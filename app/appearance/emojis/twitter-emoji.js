@@ -1,4 +1,4 @@
-document.body.insertAdjacentHTML('afterbegin', `<svg aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden;" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+document.body.insertAdjacentHTML('afterbegin', `<svg id="emojiScriptSvg" aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden;" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <defs>
 <symbol id="icon-1f0cf" viewBox="0 0 32 32">
 <path fill="#e6e7e8" style="fill: var(--color1, #e6e7e8)" d="M28.444 28.444c0 1.964-1.592 3.556-3.556 3.556h-17.778c-1.964 0-3.556-1.592-3.556-3.556v-24.889c0-1.964 1.592-3.556 3.556-3.556h17.778c1.964 0 3.556 1.592 3.556 3.556v24.889z"></path>
