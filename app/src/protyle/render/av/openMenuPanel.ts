@@ -591,7 +591,7 @@ export const openMenuPanel = (options: {
                 return;
             }
             event.preventDefault();
-            document.body.style.cursor = 'grabbing';
+            document.body.style.cursor = "grabbing";
             const documentSelf = document;
             documentSelf.ondragstart = () => false;
             let ghostElement: HTMLElement;
@@ -634,7 +634,7 @@ export const openMenuPanel = (options: {
                 documentSelf.onselect = null;
                 ghostElement?.remove();
                 selectedElement.style.opacity = "";
-                document.body.style.cursor = '';
+                document.body.style.cursor = "";
                 const newValue: IAVCellSelectValue[] = [];
                 selectedElement.parentElement.querySelectorAll(".b3-chip--middle").forEach((item: HTMLElement) => {
                     newValue.push({content: item.dataset.content, color: item.style.color.match(/color(\d+)/)[1]});
