@@ -1042,6 +1042,8 @@
   "heading4": "หัวข้อ 4",
   "heading5": "หัวข้อ 5",
   "heading6": "หัวข้อ 6",
+  "unorderedList": "รายการไม่เรียงลำดับ",
+  "searchSubTypeListTip": "ชนิดย่อยของรายการ (เรียงลำดับ/ไม่เรียงลำดับ/งาน) ใช้กับรายการย่อยด้วย",
   "outlineExpandLevel": "ระดับขยาย",
   "expandAll": "ขยายทั้งหมด",
   "outlineKeepCurrentExpand": "คงขยาย",
