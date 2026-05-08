@@ -72,6 +72,7 @@ export const openGlobalSearch = (app: App, text: string, replace: boolean, searc
             group: localData.group,
             sort: localData.sort,
             types: Object.assign({}, localData.types),
+            subTypes: Object.assign({}, localData.subTypes),
             replaceTypes: Object.assign({}, localData.replaceTypes),
             removed: localData.removed,
             page: 1
@@ -1157,6 +1158,7 @@ export const getArticle = (options: {
                 query: options.value || null,
                 queryMethod: options.config?.method || null,
                 queryTypes: options.config?.types || null,
+                querySubTypes: options.config?.subTypes || null,
                 mode: zoomIn ? 0 : 3,
                 size: zoomIn ? Constants.SIZE_GET_MAX : window.siyuan.config.editor.dynamicLoadBlocks,
                 zoom: zoomIn,
@@ -1169,6 +1171,7 @@ export const getArticle = (options: {
                     key: options.value || null,
                     method: options.config?.method || null,
                     types: options.config?.types || null,
+                    subTypes: options.config?.subTypes || null,
                 };
                 // https://ld246.com/article/1770132984152
                 if (options.edit.protyle.options.render.title) {
