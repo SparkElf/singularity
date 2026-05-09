@@ -1223,6 +1223,8 @@
   "fileTree23": "Melden bij overschrijding grootte",
   "fileTree24": "Nieuw subdoc bovenaan",
   "fileTree25": "Bovenaan bij aangepaste sortering",
+  "fileTree26": "Standaard opslaglocatie voor snelle notities",
+  "fileTree27": "Bv. <code class=\"fn__code\">/shorthands/{{now | date \"20060102150405\"}}</code>, als er geen sjabloonvariabele wordt gebruikt, wordt de snelle notitie toegevoegd aan het einde van het document op het opgegeven pad",
   "export10": "HTML-span voor watermerk",
   "export11": "Inhoudsverwerking ref bij export",
   "export12": "Inhoudsverwerking embed bij export",

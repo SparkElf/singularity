@@ -1223,6 +1223,8 @@
   "fileTree23": ".sy 文件和資料庫 .json 超過該大小時彈出通知提醒",
   "fileTree24": "新建子文檔放置在頂部",
   "fileTree25": "啟用後新建的子文檔將放置在子文檔列表的頂部（僅在自訂排序啟用時生效）",
+  "fileTree26": "新建閃念速記的默認存放路徑",
+  "fileTree27": "例如 <code class=\"fn__code\">/閃念速記/{{now | date \"20060102150405\"}}</code>，不使用變量時閃念速記將添加到該路徑指定文檔內容的末尾",
   "export10": "例如 <code class='fn__code'>&lt;span style=\"color: #fff;background-color: black;padding: 4px;border-radius: 5px;float:right;\"&gt;SiYuan&lt;/span&gt;</code> ，為空時使用水印文字或浮水印檔案路徑。",
   "export11": "匯出時關於塊引用內容的處理方式",
   "export12": "匯出時關於嵌入塊內容的處理方式",

@@ -233,6 +233,7 @@ func InitConf() {
 	}
 	Conf.FileTree.DocCreateSavePath = util.TrimSpaceInPath(Conf.FileTree.DocCreateSavePath)
 	Conf.FileTree.RefCreateSavePath = util.TrimSpaceInPath(Conf.FileTree.RefCreateSavePath)
+	Conf.FileTree.ShorthandSavePath = util.TrimSpaceInPath(Conf.FileTree.ShorthandSavePath)
 	util.UseSingleLineSave = Conf.FileTree.UseSingleLineSave
 	if 2 > Conf.FileTree.LargeFileWarningSize {
 		Conf.FileTree.LargeFileWarningSize = 8

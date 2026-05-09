@@ -249,13 +249,6 @@ export class MobileFiles extends Model {
                             } else if (type === "more-root") {
                                 initNavigationMenu(app, target.parentElement);
                                 window.siyuan.menus.menu.fullscreen("bottom");
-                            } else if (type === "addLocal") {
-                                fetchPost("/api/filetree/moveLocalShorthands", {
-                                    "notebook": notebookId
-                                });
-                                this.element.querySelectorAll('[data-type="addLocal"]').forEach(item => {
-                                    item.remove();
-                                });
                             }
                         }
                         if (type === "more-file") {
