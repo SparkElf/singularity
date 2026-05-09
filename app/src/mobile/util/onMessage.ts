@@ -10,7 +10,6 @@ import {
 import {App} from "../../index";
 import {reloadPlugin} from "../../plugin/loader";
 import {reloadEmoji} from "../../emoji";
-import {setLocalShorthandCount} from "../../util/noRelyPCFunction";
 import {renderSnippet} from "../../config/util/snippets";
 import {redirectToCheckAuth} from "../../util/pathName";
 
@@ -48,9 +47,6 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 break;
             case "reloadTag":
                 window.siyuan.mobile.docks.tag?.update();
-                break;
-            case "setLocalShorthandCount":
-                setLocalShorthandCount();
                 break;
             case "setRefDynamicText":
                 setRefDynamicText(data.data);

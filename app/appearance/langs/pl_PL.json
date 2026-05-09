@@ -1223,6 +1223,8 @@
   "fileTree23": "Powiadom, gdy plik .sy lub baza danych .json przekroczy ten rozmiar",
   "fileTree24": "Umieść nowy poddokument na górze",
   "fileTree25": "Po włączeniu nowe poddokumenty będą umieszczane na początku listy poddokumentów (działa tylko, gdy włączone jest niestandardowe sortowanie)",
+  "fileTree26": "Domyślna ścieżka zapisu dla szybkich notatek",
+  "fileTree27": "Na przykład, <code class=\"fn__code\">/shorthands/{{now | date \"20060102150405\"}}</code>, jeśli nie użyto zmiennej szablonu, szybka notatka zostanie dodana na końcu dokumentu w określonej ścieżce",
   "export10": "Na przykład <code class='fn__code'>&lt;span style=\"color: #fff;background-color: black;padding: 4px;border-radius: 5px;float:right;\"&gt;SiYuan&lt;/span&gt;</code>, jeśli jest puste, użyj tekstu znaków wodnych lub ścieżki pliku znaku wodnego.",
   "export11": "Sposób obsługi treści bloku odniesienia podczas eksportu",
   "export12": "Sposób obsługi treści bloku osadzonego podczas eksportu",

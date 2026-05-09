@@ -17,20 +17,33 @@ declare interface INotebookConf {
         refCreateSaveBox: string;
         docCreateSaveBox: string;
         dailyNoteTemplatePath: string
+        shorthandSaveBox: string;
+        shorthandSavePath: string;
     }
 }
 
-export const genNotebookOption = (id: string, notebookId?: string) => {
-    let html = `<option value="">${window.siyuan.languages.currentNotebook}</option>`;
+export const genNotebookOption = (id: string, notebookId?: string, noCurrent?: boolean) => {
+    let html = "";
+    if (!noCurrent) {
+        html = `<option value="">${window.siyuan.languages.currentNotebook}</option>`;
+    }
     const helpIds: string[] = [];
     Object.keys(Constants.HELP_PATH).forEach((key: "zh_CN") => {
         helpIds.push(Constants.HELP_PATH[key]);
     });
+    let firstNotebookId = "";
     window.siyuan.notebooks.forEach((item) => {
         if (helpIds.includes(item.id) || item.id === notebookId) {
             return;
         }
-        html += `<option value="${item.id}" ${id === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`;
+        if ("" === firstNotebookId) {
+            firstNotebookId = item.id;
+        }
+        let selected = id === item.id;
+        if (noCurrent && "" === id && item.id === firstNotebookId) {
+            selected = true;
+        }
+        html += `<option value="${item.id}" ${selected ? "selected" : ""}>${escapeHtml(item.name)}</option>`;
     });
     return html;
 };
@@ -58,6 +71,16 @@ export const onGetnotebookconf = (data: INotebookConf) => {
         <select style="min-width: 200px" class="b3-select" id="refCreateSaveBox">${genNotebookOption(data.conf.refCreateSaveBox, data.box)}</select>
         <div class="fn__space"></div>
         <input class="b3-text-field fn__flex-1" id="refCreateSavePath" value="">
+    </div>
+</div>
+<div class="b3-label config__item">
+    ${window.siyuan.languages.fileTree26}
+    <div class="b3-label__text">${window.siyuan.languages.fileTree27}</div>
+    <span class="fn__hr"></span>
+    <div class="fn__flex">
+        <select style="min-width: 200px" class="b3-select" id="shorthandSaveBox">${genNotebookOption(data.conf.shorthandSaveBox, data.box, true)}</select>
+        <div class="fn__space"></div>
+        <input class="b3-text-field fn__flex-1" id="shorthandSavePath" value="">
     </div>
 </div>
 <div class="b3-label">
@@ -101,6 +124,8 @@ const bindSettingEvent = (contentElement: Element, data: INotebookConf) => {
     docCreateSavePathElement.value = data.conf.docCreateSavePath;
     const refCreateSavePathElement = contentElement.querySelector("#refCreateSavePath") as HTMLInputElement;
     refCreateSavePathElement.value = data.conf.refCreateSavePath;
+    const shorthandSavePathElement = contentElement.querySelector("#shorthandSavePath") as HTMLInputElement;
+    shorthandSavePathElement.value = data.conf.shorthandSavePath;
     const dailyNoteTemplatePathElement = contentElement.querySelector("#dailyNoteTemplatePath") as HTMLInputElement;
     dailyNoteTemplatePathElement.value = data.conf.dailyNoteTemplatePath;
     contentElement.querySelectorAll("input, select").forEach((item) => {
@@ -114,6 +139,8 @@ const bindSettingEvent = (contentElement: Element, data: INotebookConf) => {
                     docCreateSavePath: docCreateSavePathElement.value,
                     dailyNoteSavePath: dailyNoteSavePathElement.value,
                     dailyNoteTemplatePath: dailyNoteTemplatePathElement.value,
+                    shorthandSaveBox: (contentElement.querySelector("#shorthandSaveBox") as HTMLInputElement).value,
+                    shorthandSavePath: shorthandSavePathElement.value,
                 }
             });
         });

@@ -685,6 +685,14 @@ declare namespace Config {
          */
         refCreateSavePath: string;
         refCreateSaveBox: string;
+        /**
+         * Shorthand save notebook
+         */
+        shorthandSaveBox: string;
+        /**
+         * Shorthand save path
+         */
+        shorthandSavePath: string;
         docCreateSaveBox: string;
         /**
          * Close the secondary confirmation when deleting a document

@@ -123,6 +123,16 @@ export const fileTree = {
         <div class="fn__space"></div>
         <input class="b3-text-field fn__flex-1" id="refCreateSavePath" value="${window.siyuan.config.fileTree.refCreateSavePath}">
     </div>
+</div>
+<div class="b3-label config__item">
+    ${window.siyuan.languages.fileTree26}
+    <div class="b3-label__text">${window.siyuan.languages.fileTree27}</div>
+    <span class="fn__hr"></span>
+    <div class="fn__flex">
+        <select style="min-width: 200px" class="b3-select" id="shorthandSaveBox">${genNotebookOption(window.siyuan.config.fileTree.shorthandSaveBox, undefined, true)}</select>
+        <div class="fn__space"></div>
+        <input class="b3-text-field fn__flex-1" id="shorthandSavePath" value="${window.siyuan.config.fileTree.shorthandSavePath}">
+    </div>
 </div>`;
     },
     _send() {
@@ -142,6 +152,8 @@ export const fileTree = {
             alwaysSelectOpenedFile: (fileTree.element.querySelector("#alwaysSelectOpenedFile") as HTMLInputElement).checked,
             refCreateSavePath: (fileTree.element.querySelector("#refCreateSavePath") as HTMLInputElement).value,
             refCreateSaveBox: (fileTree.element.querySelector("#refCreateSaveBox") as HTMLInputElement).value,
+            shorthandSavePath: (fileTree.element.querySelector("#shorthandSavePath") as HTMLInputElement).value,
+            shorthandSaveBox: (fileTree.element.querySelector("#shorthandSaveBox") as HTMLInputElement).value,
             docCreateSavePath: (fileTree.element.querySelector("#docCreateSavePath") as HTMLInputElement).value,
             docCreateSaveBox: (fileTree.element.querySelector("#docCreateSaveBox") as HTMLInputElement).value,
             openFilesUseCurrentTab: (fileTree.element.querySelector("#openFilesUseCurrentTab") as HTMLInputElement).checked,
@@ -162,6 +174,7 @@ export const fileTree = {
     bindEvent: () => {
         (fileTree.element.querySelector("#docCreateSavePath") as HTMLInputElement).value = window.siyuan.config.fileTree.docCreateSavePath;
         (fileTree.element.querySelector("#refCreateSavePath") as HTMLInputElement).value = window.siyuan.config.fileTree.refCreateSavePath;
+        (fileTree.element.querySelector("#shorthandSavePath") as HTMLInputElement).value = window.siyuan.config.fileTree.shorthandSavePath;
         fileTree.element.querySelectorAll("input, select").forEach((item) => {
             item.addEventListener("change", () => {
                 fileTree._send();

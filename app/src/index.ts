@@ -33,9 +33,6 @@ import {loadPlugins, reloadPlugin} from "./plugin/loader";
 import "./assets/scss/base.scss";
 import {reloadEmoji} from "./emoji";
 import {processIOSPurchaseResponse} from "./util/iOSPurchase";
-/// #if BROWSER
-import {setLocalShorthandCount} from "./util/noRelyPCFunction";
-/// #else
 import {ipcRenderer} from "electron";
 /// #endif
 import {getDockByType} from "./layout/tabUtil";
@@ -95,11 +92,6 @@ export class App {
                                     (getDockByType("tag").data.tag as Tag).update();
                                 }
                                 break;
-                            /// #if BROWSER
-                            case "setLocalShorthandCount":
-                                setLocalShorthandCount();
-                                break;
-                            /// #endif
                             case "setRefDynamicText":
                                 setRefDynamicText(data.data);
                                 break;

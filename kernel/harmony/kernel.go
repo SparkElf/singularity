@@ -20,10 +20,12 @@ import (
 	"C"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/cache"
@@ -125,6 +127,26 @@ func SetTimezone(container, appDir, timezoneID string) {
 //export DisableFeature
 func DisableFeature(feature *C.char) {
 	util.DisableFeature(C.GoString(feature))
+}
+
+//export FilepathBase
+func FilepathBase(path string) string {
+	return filepath.Base(path)
+}
+
+//export FilterUploadFileName
+func FilterUploadFileName(name string) string {
+	return util.FilterUploadFileName(name)
+}
+
+//export AssetName
+func AssetName(name string) string {
+	return util.AssetName(name, ast.NewNodeID())
+}
+
+//export HTML2Markdown
+func HTML2Markdown(html string) string {
+	return util.NewLute().HTML2Md(html)
 }
 
 //export Unzip

@@ -1223,6 +1223,8 @@
   "fileTree23": ".sy ドキュメントやデータベース .json がこのサイズを超えると通知します",
   "fileTree24": "新しい子ドキュメントを先頭に配置",
   "fileTree25": "有効にすると、新しく作成された子ドキュメントは子ドキュメント一覧の先頭に配置されます（カスタム並び替えが有効な場合のみ動作します）",
+  "fileTree26": "クイックメモのデフォルト保存場所",
+  "fileTree27": "例: <code class=\"fn__code\">/shorthands/{{now | date \"20060102150405\"}}</code>、テンプレート変数を使用しない場合、クイックメモは指定されたパスのドキュメントの末尾に追加されます",
   "export10": "例: <code class='fn__code'>&lt;span style=\"color: #fff;background-color: black;padding: 4px;border-radius: 5px;float:right;\"&gt;SiYuan&lt;/span&gt;</code><br>空の場合は透かしテキストまたは透かし画像ファイルのパスを使用します",
   "export11": "エクスポート時のブロック参照コンテンツの処理方法",
   "export12": "エクスポート時の埋め込みブロックコンテンツの処理方法",

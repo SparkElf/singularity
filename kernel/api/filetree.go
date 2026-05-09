@@ -50,29 +50,7 @@ func moveLocalShorthands(c *gin.Context) {
 		return
 	}
 
-	var parentID string
-	parentIDArg := arg["parentID"]
-	if nil != parentIDArg {
-		parentID = parentIDArg.(string)
-	}
-
-	var hPath string
-	hPathArg := arg["path"]
-	if nil != hPathArg {
-		hPath = arg["path"].(string)
-		baseName := path.Base(hPath)
-		dir := path.Dir(hPath)
-		r, _ := regexp.Compile("\r\n|\r|\n|\u2028|\u2029|\t|/")
-		baseName = r.ReplaceAllString(baseName, "")
-		if 512 < utf8.RuneCountInString(baseName) {
-			baseName = gulu.Str.SubStr(baseName, 512)
-		}
-		hPath = path.Join(dir, baseName)
-	}
-
-	// TODO: 改造旧方案，去掉 hPath, parentID，改为使用文档树配置项 闪念速记存放位置，参考创建日记实现
-	// https://github.com/siyuan-note/siyuan/issues/14414
-	ids, err := model.MoveLocalShorthands(notebook, hPath, parentID)
+	ids, err := model.MoveLocalShorthands(notebook)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -997,6 +975,54 @@ func getRefCreateSavePath(c *gin.Context) {
 	ret.Data = map[string]any{
 		"box":  refCreateSaveBox,
 		"path": refCreateSavePath,
+	}
+}
+
+func getShorthandSavePath(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	notebook := arg["notebook"].(string)
+	box := model.Conf.Box(notebook)
+
+	var shorthandSaveBox string
+	shorthandSavePathTpl := model.Conf.FileTree.ShorthandSavePath
+	if nil != box {
+		boxConf := box.GetConf()
+		shorthandSaveBox = boxConf.ShorthandSaveBox
+		shorthandSavePathTpl = boxConf.ShorthandSavePath
+	}
+	if "" == shorthandSaveBox {
+		shorthandSaveBox = model.Conf.FileTree.ShorthandSaveBox
+	}
+	if "" == shorthandSavePathTpl {
+		shorthandSavePathTpl = model.Conf.FileTree.ShorthandSavePath
+	}
+
+	if "" == shorthandSaveBox {
+		shorthandSaveBox = notebook
+	}
+
+	if shorthandSaveBox != notebook {
+		if "" != shorthandSavePathTpl && !strings.HasPrefix(shorthandSavePathTpl, "/") {
+			shorthandSavePathTpl = "/" + shorthandSavePathTpl
+		}
+	}
+
+	shorthandSavePath, err := model.RenderGoTemplate(shorthandSavePathTpl)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	ret.Data = map[string]any{
+		"box":  shorthandSaveBox,
+		"path": shorthandSavePath,
 	}
 }
 

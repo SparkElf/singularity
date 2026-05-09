@@ -1223,6 +1223,8 @@
   "fileTree23": "Upozorniť, ak .sy alebo .json prekročí túto veľkosť",
   "fileTree24": "Nové dokumenty navrch",
   "fileTree25": "Nové poddokumenty sa zobrazia na začiatku zoznamu",
+  "fileTree26": "Predvolené umiestnenie pre rýchle poznámky",
+  "fileTree27": "Napr. <code class=\"fn__code\">/shorthands/{{now | date \"20060102150405\"}}</code>, ak sa nepoužije premenná šablóny, rýchla poznámka sa pridá na koniec dokumentu na zadanej ceste",
   "export10": "HTML kód pre vodoznak",
   "export11": "Spracovanie odkazu na blok pri exporte",
   "export12": "Spracovanie vloženého bloku pri exporte",

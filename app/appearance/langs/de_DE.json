@@ -1223,6 +1223,8 @@
   "fileTree23": "Benachrichtigen, wenn .sy-Dateien oder die Datenbank .json diese Größe überschreiten",
   "fileTree24": "Neue Unterdokumente oben platzieren",
   "fileTree25": "Wenn aktiviert, werden neu erstellte Unterdokumente oben in der Liste der Unterdokumente platziert (wirkt nur, wenn die benutzerdefinierte Sortierung aktiviert ist)",
+  "fileTree26": "Standard-Speicherort für neue Kurznotizen",
+  "fileTree27": "Zum Beispiel <code class=\"fn__code\">/shorthands/{{now | date \"20060102150405\"}}</code>, wenn keine Vorlagenvariable verwendet wird, wird die Kurznotiz am Ende des Dokuments im angegebenen Pfad angehängt",
   "export10": "Beispiel <code class='fn__code'>&lt;span style=\"color: #fff;background-color: black;padding: 4px;border-radius: 5px;float:right;\"&gt;SiYuan&lt;/span&gt;</code>, wenn leer, verwenden Sie Wasserzeichentext oder den Pfad zur Wasserzeichen-Datei.",
   "export11": "Inhaltsbehandlungsverfahren des Inhaltsreferenzblocks beim Exportieren",
   "export12": "Inhaltsbehandlungsverfahren des Inhalteinbettungsblocks beim Exportieren",

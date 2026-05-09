@@ -2,4 +2,7 @@ onlyBuiltDependencies:
   - electron
 blockExoticSubdeps: false
 allowBuilds:
+  '@parcel/watcher': true
   electron: true
+  electron-winstaller: true
+  esbuild: true
