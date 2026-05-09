@@ -1,5 +1,5 @@
 import {adjustLayout, exportLayout, JSONToLayout, resetLayout, resizeTopBar} from "../layout/util";
-import {resizeTabs} from "../layout/tabUtil";
+import {resizeTabs, setTabPosition} from "../layout/tabUtil";
 import {setStorageVal} from "../protyle/util/compatibility";
 /// #if !BROWSER
 import {ipcRenderer, webFrame} from "electron";
@@ -20,7 +20,6 @@ import {isWindow} from "../util/functions";
 import {initStatus} from "../layout/status";
 import {showMessage} from "../dialog/message";
 import {replaceLocalPath} from "../editor/rename";
-import {setTabPosition} from "../window/setHeader";
 import {initBar} from "../layout/topBar";
 import {openChangelog} from "./openChangelog";
 import {App} from "../index";

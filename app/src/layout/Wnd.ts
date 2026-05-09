@@ -23,7 +23,7 @@ import {
 import {Constants} from "../constants";
 /// #if !BROWSER
 import {ipcRenderer, webFrame} from "electron";
-import {setModelsHash, setTabPosition} from "../window/setHeader";
+import {setModelsHash} from "../window/setHeader";
 /// #endif
 import {Search} from "../search";
 import {showMessage} from "../dialog/message";
@@ -45,7 +45,7 @@ import {App} from "../index";
 import {unicode2Emoji} from "../emoji";
 import {closeWindow} from "../window/closeWin";
 import {setTitle} from "../dialog/processSystem";
-import {newCenterEmptyTab, resizeTabs} from "./tabUtil";
+import {newCenterEmptyTab, resizeTabs, setTabPosition} from "./tabUtil";
 import {fullscreen} from "../protyle/breadcrumb/action";
 import {setPadding} from "../protyle/ui/initUI";
 import {setPosition} from "../util/setPosition";

@@ -7,8 +7,7 @@ import {Custom} from "../layout/dock/Custom";
 import {getAllEditor, getAllModels} from "../layout/getAll";
 import {Tab} from "../layout/Tab";
 import {resizeTopBar, setPanelFocus} from "../layout/util";
-import {getDockByType} from "../layout/tabUtil";
-import {setTabPosition} from "../window/setHeader";
+import {getDockByType, setTabPosition} from "../layout/tabUtil";
 ///#else
 import {MobileCustom} from "../mobile/dock/MobileCustom";
 /// #endif

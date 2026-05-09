@@ -10,7 +10,7 @@ import {Tag} from "./Tag";
 import {Graph} from "./Graph";
 import {Model} from "../Model";
 import {adjustLayout, saveLayout, setPanelFocus} from "../util";
-import {getDockByType, resizeTabs} from "../tabUtil";
+import {getDockByType, resizeTabs, setTabPosition} from "../tabUtil";
 import {Inbox} from "./Inbox";
 import {Protyle} from "../../protyle";
 import {Backlink} from "./Backlink";
@@ -21,7 +21,6 @@ import {Plugin} from "../../plugin";
 import {Custom} from "./Custom";
 import {clearBeforeResizeTop, recordBeforeResizeTop} from "../../protyle/util/resize";
 import {Constants} from "../../constants";
-import {setTabPosition} from "../../window/setHeader";
 
 const TYPES = ["file", "outline", "inbox", "bookmark", "tag", "graph", "globalGraph", "backlink"];
 

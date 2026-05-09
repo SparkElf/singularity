@@ -28,10 +28,9 @@ import {newCardModel} from "../card/newCardTab";
 import {App} from "../index";
 import {afterLoadPlugin} from "../plugin/loader";
 import {setTitle} from "../dialog/processSystem";
-import {newCenterEmptyTab, resizeTabs} from "./tabUtil";
+import {newCenterEmptyTab, resizeTabs, setTabPosition} from "./tabUtil";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {adjustDockPadding} from "./dock/util";
-import {setTabPosition} from "../window/setHeader";
 
 export const setPanelFocus = (element: Element, isSaveLayout = true) => {
     if (element.getAttribute("data-type") === "wnd") {

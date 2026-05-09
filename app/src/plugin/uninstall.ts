@@ -3,11 +3,11 @@ import {Plugin} from "./index";
 /// #if !MOBILE
 import {getAllModels} from "../layout/getAll";
 import {resizeTopBar} from "../layout/util";
+import {setTabPosition} from "../layout/tabUtil";
 /// #endif
 import {Constants} from "../constants";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {getAllEditor} from "../layout/getAll";
-import {setTabPosition} from "../window/setHeader";
 
 export const uninstall = (app: App, name: string, isReload: boolean) => {
     app.plugins.find((plugin: Plugin, index) => {
