@@ -168,7 +168,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
             icon: "iconMarkdown",
             click: () => {
                 const msgId = showMessage(window.siyuan.languages.exporting, -1);
-                fetchPost(" /api/export/exportMds", {
+                fetchPost("/api/export/exportMds", {
                     ids: blockIDs,
                 }, response => {
                     hideMessage(msgId);
