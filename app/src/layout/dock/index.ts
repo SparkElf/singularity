@@ -623,13 +623,19 @@ export class Dock {
             }
             // dock 显示
             if (this.position === "Left") {
-                this.layout.element.style.width = this.getMaxSize() + "px";
+                if (this.layout.element.style.width === "0px") {
+                    this.layout.element.style.width = this.getMaxSize() + "px";
+                }
                 this.layout.element.style.marginRight = "var(--b3-layout-space)";
             } else if (this.position === "Right") {
-                this.layout.element.style.width = this.getMaxSize() + "px";
+                if (this.layout.element.style.width === "0px") {
+                    this.layout.element.style.width = this.getMaxSize() + "px";
+                }
                 this.layout.element.style.marginLeft = "var(--b3-layout-space)";
-            } else {
-                this.layout.element.style.height = this.getMaxSize() + "px";
+            } else if (this.position === "Bottom") {
+                if (this.layout.element.style.height === "0px") {
+                    this.layout.element.style.height = this.getMaxSize() + "px";
+                }
                 this.layout.element.style.marginTop = "var(--b3-layout-space)";
             }
             if ((type === "graph" || type === "globalGraph") && this.layout.element.querySelector(".fullscreen")) {
