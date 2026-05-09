@@ -322,6 +322,7 @@ export class Dock {
         }
         this.layout.element.classList.toggle("layout--float");
         resizeTabs();
+        setTabPosition(true);
     }
 
     private resetDockPosition(show: boolean) {
