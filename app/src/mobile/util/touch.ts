@@ -176,7 +176,6 @@ export const handleTouchStart = (event: TouchEvent) => {
     if ((otherTouchElement && otherTouchElement.parentElement.classList.contains("b3-chips__doctag")) ||
         target.closest(".protyle-gutters") ||
         target.closest(".av__gallery") ||
-        target.closest('[style^="--file-toggle-width"]') ||
         (target.tagName === "IMG" && target.style.cursor === "move" && target.parentElement.classList.contains("protyle-background__img"))) {
         clientX = null;
         clientY = null;
@@ -214,6 +213,7 @@ export const handleTouchMove = (event: TouchEvent) => {
     const target = event.target as HTMLElement;
     if (!clientX || !clientY ||
         target.tagName === "AUDIO" ||
+        document.getElementById("dragGhost") ||
         hasClosestByClassName(target, "b3-dialog", true) ||
         (window.siyuan.mobile.editor && !window.siyuan.mobile.editor.protyle.toolbar.subElement.classList.contains("fn__none")) ||
         hasClosestByClassName(target, "keyboard") ||

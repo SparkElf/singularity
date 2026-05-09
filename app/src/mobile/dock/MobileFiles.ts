@@ -31,6 +31,7 @@ export class MobileFiles extends Model {
         startY: number;
         isDragging: boolean;
         ghostElement: HTMLElement;
+        startTime: number;
     };
 
     constructor(app: App) {
@@ -301,18 +302,25 @@ export class MobileFiles extends Model {
                 startX: touch.clientX,
                 startY: touch.clientY,
                 ghostElement: null,
+                startTime: Date.now(),
             };
         }, {passive: false});
 
         filesElement.addEventListener("touchmove", (event: TouchEvent) => {
             const state = this.touchDragState;
+            if (!state) return;
             const touch = event.touches[0];
-
             if (!state.isDragging) {
+                if (Date.now() - state.startTime < 400 &&
+                    (Math.abs(touch.clientX - state.startX) > 5 || Math.abs(touch.clientY - state.startY) > 5)) {
+                    this.touchDragState = null;
+                    return;
+                }
                 if (Math.abs(touch.clientX - state.startX) < 5 && Math.abs(touch.clientY - state.startY) < 5) return;
                 state.isDragging = true;
 
                 const ghostElement = document.createElement("ul");
+                ghostElement.id = "dragGhost";
                 ghostElement.append(state.selectedElement.cloneNode(true));
                 ghostElement.setAttribute("style", `background-color: var(--b3-theme-surface);width: 100%;touch-action: none;margin-left: -50%;margin-top:20px;z-index:${window.siyuan.zIndex};position: fixed;top:${touch.clientX}px;left:${touch.clientY}px`);
                 ghostElement.setAttribute("class", "b3-list b3-list--background");
@@ -320,6 +328,8 @@ export class MobileFiles extends Model {
 
                 state.ghostElement = ghostElement;
                 state.selectedElement.style.opacity = "0.38";
+                event.preventDefault();
+                event.stopPropagation();
             }
 
             if (state.isDragging) {
@@ -360,16 +370,14 @@ export class MobileFiles extends Model {
                     !(selectedDataType === "navigation-root" && targetDataType === "navigation-root")) {
                     liElement.classList.add("dragover");
                 }
-                event.preventDefault();
             }
         }, {passive: false});
 
-        filesElement.addEventListener("touchend", async (event: TouchEvent) => {
+        filesElement.addEventListener("touchend", async () => {
             const state = this.touchDragState;
             if (!state) return;
             state.selectedElement.style.opacity = "";
             if (state.isDragging) {
-                event.preventDefault();
                 if (state.ghostElement) {
                     state.ghostElement.remove();
                 }
@@ -396,7 +404,7 @@ export class MobileFiles extends Model {
                     if (newElement.getAttribute("data-path").startsWith(dataPath.replace(".sy", ""))) {
                         this.clearDragIndicators();
                         this.touchDragState = null;
-                       return;
+                        return;
                     }
                     fromPaths.push(dataPath);
                     selectFileElements.push(state.selectedElement);
