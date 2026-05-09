@@ -167,20 +167,6 @@ body {
       }
     }
 
-    .layout__empty {
-      background-color: transparent;
-
-      &::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        height: 42px;
-        -webkit-app-region: drag;
-        left: 0;
-        width: 100%;
-      }
-    }
-
     .fullscreen > .protyle-breadcrumb, .fullscreen > .block__icons {
       padding-left: var(--b3-toolbar-left-mac);
     }
