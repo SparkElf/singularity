@@ -245,6 +245,7 @@ func consumeShorthands() {
 	}
 
 	if "" == notebookID {
+		logging.LogWarnf("auto consume shorthands failed: no available notebook found")
 		return
 	}
 
