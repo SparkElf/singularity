@@ -1,2 +1,5 @@
 onlyBuiltDependencies:
   - electron
+blockExoticSubdeps: false
+allowBuilds:
+  electron: true
