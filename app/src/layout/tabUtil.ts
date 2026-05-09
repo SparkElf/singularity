@@ -52,6 +52,10 @@ export const setTabPosition = (onlyPadding = false) => {
     }
     wndsTemp.forEach(item => {
         const headerElement = item.headersElement.parentElement;
+        // empty
+        if (headerElement.classList.contains("fn__none")) {
+            headerElement.classList.remove("fn__none");
+        }
         const headerRect = headerElement.getBoundingClientRect();
         headerElement.style.paddingLeft = "";
         (headerElement.lastElementChild as HTMLElement).style.marginRight = "";
@@ -96,11 +100,6 @@ export const setTabPosition = (onlyPadding = false) => {
         (item.element.querySelector(".layout-tab-container") as HTMLElement).style.backgroundColor = "";
         const dragElement = headerElement.querySelector(".item--readonly .fn__flex-1") as HTMLElement;
         if (headerRect.top <= 0) {
-            // empty
-            if (headerElement.classList.contains("fn__none")) {
-                (item.element.querySelector(".layout-tab-container") as HTMLElement).style.backgroundColor = "transparent";
-                return;
-            }
             // header transparent
             item.element.classList.add("layout__wnd--center");
             if (!isWindowMode) {
