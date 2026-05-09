@@ -3211,9 +3211,18 @@ export class WYSIWYG {
                         if (embedElement) {
                             blockElement = embedElement;
                         }
-                        newRange = focusBlock(blockElement, undefined, event.clientX < rect.left + parseInt(this.element.style.paddingLeft)) || newRange;
-                        if (protyle.options.render.breadcrumb) {
-                            protyle.breadcrumb.render(protyle, false, blockElement);
+
+                        // 如果是列表块（list/li），不修正 range https://github.com/siyuan-note/siyuan/issues/17604
+                        if (blockElement.classList.contains("list") || blockElement.classList.contains("li")) {
+                            if (protyle.options.render.breadcrumb) {
+                                const breadcrumbElement = hasClosestBlock(newRange.startContainer);
+                                protyle.breadcrumb.render(protyle, false, breadcrumbElement);
+                            }
+                        } else {
+                            newRange = focusBlock(blockElement, undefined, event.clientX < rect.left + parseInt(this.element.style.paddingLeft)) || newRange;
+                            if (protyle.options.render.breadcrumb) {
+                                protyle.breadcrumb.render(protyle, false, blockElement);
+                            }
                         }
                     }
                 }
