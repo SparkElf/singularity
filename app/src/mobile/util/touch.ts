@@ -37,27 +37,7 @@ export const handleTouchEnd = (event: TouchEvent) => {
     const currentTime = Date.now();
     const editor = getCurrentEditor();
     if (Math.abs(clientX - event.changedTouches[0].clientX) < 5 && Math.abs(clientY - event.changedTouches[0].clientY) < 5) {
-        if (currentTime - time > Constants.TIMEOUT_LONGPRESS) {
-            // 长按
-            if (isIPhone() && !isChromeBrowser() && !window.siyuan.touchDragActive) {
-                target.dispatchEvent(new MouseEvent("contextmenu", {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: event.changedTouches[0].clientX,
-                    clientY: event.changedTouches[0].clientY,
-                }));
-            }
-            // 超长按
-            if (currentTime - time > 2000 && editor && !editor.protyle.toolbar.isMultiSelectMode()) {
-                const blockElement = hasClosestBlock(target);
-                if (blockElement) {
-                    const protyle = editor.protyle;
-                    protyle.toolbar.showMultiSelectMode(protyle, blockElement);
-                }
-            }
-            event.stopImmediatePropagation();
-            event.preventDefault();
-        } else if (editor && editor.protyle.toolbar.isMultiSelectMode()) {
+        if (editor && editor.protyle.toolbar.isMultiSelectMode()) {
             // 多选模式
             const blockElement = hasClosestBlock(target);
             if (blockElement) {
@@ -74,6 +54,26 @@ export const handleTouchEnd = (event: TouchEvent) => {
                 event.stopImmediatePropagation();
                 event.preventDefault();
             }
+        } else if (currentTime - time > Constants.TIMEOUT_LONGPRESS) {
+            // 长按
+            if (isIPhone() && !isChromeBrowser() && !window.siyuan.touchDragActive) {
+                target.dispatchEvent(new MouseEvent("contextmenu", {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: event.changedTouches[0].clientX,
+                    clientY: event.changedTouches[0].clientY,
+                }));
+            }
+            // 超长按
+            if (currentTime - time > 2000) {
+                const blockElement = hasClosestBlock(target);
+                if (blockElement) {
+                    const protyle = editor.protyle;
+                    protyle.toolbar.showMultiSelectMode(protyle, blockElement);
+                }
+            }
+            event.stopImmediatePropagation();
+            event.preventDefault();
         }
         return;
     }

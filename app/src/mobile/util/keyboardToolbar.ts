@@ -508,9 +508,10 @@ export const activeBlur = () => {
 export const initKeyboardToolbar = () => {
     let preventRender = false;
     document.addEventListener("selectionchange", () => {
-        if (!preventRender) {
-            renderKeyboardToolbar();
+        if (preventRender || (getCurrentEditor()?.protyle?.toolbar.isMultiSelectMode())) {
+            return;
         }
+        renderKeyboardToolbar();
     }, false);
     window.siyuan.mobile.size.isLandscape = window.matchMedia && window.matchMedia("(orientation: landscape)").matches;
     if (window.siyuan.mobile.size.isLandscape) {

@@ -46,6 +46,7 @@ import {confirmDialog} from "../../dialog/confirmDialog";
 import {paste, pasteAsPlainText, pasteEscaped} from "../util/paste";
 import {escapeHtml} from "../../util/escape";
 import {resizeSide} from "../../history/resizeSide";
+import {activeBlur} from "../../mobile/util/keyboardToolbar";
 
 export class Toolbar {
     public element: HTMLElement;
@@ -1418,6 +1419,7 @@ export class Toolbar {
         });
         setPosition(this.subElement, 8, 8);
         this.element.classList.add("fn__none");
+        activeBlur();
     }
 
     public isMultiSelectMode() {
