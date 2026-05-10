@@ -74,8 +74,8 @@ export const handleTouchEnd = (event: TouchEvent) => {
             }
             event.stopImmediatePropagation();
             event.preventDefault();
+            return;
         }
-        return;
     }
 
     if (typeof yDiff === "undefined" && window.siyuan.mobile.editor.protyle.options.render.gutter) {

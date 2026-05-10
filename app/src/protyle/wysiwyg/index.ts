@@ -2101,7 +2101,7 @@ export class WYSIWYG {
 
         let beforeContextmenuRange: Range;
         this.element.addEventListener("contextmenu", (event: MouseEvent & { detail: any }) => {
-            if (event.shiftKey) {
+            if (event.shiftKey || protyle.toolbar.isMultiSelectMode()) {
                 return;
             }
             event.stopPropagation();
