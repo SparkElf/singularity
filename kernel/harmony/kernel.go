@@ -43,7 +43,7 @@ func StartKernelFast(container, appDir, workspaceBaseDir, localIPs *C.char) {
 
 //export StartKernel
 func StartKernel(container, appDir, workspaceBaseDir, timezoneID, localIPs, lang, osVer *C.char) {
-	SetTimezone(C.GoString(container), C.GoString(appDir), C.GoString(timezoneID))
+	SetTimezone(container, appDir, timezoneID)
 	util.Mode = "prod"
 	util.MobileOSVer = C.GoString(osVer)
 	util.LocalIPs = strings.Split(C.GoString(localIPs), ",")
@@ -141,7 +141,7 @@ func FilterUploadFileName(name *C.char) *C.char {
 
 //export AssetName
 func AssetName(name *C.char) *C.char {
-	return C.CString(util.AssetName(C.GoString(name), C.GoString(ast.NewNodeID())))
+	return C.CString(util.AssetName(C.GoString(name), ast.NewNodeID()))
 }
 
 //export HTML2Markdown
