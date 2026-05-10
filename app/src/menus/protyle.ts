@@ -2080,7 +2080,7 @@ export const iframeMenu = (protyle: IProtyle, nodeElement: Element) => {
                         }
                     });
                     iframeElement.setAttribute("src", src);
-                    iframeElement.setAttribute("sandbox", "allow-top-navigation-by-user-activation allow-same-origin allow-forms allow-scripts allow-popups");
+                    iframeElement.setAttribute("sandbox", "allow-top-navigation-by-user-activation allow-same-origin allow-forms allow-scripts allow-popups allow-storage-access-by-user-activation");
                     if (!iframeElement.style.height) {
                         iframeElement.style.height = "360px";
                     }
