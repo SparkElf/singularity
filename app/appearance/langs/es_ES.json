@@ -1739,7 +1739,7 @@
     "241": "No se admite arrastrar a su subtítulo",
     "242": "Espacio disponible actualmente [%s], se requiere al menos [%s] para realizar esta operación",
     "243": "Enumere solo las primeras [%d] etiquetas (incluidas las subetiquetas), modifique [Configuración - Documentos - Número máximo a listar]",
-    "244": "",
+    "244": "Nota: No edite en la guía del usuario, porque el contenido editado aquí no se guardará. Tome sus notas en un cuaderno creado por usted mismo",
     "245": "",
     "246": "El título del documento no puede contener / y ha sido reemplazado por _",
     "247": "El archivo [%s] es más grande que el límite máximo [%s] y se ha ignorado para cargarlo en la nube",

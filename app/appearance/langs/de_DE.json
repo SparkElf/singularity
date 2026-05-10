@@ -1739,7 +1739,7 @@
     "241": "Ziehen zu seiner Unterüberschrift wird nicht unterstützt",
     "242": "Derzeit verfügbarer Speicherplatz beträgt [%s], mindestens [%s] sind erforderlich, um diese Operation auszuführen",
     "243": "Nur die ersten [%d] Tags (einschließlich Untertags) auflisten, falls Sie anpassen müssen, bitte ändern [Einstellungen - Dokumente - Maximale Anzahl aufzulistender]",
-    "244": "",
+    "244": "Hinweis: Bitte bearbeiten Sie das Benutzerhandbuch nicht, da die hier vorgenommenen Änderungen nicht gespeichert werden. Notieren Sie Ihre Inhalte bitte in einem selbst erstellten Notizbuch",
     "245": "",
     "246": "Der Dokumenttitel darf das /-Zeichen nicht enthalten und wurde durch _ ersetzt.",
     "247": "Datei [%s] ist größer als die maximale Grenze [%s] und wurde beim Hochladen in die Cloud ignoriert.",

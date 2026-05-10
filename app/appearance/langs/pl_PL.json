@@ -1739,7 +1739,7 @@
     "241": "Przeciąganie do podtytułu nie jest obsługiwane",
     "242": "Obecnie dostępna przestrzeń to [%s], co najmniej [%s] jest wymagane do wykonania tej operacji",
     "243": "Tylko wymień pierwsze [%d] tagów (w tym podtagi), jeśli potrzebujesz dostosować, proszę zmodyfikować [Ustawienia - Dokumenty - Maksymalna liczba do wyświetlenia]",
-    "244": "",
+    "244": "Uwaga: Proszę nie edytować w podręczniku użytkownika, ponieważ zmiany wprowadzone tutaj nie zostaną zapisane. Zapisuj notatki w utworzonym przez siebie notatniku",
     "245": "",
     "246": "Tytuł dokumentu nie może zawierać / i został zastąpiony _",
     "247": "Plik [%s] jest większy niż maksymalne ograniczenie [%s], i został zignorowany przy przesyłaniu do chmury",

@@ -1739,7 +1739,7 @@
     "241": "Le glisser vers son sous-titre n'est pas pris en charge",
     "242": "Espace actuellement disponible [%s], au moins [%s] est requis pour effectuer cette opération",
     "243": "Répertorier uniquement les [%d] premières balises (y compris les sous-balises). veuillez modifier [Paramètres - Documents - Nombre maximum de documents à lister].",
-    "244": "",
+    "244": "Remarque : Veuillez ne pas modifier dans le guide de l'utilisateur, car le contenu modifié ici ne sera pas enregistré. Veuillez prendre vos notes dans un carnet que vous avez créé vous-même",
     "245": "",
     "246": "Le titre du document ne peut pas contenir / et a été remplacé par _",
     "247": "Le fichier [%s] est plus grand que la limite maximale [%s] et a été ignoré pour le téléchargement vers le cloud",

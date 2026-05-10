@@ -1739,7 +1739,7 @@
     "241": "Drag ke sub-heading tidak didukung",
     "242": "Ruang yang tersedia saat ini adalah [%s], setidaknya [%s] diperlukan untuk melakukan operasi ini",
     "243": "Hanya daftar [%d] tag pertama (termasuk sub-tag), jika perlu menyesuaikan, silakan ubah [Pengaturan - Dokumen - Jumlah maksimum untuk didaftar]",
-    "244": "",
+    "244": "Catatan: Harap jangan mengedit di panduan pengguna, karena perubahan yang dibuat di sini tidak akan disimpan. Harap buat catatan di buku catatan yang Anda buat sendiri",
     "245": "",
     "246": "Judul dokumen tidak boleh mengandung / dan telah diganti dengan _",
     "247": "File [%s] lebih besar dari batas maksimum [%s], dan telah diabaikan untuk diunggah ke cloud",

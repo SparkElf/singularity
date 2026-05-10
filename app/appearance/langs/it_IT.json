@@ -1739,7 +1739,7 @@
     "241": "Trascinare nel suo sottotitolo non è supportato",
     "242": "Lo spazio attualmente disponibile è [%s], è necessario almeno [%s] per eseguire questa operazione",
     "243": "Elencare solo i primi [%d] tag (inclusi i sottotag); se è necessario regolare, si prega di modificare [Impostazioni - Documenti - Numero massimo da elencare]",
-    "244": "",
+    "244": "Nota: Non modificare nella guida utente, perché il contenuto modificato qui non verrà salvato. Prendi appunti in un taccuino creato da te",
     "245": "",
     "246": "Il titolo del documento non può contenere / ed è stato sostituito con _",
     "247": "Il file [%s] è più grande del limite massimo [%s] ed è stato ignorato per il caricamento nel cloud",
