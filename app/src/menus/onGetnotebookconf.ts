@@ -17,8 +17,6 @@ declare interface INotebookConf {
         refCreateSaveBox: string;
         docCreateSaveBox: string;
         dailyNoteTemplatePath: string
-        shorthandSaveBox: string;
-        shorthandSavePath: string;
     }
 }
 
@@ -73,16 +71,6 @@ export const onGetnotebookconf = (data: INotebookConf) => {
         <input class="b3-text-field fn__flex-1" id="refCreateSavePath" value="">
     </div>
 </div>
-<div class="b3-label config__item">
-    ${window.siyuan.languages.fileTree26}
-    <div class="b3-label__text">${window.siyuan.languages.fileTree27}</div>
-    <span class="fn__hr"></span>
-    <div class="fn__flex">
-        <select style="min-width: 200px" class="b3-select" id="shorthandSaveBox">${genNotebookOption(data.conf.shorthandSaveBox, data.box, true)}</select>
-        <div class="fn__space"></div>
-        <input class="b3-text-field fn__flex-1" id="shorthandSavePath" value="">
-    </div>
-</div>
 <div class="b3-label">
     ${window.siyuan.languages.fileTree11}
     <div class="b3-label__text">${window.siyuan.languages.fileTree14}</div>
@@ -124,8 +112,6 @@ const bindSettingEvent = (contentElement: Element, data: INotebookConf) => {
     docCreateSavePathElement.value = data.conf.docCreateSavePath;
     const refCreateSavePathElement = contentElement.querySelector("#refCreateSavePath") as HTMLInputElement;
     refCreateSavePathElement.value = data.conf.refCreateSavePath;
-    const shorthandSavePathElement = contentElement.querySelector("#shorthandSavePath") as HTMLInputElement;
-    shorthandSavePathElement.value = data.conf.shorthandSavePath;
     const dailyNoteTemplatePathElement = contentElement.querySelector("#dailyNoteTemplatePath") as HTMLInputElement;
     dailyNoteTemplatePathElement.value = data.conf.dailyNoteTemplatePath;
     contentElement.querySelectorAll("input, select").forEach((item) => {
@@ -139,8 +125,6 @@ const bindSettingEvent = (contentElement: Element, data: INotebookConf) => {
                     docCreateSavePath: docCreateSavePathElement.value,
                     dailyNoteSavePath: dailyNoteSavePathElement.value,
                     dailyNoteTemplatePath: dailyNoteTemplatePathElement.value,
-                    shorthandSaveBox: (contentElement.querySelector("#shorthandSaveBox") as HTMLInputElement).value,
-                    shorthandSavePath: shorthandSavePathElement.value,
                 }
             });
         });
