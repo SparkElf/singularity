@@ -25,8 +25,12 @@ import {commandPanel} from "../../boot/globalEvent/command/panel";
 import {openTopBarMenu} from "../../plugin/openTopBarMenu";
 import {initFileTree} from "../settings/fileTree";
 import {initExport} from "../settings/export";
+import {getCurrentEditor} from "../editor";
 
 export const popMenu = () => {
+    if (getCurrentEditor()?.protyle.toolbar.isMultiSelectMode()) {
+        return;
+    }
     activeBlur();
     document.getElementById("menu").style.transform = "translateX(0px)";
 };

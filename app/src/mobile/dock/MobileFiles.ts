@@ -311,7 +311,7 @@ export class MobileFiles extends Model {
             if (!state) return;
             const touch = event.touches[0];
             if (!state.isDragging) {
-                if (Date.now() - state.startTime < 400 &&
+                if (Date.now() - state.startTime < Constants.TIMEOUT_LONGPRESS &&
                     (Math.abs(touch.clientX - state.startX) > 5 || Math.abs(touch.clientY - state.startY) > 5)) {
                     this.touchDragState = null;
                     return;

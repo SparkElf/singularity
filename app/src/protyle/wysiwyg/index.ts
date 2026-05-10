@@ -509,6 +509,10 @@ export class WYSIWYG {
         });
 
         this.element.addEventListener("mousedown", (event: MouseEvent) => {
+            if (protyle.toolbar.isMultiSelectMode()) {
+                event.preventDefault();
+                return;
+            }
             protyle.wysiwyg.element.classList.remove("protyle-wysiwyg--hiderange");
             if (event.button === 2) {
                 // 右键
@@ -2611,6 +2615,10 @@ export class WYSIWYG {
         });
         let mobileBlur = false;
         this.element.addEventListener("click", (event: MouseEvent & { target: HTMLElement }) => {
+            if (protyle.toolbar.isMultiSelectMode()) {
+                event.preventDefault();
+                return;
+            }
             if (this.preventClick) {
                 this.preventClick = false;
                 return;

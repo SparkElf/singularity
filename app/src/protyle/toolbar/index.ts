@@ -1377,6 +1377,58 @@ export class Toolbar {
         inputElement.select();
     }
 
+    public showMultiSelectMode(protyle: IProtyle, blockElement: HTMLElement) {
+        blockElement.classList.add("protyle-wysiwyg--select");
+        window.siyuan.menus.menu.remove();
+
+        this.subElement.style.width = window.innerWidth - 16 + "px";
+        this.subElement.style.padding = "0";
+        this.subElement.innerHTML = `<div class="block__icons">
+    <div class="block__logo">
+        <svg class="block__logoicon"><use xlink:href="#iconCheck"></use></svg> 
+        <span class="multiSelectCount">${protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").length}</span>
+    </div>
+    <span class="fn__flex-1"></span>
+    <button class="block__icon block__icon--show" data-type="menu" data-menu="true"><svg><use xlink:href="#iconMore"></use></svg></button>
+    <span class="fn__space"></span>
+    <button class="block__icon block__icon--show" data-type="exitMultiSelectMode"><svg><use xlink:href="#iconClose"></use></svg></button>
+</div>`;
+        this.subElement.style.zIndex = (++window.siyuan.zIndex).toString();
+        this.subElement.classList.remove("fn__none");
+        this.subElementCloseCB = undefined;
+        this.subElement.firstElementChild.addEventListener("click", (event) => {
+            let target = event.target as HTMLElement;
+            while (target && target !== this.subElement) {
+                if (target.dataset.type === "exitMultiSelectMode") {
+                    this.subElement.classList.add("fn__none");
+                    this.subElement.innerHTML = "";
+                    hideElements(["select"], protyle);
+                    event.preventDefault();
+                    event.stopPropagation();
+                    break;
+                } else if (target.dataset.type === "menu") {
+                    protyle.gutter.renderMenu(protyle, protyle.wysiwyg.element.querySelector(".protyle-wysiwyg--select"));
+                    window.siyuan.menus.menu.fullscreen();
+                    event.preventDefault();
+                    event.stopPropagation();
+                    break;
+                }
+                target = target.parentElement;
+            }
+        });
+        setPosition(this.subElement, 8, 8);
+        this.element.classList.add("fn__none");
+    }
+
+    public isMultiSelectMode() {
+        let result = false;
+        /// #if MOBILE
+        result = !this.subElement.classList.contains("fn__none") &&
+            !!this.subElement.querySelector('[data-type="exitMultiSelectMode"]');
+        /// #endif
+        return result;
+    }
+
     public showTpl(protyle: IProtyle, nodeElement: HTMLElement, range: Range) {
         this.range = range;
         hideElements(["hint"], protyle);
@@ -1593,7 +1645,11 @@ export class Toolbar {
                 k: inputElement.value,
             }, (response) => {
                 let searchHTML = "";
-                response.data.widgets.forEach((item: { path: string, content: string, name: string }, index: number) => {
+                response.data.widgets.forEach((item: {
+                    path: string,
+                    content: string,
+                    name: string
+                }, index: number) => {
                     searchHTML += `<div data-value="${item.path}" data-content="${item.content}" class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}">
     ${item.name}
     <span class="b3-list-item__meta">${item.content}</span>

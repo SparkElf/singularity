@@ -200,6 +200,9 @@ ${padHTML}
     }
 
     private genMobileMenu(protyle: IProtyle) {
+        if (protyle.toolbar.isMultiSelectMode()) {
+            return;
+        }
         const menu = new Menu(Constants.MENU_BREADCRUMB_MOBILE_PATH);
         let blockElement: Element;
         if (getSelection().rangeCount > 0) {

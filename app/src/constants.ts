@@ -301,6 +301,7 @@ export abstract class Constants {
     public static readonly TIMEOUT_RESIZE = 200;
     public static readonly TIMEOUT_INPUT = 256;
     public static readonly TIMEOUT_LOAD = 300;
+    public static readonly TIMEOUT_LONGPRESS = 400;
     public static readonly TIMEOUT_TRANSITION = 300;
     public static readonly TIMEOUT_COUNT = 1000;
 
