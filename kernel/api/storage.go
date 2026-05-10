@@ -338,6 +338,10 @@ func updateRecentDocOpenTime(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
 
+	if model.IsReadOnlyRoleContext(c) {
+		return
+	}
+
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
 		return
@@ -359,6 +363,10 @@ func updateRecentDocOpenTime(c *gin.Context) {
 func updateRecentDocViewTime(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
+
+	if model.IsReadOnlyRoleContext(c) {
+		return
+	}
 
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
@@ -382,6 +390,10 @@ func updateRecentDocCloseTime(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
 
+	if model.IsReadOnlyRoleContext(c) {
+		return
+	}
+
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
 		return
@@ -403,6 +415,10 @@ func updateRecentDocCloseTime(c *gin.Context) {
 func batchUpdateRecentDocCloseTime(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
+
+	if model.IsReadOnlyRoleContext(c) {
+		return
+	}
 
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
