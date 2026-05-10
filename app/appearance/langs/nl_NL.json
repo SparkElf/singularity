@@ -1739,7 +1739,7 @@
     "241": "Slepen naar subkop niet ondersteund",
     "242": "Beschikbare ruimte [%s]; minstens [%s] nodig",
     "243": "Alleen eerste [%d] tags vermeld",
-    "244": "",
+    "244": "Let op: Bewerk de gebruikersgids niet; wijzigingen worden niet opgeslagen",
     "245": "",
     "246": "Documenttitel zonder /; vervangen door _",
     "247": "Bestand [%s] groter dan limiet [%s]; upload genegeerd",

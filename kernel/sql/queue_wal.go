@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/88250/gulu"
 	"github.com/88250/lute"
 	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/dataparser"
@@ -183,8 +184,10 @@ func clearWALEntries() {
 	defer walMu.Unlock()
 
 	walPath := filepath.Join(util.TempDir, "queue.wal")
-	if err := os.Truncate(walPath, 0); err != nil {
-		logging.LogErrorf("clear WAL failed: %s", err)
+	if gulu.File.IsExist(walPath) {
+		if err := os.Truncate(walPath, 0); err != nil {
+			logging.LogErrorf("clear WAL failed: %s", err)
+		}
 	}
 	walSize.Store(0)
 }

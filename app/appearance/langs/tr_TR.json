@@ -1739,7 +1739,7 @@
     "241": "Alt başlığa sürükleme desteklenmiyor",
     "242": "Kullanılabilir alan [%s], bu işlem için en az [%s] gereklidir",
     "243": "Yalnızca ilk [%d] etiketi (alt etiketler dahil) listelenir. Ayarlamak istersen [Ayarlar - Belgeler - Maksimum liste sayısı] kısmını düzenle",
-    "244": "",
+    "244": "Not: Lütfen kullanıcı rehberinde düzenleme yapmayın, çünkü burada yapılan değişiklikler kaydedilmeyecek. Notlarınızı kendi oluşturduğunuz not defterine yazın",
     "245": "",
     "246": "Belge başlığı / karakterini içeremez, _ ile değiştirildi",
     "247": "Dosya [%s] maksimum sınır [%s] değerini aştı, buluta yükleme sırasında yoksayıldı",
