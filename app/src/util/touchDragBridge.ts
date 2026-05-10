@@ -1,4 +1,5 @@
 import {stopScrollAnimation} from "../boot/globalEvent/dragover";
+import {Constants} from "../constants";
 
 const DRAG_THRESHOLD = 5;
 
@@ -284,8 +285,8 @@ const handleDragStart = (e: TouchEvent) => {
         isDragging: false,
         draggableElement: draggable,
         editorElement: null,
-        // File tree needs long-press to avoid conflict with scroll
-        requireLongPress: draggable.closest(".sy__file") !== null,
+        // File tree and gallery items need long-press to avoid conflict with scroll
+        requireLongPress: draggable.closest(".sy__file") !== null || draggable.closest(".av__gallery-item") !== null,
         touchStartTime: Date.now(),
         longPressCancelled: false,
     };
@@ -304,13 +305,13 @@ const handleDragMove = (e: TouchEvent) => {
             return;
         }
 
-        // File tree items: must hold still for 300ms, then drag.
-        // Moving before 300ms is a scroll — cancel drag entirely.
+        // File tree and gallery items: must hold still for 300ms, then drag.
+        // Moving before 400ms is a scroll — cancel drag entirely.
         if (dragState.requireLongPress) {
             if (dragState.longPressCancelled) {
                 return;
             }
-            if (Date.now() - dragState.touchStartTime < 300) {
+            if (Date.now() - dragState.touchStartTime < Constants.TIMEOUT_LONGPRESS) {
                 dragState.longPressCancelled = true;
                 return;
             }
