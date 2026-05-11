@@ -283,20 +283,17 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
         /// #if MOBILE
         html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-created="${item.updated}">
     <div class="fn__flex-1">
-        <span class="b3-list-item__text" title="${escapeAttr(item.path)} ${item.hSize}">${escapeHtml(item.title)}</span>
+        <div style="padding-top:8px" class="b3-list-item__text">${escapeHtml(item.title)}</div>
         <div class="b3-list-item__meta">
-            ${escapeHtml(item.path)}
-            <span class="fn__space"></span>
             ${item.hSize}
             <span class="fn__space"></span>
             ${dayjs(item.updated).format("YYYY-MM-DD HH:mm:ss")}
         </div>
         <div class="fn__flex" style="height: 26px">
             <span class="fn__flex-1"></span>
-            <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}">
+            <span class="b3-list-item__action" data-type="rollback">
                 <svg><use xlink:href="#iconUndo"></use></svg>
-                <span class="fn__space"></span>
-                ${window.siyuan.languages.rollback}
+                <span class="fn__space"></span> ${window.siyuan.languages.rollback}
             </span>
         </div>
     </div>
@@ -535,7 +532,7 @@ export const openHistory = (app: App) => {
                     <div class="fn__flex-1"></div>
                     <div class="b3-form__icon fn__none">
                        <svg class="b3-form__icon-icon"><use xlink:href="#iconSearch"></use></svg>
-                       <input class="b3-text-field b3-form__icon-input" style="${isMobile() ? "fn__size96" : "fn__size200"}" placeholder="${window.siyuan.languages.searchFileName}">
+                       <input class="b3-text-field b3-form__icon-input fn__size200" style="padding-right: 44px;" placeholder="${window.siyuan.languages.searchFileName}">
                        <button class="b3-button b3-button--text" style="position: absolute;right: 0;top: 0;">${window.siyuan.languages.search}</button>
                     </div>
                     <span class="fn__space"></span>
@@ -669,7 +666,8 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                 event.preventDefault();
                 break;
             } else if (target.classList.contains("b3-list-item__action") && type === "rollback" && !window.siyuan.config.readonly) {
-                const dataType = target.parentElement.getAttribute("data-type");
+                const liElement = target.closest(".b3-list-item");
+                const dataType = target.parentElement.getAttribute("data-type") || liElement.getAttribute("data-type");
                 let name;
                 let time;
                 if (dataType === "notebook") {
@@ -679,8 +677,8 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                     name = window.siyuan.languages.workspaceData;
                     time = (isMobile() ? target.parentElement.parentElement : target.parentElement).querySelector("span[data-type='hCreated']").textContent.trim();
                 } else if (dataType === "searchFileItem") {
-                    name = target.parentElement.querySelector(".b3-list-item__text").textContent.trim();
-                    time = dayjs(parseInt(target.parentElement.getAttribute("data-created"))).format("YYYY-MM-DD HH:mm:ss");
+                    name = liElement.querySelector(".b3-list-item__text").textContent.trim();
+                    time = dayjs(parseInt(liElement.getAttribute("data-created"))).format("YYYY-MM-DD HH:mm:ss");
                 } else {
                     name = target.previousElementSibling.previousElementSibling.textContent.trim();
                     time = dayjs(parseInt(target.parentElement.getAttribute("data-created")) * 1000).format("YYYY-MM-DD HH:mm:ss");
@@ -706,7 +704,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             });
                         } else if (dataType === "searchFileItem") {
                             fetchPost("/api/repo/rollbackRepoSnapshotFile", {
-                                id: target.parentElement.getAttribute("data-id")
+                                id: liElement.getAttribute("data-id")
                             });
                         } else {
                             fetchPost("/api/repo/checkoutRepo", {
