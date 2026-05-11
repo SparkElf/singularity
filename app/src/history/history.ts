@@ -268,27 +268,20 @@ ${actionHTML}
 };
 
 const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
-    const {files, pageCount, totalCount} = response.data;
-    if (files.length === 0) {
+    if (response.data.files.length === 0) {
         element.lastElementChild.innerHTML = `<li class="b3-list--empty">${window.siyuan.languages.emptyContent}</li>`;
         return;
     }
-    const nextElement = element.querySelector('[data-type="next"]');
-    const pageBtn = element.querySelector('button[data-type="jumpRepoPage"]');
-    const pageElement = nextElement.nextElementSibling.nextElementSibling;
-    const currentPage = parseInt(element.getAttribute("data-page"));
-    if (currentPage < pageCount) {
-        nextElement.removeAttribute("disabled");
-    } else {
-        nextElement.setAttribute("disabled", "disabled");
-    }
-    pageBtn.setAttribute("data-totalpage", (pageCount || 1).toString());
-    pageElement.textContent = `${window.siyuan.languages.pageCountAndHistoryCount.replace("${x}", pageCount).replace("${y}", totalCount || 1)}`;
-    pageElement.classList.remove("fn__none");
     let html = "";
-    files.forEach((item: { fileID: string, title: string, path: string, hSize: string, updated: number }) => {
+    response.data.files.forEach((item: {
+        fileID: string,
+        title: string,
+        path: string,
+        hSize: string,
+        updated: number
+    }) => {
         /// #if MOBILE
-        html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-updated="${item.updated}">
+        html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-created="${item.updated}">
     <div class="fn__flex-1">
         <span class="b3-list-item__text" title="${escapeAttr(item.path)} ${item.hSize}">${escapeHtml(item.title)}</span>
         <div class="b3-list-item__meta">
@@ -309,9 +302,9 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
     </div>
 </li>`;
         /// #else
-        html += `<li class="b3-list-item b3-list-item--hide-action" data-type="searchFileItem" data-id="${item.fileID}" data-updated="${item.updated}">
+        html += `<li class="b3-list-item b3-list-item--hide-action" data-type="searchFileItem" data-id="${item.fileID}" data-created="${item.updated}">
     <div class="fn__flex-1">
-        <span class="b3-list-item__text" title="${escapeAttr(item.path)} ${item.hSize}">${escapeHtml(item.title)}</span>
+        <span class="b3-list-item__text">${escapeHtml(item.title)}</span>
         <div class="b3-list-item__meta">
             ${escapeHtml(item.path)}
             <span class="fn__space"></span>
@@ -332,45 +325,6 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
 const renderRepo = (element: Element, currentPage: number) => {
     const selectElement = element.querySelector(".b3-select") as HTMLSelectElement;
     const selectValue = selectElement.value;
-    const searchAreaElement = element.querySelector('[data-type="repoSearchArea"]') as HTMLElement;
-    if (selectValue === "getRepoSnapshots") {
-        searchAreaElement.classList.remove("fn__none");
-    } else {
-        searchAreaElement.classList.add("fn__none");
-    }
-    const searchInputElement = searchAreaElement.querySelector("input") as HTMLInputElement;
-    const keyword = searchInputElement.value.trim();
-    const searchBtnElement = searchAreaElement.querySelector("button") as HTMLButtonElement;
-
-    // 搜索模式：仅本地快照且有关键词时
-    if (keyword && selectValue === "getRepoSnapshots") {
-        selectElement.disabled = true;
-        searchInputElement.disabled = true;
-        searchBtnElement.disabled = true;
-        element.lastElementChild.innerHTML = '<li style="position: relative;height: 100%;"><div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div></li>';
-        const pageBtn = element.querySelector('button[data-type="jumpRepoPage"]');
-        pageBtn.textContent = `${currentPage}`;
-        const previousElement = element.querySelector('[data-type="previous"]');
-        const nextElement = element.querySelector('[data-type="next"]');
-        previousElement.classList.remove("fn__none");
-        nextElement.classList.remove("fn__none");
-        pageBtn.classList.remove("fn__none");
-        element.setAttribute("data-page", currentPage.toString());
-        element.setAttribute("data-init", "true");
-        if (currentPage > 1) {
-            previousElement.removeAttribute("disabled");
-        } else {
-            previousElement.setAttribute("disabled", "disabled");
-        }
-        nextElement.setAttribute("disabled", "disabled");
-        fetchPost("/api/repo/searchRepoFile", {keyword, page: currentPage}, (response) => {
-            selectElement.disabled = false;
-            searchInputElement.disabled = false;
-            searchBtnElement.disabled = false;
-            renderRepoSearchResult(response, element);
-        });
-        return;
-    }
 
     selectElement.disabled = true;
     element.lastElementChild.innerHTML = '<li style="position: relative;height: 100%;"><div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div></li>';
@@ -381,7 +335,41 @@ const renderRepo = (element: Element, currentPage: number) => {
     const nextElement = element.querySelector('[data-type="next"]');
     const pageElement = nextElement.nextElementSibling.nextElementSibling;
     element.setAttribute("data-init", "true");
-    if (selectValue === "getRepoTagSnapshots" || selectValue === "getCloudRepoTagSnapshots") {
+
+    const searchInputElement = element.querySelector("input") as HTMLInputElement;
+    if (selectValue === "getRepoSnapshots") {
+        searchInputElement.parentElement.classList.remove("fn__none");
+    } else {
+        searchInputElement.parentElement.classList.add("fn__none");
+    }
+    const keyword = searchInputElement.value.trim();
+    if (keyword && selectValue === "getRepoSnapshots") {
+        const searchBtnElement = searchInputElement.nextElementSibling as HTMLButtonElement;
+        searchBtnElement.disabled = true;
+        previousElement.classList.remove("fn__none");
+        nextElement.classList.remove("fn__none");
+        pageBtn.classList.remove("fn__none");
+        element.setAttribute("data-page", currentPage.toString());
+        if (currentPage > 1) {
+            previousElement.removeAttribute("disabled");
+        } else {
+            previousElement.setAttribute("disabled", "disabled");
+        }
+        nextElement.setAttribute("disabled", "disabled");
+        fetchPost("/api/repo/searchRepoFile", {keyword, page: currentPage}, (response) => {
+            searchBtnElement.disabled = false;
+            selectElement.disabled = false;
+            if (currentPage < response.data.pageCount) {
+                nextElement.removeAttribute("disabled");
+            } else {
+                nextElement.setAttribute("disabled", "disabled");
+            }
+            pageBtn.setAttribute("data-totalpage", (response.data.pageCount || 1).toString());
+            pageElement.textContent = `${window.siyuan.languages.pageCountAndSnapshotCount.replace("${x}", response.data.pageCount).replace("${y}", response.data.totalCount || 1)}`;
+            pageElement.classList.remove("fn__none");
+            renderRepoSearchResult(response, element);
+        });
+    } else if (selectValue === "getRepoTagSnapshots" || selectValue === "getCloudRepoTagSnapshots") {
         fetchPost(`/api/repo/${selectValue}`, {}, (response) => {
             renderRepoItem(response, element, selectValue);
             selectElement.disabled = false;
@@ -489,8 +477,8 @@ export const openHistory = (app: App) => {
                     <span class="ft__on-surface fn__flex-shrink ft__selectnone fn__none">${window.siyuan.languages.pageCountAndHistoryCount}</span>
                     <span class="fn__space"></span>
                     <div class="fn__flex-1"></div>
-                    <div style="position: relative">
-                        <svg class="b3-form__icon-icon ft__on-surface"><use xlink:href="#iconSearch"></use></svg>
+                    <div class="b3-form__icon">
+                        <svg class="b3-form__icon-icon"><use xlink:href="#iconSearch"></use></svg>
                         <input class="b3-text-field b3-form__icon-input ${isMobile() ? "fn__size96" : "fn__size200"}">
                     </div>
                     <span class="fn__space"></span>
@@ -545,15 +533,12 @@ export const openHistory = (app: App) => {
                     <span class="ft__on-surface fn__flex-shrink ft__selectnone fn__none">${window.siyuan.languages.pageCountAndSnapshotCount}</span>
                     <span class="fn__space"></span>
                     <div class="fn__flex-1"></div>
-                    <div data-type="repoSearchArea" class="fn__none fn__flex">
-                        <div style="position: relative" data-type="repoSearch">
-                            <svg class="b3-form__icon-icon ft__on-surface"><use xlink:href="#iconSearch"></use></svg>
-                            <input class="b3-text-field b3-form__icon-input ${isMobile() ? "fn__size96" : "fn__size200"}" placeholder="${window.siyuan.languages.searchFileName}">
-                        </div>
-                        <span class="fn__space"></span>
-                        <button class="b3-button b3-button--outline" data-type="searchRepoFile">${window.siyuan.languages.search}</button>
-                        <span class="fn__space"></span>
+                    <div class="b3-form__icon fn__none">
+                       <svg class="b3-form__icon-icon"><use xlink:href="#iconSearch"></use></svg>
+                       <input class="b3-text-field b3-form__icon-input" style="${isMobile() ? "fn__size96" : "fn__size200"}" placeholder="${window.siyuan.languages.searchFileName}">
+                       <button class="b3-button b3-button--text" style="position: absolute;right: 0;top: 0;">${window.siyuan.languages.search}</button>
                     </div>
+                    <span class="fn__space"></span>
                     <select class="b3-select ${isMobile() ? "fn__size96" : "fn__size200"}">
                         <option value="getRepoSnapshots">${window.siyuan.languages.localSnapshot}</option>
                         <option value="getRepoTagSnapshots">${window.siyuan.languages.localTagSnapshot}</option>
@@ -610,10 +595,9 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
         });
     });
     firstPanelElement.querySelector(".b3-text-field").addEventListener("input", (event: KeyboardEvent) => {
-        if (event.isComposing) {
-            return;
+        if (!event.isComposing) {
+            renderDoc(firstPanelElement, 1);
         }
-        renderDoc(firstPanelElement, 1);
     });
     firstPanelElement.querySelector(".b3-text-field").addEventListener("compositionend", () => {
         renderDoc(firstPanelElement, 1);
@@ -641,18 +625,19 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
     const repoElement = element.querySelector('#historyContainer [data-type="repo"]');
     const historyElement = element.querySelector('#historyContainer [data-type="doc"]');
     const repoSelectElement = repoElement.querySelector(".b3-select") as HTMLSelectElement;
+    const searchFileElement = repoElement.querySelector(".b3-text-field") as HTMLInputElement;
     repoSelectElement.addEventListener("change", () => {
-        (repoElement.querySelector('[data-type="repoSearchArea"] input') as HTMLInputElement).value = "";
+        searchFileElement.value = "";
         renderRepo(repoElement, 1);
         const btnElement = element.querySelector(".b3-button[data-type='compare']");
         btnElement.setAttribute("disabled", "disabled");
         btnElement.removeAttribute("data-ids");
     });
-    repoElement.querySelector('button[data-type="searchRepoFile"]').addEventListener("click", () => {
+    searchFileElement.nextElementSibling.addEventListener("click", () => {
         renderRepo(repoElement, 1);
     });
-    (repoElement.querySelector('[data-type="repoSearchArea"]') as HTMLElement).querySelector("input").addEventListener("keydown", (event: KeyboardEvent) => {
-        if (event.key === "Enter") {
+    searchFileElement.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.key === "Enter" && !event.isComposing) {
             event.preventDefault();
             renderRepo(repoElement, 1);
         }
@@ -684,10 +669,9 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                 event.preventDefault();
                 break;
             } else if (target.classList.contains("b3-list-item__action") && type === "rollback" && !window.siyuan.config.readonly) {
-                const listItemElement = target.closest(".b3-list-item") as HTMLElement;
-                const dataType = listItemElement.getAttribute("data-type");
-                let name: string;
-                let time: string;
+                const dataType = target.parentElement.getAttribute("data-type");
+                let name;
+                let time;
                 if (dataType === "notebook") {
                     name = target.previousElementSibling.previousElementSibling.textContent.trim();
                     time = target.parentElement.parentElement.previousElementSibling.textContent.trim();
@@ -695,11 +679,11 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                     name = window.siyuan.languages.workspaceData;
                     time = (isMobile() ? target.parentElement.parentElement : target.parentElement).querySelector("span[data-type='hCreated']").textContent.trim();
                 } else if (dataType === "searchFileItem") {
-                    name = listItemElement.querySelector(".b3-list-item__text").textContent.trim();
-                    time = dayjs(parseInt(listItemElement.getAttribute("data-updated"))).format("YYYY-MM-DD HH:mm:ss");
+                    name = target.parentElement.querySelector(".b3-list-item__text").textContent.trim();
+                    time = dayjs(parseInt(target.parentElement.getAttribute("data-created"))).format("YYYY-MM-DD HH:mm:ss");
                 } else {
                     name = target.previousElementSibling.previousElementSibling.textContent.trim();
-                    time = dayjs(parseInt(listItemElement.getAttribute("data-created")) * 1000).format("YYYY-MM-DD HH:mm:ss");
+                    time = dayjs(parseInt(target.parentElement.getAttribute("data-created")) * 1000).format("YYYY-MM-DD HH:mm:ss");
                 }
                 confirmDialog("⚠️ " + window.siyuan.languages.rollback,
                     window.siyuan.languages.rollbackConfirm.replace("${name}", name).replace("${time}", time),
@@ -722,7 +706,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             });
                         } else if (dataType === "searchFileItem") {
                             fetchPost("/api/repo/rollbackRepoSnapshotFile", {
-                                id: listItemElement.getAttribute("data-id")
+                                id: target.parentElement.getAttribute("data-id")
                             });
                         } else {
                             fetchPost("/api/repo/checkoutRepo", {
