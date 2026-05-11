@@ -545,7 +545,7 @@ export const openHistory = (app: App) => {
                     <span class="ft__on-surface fn__flex-shrink ft__selectnone fn__none">${window.siyuan.languages.pageCountAndSnapshotCount}</span>
                     <span class="fn__space"></span>
                     <div class="fn__flex-1"></div>
-                    <span data-type="repoSearchArea" class="fn__none">
+                    <div data-type="repoSearchArea" class="fn__none fn__flex">
                         <div style="position: relative" data-type="repoSearch">
                             <svg class="b3-form__icon-icon ft__on-surface"><use xlink:href="#iconSearch"></use></svg>
                             <input class="b3-text-field b3-form__icon-input ${isMobile() ? "fn__size96" : "fn__size200"}" placeholder="${window.siyuan.languages.searchFileName}">
@@ -553,7 +553,7 @@ export const openHistory = (app: App) => {
                         <span class="fn__space"></span>
                         <button class="b3-button b3-button--outline" data-type="searchRepoFile">${window.siyuan.languages.search}</button>
                         <span class="fn__space"></span>
-                    </span>
+                    </div>
                     <select class="b3-select ${isMobile() ? "fn__size96" : "fn__size200"}">
                         <option value="getRepoSnapshots">${window.siyuan.languages.localSnapshot}</option>
                         <option value="getRepoTagSnapshots">${window.siyuan.languages.localTagSnapshot}</option>
