@@ -136,7 +136,7 @@ export const saveExportFile = async (uri: string) => {
         showMessage(window.siyuan.languages.exported);
         return;
     } catch (e) {
-        console.warn("saveExportFile failed:", e);
+        showMessage("saveExportFile failed: " + e);
     }
     /// #else
     try {
@@ -155,13 +155,13 @@ export const saveExportFile = async (uri: string) => {
             showMessage(window.siyuan.languages.exported);
             return;
         }
+        const openUrl = new URL(uri, `${location.origin}/`);
+        openUrl.searchParams.set("download", "true");
+        window.open(openUrl.href);
     } catch (e) {
-        console.warn("saveExportFile failed:", e);
+        showMessage("saveExportFile failed: " + e);
     }
     /// #endif
-    const openUrl = new URL(uri, `${location.origin}/`);
-    openUrl.searchParams.set("download", "true");
-    window.open(openUrl.href);
 };
 
 export const readText = () => {
