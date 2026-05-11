@@ -2360,8 +2360,7 @@ export const tableMenu = (protyle: IProtyle, nodeElement: Element, cellElement: 
     insertMenus.push({
         id: "insertRowAbove",
         icon: "iconBefore",
-        label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages.insertRowBefore.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
+        label: `<div class="fn__flex" style="align-items: center;">${window.siyuan.languages.insertRowBefore.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
 </div>`,
         accelerator: window.siyuan.config.keymap.editor.table.insertRowAbove.custom,
         bind(element: HTMLElement) {
@@ -2385,8 +2384,7 @@ ${window.siyuan.languages.insertRowBefore.replace("${x}", `<span class="fn__spac
         insertMenus.push({
             id: "insertRowBelow",
             icon: "iconAfter",
-            label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages.insertRowAfter.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
+            label: `<div class="fn__flex" style="align-items: center;">${window.siyuan.languages.insertRowAfter.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
 </div>`,
             accelerator: window.siyuan.config.keymap.editor.table.insertRowBelow.custom,
             bind(element: HTMLElement) {
@@ -2411,8 +2409,7 @@ ${window.siyuan.languages.insertRowAfter.replace("${x}", `<span class="fn__space
         insertMenus.push({
             id: "insertColumnLeft",
             icon: "iconInsertLeft",
-            label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages.insertColumnLeft1.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
+            label: `<div class="fn__flex" style="align-items: center;">${window.siyuan.languages.insertColumnLeft1.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
 </div>`,
             accelerator: window.siyuan.config.keymap.editor.table.insertColumnLeft.custom,
             bind(element: HTMLElement) {
@@ -2437,8 +2434,7 @@ ${window.siyuan.languages.insertColumnLeft1.replace("${x}", `<span class="fn__sp
         insertMenus.push({
             id: "insertColumnRight",
             icon: "iconInsertRight",
-            label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages.insertColumnRight1.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
+            label: `<div class="fn__flex" style="align-items: center;">${window.siyuan.languages.insertColumnRight1.replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
 </div>`,
             accelerator: window.siyuan.config.keymap.editor.table.insertColumnRight.custom,
             bind(element: HTMLElement) {
