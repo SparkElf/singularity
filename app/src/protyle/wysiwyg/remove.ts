@@ -305,7 +305,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 action: "move",
                 id: blockElement.getAttribute("data-node-id"),
                 previousID: blockElement.previousElementSibling?.getAttribute("data-node-id"),
-                parentID: blockParentElement.parentElement.getAttribute("data-node-id") || protyle.block.parentID
+                parentID: getParentBlock(blockParentElement).getAttribute("data-node-id") || protyle.block.parentID
             }, {
                 action: "delete",
                 id: blockParentElement.getAttribute("data-node-id")
@@ -314,7 +314,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 id: blockParentElement.getAttribute("data-node-id"),
                 data: blockParentElement.outerHTML,
                 previousID: blockElement.previousElementSibling?.getAttribute("data-node-id"),
-                parentID: blockParentElement.parentElement.getAttribute("data-node-id") || protyle.block.parentID
+                parentID: getParentBlock(blockElement).getAttribute("data-node-id") || protyle.block.parentID
             }, {
                 action: "move",
                 id: blockElement.getAttribute("data-node-id"),
@@ -326,7 +326,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 action: "move",
                 id: blockElement.getAttribute("data-node-id"),
                 previousID: blockElement.previousElementSibling?.getAttribute("data-node-id"),
-                parentID: blockParentElement.parentElement.getAttribute("data-node-id") || protyle.block.parentID
+                parentID: getParentBlock(blockParentElement).getAttribute("data-node-id") || protyle.block.parentID
             }], [{
                 action: "move",
                 id: blockElement.getAttribute("data-node-id"),
