@@ -172,7 +172,7 @@ const renderRepoItem = (response: IWebSocketData, element: Element, type: string
     } else if (type === "getRepoSnapshots") {
         actionHTML = `<span class="fn__flex-1"></span>
 <span class="b3-list-item__action" data-type="genTag">
-    <svg><use xlink:href="#iconTags"></use></svg>
+    <svg><use xlink:href="#iconTag"></use></svg>
     <span class="fn__space"></span>
     ${window.siyuan.languages.tagSnapshot}
 </span>
@@ -197,7 +197,7 @@ const renderRepoItem = (response: IWebSocketData, element: Element, type: string
 <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}"><svg><use xlink:href="#iconUndo"></use></svg></span>
 <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="removeRepoTagSnapshot" aria-label="${window.siyuan.languages.remove}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>`;
     } else if (type === "getRepoSnapshots") {
-        actionHTML = `<span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="genTag" aria-label="${window.siyuan.languages.tagSnapshot}"><svg><use xlink:href="#iconTags"></use></svg></span>
+        actionHTML = `<span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="genTag" aria-label="${window.siyuan.languages.tagSnapshot}"><svg><use xlink:href="#iconTag"></use></svg></span>
 <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}"><svg><use xlink:href="#iconUndo"></use></svg></span>`;
     }
     /// #endif
@@ -267,10 +267,112 @@ ${actionHTML}
     element.lastElementChild.innerHTML = `${repoHTML}`;
 };
 
+const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
+    const {files, pageCount, totalCount} = response.data;
+    if (files.length === 0) {
+        element.lastElementChild.innerHTML = `<li class="b3-list--empty">${window.siyuan.languages.emptyContent}</li>`;
+        return;
+    }
+    const nextElement = element.querySelector('[data-type="next"]');
+    const pageBtn = element.querySelector('button[data-type="jumpRepoPage"]');
+    const pageElement = nextElement.nextElementSibling.nextElementSibling;
+    const currentPage = parseInt(element.getAttribute("data-page"));
+    if (currentPage < pageCount) {
+        nextElement.removeAttribute("disabled");
+    } else {
+        nextElement.setAttribute("disabled", "disabled");
+    }
+    pageBtn.setAttribute("data-totalpage", (pageCount || 1).toString());
+    pageElement.textContent = `${window.siyuan.languages.pageCountAndHistoryCount.replace("${x}", pageCount).replace("${y}", totalCount || 1)}`;
+    pageElement.classList.remove("fn__none");
+    let html = "";
+    files.forEach((item: { fileID: string, title: string, path: string, hSize: string, updated: number }) => {
+        /// #if MOBILE
+        html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-updated="${item.updated}">
+    <div class="fn__flex-1">
+        <span class="b3-list-item__text" title="${escapeAttr(item.path)} ${item.hSize}">${escapeHtml(item.title)}</span>
+        <div class="b3-list-item__meta">
+            ${escapeHtml(item.path)}
+            <span class="fn__space"></span>
+            ${item.hSize}
+            <span class="fn__space"></span>
+            ${dayjs(item.updated).format("YYYY-MM-DD HH:mm:ss")}
+        </div>
+        <div class="fn__flex" style="height: 26px">
+            <span class="fn__flex-1"></span>
+            <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}">
+                <svg><use xlink:href="#iconUndo"></use></svg>
+                <span class="fn__space"></span>
+                ${window.siyuan.languages.rollback}
+            </span>
+        </div>
+    </div>
+</li>`;
+        /// #else
+        html += `<li class="b3-list-item b3-list-item--hide-action" data-type="searchFileItem" data-id="${item.fileID}" data-updated="${item.updated}">
+    <div class="fn__flex-1">
+        <span class="b3-list-item__text" title="${escapeAttr(item.path)} ${item.hSize}">${escapeHtml(item.title)}</span>
+        <div class="b3-list-item__meta">
+            ${escapeHtml(item.path)}
+            <span class="fn__space"></span>
+            ${item.hSize}
+            <span class="fn__space"></span>
+            ${dayjs(item.updated).format("YYYY-MM-DD HH:mm:ss")}
+        </div>
+    </div>
+    <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}">
+        <svg><use xlink:href="#iconUndo"></use></svg>
+    </span>
+</li>`;
+        /// #endif
+    });
+    element.lastElementChild.innerHTML = html;
+};
+
 const renderRepo = (element: Element, currentPage: number) => {
     const selectElement = element.querySelector(".b3-select") as HTMLSelectElement;
-    selectElement.disabled = true;
     const selectValue = selectElement.value;
+    const searchAreaElement = element.querySelector('[data-type="repoSearchArea"]') as HTMLElement;
+    if (selectValue === "getRepoSnapshots") {
+        searchAreaElement.classList.remove("fn__none");
+    } else {
+        searchAreaElement.classList.add("fn__none");
+    }
+    const searchInputElement = searchAreaElement.querySelector("input") as HTMLInputElement;
+    const keyword = searchInputElement.value.trim();
+    const searchBtnElement = searchAreaElement.querySelector("button") as HTMLButtonElement;
+
+    // 搜索模式：仅本地快照且有关键词时
+    if (keyword && selectValue === "getRepoSnapshots") {
+        selectElement.disabled = true;
+        searchInputElement.disabled = true;
+        searchBtnElement.disabled = true;
+        element.lastElementChild.innerHTML = '<li style="position: relative;height: 100%;"><div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div></li>';
+        const pageBtn = element.querySelector('button[data-type="jumpRepoPage"]');
+        pageBtn.textContent = `${currentPage}`;
+        const previousElement = element.querySelector('[data-type="previous"]');
+        const nextElement = element.querySelector('[data-type="next"]');
+        previousElement.classList.remove("fn__none");
+        nextElement.classList.remove("fn__none");
+        pageBtn.classList.remove("fn__none");
+        element.setAttribute("data-page", currentPage.toString());
+        element.setAttribute("data-init", "true");
+        if (currentPage > 1) {
+            previousElement.removeAttribute("disabled");
+        } else {
+            previousElement.setAttribute("disabled", "disabled");
+        }
+        nextElement.setAttribute("disabled", "disabled");
+        fetchPost("/api/repo/searchRepoFile", {keyword, page: currentPage}, (response) => {
+            selectElement.disabled = false;
+            searchInputElement.disabled = false;
+            searchBtnElement.disabled = false;
+            renderRepoSearchResult(response, element);
+        });
+        return;
+    }
+
+    selectElement.disabled = true;
     element.lastElementChild.innerHTML = '<li style="position: relative;height: 100%;"><div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div></li>';
     const pageBtn = element.querySelector('button[data-type="jumpRepoPage"]');
     pageBtn.textContent = `${currentPage}`;
@@ -443,6 +545,15 @@ export const openHistory = (app: App) => {
                     <span class="ft__on-surface fn__flex-shrink ft__selectnone fn__none">${window.siyuan.languages.pageCountAndSnapshotCount}</span>
                     <span class="fn__space"></span>
                     <div class="fn__flex-1"></div>
+                    <span data-type="repoSearchArea" class="fn__none">
+                        <div style="position: relative" data-type="repoSearch">
+                            <svg class="b3-form__icon-icon ft__on-surface"><use xlink:href="#iconSearch"></use></svg>
+                            <input class="b3-text-field b3-form__icon-input ${isMobile() ? "fn__size96" : "fn__size200"}" placeholder="${window.siyuan.languages.searchFileName}">
+                        </div>
+                        <span class="fn__space"></span>
+                        <button class="b3-button b3-button--outline" data-type="searchRepoFile">${window.siyuan.languages.search}</button>
+                        <span class="fn__space"></span>
+                    </span>
                     <select class="b3-select ${isMobile() ? "fn__size96" : "fn__size200"}">
                         <option value="getRepoSnapshots">${window.siyuan.languages.localSnapshot}</option>
                         <option value="getRepoTagSnapshots">${window.siyuan.languages.localTagSnapshot}</option>
@@ -531,10 +642,20 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
     const historyElement = element.querySelector('#historyContainer [data-type="doc"]');
     const repoSelectElement = repoElement.querySelector(".b3-select") as HTMLSelectElement;
     repoSelectElement.addEventListener("change", () => {
+        (repoElement.querySelector('[data-type="repoSearchArea"] input') as HTMLInputElement).value = "";
         renderRepo(repoElement, 1);
         const btnElement = element.querySelector(".b3-button[data-type='compare']");
         btnElement.setAttribute("disabled", "disabled");
         btnElement.removeAttribute("data-ids");
+    });
+    repoElement.querySelector('button[data-type="searchRepoFile"]').addEventListener("click", () => {
+        renderRepo(repoElement, 1);
+    });
+    (repoElement.querySelector('[data-type="repoSearchArea"]') as HTMLElement).querySelector("input").addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            renderRepo(repoElement, 1);
+        }
     });
     element.addEventListener("click", (event) => {
         let target = event.target as HTMLElement;
@@ -563,14 +684,22 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                 event.preventDefault();
                 break;
             } else if (target.classList.contains("b3-list-item__action") && type === "rollback" && !window.siyuan.config.readonly) {
-                const dataType = target.parentElement.getAttribute("data-type");
-                let name = target.previousElementSibling.previousElementSibling.textContent.trim();
-                let time = dayjs(parseInt(target.parentElement.getAttribute("data-created")) * 1000).format("YYYY-MM-DD HH:mm:ss");
+                const listItemElement = target.closest(".b3-list-item") as HTMLElement;
+                const dataType = listItemElement.getAttribute("data-type");
+                let name: string;
+                let time: string;
                 if (dataType === "notebook") {
+                    name = target.previousElementSibling.previousElementSibling.textContent.trim();
                     time = target.parentElement.parentElement.previousElementSibling.textContent.trim();
                 } else if (dataType === "repoitem") {
                     name = window.siyuan.languages.workspaceData;
                     time = (isMobile() ? target.parentElement.parentElement : target.parentElement).querySelector("span[data-type='hCreated']").textContent.trim();
+                } else if (dataType === "searchFileItem") {
+                    name = listItemElement.querySelector(".b3-list-item__text").textContent.trim();
+                    time = dayjs(parseInt(listItemElement.getAttribute("data-updated"))).format("YYYY-MM-DD HH:mm:ss");
+                } else {
+                    name = target.previousElementSibling.previousElementSibling.textContent.trim();
+                    time = dayjs(parseInt(listItemElement.getAttribute("data-created")) * 1000).format("YYYY-MM-DD HH:mm:ss");
                 }
                 confirmDialog("⚠️ " + window.siyuan.languages.rollback,
                     window.siyuan.languages.rollbackConfirm.replace("${name}", name).replace("${time}", time),
@@ -590,6 +719,10 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                         } else if (dataType === "notebook") {
                             fetchPost("/api/history/rollbackNotebookHistory", {
                                 historyPath: target.parentElement.getAttribute("data-path")
+                            });
+                        } else if (dataType === "searchFileItem") {
+                            fetchPost("/api/repo/rollbackRepoSnapshotFile", {
+                                id: listItemElement.getAttribute("data-id")
                             });
                         } else {
                             fetchPost("/api/repo/checkoutRepo", {

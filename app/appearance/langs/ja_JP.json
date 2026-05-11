@@ -703,6 +703,7 @@
   "resetRepo": "データリポジトリのリセット",
   "createSnapshot": "スナップショットの作成",
   "dataSnapshot": "データスナップショット",
+  "searchFileName": "ファイル名検索",
   "copyKey": "キー文字列をコピー",
   "importKey": "キーのインポート",
   "keyPlaceholder": "ここにキー文字列を貼り付けてください",

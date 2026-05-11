@@ -703,6 +703,7 @@
   "resetRepo": "Reset data repo",
   "createSnapshot": "Create snapshot",
   "dataSnapshot": "Data snapshot",
+  "searchFileName": "Search file name",
   "copyKey": "Copy key string",
   "importKey": "Import key",
   "keyPlaceholder": "Please paste the key string here",

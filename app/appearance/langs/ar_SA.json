@@ -703,6 +703,7 @@
   "resetRepo": "إعادة تعيين مستودع البيانات",
   "createSnapshot": "إنشاء لقطة",
   "dataSnapshot": "لقطة البيانات",
+  "searchFileName": "لقطة البيانات",
   "copyKey": "نسخ سلسلة المفتاح",
   "importKey": "استيراد المفتاح",
   "keyPlaceholder": "يرجى لصق سلسلة المفتاح هنا",

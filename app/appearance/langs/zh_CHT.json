@@ -703,6 +703,7 @@
   "resetRepo": "重置資料倉庫",
   "createSnapshot": "建立快照",
   "dataSnapshot": "資料快照",
+  "searchFileName": "搜尋檔案名稱",
   "copyKey": "複製密鑰字串",
   "importKey": "導入密鑰",
   "keyPlaceholder": "請在此處貼上密鑰字串",

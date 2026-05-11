@@ -703,6 +703,7 @@
   "resetRepo": "Reimposta repository dati",
   "createSnapshot": "Crea snapshot",
   "dataSnapshot": "Snapshot dei dati",
+  "searchFileName": "Cerca nome file",
   "copyKey": "Copia stringa chiave",
   "importKey": "Importa chiave",
   "keyPlaceholder": "Incolla la stringa della chiave qui",

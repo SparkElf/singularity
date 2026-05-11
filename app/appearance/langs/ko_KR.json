@@ -703,6 +703,7 @@
   "resetRepo": "데이터 저장소 재설정",
   "createSnapshot": "스냅샷 생성",
   "dataSnapshot": "데이터 스냅샷",
+  "searchFileName": "파일명 검색",
   "copyKey": "키 문자열 복사",
   "importKey": "키 가져오기",
   "keyPlaceholder": "여기에 키 문자열을 붙여넣으세요",

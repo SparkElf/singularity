@@ -703,6 +703,7 @@
   "resetRepo": "डेटा रेपो रीसेट करें",
   "createSnapshot": "स्नैपशॉट बनाएं",
   "dataSnapshot": "डेटा स्नैपशॉट",
+  "searchFileName": "डेटा स्नैपशॉट",
   "copyKey": "कुंजी स्ट्रिंग कॉपी करें",
   "importKey": "कुंजी आयात करें",
   "keyPlaceholder": "कृपया यहां कुंजी स्ट्रिंग पेस्ट करें",

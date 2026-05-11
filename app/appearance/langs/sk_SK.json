@@ -703,6 +703,7 @@
   "resetRepo": "Resetovať dátový sklad",
   "createSnapshot": "Vytvoriť snímku",
   "dataSnapshot": "Snímka dát",
+  "searchFileName": "Snímka dát",
   "copyKey": "Kopírovať reťazec kľúča",
   "importKey": "Importovať kľúč",
   "keyPlaceholder": "Vložte reťazec kľúča sem",

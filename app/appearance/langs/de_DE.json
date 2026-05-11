@@ -703,6 +703,7 @@
   "resetRepo": "Daten-Repo zurücksetzen",
   "createSnapshot": "Snapshot erstellen",
   "dataSnapshot": "Datensnapshot",
+  "searchFileName": "Dateiname suchen",
   "copyKey": "Schlüsselzeichenfolge kopieren",
   "importKey": "Schlüssel importieren",
   "keyPlaceholder": "Bitte fügen Sie die Schlüsselzeichenfolge hier ein",

@@ -305,6 +305,43 @@ func getRepoSnapshots(c *gin.Context) {
 	}
 }
 
+func searchRepoFile(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	var keyword string
+	var page float64
+	if !util.ParseJsonArgs(arg, ret,
+		util.BindJsonArg("keyword", &keyword, true, true),
+		util.BindJsonArg("page", &page, true, false),
+	) {
+		return
+	}
+	if 1 > len(keyword) {
+		ret.Code = -1
+		ret.Msg = "keyword is empty"
+		return
+	}
+
+	files, pageCount, totalCount, err := model.SearchRepoFile(keyword, int(page))
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+
+	ret.Data = map[string]any{
+		"files":      files,
+		"pageCount":  pageCount,
+		"totalCount": totalCount,
+	}
+}
+
 func getCloudRepoSnapshots(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)

@@ -703,6 +703,7 @@
   "resetRepo": "Veri deposunu sıfırla",
   "createSnapshot": "Anlık görüntü oluştur",
   "dataSnapshot": "Veri anlık görüntüsü",
+  "searchFileName": "Veri anlık görüntüsü",
   "copyKey": "Anahtar dizisini kopyala",
   "importKey": "Anahtar içe aktar",
   "keyPlaceholder": "Anahtar dizisini buraya yapıştır",

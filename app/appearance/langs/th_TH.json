@@ -703,6 +703,7 @@
   "resetRepo": "รีเซ็ตคลังข้อมูล",
   "createSnapshot": "สร้างสแนปช็อต",
   "dataSnapshot": "สแนปช็อตข้อมูล",
+  "searchFileName": "สแนปช็อตข้อมูล",
   "copyKey": "คัดลอกคีย์",
   "importKey": "นำเข้าคีย์",
   "keyPlaceholder": "วางคีย์ที่นี่",

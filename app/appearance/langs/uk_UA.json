@@ -703,6 +703,7 @@
   "resetRepo": "Скинути сховище даних",
   "createSnapshot": "Створити знімок",
   "dataSnapshot": "Знімок даних",
+  "searchFileName": "Знімок даних",
   "copyKey": "Скопіювати рядок ключа",
   "importKey": "Імпортувати ключ",
   "keyPlaceholder": "Вставте сюди рядок ключа",

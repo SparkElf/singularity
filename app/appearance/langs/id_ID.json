@@ -703,6 +703,7 @@
   "resetRepo": "Setel ulang repositori data",
   "createSnapshot": "Buat snapshot",
   "dataSnapshot": "Snapshot data",
+  "searchFileName": "Snapshot data",
   "copyKey": "Salin string kunci",
   "importKey": "Impor kunci",
   "keyPlaceholder": "Silakan tempel string kunci di sini",

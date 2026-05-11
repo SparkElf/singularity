@@ -703,6 +703,7 @@
   "resetRepo": "אפס מאגר נתונים",
   "createSnapshot": "צור צילום",
   "dataSnapshot": "צילום נתונים",
+  "searchFileName": "צילום נתונים",
   "copyKey": "העתק מפתח מפתח",
   "importKey": "יבוא מפתח",
   "keyPlaceholder": "אנא הדבק את מפתח המפתח כאן",

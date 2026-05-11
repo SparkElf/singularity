@@ -555,6 +555,46 @@ func parseTreeInSnapshot(data []byte, luteEngine *lute.Lute) (isLargeDoc bool, t
 	return
 }
 
+func SearchRepoFile(keyword string, page int) (ret []*DiffFile, pageCount, totalCount int, err error) {
+	ret = []*DiffFile{}
+	if 1 > len(Conf.Repo.Key) {
+		err = errors.New(Conf.Language(26))
+		return
+	}
+
+	repo, err := newRepository()
+	if err != nil {
+		return
+	}
+
+	files, totalCount, pageCount, err := repo.SearchFile(keyword, page, 32)
+	if err != nil {
+		logging.LogErrorf("search repo file failed: %s", err)
+		return
+	}
+
+	if 1 > len(files) {
+		return
+	}
+
+	luteEngine := NewLute()
+	for _, file := range files {
+		title, parseErr := parseTitleInSnapshot(file.ID, repo, luteEngine)
+		if "" == title || nil != parseErr {
+			title = path.Base(file.Path)
+		}
+
+		ret = append(ret, &DiffFile{
+			FileID:  file.ID,
+			Title:   title,
+			Path:    file.Path,
+			HSize:   humanize.BytesCustomCeil(uint64(file.Size), 2),
+			Updated: file.Updated,
+		})
+	}
+	return
+}
+
 type Snapshot struct {
 	*dejavu.Log
 	TypesCount []*TypeCount `json:"typesCount"`

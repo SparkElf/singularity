@@ -703,6 +703,7 @@
   "resetRepo": "Data-repo resetten",
   "createSnapshot": "Momentopname maken",
   "dataSnapshot": "Gegevensmomentopname",
+  "searchFileName": "Gegevensmomentopname",
   "copyKey": "Sleutel kopieren",
   "importKey": "Sleutel importeren",
   "keyPlaceholder": "Plak sleutel hier",
