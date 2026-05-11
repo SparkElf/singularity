@@ -356,9 +356,7 @@ func serveExport(ginServer *gin.Engine) {
 			return
 		}
 
-		fileName := filepath.Base(decodedPath)
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
-
+		c.Header("Content-Disposition", formatContentDispositionAttachment(filepath.Base(decodedPath)))
 		c.File(fullPath)
 	})
 }
@@ -611,6 +609,22 @@ func serveAuthPage(c *gin.Context) {
 	c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
+// formatContentDispositionAttachment 使用 mime.FormatMediaType 编码文件名，避免异常字符破坏响应头
+func formatContentDispositionAttachment(filename string) string {
+	if cd := mime.FormatMediaType("attachment", map[string]string{"filename": filename}); cd != "" {
+		return cd
+	}
+	return "attachment"
+}
+
+// 资源 GET 带 download=true 时以附件返回，便于浏览器 window.open 触发下载而非内联预览
+func setAssetsAttachmentDisposition(c *gin.Context, pathForBaseName string) {
+	if !strings.EqualFold(c.Query("download"), "true") {
+		return
+	}
+	c.Header("Content-Disposition", formatContentDispositionAttachment(filepath.Base(pathForBaseName)))
+}
+
 func serveAssets(ginServer *gin.Engine) {
 	ginServer.POST("/upload", model.CheckAuth, model.CheckAdminRole, model.CheckReadonly, model.Upload)
 
@@ -652,6 +666,7 @@ func serveAssets(ginServer *gin.Engine) {
 		}
 
 		// 返回原始文件
+		setAssetsAttachmentDisposition(context, p)
 		http.ServeFile(context.Writer, context.Request, p)
 	})
 
@@ -673,6 +688,7 @@ func serveSVG(context *gin.Context, assetAbsPath string) bool {
 			data = []byte(util.SanitizeSVG(string(data)))
 		}
 
+		setAssetsAttachmentDisposition(context, assetAbsPath)
 		context.Data(200, "image/svg+xml", data)
 		return true
 	}
@@ -691,6 +707,7 @@ func serveThumbnail(context *gin.Context, assetAbsPath, requestPath string) bool
 			}
 		}
 
+		setAssetsAttachmentDisposition(context, assetAbsPath)
 		http.ServeFile(context.Writer, context.Request, thumbnailPath)
 		return true
 	}
