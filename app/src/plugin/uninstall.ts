@@ -49,8 +49,6 @@ export const uninstall = (app: App, name: string, isReload: boolean) => {
                 i--;
             }
             /// #if !MOBILE
-            resizeTopBar();
-            setTabPosition(true);
             // rm statusBar
             plugin.statusBarIcons.forEach(item => {
                 item.remove();
@@ -66,6 +64,8 @@ export const uninstall = (app: App, name: string, isReload: boolean) => {
                     window.siyuan.layout.bottomDock.remove(key);
                 }
             });
+            resizeTopBar();
+            setTabPosition(true);
             /// #endif
             // rm listen
             Array.from(document.childNodes).find(item => {

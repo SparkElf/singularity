@@ -224,9 +224,6 @@ export class Plugin {
             iconElement.addEventListener("click", options.callback);
             iconElement.setAttribute("data-location", options.position || "right");
             resizeTopBar();
-            /// #if !MOBILE
-            setTabPosition(true);
-            /// #endif
         }
         if (isMobile() && window.siyuan.storage) {
             if (!window.siyuan.storage[Constants.LOCAL_PLUGINTOPUNPIN].includes(iconElement.id)) {
@@ -239,6 +236,11 @@ export class Plugin {
             document.querySelector("#" + (iconElement.getAttribute("data-location") === "right" ? "barPlugins" : "drag"))?.before(iconElement);
         }
         this.topBarIcons.push(iconElement);
+        /// #if !MOBILE
+        if (!isWindow()) {
+            setTabPosition(true);
+        }
+        /// #endif
         return iconElement;
     }
 
