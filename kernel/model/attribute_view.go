@@ -3261,7 +3261,7 @@ func getAvNames(avIDs string) (ret string) {
 		}
 
 		tpl := strings.ReplaceAll(attrAvNameTpl, "${avID}", nodeAvID)
-		tpl = strings.ReplaceAll(tpl, "${avName}", nodeAvName)
+		tpl = strings.ReplaceAll(tpl, "${avName}", util.EscapeHTML(nodeAvName))
 		avNames.WriteString(tpl)
 		avNames.WriteString("&nbsp;")
 	}
@@ -3535,7 +3535,7 @@ func addAttributeViewBlock(now int64, avID, dbBlockID, viewID, groupID, previous
 				err = av.SaveAttributeView(attrView)
 			}
 
-			msg := fmt.Sprintf(Conf.language(269), getAttrViewName(attrView))
+			msg := fmt.Sprintf(Conf.language(269), util.EscapeHTML(getAttrViewName(attrView)))
 			util.PushMsg(msg, 5000)
 			return
 		}
