@@ -5,6 +5,15 @@
   "homepage": "https://b3log.org/siyuan",
   "main": "./electron/main.js",
   "packageManager": "pnpm@11.0.9",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "@parcel/watcher",
+      "electron-winstaller",
+      "esbuild"
+    ],
+    "blockExoticSubdeps": false
+  },
   "scripts": {
     "lint": "eslint . --fix --cache",
     "dev": "webpack --mode development",
