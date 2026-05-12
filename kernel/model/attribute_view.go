@@ -3274,6 +3274,10 @@ func getAvNames(avIDs string) (ret string) {
 
 func (tx *Transaction) getAttrViewBoundNodes(attrView *av.AttributeView) (trees map[string]*parse.Tree, nodes []*ast.Node) {
 	blockKeyValues := attrView.GetBlockKeyValues()
+	if nil == blockKeyValues.Values {
+		return
+	}
+
 	trees = map[string]*parse.Tree{}
 	for _, blockKeyValue := range blockKeyValues.Values {
 		if blockKeyValue.IsDetached {
