@@ -459,13 +459,19 @@ export class Dock {
                 !this.elements[1].querySelector(".dock__item--active")) {
                 if (this.position === "Left") {
                     this.layout.element.style.width = "0px";
-                    this.layout.element.style.marginRight = "0px";
+                    setTimeout(() => {
+                        this.layout.element.style.marginRight = "0px";
+                    }, Constants.TIMEOUT_TRANSITION);
                 } else if (this.position === "Right") {
                     this.layout.element.style.width = "0px";
-                    this.layout.element.style.marginLeft = "0px";
+                    setTimeout(() => {
+                        this.layout.element.style.marginLeft = "0px";
+                    }, Constants.TIMEOUT_TRANSITION);
                 } else {
                     this.layout.element.style.height = "0px";
-                    this.layout.element.style.marginTop = "0px";
+                    setTimeout(() => {
+                        this.layout.element.style.marginTop = "0px";
+                    }, Constants.TIMEOUT_TRANSITION);
                 }
                 this.resizeElement.classList.add("fn__none");
                 clearTimeout(this.hideResizeTimeout);
