@@ -30,6 +30,7 @@ import (
 	"github.com/88250/lute/ast"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/task"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
@@ -246,6 +247,11 @@ func Mount(boxID string) (alreadyMount bool, err error) {
 		if err = filelock.Copy(p, localPath); err != nil {
 			return
 		}
+
+		// 清除所有缓存，确保重开用户指南时数据是最新的
+		cache.ClearTreeCache()
+		cache.ClearDocsIAL()
+		cache.ClearBlocksIAL()
 
 		avDirPath := filepath.Join(util.WorkingDir, "guide", boxID, "storage", "av")
 		if filelock.IsExist(avDirPath) {
