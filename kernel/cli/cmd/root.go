@@ -67,10 +67,12 @@ var rootCmd = &cobra.Command{
 		util.ConfDir = filepath.Join(workspacePath, "conf")
 		util.DataDir = filepath.Join(workspacePath, "data")
 		util.TempDir = filepath.Join(workspacePath, "temp")
+		util.QueueDir = filepath.Join(util.TempDir, "queue")
 		util.DBPath = filepath.Join(util.TempDir, "siyuan.db")
 		util.BlockTreeDBPath = filepath.Join(util.TempDir, "blocktree.db")
 
 		os.MkdirAll(util.TempDir, 0755)
+		os.MkdirAll(util.QueueDir, 0755)
 		logging.SetLogPath(filepath.Join(util.TempDir, "siyuan-cli.log"))
 		logging.SetLogToStdout(false)
 

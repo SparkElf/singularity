@@ -87,7 +87,7 @@ var documentCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		model.AppendPushEntry("create", notebook, docPath)
+		model.AppendPushCreateEntry(notebook, docPath)
 		fmt.Println(id)
 		return nil
 	},
@@ -152,7 +152,11 @@ var documentRemoveCmd = &cobra.Command{
 			return err
 		}
 		model.RemoveDoc(tree.Box, tree.Path)
-		model.AppendPushEntry("reloadFiletree", "", "")
+		model.AppendPushRemoveEntry(tree.Box, tree.Path, id)
+		parentPath := path.Dir(tree.Path) + ".sy"
+		if parentPath != "/.sy" {
+			model.AppendPushReloadDocInfoEntry(tree.Box, parentPath)
+		}
 		fmt.Println(id)
 		return nil
 	},
@@ -177,7 +181,7 @@ var documentRenameCmd = &cobra.Command{
 		if err := model.RenameDoc(tree.Box, tree.Path, title); err != nil {
 			return err
 		}
-		model.AppendPushEntry("reloadFiletree", "", "")
+		model.AppendPushRenameEntry(tree.Box, tree.Path, title)
 		return nil
 	},
 }

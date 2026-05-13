@@ -87,17 +87,17 @@ func initDatabase(forceRebuild bool) {
 	}
 
 	initDBConnection()
-	initQueueWAL()
+	initIndexQueue()
 	treenode.InitBlockTree(forceRebuild)
 
 	if !forceRebuild {
 		// 检查数据库结构版本，如果版本不一致的话说明改过表结构，需要重建
 		if util.DatabaseVer == getDatabaseVer() {
-			recoverWAL()
+			recoverIndexQueue()
 			return
 		}
 		logging.LogInfof("the database structure is changed, rebuilding database...")
-		clearWALEntries()
+		clearIndexQueueEntries()
 	}
 
 	// 不存在库或者版本不一致都会走到这里
@@ -1321,7 +1321,7 @@ func batchUpdateHPath(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err
 }
 
 func CloseDatabase() {
-	closeQueueWAL()
+	closeIndexQueue()
 	if err := db.Close(); err != nil {
 		logging.LogErrorf("close database failed: %s", err)
 	}

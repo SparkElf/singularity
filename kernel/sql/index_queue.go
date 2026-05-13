@@ -35,13 +35,13 @@ import (
 )
 
 var (
-	walMu         sync.Mutex
-	walSize       atomic.Int64
-	skipWALAppend atomic.Bool
-	walFlock      *flock.Flock
+	indexMu         sync.Mutex
+	indexQueueSize       atomic.Int64
+	skipIndexAppend atomic.Bool
+	indexFlock      *flock.Flock
 )
 
-type walEntry struct {
+type indexEntry struct {
 	Action string   `json:"action"`
 	ID     string   `json:"id,omitempty"`
 	IDs    []string `json:"ids,omitempty"`
@@ -50,107 +50,113 @@ type walEntry struct {
 	Hashes []string `json:"hashes,omitempty"`
 }
 
-func initQueueWAL() {
-	walPath := filepath.Join(util.TempDir, "queue.wal")
-	walFlock = flock.New(walPath + ".lock")
-	fi, err := os.Stat(walPath)
+func initIndexQueue() {
+	indexQueuePath := filepath.Join(util.QueueDir, "index.queue")
+	os.MkdirAll(util.QueueDir, 0755)
+	indexFlock = flock.New(indexQueuePath + ".lock")
+	fi, err := os.Stat(indexQueuePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			logging.LogErrorf("stat WAL file [%s] failed: %s", walPath, err)
+			logging.LogErrorf("stat index queue file [%s] failed: %s", indexQueuePath, err)
 		}
 		return
 	}
-	walSize.Store(fi.Size())
+	indexQueueSize.Store(fi.Size())
 }
 
-func closeQueueWAL() {}
+func closeIndexQueue() {
+	os.Remove(filepath.Join(util.QueueDir, "index.queue.lock"))
+}
 
-func appendToWAL(op *dbQueueOperation) {
-	if skipWALAppend.Load() {
+func appendToIndexQueue(op *dbQueueOperation) {
+	if skipIndexAppend.Load() {
 		return
 	}
 
-	entry := dbOpToWALEntry(op)
+	entry := dbOpToIndexEntry(op)
 	if nil == entry {
 		return
 	}
 
 	data, err := json.Marshal(entry)
 	if err != nil {
-		logging.LogErrorf("marshal WAL entry failed: %s", err)
+		logging.LogErrorf("marshal index queue entry failed: %s", err)
 		return
 	}
 	data = append(data, '\n')
 
-	walMu.Lock()
-	defer walMu.Unlock()
+	_ = indexFlock.Lock()
+	defer func() { _ = indexFlock.Unlock() }()
 
-	_ = walFlock.Lock()
-	defer func() { _ = walFlock.Unlock() }()
+	indexMu.Lock()
+	defer indexMu.Unlock()
 
-	walPath := filepath.Join(util.TempDir, "queue.wal")
-	f, err := os.OpenFile(walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	indexQueuePath := filepath.Join(util.QueueDir, "index.queue")
+	f, err := os.OpenFile(indexQueuePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		logging.LogErrorf("open WAL for append failed: %s", err)
+		logging.LogErrorf("open index queue for append failed: %s", err)
 		return
 	}
 	n, err := f.Write(data)
 	f.Close()
 	if err != nil {
-		logging.LogErrorf("write WAL failed: %s", err)
+		logging.LogErrorf("write index queue failed: %s", err)
 		return
 	}
-	walSize.Add(int64(n))
+	indexQueueSize.Add(int64(n))
 }
 
-func dbOpToWALEntry(op *dbQueueOperation) *walEntry {
+func dbOpToIndexEntry(op *dbQueueOperation) *indexEntry {
 	switch op.action {
 	case "upsert":
-		return &walEntry{Action: "upsert", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
+		return &indexEntry{Action: "upsert", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
 	case "index":
-		return &walEntry{Action: "index", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
+		return &indexEntry{Action: "index", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
 	case "rename":
-		return &walEntry{Action: "rename", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
+		return &indexEntry{Action: "rename", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
 	case "move":
-		return &walEntry{Action: "move", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
+		return &indexEntry{Action: "move", ID: op.indexTree.ID, Box: op.indexTree.Box, Path: op.indexTree.Path}
 	case "update_refs":
-		return &walEntry{Action: "update_refs", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
+		return &indexEntry{Action: "update_refs", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
 	case "delete_refs":
-		return &walEntry{Action: "delete_refs", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
+		return &indexEntry{Action: "delete_refs", ID: op.upsertTree.ID, Box: op.upsertTree.Box, Path: op.upsertTree.Path}
 	case "delete":
-		return &walEntry{Action: "delete", Box: op.removeTreeBox, Path: op.removeTreePath}
+		return &indexEntry{Action: "delete", Box: op.removeTreeBox, Path: op.removeTreePath}
 	case "delete_id":
-		return &walEntry{Action: "delete_id", ID: op.removeTreeID}
+		return &indexEntry{Action: "delete_id", ID: op.removeTreeID}
 	case "delete_ids":
-		return &walEntry{Action: "delete_ids", IDs: op.removeTreeIDs}
+		return &indexEntry{Action: "delete_ids", IDs: op.removeTreeIDs}
 	case "delete_box":
-		return &walEntry{Action: "delete_box", Box: op.box}
+		return &indexEntry{Action: "delete_box", Box: op.box}
 	case "delete_box_refs":
-		return &walEntry{Action: "delete_box_refs", Box: op.box}
+		return &indexEntry{Action: "delete_box_refs", Box: op.box}
 	case "delete_assets":
-		return &walEntry{Action: "delete_assets", Hashes: op.removeAssetHashes}
+		return &indexEntry{Action: "delete_assets", Hashes: op.removeAssetHashes}
 	case "index_node":
-		return &walEntry{Action: "index_node", ID: op.id}
+		return &indexEntry{Action: "index_node", ID: op.id}
 	default:
 		return nil
 	}
 }
 
-func clearWAL(snapshotSize int64) {
-	walMu.Lock()
-	defer walMu.Unlock()
+func clearIndexQueue(snapshotSize int64) {
+	_ = indexFlock.Lock()
+	defer func() { _ = indexFlock.Unlock() }()
 
-	walPath := filepath.Join(util.TempDir, "queue.wal")
+	indexMu.Lock()
+	defer indexMu.Unlock()
 
-	var preserved []walEntry
-	fi, err := os.Stat(walPath)
+	indexQueuePath := filepath.Join(util.QueueDir, "index.queue")
+
+	var preserved []indexEntry
+	fi, err := os.Stat(indexQueuePath)
 	if err == nil && fi.Size() > snapshotSize {
-		preserved = readWALEntriesFrom(walPath, snapshotSize)
+		preserved = readIndexEntriesFrom(indexQueuePath, snapshotSize)
 	}
 
-	f, err := os.Create(walPath)
+	f, err := os.Create(indexQueuePath)
 	if err != nil {
-		logging.LogErrorf("create WAL file failed: %s", err)
+		logging.LogErrorf("create index queue file failed: %s", err)
 		return
 	}
 
@@ -162,11 +168,11 @@ func clearWAL(snapshotSize int64) {
 		newSize += int64(n)
 	}
 	f.Close()
-	walSize.Store(newSize)
+	indexQueueSize.Store(newSize)
 }
 
-func readWALEntriesFrom(walPath string, offset int64) (entries []walEntry) {
-	f, err := os.Open(walPath)
+func readIndexEntriesFrom(indexQueuePath string, offset int64) (entries []indexEntry) {
+	f, err := os.Open(indexQueuePath)
 	if err != nil {
 		return
 	}
@@ -182,7 +188,7 @@ func readWALEntriesFrom(walPath string, offset int64) (entries []walEntry) {
 		if 0 == len(line) {
 			continue
 		}
-		var entry walEntry
+		var entry indexEntry
 		if nil == json.Unmarshal(line, &entry) {
 			entries = append(entries, entry)
 		}
@@ -190,46 +196,46 @@ func readWALEntriesFrom(walPath string, offset int64) (entries []walEntry) {
 	return
 }
 
-func clearWALEntries() {
-	walMu.Lock()
-	defer walMu.Unlock()
+func clearIndexQueueEntries() {
+	indexMu.Lock()
+	defer indexMu.Unlock()
 
-	walPath := filepath.Join(util.TempDir, "queue.wal")
-	if gulu.File.IsExist(walPath) {
-		if err := os.Truncate(walPath, 0); err != nil {
-			logging.LogErrorf("clear WAL failed: %s", err)
+	indexQueuePath := filepath.Join(util.QueueDir, "index.queue")
+	if gulu.File.IsExist(indexQueuePath) {
+		if err := os.Truncate(indexQueuePath, 0); err != nil {
+			logging.LogErrorf("clear index queue failed: %s", err)
 		}
 	}
-	walSize.Store(0)
+	indexQueueSize.Store(0)
 }
 
-func PollWAL() {
-	if skipWALAppend.Load() {
+func PollIndexQueue() {
+	if skipIndexAppend.Load() {
 		return
 	}
 
-	_ = walFlock.Lock()
-	defer func() { _ = walFlock.Unlock() }()
+	_ = indexFlock.Lock()
+	defer func() { _ = indexFlock.Unlock() }()
 
-	entries := loadWAL()
+	entries := loadIndexQueue()
 	if 1 > len(entries) {
 		return
 	}
 
-	skipWALAppend.Store(true)
-	defer skipWALAppend.Store(false)
+	skipIndexAppend.Store(true)
+	defer skipIndexAppend.Store(false)
 
-	logging.LogInfof("polling [%d] external WAL operations", len(entries))
-	processWALEntries(entries, "poll WAL")
-	clearWALEntries()
+	logging.LogInfof("polling [%d] external index queue operations", len(entries))
+	processIndexEntries(entries, "poll index queue")
+	clearIndexQueueEntries()
 }
 
-func loadWAL() (entries []walEntry) {
-	walPath := filepath.Join(util.TempDir, "queue.wal")
-	f, err := os.Open(walPath)
+func loadIndexQueue() (entries []indexEntry) {
+	indexQueuePath := filepath.Join(util.QueueDir, "index.queue")
+	f, err := os.Open(indexQueuePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			logging.LogErrorf("open WAL for reading failed: %s", err)
+			logging.LogErrorf("open index queue for reading failed: %s", err)
 		}
 		return
 	}
@@ -241,31 +247,31 @@ func loadWAL() (entries []walEntry) {
 		if 0 == len(line) {
 			continue
 		}
-		var entry walEntry
+		var entry indexEntry
 		if err = json.Unmarshal(line, &entry); err != nil {
-			logging.LogWarnf("skip corrupted WAL line: %s", err)
+			logging.LogWarnf("skip corrupted index queue line: %s", err)
 			continue
 		}
 		entries = append(entries, entry)
 	}
 	if err = scanner.Err(); err != nil {
-		logging.LogErrorf("scan WAL failed: %s", err)
+		logging.LogErrorf("scan index queue failed: %s", err)
 	}
 	return
 }
 
-func recoverWAL() {
-	entries := loadWAL()
+func recoverIndexQueue() {
+	entries := loadIndexQueue()
 	if 1 > len(entries) {
 		return
 	}
 
-	logging.LogInfof("recovering [%d] WAL operations", len(entries))
-	processWALEntries(entries, "recover WAL")
-	logging.LogInfof("recovered [%d] WAL operations, will be flushed soon", len(entries))
+	logging.LogInfof("recovering [%d] index queue operations", len(entries))
+	processIndexEntries(entries, "recover index queue")
+	logging.LogInfof("recovered [%d] index queue operations, will be flushed soon", len(entries))
 }
 
-func processWALEntries(entries []walEntry, prefix string) {
+func processIndexEntries(entries []indexEntry, prefix string) {
 	luteEngine := lute.New()
 	for _, e := range entries {
 		switch e.Action {

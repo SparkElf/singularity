@@ -600,8 +600,8 @@ func InitConf() {
 	Conf.AccessAuthCode = strings.TrimSpace(Conf.AccessAuthCode)
 
 	if 1 == Conf.DataIndexState {
-		// 上次未正常完成数据索引，后续会由 recoverWAL() 恢复
-		logging.LogInfof("data index state is [%d], will recover through WAL", Conf.DataIndexState)
+		// 上次未正常完成数据索引，后续会由 recoverIndexQueue() 恢复
+		logging.LogInfof("data index state is [%d], will recover through index queue", Conf.DataIndexState)
 	}
 
 	Conf.DataIndexState = 0
@@ -786,6 +786,7 @@ func Close(force, setCurrentWorkspace bool, execInstallPkg int) (exitCode int) {
 
 	Conf.Close()
 	sql.CloseDatabase()
+	closePushQueue()
 	util.SaveAssetsTexts()
 	clearWorkspaceTemp()
 	clearCorruptedNotebooks()
@@ -1200,6 +1201,10 @@ func clearWorkspaceTemp() {
 	os.RemoveAll(filepath.Join(util.TempDir, "blocktree.msgpack")) // v2.7.2 前旧版的块树数据
 	os.RemoveAll(filepath.Join(util.DataDir, "%"))                 // v3.0.6 生成的错误历史文件夹
 	os.RemoveAll(filepath.Join(util.TempDir, "blocktree"))         // v3.1.0 前旧版的块树数据
+
+	// v3.7.0-dev 开发版数据索引队列，后面改成 index.queue 了
+	os.RemoveAll(filepath.Join(util.TempDir, "queue.wal"))
+	os.RemoveAll(filepath.Join(util.TempDir, "queue.wal.lock"))
 
 	logging.LogInfof("cleared workspace temp")
 }
