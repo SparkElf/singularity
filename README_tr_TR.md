@@ -70,6 +70,8 @@ Blok düzeyinde referansları ve Markdown WYSIWYG düzenlemeyi destekler.
 
 Daha fazla bilgi için [SiYuan İngilizce Tartışma Forumu](https://liuyun.io)’na katılabilirsin.
 
+Çevrimiçi kullanıcı rehberi: [English](https://siyuan-en.b3log.org/)
+
 ![feature0.png](https://b3logfile.com/file/2025/11/feature0-GfbhEqf.png)
 
 ![feature51.png](https://b3logfile.com/file/2025/11/feature5-1-7DJSfEP.png)
