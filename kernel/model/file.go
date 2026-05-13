@@ -1005,7 +1005,11 @@ func DuplicateDoc(tree *parse.Tree) {
 	if nil != box {
 		box.addSort(previousPath, tree.ID)
 	}
+
 	FlushTxQueue()
+	arg := map[string]any{}
+	arg["listDocTree"] = true
+	PushCreate(box, tree.Path, arg)
 }
 
 func createTreeTx(tree *parse.Tree) {
@@ -1015,7 +1019,7 @@ func createTreeTx(tree *parse.Tree) {
 
 var createDocLock = sync.Mutex{}
 
-func CreateDocByMd(boxID, p, title, md string, sorts []string) (tree *parse.Tree, err error) {
+func CreateDocByMd(boxID, p, title, md string, sorts []string, arg map[string]any) (tree *parse.Tree, err error) {
 	createDocLock.Lock()
 	defer createDocLock.Unlock()
 
@@ -1038,10 +1042,13 @@ func CreateDocByMd(boxID, p, title, md string, sorts []string) (tree *parse.Tree
 	} else {
 		box.setSortByConf(path.Dir(tree.Path), tree.ID)
 	}
+
+	FlushTxQueue()
+	PushCreate(box, p, arg)
 	return
 }
 
-func CreateWithMarkdown(tags, boxID, hPath, md, parentID, id string, withMath bool, clippingHref string) (retID string, err error) {
+func CreateWithMarkdown(tags, boxID, hPath, md, parentID, id string, withMath bool, clippingHref string, arg map[string]any) (retID string, err error) {
 	createDocLock.Lock()
 	defer createDocLock.Unlock()
 
@@ -1084,6 +1091,9 @@ func CreateWithMarkdown(tags, boxID, hPath, md, parentID, id string, withMath bo
 		return
 	}
 	box.setSortByConf(path.Dir(bt.Path), retID)
+
+	FlushTxQueue()
+	PushCreate(box, bt.Path, arg)
 	return
 }
 

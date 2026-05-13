@@ -57,12 +57,7 @@ func moveLocalShorthands(c *gin.Context) {
 		return
 	}
 
-	model.FlushTxQueue()
-	box := model.Conf.Box(notebook)
-	for _, id := range ids {
-		b, _ := model.GetBlock(id, nil)
-		pushCreate(box, b.Path, arg)
-	}
+	ret.Data = ids
 }
 
 func listDocTree(c *gin.Context) {
@@ -694,10 +689,7 @@ func duplicateDoc(c *gin.Context) {
 	}
 
 	notebook := tree.Box
-	box := model.Conf.Box(notebook)
 	model.DuplicateDoc(tree)
-	arg["listDocTree"] = true
-	pushCreate(box, tree.Path, arg)
 
 	ret.Data = map[string]any{
 		"id":       tree.Root.ID,
@@ -728,17 +720,13 @@ func createDoc(c *gin.Context) {
 		}
 	}
 
-	tree, err := model.CreateDocByMd(notebook, p, title, md, sorts)
+	tree, err := model.CreateDocByMd(notebook, p, title, md, sorts, arg)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		ret.Data = map[string]any{"closeTimeout": 7000}
 		return
 	}
-
-	model.FlushTxQueue()
-	box := model.Conf.Box(notebook)
-	pushCreate(box, p, arg)
 
 	ret.Data = map[string]any{
 		"id": tree.Root.ID,
@@ -856,18 +844,13 @@ func createDocWithMd(c *gin.Context) {
 		clippingHref = clippingHrefArg.(string)
 	}
 
-	id, err := model.CreateWithMarkdown(tags, notebook, hPath, markdown, parentID, id, withMath, clippingHref)
+	id, err := model.CreateWithMarkdown(tags, notebook, hPath, markdown, parentID, id, withMath, clippingHref, arg)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
 	}
 	ret.Data = id
-
-	model.FlushTxQueue()
-	box := model.Conf.Box(notebook)
-	b, _ := model.GetBlock(id, nil)
-	pushCreate(box, b.Path, arg)
 }
 
 func getDocCreateSavePath(c *gin.Context) {
@@ -1262,22 +1245,6 @@ func getDoc(c *gin.Context) {
 		"keywords":         keywords,
 		"reqId":            arg["reqId"],
 	}
-}
-
-func pushCreate(box *model.Box, p string, arg map[string]any) {
-	evt := util.NewCmdResult("create", 0, util.PushModeBroadcast)
-	listDocTree := false
-	listDocTreeArg := arg["listDocTree"]
-	if nil != listDocTreeArg {
-		listDocTree = listDocTreeArg.(bool)
-	}
-
-	evt.Data = map[string]any{
-		"box":         box,
-		"path":        p,
-		"listDocTree": listDocTree,
-	}
-	util.PushEvent(evt)
 }
 
 func setPublishAccess(c *gin.Context) {
