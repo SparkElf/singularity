@@ -337,9 +337,10 @@ func InstallBazaarPackage(pkgType, repoURL, repoHash, packageName string, themeM
 	case "plugins":
 		if update {
 			// 已启用的插件更新之后需要重载
-			petals := getPetals()
-			petal := getPetalByName(packageName, petals)
+			petal := GetPetalByName(packageName)
 			if nil != petal && petal.Enabled {
+				// reload kernel plugin
+				SetPetalEnabled(petal.Name, petal.Enabled)
 				reloadPluginSet := hashset.New(packageName)
 				PushReloadPlugin(nil, nil, reloadPluginSet, nil, "")
 			}
