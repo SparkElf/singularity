@@ -963,6 +963,9 @@ func ImportFromLocalPath(boxID, localPath string, toPath string) (err error) {
 					dest = decodedDest
 				}
 				absolutePath := filepath.Join(currentDir, dest)
+				if !gulu.File.IsSubPath(currentDir, absolutePath) {
+					return ast.WalkContinue
+				}
 
 				if ast.NodeLinkDest == n.Type {
 					n.Tokens = []byte(dest)
@@ -1070,6 +1073,7 @@ func ImportFromLocalPath(boxID, localPath string, toPath string) (err error) {
 		tree.HPath = path.Join(baseHPath, title)
 		tree.Root.Spec = treenode.CurrentSpec
 
+		localPathParentDir := filepath.Dir(localPath)
 		docDirLocalPath := filepath.Dir(filepath.Join(boxLocalPath, targetPath))
 		assetDirPath := getAssetsDir(boxLocalPath, docDirLocalPath)
 		ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
@@ -1093,7 +1097,10 @@ func ImportFromLocalPath(boxID, localPath string, toPath string) (err error) {
 			if decodedDest != dest {
 				dest = decodedDest
 			}
-			absolutePath := filepath.Join(filepath.Dir(localPath), dest)
+			absolutePath := filepath.Join(localPathParentDir, dest)
+			if !gulu.File.IsSubPath(localPathParentDir, absolutePath) {
+				return ast.WalkContinue
+			}
 
 			if ast.NodeLinkDest == n.Type {
 				n.Tokens = []byte(dest)

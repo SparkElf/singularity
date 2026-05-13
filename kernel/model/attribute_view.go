@@ -3261,7 +3261,7 @@ func getAvNames(avIDs string) (ret string) {
 		}
 
 		tpl := strings.ReplaceAll(attrAvNameTpl, "${avID}", nodeAvID)
-		tpl = strings.ReplaceAll(tpl, "${avName}", nodeAvName)
+		tpl = strings.ReplaceAll(tpl, "${avName}", util.EscapeHTML(nodeAvName))
 		avNames.WriteString(tpl)
 		avNames.WriteString("&nbsp;")
 	}
@@ -3274,6 +3274,10 @@ func getAvNames(avIDs string) (ret string) {
 
 func (tx *Transaction) getAttrViewBoundNodes(attrView *av.AttributeView) (trees map[string]*parse.Tree, nodes []*ast.Node) {
 	blockKeyValues := attrView.GetBlockKeyValues()
+	if nil == blockKeyValues.Values {
+		return
+	}
+
 	trees = map[string]*parse.Tree{}
 	for _, blockKeyValue := range blockKeyValues.Values {
 		if blockKeyValue.IsDetached {
@@ -3531,7 +3535,7 @@ func addAttributeViewBlock(now int64, avID, dbBlockID, viewID, groupID, previous
 				err = av.SaveAttributeView(attrView)
 			}
 
-			msg := fmt.Sprintf(Conf.language(269), getAttrViewName(attrView))
+			msg := fmt.Sprintf(Conf.language(269), util.EscapeHTML(getAttrViewName(attrView)))
 			util.PushMsg(msg, 5000)
 			return
 		}

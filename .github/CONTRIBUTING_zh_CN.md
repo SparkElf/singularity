@@ -8,7 +8,7 @@
 
 ## NPM 依赖
 
-安装 pnpm：`npm install -g pnpm@11.0.9`
+安装 pnpm：`npm install -g pnpm@11.1.1`
 
 <details>
 <summary>适用于中国大陆</summary>

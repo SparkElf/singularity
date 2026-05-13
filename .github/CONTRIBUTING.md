@@ -8,7 +8,7 @@
 
 ## NPM dependencies
 
-Install pnpm: `npm install -g pnpm@11.0.9`
+Install pnpm: `npm install -g pnpm@11.1.1`
 
 <details>
 <summary>For China mainland</summary>
