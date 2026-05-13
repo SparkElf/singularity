@@ -27,6 +27,7 @@ import (
 	"github.com/88250/gulu"
 	"github.com/88250/lute"
 	"github.com/88250/lute/parse"
+	"github.com/gofrs/flock"
 	"github.com/siyuan-note/dataparser"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
@@ -34,8 +35,10 @@ import (
 )
 
 var (
-	walMu   sync.Mutex
-	walSize atomic.Int64
+	walMu         sync.Mutex
+	walSize       atomic.Int64
+	skipWALAppend atomic.Bool
+	walFlock      *flock.Flock
 )
 
 type walEntry struct {
@@ -49,6 +52,7 @@ type walEntry struct {
 
 func initQueueWAL() {
 	walPath := filepath.Join(util.TempDir, "queue.wal")
+	walFlock = flock.New(walPath + ".lock")
 	fi, err := os.Stat(walPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -62,6 +66,10 @@ func initQueueWAL() {
 func closeQueueWAL() {}
 
 func appendToWAL(op *dbQueueOperation) {
+	if skipWALAppend.Load() {
+		return
+	}
+
 	entry := dbOpToWALEntry(op)
 	if nil == entry {
 		return
@@ -76,6 +84,9 @@ func appendToWAL(op *dbQueueOperation) {
 
 	walMu.Lock()
 	defer walMu.Unlock()
+
+	_ = walFlock.Lock()
+	defer func() { _ = walFlock.Unlock() }()
 
 	walPath := filepath.Join(util.TempDir, "queue.wal")
 	f, err := os.OpenFile(walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -132,8 +143,8 @@ func clearWAL(snapshotSize int64) {
 	walPath := filepath.Join(util.TempDir, "queue.wal")
 
 	var preserved []walEntry
-	currentSize := walSize.Load()
-	if currentSize > snapshotSize {
+	fi, err := os.Stat(walPath)
+	if err == nil && fi.Size() > snapshotSize {
 		preserved = readWALEntriesFrom(walPath, snapshotSize)
 	}
 
@@ -192,6 +203,27 @@ func clearWALEntries() {
 	walSize.Store(0)
 }
 
+func PollWAL() {
+	if skipWALAppend.Load() {
+		return
+	}
+
+	_ = walFlock.Lock()
+	defer func() { _ = walFlock.Unlock() }()
+
+	entries := loadWAL()
+	if 1 > len(entries) {
+		return
+	}
+
+	skipWALAppend.Store(true)
+	defer skipWALAppend.Store(false)
+
+	logging.LogInfof("polling [%d] external WAL operations", len(entries))
+	processWALEntries(entries, "poll WAL")
+	clearWALEntries()
+}
+
 func loadWAL() (entries []walEntry) {
 	walPath := filepath.Join(util.TempDir, "queue.wal")
 	f, err := os.Open(walPath)
@@ -229,50 +261,53 @@ func recoverWAL() {
 	}
 
 	logging.LogInfof("recovering [%d] WAL operations", len(entries))
+	processWALEntries(entries, "recover WAL")
+	logging.LogInfof("recovered [%d] WAL operations, will be flushed soon", len(entries))
+}
 
+func processWALEntries(entries []walEntry, prefix string) {
 	luteEngine := lute.New()
-
 	for _, e := range entries {
 		switch e.Action {
 		case "upsert":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL upsert: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s upsert: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			UpsertTreeQueue(tree)
 		case "index":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL index: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s index: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			IndexTreeQueue(tree)
 		case "rename":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL rename: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s rename: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			RenameTreeQueue(tree)
 		case "move":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL move: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s move: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			MoveTreeQueue(tree)
 		case "update_refs":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL update_refs: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s update_refs: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			UpdateRefsTreeQueue(tree)
 		case "delete_refs":
 			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
 			if err != nil {
-				logging.LogWarnf("recover WAL delete_refs: load tree [%s/%s] failed: %s", e.Box, e.Path, err)
+				logging.LogWarnf("%s delete_refs: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			DeleteRefsTreeQueue(tree)
@@ -292,8 +327,6 @@ func recoverWAL() {
 			IndexNodeQueue(e.ID)
 		}
 	}
-
-	logging.LogInfof("recovered [%d] WAL operations, will be flushed soon", len(entries))
 }
 
 func loadTreeFromDisk(box, p string, luteEngine *lute.Lute) (tree *parse.Tree, err error) {
