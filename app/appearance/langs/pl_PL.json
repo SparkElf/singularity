@@ -703,6 +703,7 @@
   "resetRepo": "Zresetuj repozytorium danych",
   "createSnapshot": "Utwórz zrzut",
   "dataSnapshot": "Zrzut danych",
+  "saveAs": "Zapisz jako",
   "searchFileName": "Zrzut danych",
   "copyKey": "Kopiuj ciąg klucza",
   "importKey": "Importuj klucz",

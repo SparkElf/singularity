@@ -703,6 +703,7 @@
   "resetRepo": "Réinitialiser le référentiel de données",
   "createSnapshot": "Créer un instantané",
   "dataSnapshot": "Instantané de données",
+  "saveAs": "Enregistrer sous",
   "searchFileName": "Rechercher un nom de fichier",
   "copyKey": "Copier la chaîne de clé",
   "importKey": "Importer la clé",
