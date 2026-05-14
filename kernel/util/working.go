@@ -81,11 +81,37 @@ func coalesceToEnvVar(fromCLI *string, envVarName string) *string {
 	return fromCLI
 }
 
-func Boot() {
+func InitWorkspace(workspacePath, wdPath string) {
 	initEnvVars()
-	IncBootProgress(3, "Booting kernel...")
 	initMime()
 	initHttpClient()
+
+	if "" != wdPath {
+		WorkingDir = wdPath
+	}
+
+	Container = ContainerStd
+	if RunInContainer {
+		Container = ContainerDocker
+	}
+
+	initWorkspaceDir(workspacePath)
+	initPathDir()
+
+	AppearancePath = filepath.Join(ConfDir, "appearance")
+	if "dev" == Mode {
+		ThemesPath = filepath.Join(WorkingDir, "appearance", "themes")
+		IconsPath = filepath.Join(WorkingDir, "appearance", "icons")
+	} else {
+		ThemesPath = filepath.Join(AppearancePath, "themes")
+		IconsPath = filepath.Join(AppearancePath, "icons")
+	}
+
+	LogPath = filepath.Join(TempDir, "siyuan.log")
+}
+
+func Boot() {
+	IncBootProgress(3, "Booting kernel...")
 
 	workspacePath := flag.String("workspace", "", "dir path of the workspace, default to ~/SiYuan/")
 	wdPath := flag.String("wd", WorkingDir, "working directory of SiYuan")
@@ -104,9 +130,6 @@ func Boot() {
 	accessAuthCode = coalesceToEnvVar(accessAuthCode, "SIYUAN_ACCESS_AUTH_CODE")
 	lang = coalesceToEnvVar(lang, "SIYUAN_LANG")
 
-	if "" != *wdPath {
-		WorkingDir = *wdPath
-	}
 	if "" != *lang {
 		Lang = *lang
 	}
@@ -146,25 +169,13 @@ func Boot() {
 	UserAgent = UserAgent + " " + Container + "/" + runtime.GOOS
 	httpclient.SetUserAgent(UserAgent)
 
-	initWorkspaceDir(*workspacePath)
+	InitWorkspace(*workspacePath, *wdPath)
 
 	SSL = *ssl
-	LogPath = filepath.Join(TempDir, "siyuan.log")
 	logging.SetLogPath(LogPath)
 
 	// 工作空间仅允许被一个内核进程伺服
 	tryLockWorkspace()
-
-	AppearancePath = filepath.Join(ConfDir, "appearance")
-	if "dev" == Mode {
-		ThemesPath = filepath.Join(WorkingDir, "appearance", "themes")
-		IconsPath = filepath.Join(WorkingDir, "appearance", "icons")
-	} else {
-		ThemesPath = filepath.Join(AppearancePath, "themes")
-		IconsPath = filepath.Join(AppearancePath, "icons")
-	}
-
-	initPathDir()
 
 	bootBanner := figure.NewColorFigure("SiYuan", "isometric3", "green", true)
 	logging.LogInfof("\n" + bootBanner.String())
