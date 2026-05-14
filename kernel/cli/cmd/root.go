@@ -72,7 +72,10 @@ var rootCmd = &cobra.Command{
 
 		model.InitConf()
 		sql.InitDatabase(false)
-
+		sql.InitHistoryDatabase(false)
+		sql.InitAssetContentDatabase(false)
+		sql.SetCaseSensitive(model.Conf.Search.CaseSensitive)
+		sql.SetIndexAssetPath(model.Conf.Search.IndexAssetPath)
 		return nil
 	},
 }
