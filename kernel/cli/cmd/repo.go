@@ -189,6 +189,94 @@ var repoSearchCmd = &cobra.Command{
 	},
 }
 
+var repoPurgeCmd = &cobra.Command{
+	Use:   "purge",
+	Short: "Purge old snapshots",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := model.PurgeRepo(); err != nil {
+			return err
+		}
+		fmt.Println("ok")
+		return nil
+	},
+}
+
+var repoFileCmd = &cobra.Command{
+	Use:   "file",
+	Short: "File-level snapshot operations",
+}
+
+var repoFileGetCmd = &cobra.Command{
+	Use:   "get --id <fileID>",
+	Short: "Get file content from snapshot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		data, path, err := model.GetRepoFile(id)
+		if err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		if output != "" {
+			return os.WriteFile(output, data, 0644)
+		}
+		fmt.Printf("Path: %s\nSize: %d\n---\n%s", path, len(data), string(data))
+		return nil
+	},
+}
+
+var repoFileRollbackCmd = &cobra.Command{
+	Use:   "rollback --id <fileID>",
+	Short: "Rollback a single file from snapshot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		if err := model.RollbackRepoSnapshotFile(id); err != nil {
+			return err
+		}
+		fmt.Println("ok")
+		return nil
+	},
+}
+
+var repoFileOpenCmd = &cobra.Command{
+	Use:   "open --id <fileID>",
+	Short: "Preview file content from snapshot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		title, content, _, _, err := model.OpenRepoSnapshotFile(id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Title: %s\n---\n%s\n", title, content)
+		return nil
+	},
+}
+
+var repoFileExportCmd = &cobra.Command{
+	Use:   "export --id <fileID>",
+	Short: "Export file from snapshot to temp file",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, _ := cmd.Flags().GetString("id")
+		if id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		exportPath, err := model.ExportRepoFile(id)
+		if err != nil {
+			return err
+		}
+		fmt.Println(exportPath)
+		return nil
+	},
+}
+
 func printSnapshotTable(snapshots []*model.Snapshot) {
 	if len(snapshots) == 0 {
 		fmt.Println("No snapshots found.")
@@ -233,6 +321,15 @@ func init() {
 
 	repoSearchCmd.Flags().IntP("page", "p", 1, "page number")
 
+	repoFileGetCmd.Flags().String("id", "", "file ID (content hash)")
+	repoFileGetCmd.Flags().String("output", "", "output file path (default: stdout)")
+
+	repoFileRollbackCmd.Flags().String("id", "", "file ID to rollback")
+
+	repoFileOpenCmd.Flags().String("id", "", "file ID to preview")
+
+	repoFileExportCmd.Flags().String("id", "", "file ID to export")
+
 	rootCmd.AddCommand(repoCmd)
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoCreateCmd)
@@ -241,4 +338,10 @@ func init() {
 	repoCmd.AddCommand(repoCheckoutCmd)
 	repoCmd.AddCommand(repoDiffCmd)
 	repoCmd.AddCommand(repoSearchCmd)
+	repoCmd.AddCommand(repoPurgeCmd)
+	repoCmd.AddCommand(repoFileCmd)
+	repoFileCmd.AddCommand(repoFileGetCmd)
+	repoFileCmd.AddCommand(repoFileRollbackCmd)
+	repoFileCmd.AddCommand(repoFileOpenCmd)
+	repoFileCmd.AddCommand(repoFileExportCmd)
 }
