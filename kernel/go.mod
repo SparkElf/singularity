@@ -67,16 +67,17 @@ require (
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/shirou/gopsutil/v4 v4.26.3
 	github.com/siyuan-note/dataparser v0.0.0-20260115084335-b57cb8bc7c17
-	github.com/siyuan-note/dejavu v0.0.0-20260511122025-4a7e3f0428e9
+	github.com/siyuan-note/dejavu v0.0.0-20260513020519-7bfeed4dabb9
 	github.com/siyuan-note/encryption v0.0.0-20251120032857-3ddc3c2cc49f
 	github.com/siyuan-note/eventbus v0.0.0-20240627125516-396fdb0f0f97
 	github.com/siyuan-note/filelock v0.0.0-20260411141728-bf44452627c0
 	github.com/siyuan-note/httpclient v0.0.0-20260408083825-43e4476ad2b3
-	github.com/siyuan-note/logging v0.0.0-20260117134552-88b424dfe7f1
+	github.com/siyuan-note/logging v0.0.0-20260513050044-06b8e04d5490
 	github.com/siyuan-note/riff v0.0.0-20251022131846-228528e70754
 	github.com/smallnest/chanx v1.2.0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cast v1.10.0
+	github.com/spf13/cobra v1.10.2
 	github.com/steambap/captcha v1.4.1
 	github.com/studio-b12/gowebdav v0.12.0
 	github.com/vanng822/css v1.0.1
@@ -92,8 +93,6 @@ require (
 	golang.org/x/time v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-require gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -161,6 +160,7 @@ require (
 	github.com/hhrutter/tiff v1.0.2 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jaypipes/pcidb v1.1.1 // indirect
 	github.com/jaytaylor/html2text v0.0.0-20230321000545-74c2419ad056 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
@@ -189,6 +189,7 @@ require (
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
@@ -207,6 +208,7 @@ require (
 	golang.org/x/image v0.38.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
+	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9 // indirect
 	modernc.org/fileutil v1.4.0 // indirect

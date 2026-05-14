@@ -703,6 +703,7 @@
   "resetRepo": "Restablecer el repositorio de datos",
   "createSnapshot": "Crear instantánea",
   "dataSnapshot": "Instantánea de datos",
+  "saveAs": "Guardar como",
   "searchFileName": "Buscar nombre de archivo",
   "copyKey": "Copiar cadena de claves",
   "importKey": "Importar la clave",

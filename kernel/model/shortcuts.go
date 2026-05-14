@@ -115,7 +115,7 @@ func MoveLocalShorthands(boxID string) (retIDs []string, err error) {
 			}
 			hPath = "/" + time.UnixMilli(i).Format("2006-01-02 15:04:05")
 			var retID string
-			retID, err = CreateWithMarkdown("", boxID, hPath, content, "", "", false, "")
+			retID, err = CreateWithMarkdown("", boxID, hPath, content, "", "", false, "", nil)
 			if nil != err {
 				logging.LogErrorf("create doc failed: %s", err)
 				return
@@ -157,7 +157,7 @@ func MoveLocalShorthands(boxID string) (retIDs []string, err error) {
 			bt := treenode.GetBlockTreeRootByHPath(boxID, hPath)
 			if nil == bt {
 				var retID string
-				retID, err = CreateWithMarkdown("", boxID, hPath, buff.String(), "", "", false, "")
+				retID, err = CreateWithMarkdown("", boxID, hPath, buff.String(), "", "", false, "", nil)
 				if nil != err {
 					logging.LogErrorf("create doc failed: %s", err)
 					return
@@ -199,6 +199,12 @@ func MoveLocalShorthands(boxID string) (retIDs []string, err error) {
 		if removeErr := os.Remove(p); nil != removeErr {
 			logging.LogErrorf("remove file [%s] failed: %s", p, removeErr)
 		}
+	}
+
+	FlushTxQueue()
+	for _, id := range retIDs {
+		b, _ := GetBlock(id, nil)
+		PushCreate(box, b.Path, nil)
 	}
 	return
 }

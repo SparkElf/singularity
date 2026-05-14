@@ -228,6 +228,7 @@ var (
 	RepoDir            string        // 仓库目录路径
 	HistoryDir         string        // 数据历史目录路径
 	TempDir            string        // 临时目录路径
+	QueueDir           string        // 队列目录路径
 	LogPath            string        // 配置目录下的日志文件 siyuan.log 路径
 	DBName             = "siyuan.db" // SQLite 数据库文件名
 	DBPath             string        // SQLite 数据库文件路径
@@ -303,6 +304,7 @@ func initWorkspaceDir(workspaceArg string) {
 	RepoDir = filepath.Join(WorkspaceDir, "repo")
 	HistoryDir = filepath.Join(WorkspaceDir, "history")
 	TempDir = filepath.Join(WorkspaceDir, "temp")
+	QueueDir = filepath.Join(TempDir, "queue")
 	osTmpDir := filepath.Join(TempDir, "os")
 	os.RemoveAll(osTmpDir)
 	if err := os.MkdirAll(osTmpDir, 0755); err != nil {

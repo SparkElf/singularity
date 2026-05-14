@@ -28,6 +28,7 @@ import (
 	mathRand "math/rand"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -592,6 +593,44 @@ func SearchRepoFile(keyword string, page int) (ret []*DiffFile, pageCount, total
 			Updated: file.Updated,
 		})
 	}
+	return
+}
+
+func ExportRepoFile(id string) (exportPath string, err error) {
+	if 1 > len(Conf.Repo.Key) {
+		err = errors.New(Conf.Language(26))
+		return
+	}
+
+	repo, err := newRepository()
+	if err != nil {
+		return
+	}
+
+	file, err := repo.GetFile(id)
+	if err != nil {
+		return
+	}
+
+	data, err := repo.OpenFile(file)
+	if err != nil {
+		return
+	}
+
+	name := path.Base(file.Path)
+	exportDir := filepath.Join(util.TempDir, "export", "repo")
+	if err = os.MkdirAll(exportDir, 0755); err != nil {
+		logging.LogErrorf("mkdir [%s] failed: %s", exportDir, err)
+		return
+	}
+
+	exportFilePath := filepath.Join(exportDir, name)
+	if err = os.WriteFile(exportFilePath, data, 0644); err != nil {
+		logging.LogErrorf("write file [%s] failed: %s", exportFilePath, err)
+		return
+	}
+
+	exportPath = path.Join("/export/repo", url.PathEscape(name))
 	return
 }
 

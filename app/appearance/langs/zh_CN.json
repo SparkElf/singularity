@@ -703,6 +703,7 @@
   "resetRepo": "重置数据仓库",
   "createSnapshot": "创建快照",
   "dataSnapshot": "数据快照",
+  "saveAs": "另存为",
   "searchFileName": "搜索文件名",
   "copyKey": "复制密钥字符串",
   "importKey": "导入密钥",

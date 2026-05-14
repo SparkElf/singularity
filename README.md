@@ -70,6 +70,8 @@ WYSIWYG.
 
 Welcome to [SiYuan English Discussion Forum](https://liuyun.io) to learn more.
 
+Online user guide: [English](https://siyuan-en.b3log.org/)
+
 ![feature0.png](https://b3logfile.com/file/2025/11/feature0-GfbhEqf.png)
 
 ![feature51.png](https://b3logfile.com/file/2025/11/feature5-1-7DJSfEP.png)

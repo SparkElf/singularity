@@ -10,7 +10,7 @@ import {fetchPost} from "../util/fetch";
 import {escapeAttr, escapeHtml} from "../util/escape";
 import {isMobile} from "../util/functions";
 import {showDiff} from "./diff";
-import {setStorageVal} from "../protyle/util/compatibility";
+import {saveExportFile, setStorageVal} from "../protyle/util/compatibility";
 import {openModel} from "../mobile/menu/model";
 import {closeModel} from "../mobile/util/closePanel";
 import {App} from "../index";
@@ -291,6 +291,11 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
         </div>
         <div class="fn__flex" style="height: 26px">
             <span class="fn__flex-1"></span>
+            <span class="b3-list-item__action" data-type="saveAs">
+                <svg><use xlink:href="#iconDownload"></use></svg>
+                <span class="fn__space"></span>${window.siyuan.languages.saveAs}
+            </span>
+            <span class="fn__space"></span>
             <span class="b3-list-item__action" data-type="rollback">
                 <svg><use xlink:href="#iconUndo"></use></svg>
                 <span class="fn__space"></span> ${window.siyuan.languages.rollback}
@@ -312,6 +317,9 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
     </div>
     <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="rollback" aria-label="${window.siyuan.languages.rollback}">
         <svg><use xlink:href="#iconUndo"></use></svg>
+    </span>
+    <span class="b3-list-item__action b3-tooltips b3-tooltips__w" data-type="saveAs" aria-label="${window.siyuan.languages.saveAs}">
+        <svg><use xlink:href="#iconDownload"></use></svg>
     </span>
 </li>`;
         /// #endif
@@ -712,6 +720,15 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             });
                         }
                     });
+                event.stopPropagation();
+                event.preventDefault();
+                break;
+            } else if (type === "saveAs") {
+                const liElement = target.closest(".b3-list-item") as HTMLElement;
+                const fileId = liElement.getAttribute("data-id");
+                fetchPost("/api/repo/exportRepoFile", {id: fileId}, (response) => {
+                    saveExportFile(response.data.path);
+                });
                 event.stopPropagation();
                 event.preventDefault();
                 break;
