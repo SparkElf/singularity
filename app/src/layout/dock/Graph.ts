@@ -600,6 +600,7 @@ export class Graph extends Model {
                 autoResize: true,
                 interaction: {
                     hover: true,
+                    zoomSpeed: 0.5, // 1 is default
                 },
                 nodes: {
                     borderWidth: 0,
