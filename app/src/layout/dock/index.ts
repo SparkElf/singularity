@@ -459,19 +459,13 @@ export class Dock {
                 !this.elements[1].querySelector(".dock__item--active")) {
                 if (this.position === "Left") {
                     this.layout.element.style.width = "0px";
-                    setTimeout(() => {
-                        this.layout.element.style.marginRight = "0px";
-                    }, Constants.TIMEOUT_TRANSITION);
+                    this.layout.element.style.marginRight = "0px";
                 } else if (this.position === "Right") {
                     this.layout.element.style.width = "0px";
-                    setTimeout(() => {
-                        this.layout.element.style.marginLeft = "0px";
-                    }, Constants.TIMEOUT_TRANSITION);
+                    this.layout.element.style.marginLeft = "0px";
                 } else {
                     this.layout.element.style.height = "0px";
-                    setTimeout(() => {
-                        this.layout.element.style.marginTop = "0px";
-                    }, Constants.TIMEOUT_TRANSITION);
+                    this.layout.element.style.marginTop = "0px";
                 }
                 this.resizeElement.classList.add("fn__none");
                 clearTimeout(this.hideResizeTimeout);
@@ -752,7 +746,7 @@ export class Dock {
         // 目标处理
         sourceElement.setAttribute("data-index", index.toString());
         if (previousType) {
-            this.elements[0].parentElement.querySelector(`[data-type="${previousType}"]`).after(sourceElement);
+            this.elements[index].parentElement.querySelector(`[data-type="${previousType}"]`).after(sourceElement);
         } else {
             this.elements[index].insertAdjacentElement("afterbegin", sourceElement);
         }
