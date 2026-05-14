@@ -195,7 +195,11 @@ export const addPluginDock = (plugin: Plugin) => {
         if (document.querySelector(`.dock .dock__item[data-type="${key}"]`)) {
             return;
         }
-        if (window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name] && window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name][key]) {
+        if (!window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name]) {
+            window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name] = {};
+        }
+        if (window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name] &&
+            window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name][key]) {
             plugin.docks[key].config = window.siyuan.storage[Constants.LOCAL_PLUGIN_DOCKS][plugin.name][key];
         }
         const dock = plugin.docks[key];
