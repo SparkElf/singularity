@@ -1366,7 +1366,7 @@ aria-label="${ariaLabel}">${getDisplayName(Lute.EscapeHTMLStr(item.name), true, 
         window.siyuan.menus.menu.remove();
         if (!window.siyuan.config.readonly) {
             window.siyuan.menus.menu.append(new MenuItem({
-                icon: "iconFilesRoot",
+                icon: "iconNewNoteBook",
                 label: window.siyuan.languages.newNotebook,
                 click: () => {
                     newNotebook();

@@ -443,7 +443,7 @@ export class Asset extends Model {
         </div>
         <div class="b3-menu__separator pdf__util__hide" style="margin-top: 8px"></div>
         <button class="b3-menu__item pdf__util__hide" data-type="toggle">
-            <svg class="b3-menu__icon"><use xlink:href="#iconFilesRoot"></use></svg>
+            <svg class="b3-menu__icon"><use xlink:href="#iconPaintBucket"></use></svg>
             <span class="b3-menu__label">${window.siyuan.languages.showHideBg}</span>
         </button>
         <button class="b3-menu__item pdf__util__hide" data-type="copy">
