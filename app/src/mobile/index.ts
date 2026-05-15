@@ -226,8 +226,8 @@ window.reconnectWebSocket = () => {
         }
     };
     tryPing(window.siyuan.ws);
-    tryPing(window.siyuan.mobile.docks.file);
-    tryPing(window.siyuan.mobile.editor.protyle.ws);
+    tryPing(window.siyuan.mobile.docks?.file);
+    tryPing(window.siyuan.mobile.editor?.protyle.ws);
     tryPing(window.siyuan.mobile.popEditor?.protyle.ws);
 };
 window.lockscreenByMode = () => {
