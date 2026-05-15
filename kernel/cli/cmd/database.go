@@ -1,0 +1,186 @@
+// SiYuan - Refactor your thinking
+// Copyright (c) 2020-present, b3log.org
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/siyuan-note/siyuan/kernel/av"
+	"github.com/siyuan-note/siyuan/kernel/model"
+
+	"github.com/spf13/cobra"
+)
+
+var databaseCmd = &cobra.Command{
+	Use:   "database",
+	Short: "Manage databases (attribute views)",
+}
+
+var databaseRenderCmd = &cobra.Command{
+	Use:   "render --av <avID>",
+	Short: "Render database data",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		avID, _ := cmd.Flags().GetString("av")
+		viewID, _ := cmd.Flags().GetString("view")
+		query, _ := cmd.Flags().GetString("query")
+		page, _ := cmd.Flags().GetInt("page")
+		size, _ := cmd.Flags().GetInt("size")
+		if avID == "" {
+			return fmt.Errorf("--av is required")
+		}
+		if page < 1 {
+			page = 1
+		}
+		if size < 1 {
+			size = 50
+		}
+
+		_, attrView, err := model.RenderAttributeView("", avID, viewID, query, page, size, nil, false)
+		if err != nil {
+			return err
+		}
+
+		switch outputFormat {
+		case "json":
+			data, _ := json.MarshalIndent(attrView, "", "  ")
+			fmt.Println(string(data))
+		default:
+			printDatabaseTable(attrView)
+		}
+		return nil
+	},
+}
+
+func printDatabaseTable(attrView *av.AttributeView) {
+	if len(attrView.KeyValues) == 0 {
+		fmt.Println("(empty)")
+		return
+	}
+
+	fmt.Println(attrView.Name)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, kv := range attrView.KeyValues {
+		fmt.Fprintf(w, "%s\t", kv.Key.Name)
+	}
+	fmt.Fprintln(w)
+
+	rowCount := 0
+	for _, kv := range attrView.KeyValues {
+		if len(kv.Values) > rowCount {
+			rowCount = len(kv.Values)
+		}
+	}
+
+	for i := 0; i < rowCount; i++ {
+		for _, kv := range attrView.KeyValues {
+			if i < len(kv.Values) {
+				fmt.Fprintf(w, "%s\t", formatValue(kv.Values[i]))
+			} else {
+				fmt.Fprintf(w, "%s\t", "")
+			}
+		}
+		fmt.Fprintln(w)
+	}
+	w.Flush()
+
+	fmt.Printf("\n%d row(s)\n", rowCount)
+}
+
+func formatValue(v *av.Value) string {
+	if v == nil {
+		return ""
+	}
+	switch v.Type {
+	case av.KeyTypeBlock:
+		if v.Block != nil {
+			return truncate(v.Block.Content, 40)
+		}
+		return v.BlockID
+	case av.KeyTypeText:
+		return v.Text.Content
+	case av.KeyTypeNumber:
+		if v.Number != nil && v.Number.FormattedContent != "" {
+			return v.Number.FormattedContent
+		}
+		return fmt.Sprintf("%v", v.Number.Content)
+	case av.KeyTypeSelect, av.KeyTypeMSelect:
+		var parts []string
+		for _, s := range v.MSelect {
+			parts = append(parts, s.Content)
+		}
+		return strings.Join(parts, ", ")
+	case av.KeyTypeCheckbox:
+		if v.Checkbox.Checked {
+			return "☑"
+		}
+		return "☐"
+	case av.KeyTypeDate:
+		if v.Date != nil && v.Date.FormattedContent != "" {
+			return v.Date.FormattedContent
+		}
+		return ""
+	case av.KeyTypeURL:
+		return v.URL.Content
+	case av.KeyTypeEmail:
+		return v.Email.Content
+	case av.KeyTypePhone:
+		return v.Phone.Content
+	case av.KeyTypeTemplate:
+		return truncate(v.Template.Content, 40)
+	case av.KeyTypeCreated:
+		if v.Created != nil && v.Created.FormattedContent != "" {
+			return v.Created.FormattedContent
+		}
+		return ""
+	case av.KeyTypeUpdated:
+		if v.Updated != nil && v.Updated.FormattedContent != "" {
+			return v.Updated.FormattedContent
+		}
+		return ""
+	case av.KeyTypeMAsset:
+		var parts []string
+		for _, a := range v.MAsset {
+			parts = append(parts, a.Name)
+		}
+		return strings.Join(parts, ", ")
+	case av.KeyTypeRelation:
+		return fmt.Sprintf("%d ref(s)", len(v.Relation.BlockIDs))
+	case av.KeyTypeRollup:
+		if len(v.Rollup.Contents) > 0 && v.Rollup.Contents[0] != nil {
+			return formatValue(v.Rollup.Contents[0])
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+func init() {
+	databaseRenderCmd.Flags().String("av", "", "attribute view ID (required)")
+	databaseRenderCmd.Flags().String("view", "", "view ID (default: current view)")
+	databaseRenderCmd.Flags().String("query", "", "search query within the view")
+	databaseRenderCmd.Flags().IntP("page", "p", 1, "page number")
+	databaseRenderCmd.Flags().IntP("size", "s", 50, "page size")
+
+	rootCmd.AddCommand(databaseCmd)
+	databaseCmd.AddCommand(databaseRenderCmd)
+}
