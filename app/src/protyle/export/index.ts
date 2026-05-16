@@ -169,11 +169,12 @@ const renderPDF = async (id: string) => {
         body {
           margin: 0;
           font-family: var(--b3-font-family);
+          background-color: var(--b3-body-background);
         }
         
         #action {
           width: 232px;
-          background: var(--b3-theme-surface);
+          background-color: var(--b3-theme-background);
           padding: 12px 0;
           position: fixed;
           right: 0;
@@ -184,15 +185,19 @@ const renderPDF = async (id: string) => {
           z-index: 1;
           display: flex;
           flex-direction: column;
+          border-left: 1px solid var(--b3-body-background);
         }
         
         #preview {
           max-width: 800px;
-          margin: 0 auto;
+          margin: 24px auto;
           position: absolute;
           right: 232px;
           left: 0;
+          min-height: calc(100% - 48px);
           box-sizing: border-box;
+          background-color: var(--b3-theme-background);
+          box-shadow: var(--b3-dialog-shadow);
         }
         
         #preview.exporting {
