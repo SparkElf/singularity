@@ -18,7 +18,9 @@ package main
 
 import (
 	"C"
+	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +158,51 @@ func Unzip(zipFilePath, destination *C.char) {
 		logging.LogErrorf("unzip [%s] failed: %s", zipPath, err)
 		panic(err)
 	}
+}
+
+//export ReadExportFile
+func ReadExportFile(exportPath *C.char) *C.char {
+	pathStr := C.GoString(exportPath)
+	var absPath string
+	if strings.HasPrefix(pathStr, "/export/") {
+		fileName := strings.TrimPrefix(pathStr, "/export/")
+		if decoded, err := url.PathUnescape(fileName); err == nil {
+			fileName = decoded
+		}
+		fileName = filepath.Clean(fileName)
+		if strings.HasPrefix(fileName, "..") {
+			logging.LogWarnf("read export file [%s] blocked: path traversal attempt [%s]", pathStr, fileName)
+			return nil
+		}
+		absPath = filepath.Join(util.TempDir, "export", fileName)
+		exportBaseDir := filepath.Join(util.TempDir, "export")
+		if !gulu.File.IsSubPath(exportBaseDir, absPath) {
+			logging.LogWarnf("read export file [%s] blocked: path [%s] is outside export base dir [%s]", pathStr, absPath, exportBaseDir)
+			return nil
+		}
+	} else if strings.HasPrefix(pathStr, "assets/") {
+		var err error
+		absPath, err = model.GetAssetAbsPath(pathStr)
+		if nil != err {
+			logging.LogErrorf("get asset abs path [%s] failed: %s", pathStr, err)
+			return nil
+		}
+	} else {
+		logging.LogWarnf("read export file [%s] failed: unsupported path prefix", pathStr)
+		return nil
+	}
+
+	if "" == absPath {
+		logging.LogWarnf("read export file [%s] failed: resolved to empty abs path", pathStr)
+		return nil
+	}
+
+	data, err := os.ReadFile(absPath)
+	if nil != err {
+		logging.LogErrorf("read export file [%s] failed: %s", absPath, err)
+		return nil
+	}
+	return C.CString(base64.StdEncoding.EncodeToString(data))
 }
 
 //export Exit
