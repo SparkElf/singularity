@@ -26,17 +26,15 @@ import (
 
 	"github.com/88250/gulu"
 	"github.com/88250/lute"
-	"github.com/88250/lute/parse"
 	"github.com/gofrs/flock"
-	"github.com/siyuan-note/dataparser"
-	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 var (
 	indexMu         sync.Mutex
-	indexQueueSize       atomic.Int64
+	indexQueueSize  atomic.Int64
 	skipIndexAppend atomic.Bool
 	indexFlock      *flock.Flock
 )
@@ -276,42 +274,42 @@ func processIndexEntries(entries []indexEntry, prefix string) {
 	for _, e := range entries {
 		switch e.Action {
 		case "upsert":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s upsert: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			UpsertTreeQueue(tree)
 		case "index":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s index: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			IndexTreeQueue(tree)
 		case "rename":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s rename: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			RenameTreeQueue(tree)
 		case "move":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s move: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			MoveTreeQueue(tree)
 		case "update_refs":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s update_refs: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
 			}
 			UpdateRefsTreeQueue(tree)
 		case "delete_refs":
-			tree, err := loadTreeFromDisk(e.Box, e.Path, luteEngine)
+			tree, err := filesys.LoadTree(e.Box, e.Path, luteEngine)
 			if err != nil {
 				logging.LogWarnf("%s delete_refs: load tree [%s/%s] failed: %s", prefix, e.Box, e.Path, err)
 				continue
@@ -333,20 +331,4 @@ func processIndexEntries(entries []indexEntry, prefix string) {
 			IndexNodeQueue(e.ID)
 		}
 	}
-}
-
-func loadTreeFromDisk(box, p string, luteEngine *lute.Lute) (tree *parse.Tree, err error) {
-	filePath := filepath.Join(util.DataDir, box, p)
-	data, err := filelock.ReadFile(filePath)
-	if err != nil {
-		return
-	}
-
-	tree, _, err = dataparser.ParseJSON(data, luteEngine.ParseOptions)
-	if err != nil {
-		return
-	}
-	tree.Box = box
-	tree.Path = p
-	return
 }
