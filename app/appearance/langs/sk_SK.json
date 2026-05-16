@@ -1785,6 +1785,11 @@
     "285": "Nesprávne heslo",
     "286": "[%s] bol vrátený",
     "287": "Prístupový autorizačný kód nemôže obsahovať iba medzery. Ak ho chcete zakázať, jednoducho vymažte vstupné pole",
-    "288": " (Predvolené)"
+    "288": " (Predvolené)",
+    "289": "Exportované do Prevzatia",
+    "290": "Export zlyhal",
+    "291": "Súbor nebol nájdený alebo je prázdny",
+    "292": "Súbor sa nedá vytvoriť",
+    "293": "Do súboru sa nedá zapísať"
   }
 }

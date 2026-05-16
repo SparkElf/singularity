@@ -1785,6 +1785,11 @@
     "285": "Wachtwoord onjuist",
     "286": "[%s] is al teruggedraaid",
     "287": "Toegangscode mag niet alleen spaties bevatten",
-    "288": " (Standaard)"
+    "288": " (Standaard)",
+    "289": "Geëxporteerd naar Downloads",
+    "290": "Export mislukt",
+    "291": "Bestand niet gevonden of leeg",
+    "292": "Kan bestand niet aanmaken",
+    "293": "Kan niet naar bestand schrijven"
   }
 }

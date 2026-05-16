@@ -1785,6 +1785,11 @@
     "285": "La contraseña es incorrecta",
     "286": "[%s] ya ha sido revertido",
     "287": "El código de autorización de acceso no puede contener solo espacios. Si desea desactivarlo, simplemente borre el cuadro de entrada",
-    "288": " (Por defecto)"
+    "288": " (Por defecto)",
+    "289": "Exportado a Descargas",
+    "290": "Error al exportar",
+    "291": "Archivo no encontrado o vacío",
+    "292": "No se puede crear el archivo",
+    "293": "No se puede escribir el archivo"
   }
 }

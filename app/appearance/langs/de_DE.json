@@ -1785,6 +1785,11 @@
     "285": "Passwort ist falsch",
     "286": "[%s] wurde bereits zurückgesetzt",
     "287": "Der Zugriffsautorisierungscode darf nicht nur aus Leerzeichen bestehen. Um ihn zu deaktivieren, leeren Sie das Eingabefeld direkt",
-    "288": " (Standard)"
+    "288": " (Standard)",
+    "289": "In Downloads exportiert",
+    "290": "Export fehlgeschlagen",
+    "291": "Datei nicht gefunden oder leer",
+    "292": "Datei kann nicht erstellt werden",
+    "293": "Datei kann nicht geschrieben werden"
   }
 }
