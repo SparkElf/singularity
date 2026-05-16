@@ -839,6 +839,9 @@ export const addResize = (obj: Layout | Wnd, after = true) => {
                     nextNowSize < 64 && nextNowSize < nextSize) {
                     return;
                 }
+                if (nextElement.classList.contains("layout__center") && nextNowSize <= 148) {
+                    return;
+                }
                 if (!previousElement.classList.contains("fn__flex-1")) {
                     previousElement.style[direction === "lr" ? "width" : "height"] = previousNowSize + "px";
                 }
