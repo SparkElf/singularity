@@ -1785,6 +1785,11 @@
     "285": "Şifre yanlış",
     "286": "[%s] geri alındı",
     "287": "Erişim yetkilendirme kodu yalnızca boşluklardan oluşamaz. Devre dışı bırakmak için giriş kutusunu doğrudan temizleyin",
-    "288": " (Varsayılan)"
+    "288": " (Varsayılan)",
+    "289": "İndirilenlere aktarıldı",
+    "290": "Dışa aktarma başarısız",
+    "291": "Dosya bulunamadı veya boş",
+    "292": "Dosya oluşturulamadı",
+    "293": "Dosyaya yazılamadı"
   }
 }

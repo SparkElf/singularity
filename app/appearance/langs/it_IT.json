@@ -1785,6 +1785,11 @@
     "285": "La password è errata",
     "286": "[%s] è già stato ripristinato",
     "287": "Il codice di autorizzazione di accesso non può contenere solo spazi. Per disabilitarlo, svuota direttamente il campo di input",
-    "288": " (Predefinito)"
+    "288": " (Predefinito)",
+    "289": "Esportato in Download",
+    "290": "Esportazione fallita",
+    "291": "File non trovato o vuoto",
+    "292": "Impossibile creare il file",
+    "293": "Impossibile scrivere il file"
   }
 }

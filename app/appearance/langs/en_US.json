@@ -1785,6 +1785,11 @@
     "285": "Password is incorrect",
     "286": "[%s] has already been rolled back",
     "287": "The access auth code cannot contain only spaces. To disable it, just clear the input box",
-    "288": " (Default)"
+    "288": " (Default)",
+    "289": "Exported to Downloads",
+    "290": "Export failed",
+    "291": "File not found or empty",
+    "292": "Cannot create file",
+    "293": "Cannot write file"
   }
 }

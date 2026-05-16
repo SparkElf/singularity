@@ -1785,6 +1785,11 @@
     "285": "Hasło jest nieprawidłowe",
     "286": "[%s] został cofnięty",
     "287": "Kod autoryzacji dostępu nie może składać się wyłącznie ze spacji. Aby go wyłączyć, po prostu wyczyść pole wprowadzania",
-    "288": " (Domyślny)"
+    "288": " (Domyślny)",
+    "289": "Wyeksportowano do Pobrane",
+    "290": "Eksport nie powiódł się",
+    "291": "Plik nie znaleziony lub pusty",
+    "292": "Nie można utworzyć pliku",
+    "293": "Nie można zapisać pliku"
   }
 }

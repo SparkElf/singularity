@@ -142,17 +142,14 @@ export const saveExportFile = async (uri: string) => {
     try {
         if (isInAndroid()) {
             window.JSAndroid.saveExportFile(uri);
-            showMessage(window.siyuan.languages.exported);
             return;
         }
         if (isInIOS()) {
             window.webkit.messageHandlers.saveExportFile.postMessage(uri);
-            showMessage(window.siyuan.languages.exported);
             return;
         }
         if (isInHarmony()) {
             window.JSHarmony.saveExportFile(uri);
-            showMessage(window.siyuan.languages.exported);
             return;
         }
         const openUrl = new URL(uri, `${location.origin}/`);

@@ -1785,6 +1785,11 @@
     "285": "A senha está incorreta",
     "286": "[%s] já foi revertido",
     "287": "O código de autorização de acesso não pode conter apenas espaços. Para desativá-lo, basta limpar o campo de entrada",
-    "288": " (Padrão)"
+    "288": " (Padrão)",
+    "289": "Exportado para Downloads",
+    "290": "Falha na exportação",
+    "291": "Arquivo não encontrado ou vazio",
+    "292": "Não foi possível criar o arquivo",
+    "293": "Não foi possível gravar o arquivo"
   }
 }
