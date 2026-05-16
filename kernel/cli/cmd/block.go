@@ -245,7 +245,7 @@ var blockPrependCmd = &cobra.Command{
 		dom := markdownToBlockDOM(data)
 		transactions := []*model.Transaction{{
 			DoOperations: []*model.Operation{{
-				Action:   "prepend",
+				Action:   "prependInsert",
 				Data:     dom,
 				ParentID: parentID,
 			}},
