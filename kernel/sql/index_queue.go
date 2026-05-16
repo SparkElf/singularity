@@ -212,6 +212,9 @@ func PollIndexQueue() {
 		return
 	}
 
+	initDatabaseLock.Lock()
+	defer initDatabaseLock.Unlock()
+
 	_ = indexFlock.Lock()
 	defer func() { _ = indexFlock.Unlock() }()
 
