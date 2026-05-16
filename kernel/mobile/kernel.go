@@ -305,10 +305,11 @@ func Unzip(zipFilePath, destination string) {
 	}
 }
 
-// ReadExportFile 读取导出文件内容，绕过 HTTP 层以避免访问授权码拦截。
+// GetExportFilePath 解析导出文件绝对路径，绕过 HTTP 层以避免访问授权码拦截。
 // exportPath 格式为 "/export/xxx.zip" 或 "assets/xxx"。
-// 返回文件字节，失败返回 nil。
-func ReadExportFile(exportPath string) (ret []byte) {
+// 返回文件在磁盘上的绝对路径，以便原生端分块拷贝，避免大文件内存溢出。
+// 解析失败返回空字符串。
+func GetExportFilePath(exportPath string) (ret string) {
 	var absPath string
 	if strings.HasPrefix(exportPath, "/export/") {
 		fileName := strings.TrimPrefix(exportPath, "/export/")
@@ -317,13 +318,13 @@ func ReadExportFile(exportPath string) (ret []byte) {
 		}
 		fileName = filepath.Clean(fileName)
 		if strings.HasPrefix(fileName, "..") {
-			logging.LogWarnf("read export file [%s] blocked: path traversal attempt [%s]", exportPath, fileName)
+			logging.LogWarnf("get export file path [%s] blocked: path traversal attempt [%s]", exportPath, fileName)
 			return
 		}
 		absPath = filepath.Join(util.TempDir, "export", fileName)
 		exportBaseDir := filepath.Join(util.TempDir, "export")
 		if !gulu.File.IsSubPath(exportBaseDir, absPath) {
-			logging.LogWarnf("read export file [%s] blocked: path [%s] is outside export base dir [%s]", exportPath, absPath, exportBaseDir)
+			logging.LogWarnf("get export file path [%s] blocked: path [%s] is outside export base dir [%s]", exportPath, absPath, exportBaseDir)
 			return
 		}
 	} else if strings.HasPrefix(exportPath, "assets/") {
@@ -334,21 +335,15 @@ func ReadExportFile(exportPath string) (ret []byte) {
 			return
 		}
 	} else {
-		logging.LogWarnf("read export file [%s] failed: unsupported path prefix", exportPath)
+		logging.LogWarnf("get export file path [%s] failed: unsupported path prefix", exportPath)
 		return
 	}
 
 	if "" == absPath {
-		logging.LogWarnf("read export file [%s] failed: resolved to empty abs path", exportPath)
+		logging.LogWarnf("get export file path [%s] failed: resolved to empty abs path", exportPath)
 		return
 	}
-
-	data, err := os.ReadFile(absPath)
-	if nil != err {
-		logging.LogErrorf("read export file [%s] failed: %s", absPath, err)
-		return
-	}
-	return data
+	return absPath
 }
 
 func Exit() {
