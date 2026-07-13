@@ -517,6 +517,8 @@ type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/s
     IProtyle
 >;
 
+type TProtyleEditorRegistry = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleEditorRegistry<IProtyle>;
+
 interface IProtyle {
     highlight: {
         mark: Highlight
@@ -529,9 +531,11 @@ interface IProtyle {
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
     app: import("../index").App,
+    editors: TProtyleEditorRegistry,
     host: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort,
     plugins: TProtylePluginPort,
     id: string,
+    destroyed?: boolean,
     query?: {
         key: string,
         method: number

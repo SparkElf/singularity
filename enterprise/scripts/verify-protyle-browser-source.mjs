@@ -3,6 +3,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import {
+  auditRegistryMigrationAst,
+  collectModuleLoads,
+} from "./protyle-browser-source-audit.mjs";
 
 const enterpriseRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(enterpriseRoot, "..");
@@ -55,54 +59,6 @@ function collectTypeScriptFiles(directory) {
       return sourceExtensions.has(extname(entry.name)) ? [entryPath] : [];
     })
     .sort();
-}
-
-function collectModuleLoads(sourceFile) {
-  const moduleLoads = [];
-
-  function visit(node) {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-      moduleLoads.push({
-        kind: "static",
-        specifier: ts.isStringLiteralLike(node.moduleSpecifier) ? node.moduleSpecifier.text : null,
-      });
-    }
-
-    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-      const expression = node.moduleReference.expression;
-      moduleLoads.push({
-        kind: "require",
-        specifier: expression && ts.isStringLiteralLike(expression) ? expression.text : null,
-      });
-    }
-
-    if (ts.isImportTypeNode(node)) {
-      const argument = node.argument;
-      moduleLoads.push({
-        kind: "static",
-        specifier: ts.isLiteralTypeNode(argument) && ts.isStringLiteralLike(argument.literal)
-          ? argument.literal.text
-          : null,
-      });
-    }
-
-    if (ts.isCallExpression(node)) {
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
-      const argument = node.arguments[0];
-      if (isDynamicImport || isRequire) {
-        moduleLoads.push({
-          kind: isRequire ? "require" : "dynamic",
-          specifier: argument && ts.isStringLiteralLike(argument) ? argument.text : null,
-        });
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return moduleLoads;
 }
 
 function getAccessName(node) {
@@ -161,6 +117,10 @@ for (const file of files) {
   for (const access of collectPluginRegistryAccesses(sourceFile)) {
     const line = sourceFile.getLineAndCharacterOfPosition(access.getStart(sourceFile)).line + 1;
     violations.push(`${relativeFile}:${line}: direct App.plugins access is forbidden; use ProtylePluginPort`);
+  }
+
+  for (const violation of auditRegistryMigrationAst(file, sourceFile)) {
+    violations.push(`${relativeFile}:${violation.line}: ${violation.message}`);
   }
 
   for (const statement of sourceFile.statements) {
@@ -261,13 +221,16 @@ for (const file of boundaryIntegrationFiles) {
   const scriptKind = extname(file) === ".tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, scriptKind);
   const relativeFile = relative(repositoryRoot, file);
-
   for (const diagnostic of sourceFile.parseDiagnostics) {
     const line = diagnostic.start === undefined
       ? 1
       : sourceFile.getLineAndCharacterOfPosition(diagnostic.start).line + 1;
     const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
     violations.push(`${relativeFile}:${line}: TypeScript syntax error TS${diagnostic.code}: ${message}`);
+  }
+
+  for (const violation of auditRegistryMigrationAst(file, sourceFile)) {
+    violations.push(`${relativeFile}:${violation.line}: ${violation.message}`);
   }
 
   for (const statement of sourceFile.statements) {

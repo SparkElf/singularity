@@ -55,14 +55,19 @@ export class Protyle {
      * @param id 要挂载 Protyle 的元素或者元素 ID。
      * @param options Protyle 参数
      */
-    constructor(app: App, id: HTMLElement, options?: IProtyleOptions) {
+    constructor(app: App, id: HTMLElement, options?: IProtyleOptions, lifecycle?: {
+        participateInSession?: boolean,
+    }) {
         this.version = Constants.SIYUAN_VERSION;
+        const participateInSession = lifecycle?.participateInSession !== false &&
+            !options?.action?.includes(Constants.CB_GET_HISTORY);
         const pluginsOptions = app.protylePlugins.extendOptions(options);
         const getOptions = new Options(pluginsOptions);
         const mergedOptions = getOptions.merge();
         this.protyle = {
             getInstance: () => this,
             app,
+            editors: app.protyleEditors,
             host: app.protyleHost,
             plugins: app.protylePlugins,
             id: genUUID(),
@@ -119,7 +124,11 @@ export class Protyle {
         }
 
         this.init();
-        if (!mergedOptions.action.includes(Constants.CB_GET_HISTORY)) {
+        if (participateInSession) {
+            this.protyle.editors.register(this.protyle);
+            this.protyle.wysiwyg.element.addEventListener("focusin", () => {
+                this.protyle.editors.activate(this.protyle);
+            });
             this.protyle.ws = new Model({app});
             this.protyle.ws.connect({
                 id: this.protyle.id,

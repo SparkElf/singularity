@@ -83,7 +83,7 @@ export const onGetConfig = (isStart: boolean, app: App) => {
     let firstResize = true;
     window.addEventListener("resize", () => {
         if (firstResize) {
-            recordBeforeResizeTop();
+            recordBeforeResizeTop(app.protyleEditors);
             firstResize = false;
         }
         window.clearTimeout(resizeTimeout);

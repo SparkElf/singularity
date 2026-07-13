@@ -4,31 +4,39 @@ on:
   pull_request:
     paths:
       - ".github/workflows/singularity-l0.yml"
+      - "app/src/block/Panel.ts"
       - "app/src/boot/onGetConfig.ts"
       - "app/src/card/makeCard.ts"
       - "app/src/editor/util.ts"
-      - "app/src/host/protyle.ts"
+      - "app/src/host/**"
       - "app/src/index.ts"
+      - "app/src/layout/**"
+      - "app/src/menus/commonMenuItem.ts"
       - "app/src/protyle/**"
       - "app/src/types/protyle.d.ts"
       - "app/src/window/init.ts"
+      - "app/webpack*.js"
       - "config/**"
       - "enterprise/**"
       - "kernel/**"
       - "scripts/singularity/**"
   push:
     branches:
-      - main
+      - master
     paths:
       - ".github/workflows/singularity-l0.yml"
+      - "app/src/block/Panel.ts"
       - "app/src/boot/onGetConfig.ts"
       - "app/src/card/makeCard.ts"
       - "app/src/editor/util.ts"
-      - "app/src/host/protyle.ts"
+      - "app/src/host/**"
       - "app/src/index.ts"
+      - "app/src/layout/**"
+      - "app/src/menus/commonMenuItem.ts"
       - "app/src/protyle/**"
       - "app/src/types/protyle.d.ts"
       - "app/src/window/init.ts"
+      - "app/webpack*.js"
       - "config/**"
       - "enterprise/**"
       - "kernel/**"
@@ -89,7 +97,7 @@ jobs:
         run: pnpm --filter @singularity/web exec playwright install --with-deps chromium
         working-directory: enterprise
 
-      - name: Browser tests
+      - name: Static workspace browser check
         env:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ""
         run: pnpm e2e

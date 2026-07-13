@@ -19,7 +19,6 @@ import {makeCard} from "../card/makeCard";
 import {openByMobile} from "../editor/openLink";
 import {Constants} from "../constants";
 import {fetchPost} from "../util/fetch";
-import {getAllModels} from "../layout/getAll";
 import {getDisplayName, getNotebookName, pathPosix} from "../util/pathName";
 import {showMessage} from "../dialog/message";
 
@@ -182,9 +181,9 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             openByMobile(event.url);
             return;
         case "close-document":
-            getAllModels().editor.forEach((editor) => {
-                if (editor.editor.protyle.block.rootID === event.documentId) {
-                    editor.parent.parent.removeTab(editor.parent.id);
+            app.protyleEditors.forEach((editor) => {
+                if (editor.block.rootID === event.documentId && editor.model) {
+                    editor.model.parent.parent.removeTab(editor.model.parent.id);
                 }
             });
             return;

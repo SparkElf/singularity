@@ -426,7 +426,7 @@ export class Dock {
             return;
         }
         if (this.pin) {
-            recordBeforeResizeTop();
+            recordBeforeResizeTop(this.app.protyleEditors);
         }
         const target = document.querySelector(`.dock__item[data-type="${type}"]`) as HTMLElement;
         if (show && target.classList.contains("dock__item--active")) {
@@ -450,7 +450,7 @@ export class Dock {
                     if (document.activeElement) {
                         (document.activeElement as HTMLElement).blur();
                     }
-                    clearBeforeResizeTop();
+                    clearBeforeResizeTop(this.app.protyleEditors);
                     this.showDock();
                     return;
                 }

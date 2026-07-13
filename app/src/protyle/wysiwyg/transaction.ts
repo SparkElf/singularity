@@ -8,7 +8,6 @@ import {highlightRender} from "../render/highlightRender";
 import {hasClosestBlock, hasClosestByAttribute, hasTopClosestByAttribute, isInEmbedBlock} from "../util/hasClosest";
 import {zoomOut} from "../../menus/protyle";
 import {disabledProtyle, enableProtyle, onGet} from "../util/onGet";
-import {getAllModels} from "../../layout/getAll";
 import {avRender, refreshAV} from "../render/av/render";
 import {removeFoldHeading} from "../util/heading";
 import {cancelSB, genEmptyElement, genSBElement, refreshSbResize} from "../../block/util";
@@ -706,21 +705,14 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
             }
             if (updateElements.length === 0) {
                 // 打开两个相同的文档 A、A1，从 A 拖拽块 B 到 A1，在后续 ws 处理中，无法获取到拖拽出去的 B
-                getAllModels().editor.forEach(editor => {
-                    const updateCloneElement = editor.editor.protyle.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`);
-                    if (updateCloneElement) {
-                        updateElements.push(updateCloneElement.cloneNode(true) as Element);
-                    }
+                let updateCloneElement: Element;
+                protyle.editors.find(editor => {
+                    updateCloneElement = editor.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`);
+                    return Boolean(updateCloneElement);
                 });
-            }
-            if (updateElements.length === 0) {
-                // 页签拖入浮窗 https://github.com/siyuan-note/siyuan/issues/6647
-                window.siyuan.blockPanels.forEach((item) => {
-                    const updateCloneElement = item.element.querySelector(`[data-node-id="${operation.id}"]`);
-                    if (updateCloneElement) {
-                        updateElements.push(updateCloneElement.cloneNode(true) as Element);
-                    }
-                });
+                if (updateCloneElement) {
+                    updateElements.push(updateCloneElement.cloneNode(true) as Element);
+                }
             }
             // 折叠标题移动到横向超级块的第一个块上后撤销
             if (updateElements.length === 0) {

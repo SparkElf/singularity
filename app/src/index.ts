@@ -49,15 +49,18 @@ import {reloadSync} from "./util/reloadSync";
 import {setTitle} from "./util/processTitle";
 import {createAppProtyleHost} from "./host/protyle";
 import {createAppProtylePluginPort} from "./host/plugin";
+import {createProtyleEditorRegistry} from "../../enterprise/packages/protyle-browser/src";
 import type {ProtyleHostPort} from "../../enterprise/packages/protyle-browser/src/contracts";
 
 export class App {
     public plugins: import("./plugin").Plugin[] = [];
+    public readonly protyleEditors: TProtyleEditorRegistry;
     public readonly protyleHost: ProtyleHostPort;
     public readonly protylePlugins: TProtylePluginPort;
     public appId: string;
 
     constructor() {
+        this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
         this.protyleHost = createAppProtyleHost(this);
         this.protylePlugins = createAppProtylePluginPort(this);
         if (checkPublishServiceClosed()) {

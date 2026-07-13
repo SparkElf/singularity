@@ -6,6 +6,7 @@ export type {
   ProtyleDocumentScope,
   ProtyleDocumentScroll,
   ProtyleDocumentScrollRestore,
+  ProtyleEditorRegistry,
   ProtyleFactory,
   ProtyleHostEvent,
   ProtyleHostPort,
@@ -15,3 +16,5 @@ export type {
   ProtylePluginSlashItem,
   ProtyleSession,
 } from "./contracts.ts";
+
+export { createProtyleEditorRegistry } from "./registry.ts";

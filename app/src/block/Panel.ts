@@ -32,6 +32,8 @@ export class BlockPanel {
     private observerResize: ResizeObserver;
     private observerLoad: IntersectionObserver;
     private originalRefBlockIDs: IObject;
+    private abortController = new AbortController();
+    private destroyed = false;
 
     // x,y 和 targetElement 二选一必传
     constructor(options: {
@@ -157,11 +159,11 @@ export class BlockPanel {
     private initProtyle(editorElement: HTMLElement, afterCB?: () => void) {
         const index = parseInt(editorElement.getAttribute("data-index"));
         fetchPost("/api/block/getBlockInfo", {id: this.refDefs[index].refID}, (response) => {
-            if (response.code === 3) {
-                showMessage(response.msg);
+            if (this.destroyed || !editorElement.isConnected) {
                 return;
             }
-            if (!this.targetElement && typeof this.x === "undefined" && typeof this.y === "undefined") {
+            if (response.code === 3) {
+                showMessage(response.msg);
                 return;
             }
             const action: TProtyleAction[] = [];
@@ -188,6 +190,9 @@ export class BlockPanel {
                 },
                 typewriterMode: false,
                 after: (editor) => {
+                    if (this.destroyed) {
+                        return;
+                    }
                     if (response.data.rootID !== this.refDefs[index].refID) {
                         editor.protyle.breadcrumb.element.parentElement.lastElementChild.classList.remove("fn__none");
                     }
@@ -204,10 +209,15 @@ export class BlockPanel {
                 }
             });
             this.editors.push(editor);
-        });
+        }, undefined, undefined, this.abortController.signal);
     }
 
     public destroy() {
+        if (this.destroyed) {
+            return;
+        }
+        this.destroyed = true;
+        this.abortController.abort();
         this.observerResize?.disconnect();
         this.observerLoad?.disconnect();
         window.siyuan.blockPanels.find((item, index) => {
@@ -223,6 +233,9 @@ export class BlockPanel {
                 item.destroy();
             });
             this.editors = [];
+        }
+        if (this.targetElement) {
+            this.targetElement.style.cursor = "";
         }
         const level = parseInt(this.element.dataset.level);
         this.element.remove();
