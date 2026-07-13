@@ -1,0 +1,30 @@
+{
+  "name": "@singularity/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @singularity/web build",
+    "dev": "pnpm --filter @singularity/web dev",
+    "e2e": "pnpm --filter @singularity/web e2e",
+    "lint": "pnpm verify:protyle-platform && pnpm verify:protyle-boundary && eslint apps/web packages/protyle-browser/src --config eslint.config.mjs --max-warnings=0",
+    "test": "pnpm --filter @singularity/web test",
+    "typecheck": "pnpm --filter @singularity/web typecheck",
+    "verify:protyle-boundary": "node scripts/verify-protyle-browser-boundary.mjs",
+    "verify:protyle-platform": "node ../scripts/singularity/resolve-protyle-browser-directives.mjs --check && node scripts/verify-protyle-browser-source.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.7.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "17.7.0",
+    "shadcn": "4.13.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.63.0",
+    "zod": "3.25.76"
+  }
+}

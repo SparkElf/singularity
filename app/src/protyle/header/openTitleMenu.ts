@@ -3,27 +3,13 @@ import {MenuItem} from "../../menus/Menu";
 import {copySubMenu, exportMd, movePathToMenu, openFileAttr, openFileWechatNotify,} from "../../menus/commonMenuItem";
 import {deleteFile} from "../../editor/deleteFile";
 import {encodeBase64, updateHotkeyTip} from "../util/compatibility";
-/// #if !MOBILE
-import {openBacklink, openGraph, openOutline} from "../../layout/dock/util";
-import * as path from "path";
-/// #else
-import {openMobileFileById} from "../../mobile/editor";
-/// #endif
 import {Constants} from "../../constants";
-import {openCardByData} from "../../card/openCard";
-import {viewCards} from "../../card/viewCards";
-import {getDisplayName, getNotebookName, pathPosix, useShell} from "../../util/pathName";
-import {makeCard, quickMakeCard} from "../../card/makeCard";
-import {emitOpenMenu} from "../../plugin/EventBus";
+import {quickMakeCard} from "../../card/makeCard";
+import {emitProtylePluginMenu} from "../util/plugin";
 import * as dayjs from "dayjs";
 import {hideTooltip} from "../../dialog/tooltip";
-import {popSearch} from "../../mobile/menu/search";
-import {openSearch} from "../../search/spread";
-import {openDocHistory} from "../../history/doc";
-import {openNewWindowById} from "../../window/openNewWindow";
 import {transferBlockRef} from "../../menus/block";
 import {addEditorToDatabase} from "../render/av/addToDatabase";
-import {openFileById} from "../../editor/util";
 import {hasTopClosestByClassName} from "../util/hasClosest";
 import {showMessage} from "../../dialog/message";
 import {removeZWJ} from "../util/normalizeText";
@@ -99,7 +85,6 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 }
             }).element);
         }
-        /// #if !MOBILE
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_1", type: "separator"}).element);
         window.siyuan.menus.menu.append(new MenuItem({
             id: "outline",
@@ -107,11 +92,10 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.outline,
             accelerator: window.siyuan.config.keymap.editor.general.outline.custom,
             click: () => {
-                openOutline({
-                    app: protyle.app,
-                    rootId: protyle.block.rootID,
-                    title: protyle.options.render.title ? (protyle.title.editElement.textContent || window.siyuan.languages.untitled) : "",
-                    isPreview: !protyle.preview.element.classList.contains("fn__none")
+                protyle.host.dispatch({
+                    type: "open-outline",
+                    documentId: protyle.block.rootID,
+                    preview: !protyle.preview.element.classList.contains("fn__none"),
                 });
             }
         }).element);
@@ -121,12 +105,9 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.backlinks,
             accelerator: window.siyuan.config.keymap.editor.general.backlinks.custom,
             click: () => {
-                openBacklink({
-                    app: protyle.app,
-                    blockId: protyle.block.id,
-                    rootId: protyle.block.rootID,
-                    useBlockId: protyle.block.showAll,
-                    title: protyle.title ? (protyle.title.editElement.textContent || window.siyuan.languages.untitled) : null
+                protyle.host.dispatch({
+                    type: "open-backlinks",
+                    documentId: protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
                 });
             }
         }).element);
@@ -136,16 +117,13 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.graphView,
             accelerator: window.siyuan.config.keymap.editor.general.graphView.custom,
             click: () => {
-                openGraph({
-                    app: protyle.app,
-                    blockId: protyle.block.id,
-                    rootId: protyle.block.rootID,
-                    useBlockId: protyle.block.showAll,
-                    title: protyle.title ? (protyle.title.editElement.textContent || window.siyuan.languages.untitled) : null
+                protyle.host.dispatch({
+                    type: "open-graph",
+                    scope: "document",
+                    documentId: protyle.block.id,
                 });
             }
         }).element);
-        /// #endif
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
         window.siyuan.menus.menu.append(new MenuItem({
             id: "attr",
@@ -174,8 +152,9 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.spaceRepetition,
                 accelerator: window.siyuan.config.keymap.editor.general.spaceRepetition.custom,
                 click: () => {
-                    fetchPost("/api/riff/getTreeRiffDueCards", {rootID: protyle.block.rootID}, (response) => {
-                        openCardByData(protyle.app, response.data, "doc", protyle.block.rootID, response.data.name);
+                    protyle.host.dispatch({
+                        type: "open-card-review",
+                        documentId: protyle.block.rootID,
                     });
                 }
             }, {
@@ -183,10 +162,9 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 iconHTML: "",
                 label: window.siyuan.languages.manage,
                 click: () => {
-                    fetchPost("/api/filetree/getHPathByID", {
-                        id: protyle.block.rootID
-                    }, (response) => {
-                        viewCards(protyle.app, protyle.block.rootID, pathPosix().join(getNotebookName(protyle.notebookId), (response.data)), "Tree");
+                    protyle.host.dispatch({
+                        type: "open-card-browser",
+                        documentId: protyle.block.rootID,
                     });
                 }
             }, {
@@ -210,7 +188,10 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                     iconHTML: "",
                     label: window.siyuan.languages.addToDeck,
                     click: () => {
-                        makeCard(protyle.app, [protyle.block.rootID]);
+                        protyle.host.dispatch({
+                            type: "open-card-deck-picker",
+                            blockIds: [protyle.block.rootID],
+                        });
                     }
                 });
             }
@@ -227,27 +208,11 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.search,
             icon: "iconSearch",
             accelerator: window.siyuan.config.keymap.general.search.custom,
-            async click() {
-                const searchPath = getDisplayName(protyle.path, false, true);
-                /// #if MOBILE
-                const pathResponse = await fetchSyncPost("/api/filetree/getHPathByPath", {
-                    notebook: protyle.notebookId,
-                    path: searchPath + ".sy"
+            click() {
+                protyle.host.dispatch({
+                    type: "open-document-search",
+                    documentId: protyle.block.rootID,
                 });
-                popSearch(protyle.app, {
-                    hasReplace: false,
-                    hPath: pathPosix().join(getNotebookName(protyle.notebookId), pathResponse.data),
-                    idPath: [pathPosix().join(protyle.notebookId, searchPath)],
-                    page: 1,
-                });
-                /// #else
-                openSearch({
-                    app: protyle.app,
-                    hotkey: Constants.DIALOG_SEARCH,
-                    notebookId: protyle.notebookId,
-                    searchPath
-                });
-                /// #endif
             }
         }).element);
         if (!protyle.disabled) {
@@ -260,47 +225,28 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.openBy,
                 icon: "iconOpen",
                 click() {
-                    /// #if !MOBILE
-                    openFileById({
-                        app: protyle.app,
-                        id: protyle.block.id,
-                        action: protyle.block.rootID !== protyle.block.id ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_CONTEXT],
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: protyle.block.id,
+                        disposition: "current",
+                        scope: protyle.block.rootID !== protyle.block.id ? "subtree" : "context",
+                        attention: protyle.block.rootID !== protyle.block.id ? "focus" : "none",
+                        scroll: "auto",
+                        restoreScroll: "never",
+                        zoom: false,
                     });
-                    /// #else
-                    openMobileFileById(protyle.app, protyle.block.id, protyle.block.rootID !== protyle.block.id ? [Constants.CB_GET_ALL] : [Constants.CB_GET_CONTEXT]);
-                    /// #endif
                 }
             }).element);
         }
-        /// #if !BROWSER
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "openByNewWindow",
-            label: window.siyuan.languages.openByNewWindow,
-            icon: "iconOpenWindow",
-            click() {
-                openNewWindowById(protyle.block.rootID);
-            }
-        }).element);
-        window.siyuan.menus.menu.append(new MenuItem({
-            id: "showInFolder",
-            icon: "iconFolder",
-            label: window.siyuan.languages.showInFolder,
-            click: () => {
-                useShell("showItemInFolder", path.join(window.siyuan.config.system.dataDir, protyle.notebookId, protyle.path));
-            }
-        }).element);
-        /// #endif
         if (!protyle.disabled) {
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "fileHistory",
                 label: window.siyuan.languages.fileHistory,
                 icon: "iconHistory",
                 click() {
-                    openDocHistory({
-                        app: protyle.app,
-                        id: protyle.block.rootID,
-                        notebookId: protyle.notebookId,
-                        pathString: response.data.name
+                    protyle.host.dispatch({
+                        type: "open-document-history",
+                        documentId: protyle.block.rootID,
                     });
                 }
             }).element);
@@ -308,17 +254,15 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
         window.siyuan.menus.menu.append(exportMd(protyle.block.showAll ? protyle.block.id : protyle.block.rootID));
 
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_4", type: "separator"}).element);
-        if (protyle?.app?.plugins) {
-            emitOpenMenu({
-                plugins: protyle.app.plugins,
-                type: "click-editortitleicon",
-                detail: {
-                    protyle,
-                    data: response.data,
-                },
-                separatorPosition: "bottom",
-            });
-        }
+        emitProtylePluginMenu({
+            plugins: protyle.plugins,
+            type: "click-editortitleicon",
+            detail: {
+                protyle,
+                data: response.data,
+            },
+            separatorPosition: "bottom",
+        });
         window.siyuan.menus.menu.append(new MenuItem({
             id: "updateAndCreatedAt",
             iconHTML: "",
@@ -326,10 +270,6 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             // 不能换行，否则移动端间距过大
             label: `${window.siyuan.languages.modifiedAt} ${dayjs(response.data.ial.updated).format("YYYY-MM-DD HH:mm:ss")}<br>${window.siyuan.languages.createdAt} ${dayjs(response.data.ial.id.substr(0, 14)).format("YYYY-MM-DD HH:mm:ss")}`
         }).element);
-        /// #if MOBILE
-        window.siyuan.menus.menu.fullscreen();
-        /// #else
         window.siyuan.menus.menu.popup(position);
-        /// #endif
     });
 };

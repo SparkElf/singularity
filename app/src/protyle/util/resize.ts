@@ -3,24 +3,19 @@ import {setPadding} from "../ui/initUI";
 import {hasClosestBlock, hasClosestByClassName} from "./hasClosest";
 import {Constants} from "../../constants";
 import {lineNumberRender} from "../render/highlightRender";
-/// #if !MOBILE
 import {getAllModels} from "../../layout/getAll";
-/// #endif
 import {stickyRow} from "../render/av/row";
 
 export const clearBeforeResizeTop = () => {
-    /// #if !MOBILE
     getAllModels().editor.forEach((item) => {
         if (item.editor && item.editor.protyle &&
             item.element.parentElement && !item.element.classList.contains("fn__none")) {
             item.editor.protyle.wysiwyg.element.querySelector("[data-resize-top]")?.removeAttribute("data-resize-top");
         }
     });
-    /// #endif
 };
 
 export const recordBeforeResizeTop = () => {
-    /// #if !MOBILE
     getAllModels().editor.forEach((item) => {
         if (item.editor && item.editor.protyle &&
             item.element.parentElement && !item.element.classList.contains("fn__none")) {
@@ -44,7 +39,6 @@ export const recordBeforeResizeTop = () => {
             topElement.setAttribute("data-resize-top", (contentRect.top - topElement.getBoundingClientRect().top).toString());
         }
     });
-    /// #endif
 };
 
 export const resize = (protyle: IProtyle) => {

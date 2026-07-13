@@ -1,7 +1,7 @@
 import {Constants} from "../../constants";
 import {uploadFiles, uploadLocalFiles} from "../upload";
 import {processPasteCode, processRender} from "./processCode";
-import {getLocalFiles, getTextSiyuanFromTextHTML, readText} from "./compatibility";
+import {getTextSiyuanFromTextHTML, readText} from "./compatibility";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName} from "./hasClosest";
 import {getEditorRange, getSelectionOffset} from "./selection";
 import {blockRender} from "../render/blockRender";
@@ -172,58 +172,48 @@ export const pasteEscaped = async (protyle: IProtyle, nodeElement: Element) => {
 };
 
 export const pasteAsPlainText = async (protyle: IProtyle) => {
-    let localFiles: ILocalFiles[] = [];
-    /// #if !BROWSER
-    localFiles = await getLocalFiles();
-    if (localFiles.length > 0) {
-        uploadLocalFiles(localFiles, protyle, false);
-        return;
-    }
-    /// #endif
-    if (localFiles.length === 0) {
-        // Inline-level elements support pasted as plain text https://github.com/siyuan-note/siyuan/issues/8010
-        let textPlain = await readText() || "";
-        if (getSelection().rangeCount > 0) {
-            const range = getSelection().getRangeAt(0);
-            if (hasClosestByAttribute(range.startContainer, "data-type", "code") || hasClosestByClassName(range.startContainer, "hljs")) {
-                insertHTML(removeZWJ(textPlain).replace(/```/g, "\u200D```"), protyle);
-                return;
-            }
+    // Inline-level elements support pasted as plain text https://github.com/siyuan-note/siyuan/issues/8010
+    let textPlain = await readText() || "";
+    if (getSelection().rangeCount > 0) {
+        const range = getSelection().getRangeAt(0);
+        if (hasClosestByAttribute(range.startContainer, "data-type", "code") || hasClosestByClassName(range.startContainer, "hljs")) {
+            insertHTML(removeZWJ(textPlain).replace(/```/g, "\u200D```"), protyle);
+            return;
         }
-        // 对一些内置需要解析的 HTML 标签进行内部转移 Improve sub/sup pasting as plain text https://github.com/siyuan-note/siyuan/issues/12155
-        textPlain = textPlain.replace(/<sub>/g, "__@sub@__").replace(/<\/sub>/g, "__@/sub@__");
-        textPlain = textPlain.replace(/<sup>/g, "__@sup@__").replace(/<\/sup>/g, "__@/sup@__");
-        textPlain = textPlain.replace(/<kbd>/g, "__@kbd@__").replace(/<\/kbd>/g, "__@/kbd@__");
-        textPlain = textPlain.replace(/<u>/g, "__@u@__").replace(/<\/u>/g, "__@/u@__");
-
-        // 删掉 <span data-type\="text".*>text</span> 标签，只保留文本
-        textPlain = textPlain.replace(/<span data-type="text".*?>(.*?)<\/span>/g, "$1");
-
-        // 对 <<assets/...>> 进行内部转义 https://github.com/siyuan-note/siyuan/issues/11992
-        textPlain = textPlain.replace(/<<assets\//g, "__@lt2assets/@__").replace(/>>/g, "__@gt2@__");
-
-        // 对 HTML 标签进行内部转义，避免被 Lute 解析以后变为小写 https://github.com/siyuan-note/siyuan/issues/10620
-        textPlain = textPlain.replace(/</g, ";;;lt;;;").replace(/>/g, ";;;gt;;;");
-
-        // 反转义 <<assets/...>>
-        textPlain = textPlain.replace(/__@lt2assets\/@__/g, "<<assets/").replace(/__@gt2@__/g, ">>");
-
-        // 反转义内置需要解析的 HTML 标签
-        textPlain = textPlain.replace(/__@sub@__/g, "<sub>").replace(/__@\/sub@__/g, "</sub>");
-        textPlain = textPlain.replace(/__@sup@__/g, "<sup>").replace(/__@\/sup@__/g, "</sup>");
-        textPlain = textPlain.replace(/__@kbd@__/g, "<kbd>").replace(/__@\/kbd@__/g, "</kbd>");
-        textPlain = textPlain.replace(/__@u@__/g, "<u>").replace(/__@\/u@__/g, "</u>");
-
-        // 临界区：Lute 已是所有编辑器共享的单例，此处临时把 inline-syntax 标志置 true 再恢复。
-        // enable/transform/restore 必须保持同步执行，中间不得插入 await，否则并发编辑器的
-        // 转换调用（如实时输入的 SpinBlockDOM）会读到被改写的标志而产生错误输出。
-        enableLuteMarkdownSyntax(protyle);
-        const content = protyle.lute.BlockDOM2EscapeMarkerContent(protyle.lute.Md2BlockDOM(textPlain));
-        restoreLuteMarkdownSyntax(protyle);
-
-        // insertHTML 会进行内部反转义
-        insertHTML(content, protyle, false, false, true);
     }
+    // 对一些内置需要解析的 HTML 标签进行内部转移 Improve sub/sup pasting as plain text https://github.com/siyuan-note/siyuan/issues/12155
+    textPlain = textPlain.replace(/<sub>/g, "__@sub@__").replace(/<\/sub>/g, "__@/sub@__");
+    textPlain = textPlain.replace(/<sup>/g, "__@sup@__").replace(/<\/sup>/g, "__@/sup@__");
+    textPlain = textPlain.replace(/<kbd>/g, "__@kbd@__").replace(/<\/kbd>/g, "__@/kbd@__");
+    textPlain = textPlain.replace(/<u>/g, "__@u@__").replace(/<\/u>/g, "__@/u@__");
+
+    // 删掉 <span data-type\="text".*>text</span> 标签，只保留文本
+    textPlain = textPlain.replace(/<span data-type="text".*?>(.*?)<\/span>/g, "$1");
+
+    // 对 <<assets/...>> 进行内部转义 https://github.com/siyuan-note/siyuan/issues/11992
+    textPlain = textPlain.replace(/<<assets\//g, "__@lt2assets/@__").replace(/>>/g, "__@gt2@__");
+
+    // 对 HTML 标签进行内部转义，避免被 Lute 解析以后变为小写 https://github.com/siyuan-note/siyuan/issues/10620
+    textPlain = textPlain.replace(/</g, ";;;lt;;;").replace(/>/g, ";;;gt;;;");
+
+    // 反转义 <<assets/...>>
+    textPlain = textPlain.replace(/__@lt2assets\/@__/g, "<<assets/").replace(/__@gt2@__/g, ">>");
+
+    // 反转义内置需要解析的 HTML 标签
+    textPlain = textPlain.replace(/__@sub@__/g, "<sub>").replace(/__@\/sub@__/g, "</sub>");
+    textPlain = textPlain.replace(/__@sup@__/g, "<sup>").replace(/__@\/sup@__/g, "</sup>");
+    textPlain = textPlain.replace(/__@kbd@__/g, "<kbd>").replace(/__@\/kbd@__/g, "</kbd>");
+    textPlain = textPlain.replace(/__@u@__/g, "<u>").replace(/__@\/u@__/g, "</u>");
+
+    // 临界区：Lute 已是所有编辑器共享的单例，此处临时把 inline-syntax 标志置 true 再恢复。
+    // enable/transform/restore 必须保持同步执行，中间不得插入 await，否则并发编辑器的
+    // 转换调用（如实时输入的 SpinBlockDOM）会读到被改写的标志而产生错误输出。
+    enableLuteMarkdownSyntax(protyle);
+    const content = protyle.lute.BlockDOM2EscapeMarkerContent(protyle.lute.Md2BlockDOM(textPlain));
+    restoreLuteMarkdownSyntax(protyle);
+
+    // insertHTML 会进行内部反转义
+    insertHTML(content, protyle, false, false, true);
 };
 
 export const enableLuteMarkdownSyntax = (protyle: IProtyle) => {
@@ -248,27 +238,13 @@ export const restoreLuteMarkdownSyntax = (protyle: IProtyle) => {
 };
 
 const readLocalFile = async (protyle: IProtyle, localFiles: ILocalFiles[]) => {
-    if (protyle && protyle.app && protyle.app.plugins) {
-        for (let i = 0; i < protyle.app.plugins.length; i++) {
-            const response: { localFiles: ILocalFiles[] } = await new Promise((resolve) => {
-                const emitResult = protyle.app.plugins[i].eventBus.emit("paste", {
-                    protyle,
-                    resolve,
-                    textHTML: "",
-                    textPlain: "",
-                    siyuanHTML: "",
-                    localFiles
-                });
-                if (emitResult) {
-                    resolve(undefined);
-                }
-            });
-            if (response?.localFiles) {
-                localFiles = response.localFiles;
-            }
-        }
-    }
-    uploadLocalFiles(localFiles, protyle, true);
+    const transformed = await protyle.plugins.transformPaste(protyle, {
+        textHTML: "",
+        textPlain: "",
+        siyuanHTML: "",
+        localFiles,
+    });
+    uploadLocalFiles(transformed.localFiles, protyle, true);
 };
 
 export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEvent | IClipboardData) & {
@@ -308,15 +284,6 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
     // Improve the pasting of selected text in PDF rectangular annotation https://github.com/siyuan-note/siyuan/issues/11629
     textPlain = textPlain.replace(/\r\n|\r|\u2028|\u2029/g, "\n");
 
-    /// #if !BROWSER
-    if (!siyuanHTML && !textHTML && !textPlain && ("clipboardData" in event)) {
-        const localFiles: ILocalFiles[] = await getLocalFiles();
-        if (localFiles.length > 0) {
-            readLocalFile(protyle, localFiles);
-            return;
-        }
-    }
-    /// #endif
     const originalTextHTML = textHTML;
     // 浏览器地址栏拷贝处理
     if (textHTML.replace(/&amp;/g, "&").replace(/<(|\/)(html|body|meta)[^>]*?>/ig, "").trim() ===
@@ -349,36 +316,16 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
         textHTML = Lute.Sanitize(textHTML);
     }
 
-    if (protyle && protyle.app && protyle.app.plugins) {
-        for (let i = 0; i < protyle.app.plugins.length; i++) {
-            const response: IObject & { files: FileList } = await new Promise((resolve) => {
-                const emitResult = protyle.app.plugins[i].eventBus.emit("paste", {
-                    protyle,
-                    resolve,
-                    textHTML,
-                    textPlain,
-                    siyuanHTML,
-                    files
-                });
-                if (emitResult) {
-                    resolve(undefined);
-                }
-            });
-
-            if (response?.textHTML) {
-                textHTML = response.textHTML;
-            }
-            if (response?.textPlain) {
-                textPlain = response.textPlain;
-            }
-            if (response?.siyuanHTML) {
-                siyuanHTML = response.siyuanHTML;
-            }
-            if (response?.files) {
-                files = response.files as FileList;
-            }
-        }
-    }
+    const transformed = await protyle.plugins.transformPaste(protyle, {
+        textHTML,
+        textPlain,
+        siyuanHTML,
+        files,
+    });
+    textHTML = transformed.textHTML;
+    textPlain = transformed.textPlain;
+    siyuanHTML = transformed.siyuanHTML;
+    files = transformed.files;
 
 
     let nodeElement = hasClosestBlock(event.target);
@@ -722,4 +669,3 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
         scrollCenter(protyle, undefined, "nearest", "smooth");
     }
 };
-

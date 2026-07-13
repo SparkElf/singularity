@@ -13,13 +13,7 @@ import {needSubscribe} from "../../util/needSubscribe";
 import {isMobile} from "../../util/functions";
 import {zoomOut} from "../../menus/protyle";
 import {getEditorRange} from "../util/selection";
-/// #if !MOBILE
-import {openFileById} from "../../editor/util";
 import {saveLayout} from "../../layout/util";
-/// #endif
-/// #if !BROWSER
-import {ipcRenderer} from "electron";
-/// #endif
 import {onGet} from "../util/onGet";
 import {hideElements} from "../ui/hideElements";
 import {confirmDialog} from "../../dialog/confirmDialog";
@@ -27,7 +21,7 @@ import {reloadProtyle} from "../util/reload";
 import {Menu} from "../../plugin/Menu";
 import {getNoContainerElement} from "../wysiwyg/getBlock";
 import {openTitleMenu} from "../header/openTitleMenu";
-import {emitOpenMenu} from "../../plugin/EventBus";
+import {emitProtylePluginMenu} from "../util/plugin";
 import {isInAndroid, isInHarmony, isIPad, isMac, updateHotkeyTip} from "../util/compatibility";
 import {resize} from "../util/resize";
 import {listIndent, listOutdent} from "../wysiwyg/list";
@@ -44,14 +38,12 @@ export class Breadcrumb {
         const element = document.createElement("div");
         element.className = "protyle-breadcrumb";
         let padHTML = "";
-        /// #if BROWSER && !MOBILE
         if (isIPad() || isInAndroid() || isInHarmony()) {
             padHTML = `<button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.undo}" data-type="undo"><svg><use xlink:href="#iconUndo"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.redo}" data-type="redo"><svg><use xlink:href="#iconRedo"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.outdent}" data-type="outdent"><svg><use xlink:href="#iconOutdent"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.indent}" data-type="indent"><svg><use xlink:href="#iconIndent"></use></svg></button>`;
         }
-        /// #endif
         element.innerHTML = `${isMobile() ?
             `<button class="protyle-breadcrumb__icon" data-type="mobile-menu">${window.siyuan.languages.breadcrumb}</button>` :
             '<div class="protyle-breadcrumb__bar"></div>'}
@@ -69,17 +61,20 @@ ${padHTML}
                 const id = target.getAttribute("data-node-id");
                 const type = target.getAttribute("data-type");
                 if (id) {
-                    /// #if !MOBILE
                     if (protyle.options.render.breadcrumbDocName && window.siyuan.ctrlIsPressed) {
-                        openFileById({
-                            app: protyle.app,
-                            id,
-                            action: id === protyle.block.rootID ? [Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL]
+                        protyle.host.dispatch({
+                            type: "open-document",
+                            documentId: id,
+                            disposition: "current",
+                            scope: id === protyle.block.rootID ? "target" : "subtree",
+                            attention: "focus",
+                            scroll: "auto",
+                            restoreScroll: "never",
+                            zoom: false,
                         });
                     } else {
                         zoomOut({protyle, id});
                     }
-                    /// #endif
                     event.preventDefault();
                     break;
                 } else if (type === "mobile-menu") {
@@ -173,7 +168,6 @@ ${padHTML}
                 target = target.parentElement;
             }
         });
-        /// #if !MOBILE
         element.addEventListener("mouseleave", () => {
             protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--hl").forEach(item => {
                 item.classList.remove("protyle-wysiwyg--hl");
@@ -182,7 +176,6 @@ ${padHTML}
         this.element.addEventListener("mousewheel", (event: WheelEvent) => {
             this.element.scrollLeft = this.element.scrollLeft + event.deltaY;
         }, {passive: true});
-        /// #endif
     }
 
     private startRecord(protyle: IProtyle) {
@@ -293,23 +286,7 @@ ${padHTML}
                         current: this.mediaRecorder && this.mediaRecorder.isRecording,
                         icon: "iconRecord",
                         label: this.mediaRecorder?.isRecording ? window.siyuan.languages.endRecord : window.siyuan.languages.startRecord,
-                        click: async () => {
-                            /// #if !BROWSER
-                            if (window.siyuan.config.system.os === "darwin") {
-                                const status = await ipcRenderer.invoke(Constants.SIYUAN_GET, {cmd: "getMicrophone"});
-                                if (["denied", "restricted", "unknown"].includes(status)) {
-                                    showMessage(window.siyuan.languages.microphoneDenied);
-                                    return;
-                                } else if (status === "not-determined") {
-                                    const isAccess = await ipcRenderer.invoke(Constants.SIYUAN_GET, {cmd: "askMicrophone"});
-                                    if (!isAccess) {
-                                        showMessage(window.siyuan.languages.microphoneNotAccess);
-                                        return;
-                                    }
-                                }
-                            }
-                            /// #endif
-
+                        click: () => {
                             if (!this.mediaRecorder) {
                                 navigator.mediaDevices.getUserMedia({audio: true}).then((mediaStream: MediaStream) => {
                                     this.mediaRecorder = new RecordMedia(mediaStream);
@@ -426,7 +403,6 @@ ${padHTML}
                     }
                 }).element);
             }
-            /// #if !MOBILE
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "fullscreen",
                 icon: protyle.element.className.includes("fullscreen") ? "iconFullscreenExit" : "iconFullscreen",
@@ -437,7 +413,6 @@ ${padHTML}
                     resize(protyle);
                 }
             }).element);
-            /// #endif
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "editMode",
                 icon: "iconEdit",
@@ -451,9 +426,7 @@ ${padHTML}
                     click: () => {
                         setEditMode(protyle, "wysiwyg");
                         reloadProtyle(protyle, true);
-                        /// #if !MOBILE
                         saveLayout();
-                        /// #endif
                     }
                 }, {
                     id: "preview",
@@ -464,9 +437,7 @@ ${padHTML}
                     click: () => {
                         setEditMode(protyle, "preview");
                         window.siyuan.menus.menu.remove();
-                        /// #if !MOBILE
                         saveLayout();
-                        /// #endif
                     }
                 }]
             }).element);
@@ -502,7 +473,6 @@ ${padHTML}
                     }]
                 }).element);
             }
-            /// #if !MOBILE
             if (!protyle.disabled) {
                 const isCustomFullWidth = protyle.wysiwyg.element.getAttribute(Constants.CUSTOM_SY_FULLWIDTH);
                 window.siyuan.menus.menu.append(new MenuItem({
@@ -546,18 +516,15 @@ ${padHTML}
                     }]
                 }).element);
             }
-            /// #endif
-            if (protyle?.app?.plugins) {
-                emitOpenMenu({
-                    plugins: protyle.app.plugins,
-                    type: "open-menu-breadcrumbmore",
-                    detail: {
-                        protyle,
-                        data: response.data.stat,
-                    },
-                    separatorPosition: "top",
-                });
-            }
+            emitProtylePluginMenu({
+                plugins: protyle.plugins,
+                type: "open-menu-breadcrumbmore",
+                detail: {
+                    protyle,
+                    data: response.data.stat,
+                },
+                separatorPosition: "top",
+            });
             window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "docInfo",
@@ -566,11 +533,7 @@ ${padHTML}
                 // 不能换行，否则移动端间距过大
                 label: `<div class="fn__flex">${window.siyuan.languages.runeCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.runeCount}</div><div class="fn__flex">${window.siyuan.languages.wordCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.wordCount}</div><div class="fn__flex">${window.siyuan.languages.linkCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.linkCount}</div><div class="fn__flex">${window.siyuan.languages.imgCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.imageCount}</div><div class="fn__flex">${window.siyuan.languages.refCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.refCount}</div><div class="fn__flex">${window.siyuan.languages.blockCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.blockCount}</div>`,
             }).element);
-            /// #if MOBILE
-            window.siyuan.menus.menu.fullscreen();
-            /// #else
             window.siyuan.menus.menu.popup(position);
-            /// #endif
             const popoverElement = hasTopClosestByClassName(protyle.element, "block__popover", true);
             window.siyuan.menus.menu.element.setAttribute("data-from", popoverElement ? popoverElement.dataset.level + "popover" : "app");
         });
@@ -580,7 +543,6 @@ ${padHTML}
         if (protyle.element.getAttribute("disabled-forever") === "true") {
             return;
         }
-        /// #if !MOBILE
         let range: Range;
         let blockElement: Element;
         if (nodeElement &&
@@ -650,7 +612,6 @@ ${padHTML}
             this.element.innerHTML = html;
             improveBreadcrumbAppearance(this.element.parentElement);
         });
-        /// #endif
     }
 
     public hide() {

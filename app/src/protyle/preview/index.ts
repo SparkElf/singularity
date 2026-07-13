@@ -1,20 +1,13 @@
-import {isOnlyMeta, writeText} from "../util/compatibility";
+import {writeText} from "../util/compatibility";
 import {focusByRange} from "../util/selection";
-import {openByMobile} from "../../editor/openLink";
 import {showMessage} from "../../dialog/message";
 import {isLocalPath, pathPosix} from "../../util/pathName";
 import {previewDocImage} from "./image";
 import {getDiagramBlock, previewDiagram} from "./diagram";
 import {needSubscribe} from "../../util/needSubscribe";
 import {Constants} from "../../constants";
-import {getSearch, isMobile} from "../../util/functions";
-/// #if !BROWSER
-import {shell} from "electron";
-/// #endif
-/// #if !MOBILE
-import {openAsset, openBy} from "../../editor/util";
+import {getSearch} from "../../util/functions";
 import {getAllModels} from "../../layout/getAll";
-/// #endif
 import {fetchPost} from "../../util/fetch";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
@@ -27,7 +20,6 @@ import {addScriptSync} from "../util/addScript";
 export class Preview {
     public element: HTMLElement;
     public previewElement: HTMLElement;
-    private mdTimeoutId: number;
 
     constructor(protyle: IProtyle) {
         this.element = document.createElement("div");
@@ -87,32 +79,19 @@ export class Preview {
                         break;
                     }
 
-                    if (isMobile()) {
-                        openByMobile(linkAddress);
-                        event.stopPropagation();
-                        event.preventDefault();
-                        break;
-                    }
                     event.stopPropagation();
                     event.preventDefault();
-                    if (isLocalPath(linkAddress)) {
-                        /// #if !MOBILE
-                        if (isOnlyMeta(event)) {
-                            openBy(linkAddress, "folder");
-                        } else if (event.shiftKey) {
-                            openBy(linkAddress, "app");
-                        } else if (Constants.SIYUAN_ASSETS_EXTS.includes(pathPosix().extname((linkAddress).split("?")[0]))) {
-                            openAsset(protyle.app, linkAddress.split("?page")[0], parseInt(getSearch("page", linkAddress)));
-                        }
-                        /// #endif
-                    } else {
-                        /// #if !BROWSER
-                        shell.openExternal(linkAddress).catch((e) => {
-                            showMessage(e);
+                    const assetPath = linkAddress.split("?page")[0];
+                    if (isLocalPath(linkAddress) && Constants.SIYUAN_ASSETS_EXTS.includes(pathPosix().extname(assetPath))) {
+                        const page = getSearch("page", linkAddress);
+                        protyle.host.dispatch({
+                            type: "open-asset",
+                            assetPath,
+                            page: page ? parseInt(page) : undefined,
+                            disposition: "current",
                         });
-                        /// #else
-                        window.open(linkAddress);
-                        /// #endif
+                    } else {
+                        protyle.host.dispatch({type: "open-external", url: linkAddress});
                     }
                     break;
                 } else if (target.tagName === "IMG") {
@@ -155,7 +134,6 @@ export class Preview {
                     item.classList.remove("selected");
                 });
                 nodeElement.classList.add("selected");
-                /// #if !MOBILE
                 if (protyle.model) {
                     getAllModels().outline.forEach(item => {
                         if (item.blockId === protyle.block.rootID) {
@@ -163,9 +141,6 @@ export class Preview {
                         }
                     });
                 }
-                /// #else
-                window.siyuan.mobile.docks.outline?.setCurrentByPreview(nodeElement);
-                /// #endif
                 const diagramElement = getDiagramBlock(nodeElement);
                 if (diagramElement) {
                     previewDiagram(diagramElement);
@@ -195,7 +170,7 @@ export class Preview {
 </div>`);
             loadingElement = this.element.querySelector(".fn__loading");
         }
-        this.mdTimeoutId = window.setTimeout(() => {
+        window.setTimeout(() => {
             fetchPost("/api/export/preview", {
                 id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
             }, response => {

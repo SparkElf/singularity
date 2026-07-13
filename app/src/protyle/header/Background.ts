@@ -5,11 +5,6 @@ import {uploadFiles} from "../upload";
 import {fetchPost} from "../../util/fetch";
 import {getRandomEmoji, openEmojiPanel, unicode2Emoji, updateFileTreeEmoji, updateOutlineEmoji} from "../../emoji";
 import {upDownHint} from "../../util/upDownHint";
-/// #if !MOBILE
-import {openGlobalSearch} from "../../search/util";
-/// #else
-import {popSearch} from "../../mobile/menu/search";
-/// #endif
 import {Dialog} from "../../dialog";
 import {Constants} from "../../constants";
 import {assetMenu} from "../../menus/protyle";
@@ -314,9 +309,6 @@ export class Background {
                             id: protyle.block.rootID,
                             attrs: {"title-img": this.ial["title-img"]}
                         });
-                        /// #if MOBILE
-                        window.siyuan.menus.menu.remove();
-                        /// #endif
                     }, Constants.SIYUAN_ASSETS_IMAGE);
                     event.preventDefault();
                     event.stopPropagation();
@@ -392,19 +384,12 @@ export class Background {
                     event.stopPropagation();
                     break;
                 } else if (type === "open-search") {
-                    /// #if !MOBILE
-                    openGlobalSearch(protyle.app, `#${target.textContent}#`, !window.siyuan.ctrlIsPressed, {method: 0});
-                    /// #else
-                    popSearch(protyle.app, {
-                        hasReplace: false,
-                        method: 0,
-                        hPath: "",
-                        idPath: [],
-                        k: `#${target.textContent}#`,
-                        r: "",
-                        page: 1,
+                    protyle.host.dispatch({
+                        type: "open-search",
+                        query: `#${target.textContent}#`,
+                        queryMode: window.siyuan.ctrlIsPressed ? "toggle-term" : "replace",
+                        method: "keyword",
                     });
-                    /// #endif
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -620,10 +605,6 @@ export class Background {
             this.actionElements[2].classList.add("fn__none");
             this.imgElement.parentElement.classList.remove("fn__none");
             this.iconElement.style.marginTop = "";
-            /// #if MOBILE
-            // 移动端键盘弹起和点击加号需保持滚动高度一致
-            this.imgElement.style.height = "200px";
-            /// #endif
         } else {
             this.imgElement.parentElement.classList.add("fn__none");
             this.actionElements[2].classList.remove("fn__none");
@@ -724,14 +705,9 @@ export class Background {
         });
         const itemsElement = menu.element.querySelector(".b3-menu__items");
         itemsElement.setAttribute("style", "overflow: initial");
-        /// #if MOBILE
-        menu.fullscreen();
-        itemsElement.firstElementChild.setAttribute("style", "padding: 0 8px;height: 100%;");
-        /// #else
         const rect = target.getBoundingClientRect();
         menu.open({x: rect.left, y: rect.top + rect.height});
         menu.element.querySelector("input").focus();
-        /// #endif
     }
 
     private getTags(removeTag?: string) {

@@ -35,7 +35,7 @@ export const genCardItem = (item: ICardPackage) => {
 </li>`;
 };
 
-export const makeCard = (app: App, ids: string[]) => {
+export const makeCard = (app: App, ids: readonly string[]) => {
     window.siyuan.dialogs.find(item => {
         if (item.element.getAttribute("data-key") === Constants.DIALOG_MAKECARD) {
             hideElements(["dialog"]);
@@ -223,6 +223,5 @@ export const quickMakeCard = (protyle: IProtyle, nodeElement: Element[]) => {
         }]);
     }
 };
-
 
 

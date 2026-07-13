@@ -1,9 +1,6 @@
 import {onTransaction} from "../wysiwyg/transaction";
 import {preventScroll} from "../scroll/preventScroll";
-import {Constants} from "../../constants";
 import {hideElements} from "../ui/hideElements";
-import {matchHotKey} from "../util/hotKey";
-import {ipcRenderer} from "electron";
 import {markMirror, refreshUndoButtons, requestRedo, requestUndo} from "./globalUndo";
 
 // 撤销权威栈已下沉到 kernel（GlobalUndoLog），前端按 rootID 共享。
@@ -65,21 +62,3 @@ export class Undo {
         // 本地仅刷新按钮态，镜像条目保留供重开校准。
     }
 }
-
-export const electronUndo = (event: KeyboardEvent) => {
-    /// #if !BROWSER
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.undo.custom, event)) {
-        ipcRenderer.send(Constants.SIYUAN_CMD, "undo");
-        event.preventDefault();
-        event.stopPropagation();
-        return true;
-    }
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.redo.custom, event)) {
-        ipcRenderer.send(Constants.SIYUAN_CMD, "redo");
-        event.preventDefault();
-        event.stopPropagation();
-        return true;
-    }
-    /// #endif
-    return false;
-};

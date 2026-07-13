@@ -1,6 +1,4 @@
-/// #if !MOBILE
 import {getAllModels, getAllWnds} from "../../layout/getAll";
-/// #endif
 import {addLoading} from "../ui/initUI";
 import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
@@ -35,7 +33,6 @@ export const fullscreen = (element: Element, btnElement?: Element) => {
         element.classList.add("fullscreen");
         document.getElementById("drag")?.classList.add("fn__hidden");
     }
-    /// #if !MOBILE
     const isWindowMode = isWindow();
     const wndsTemp: Wnd[] = [];
     if (isWindowMode) {
@@ -51,9 +48,7 @@ export const fullscreen = (element: Element, btnElement?: Element) => {
             return true;
         }
     });
-    /// #endif
 
-    /// #if !MOBILE
     if ("darwin" !== window.siyuan.config.system.os && !isWindow()) {
         const windowControlsElement = document.getElementById("windowControls");
         if (isFullscreen) {
@@ -63,7 +58,6 @@ export const fullscreen = (element: Element, btnElement?: Element) => {
             windowControlsElement.style.zIndex = window.siyuan.zIndex.toString();
         }
     }
-    /// #endif
     if (btnElement) {
         if (isFullscreen) {
             btnElement.querySelector("use").setAttribute("xlink:href", "#iconFullscreen");
@@ -82,7 +76,6 @@ export const fullscreen = (element: Element, btnElement?: Element) => {
         }
         return;
     }
-    /// #if !MOBILE
     if (element.classList.contains("protyle")) {
         window.siyuan.editorIsFullscreen = !isFullscreen;
     }
@@ -99,7 +92,6 @@ export const fullscreen = (element: Element, btnElement?: Element) => {
             }
         }
     });
-    /// #endif
 };
 
 export const updateReadonly = (target: Element, protyle: IProtyle) => {

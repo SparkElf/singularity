@@ -77,7 +77,7 @@ export const openFileById = async (options: {
     });
 };
 
-export const openAsset = (app: App, assetPath: string, page: number | string, position?: string) => {
+export const openAsset = (app: App, assetPath: string, page?: number | string, position?: string) => {
     const suffix = pathPosix().extname(assetPath).split("?")[0];
     if (!Constants.SIYUAN_ASSETS_EXTS.includes(suffix)) {
         return;

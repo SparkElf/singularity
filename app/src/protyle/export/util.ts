@@ -1,8 +1,4 @@
-/// #if !BROWSER
-import {escapeHtml} from "../../util/escape";
-import * as path from "path";
-/// #endif
-import {hideMessage, showMessage} from "../../dialog/message";
+import {showMessage} from "../../dialog/message";
 import {fetchPost} from "../../util/fetch";
 import {Dialog} from "../../dialog";
 import {addScript} from "../util/addScript";
@@ -11,18 +7,8 @@ import {Constants} from "../../constants";
 import {highlightRender, lineNumberRender} from "../render/highlightRender";
 import {processRender} from "../util/processCode";
 import {isIPhone, isSafari, saveExportFile, setStorageVal} from "../util/compatibility";
-import {useShell} from "../../util/pathName";
 
 export const afterExport = (exportPath: string, msgId: string) => {
-    /// #if !BROWSER
-    showMessage(`${window.siyuan.languages.exported} ${escapeHtml(exportPath)}
-<div class="fn__space"></div>
-<button class="b3-button b3-button--white">${window.siyuan.languages.showInFolder}</button>`, 6000, "info", msgId);
-    document.querySelector(`#message [data-id="${msgId}"] button`).addEventListener("click", () => {
-        useShell("showItemInFolder", path.join(exportPath));
-        hideMessage(msgId);
-    });
-    /// #endif
 };
 
 export const exportImage = (id: string) => {
@@ -70,9 +56,6 @@ export const exportImage = (id: string) => {
         const msgId = showMessage(window.siyuan.languages.exporting, 0);
         const containerElement = exportDialog.element.querySelector(".b3-dialog__container") as HTMLElement;
         containerElement.style.height = "";
-        /// #if MOBILE
-        containerElement.style.width = "100vw";
-        /// #endif
         const contentElement = exportDialog.element.querySelector(".b3-dialog__content") as HTMLElement;
         contentElement.style.overflow = "hidden";
         setStorageVal(Constants.LOCAL_EXPORTIMG, window.siyuan.storage[Constants.LOCAL_EXPORTIMG]);

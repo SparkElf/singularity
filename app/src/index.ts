@@ -47,12 +47,19 @@ import {renderSnippet} from "./config/util/snippets";
 import {setBodyHighlight} from "./util/assets";
 import {reloadSync} from "./util/reloadSync";
 import {setTitle} from "./util/processTitle";
+import {createAppProtyleHost} from "./host/protyle";
+import {createAppProtylePluginPort} from "./host/plugin";
+import type {ProtyleHostPort} from "../../enterprise/packages/protyle-browser/src/contracts";
 
 export class App {
     public plugins: import("./plugin").Plugin[] = [];
+    public readonly protyleHost: ProtyleHostPort;
+    public readonly protylePlugins: TProtylePluginPort;
     public appId: string;
 
     constructor() {
+        this.protyleHost = createAppProtyleHost(this);
+        this.protylePlugins = createAppProtylePluginPort(this);
         if (checkPublishServiceClosed()) {
             return;
         }

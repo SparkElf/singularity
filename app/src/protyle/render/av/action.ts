@@ -1,7 +1,6 @@
 import {Menu} from "../../../plugin/Menu";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {transaction} from "../../wysiwyg/transaction";
-import {openEditorTab} from "../../../menus/util";
 import {openFileAttr} from "../../../menus/commonMenuItem";
 import {
     addDragFill,
@@ -18,7 +17,7 @@ import {
 import {addCol, getColIconByType, showColMenu} from "./col";
 import {deleteRow, duplicateRows, insertRows, selectRow, setPageSize, updateHeader} from "./row";
 import {resetAVRowSelect, updateAVRowSelect} from "./virtualScroll";
-import {emitOpenMenu} from "../../../plugin/EventBus";
+import {emitProtylePluginMenu} from "../../util/plugin";
 import {openMenuPanel} from "./openMenuPanel";
 import {hintRef} from "../../hint/extend";
 import {focusBlock, focusByRange} from "../../util/selection";
@@ -29,7 +28,7 @@ import * as dayjs from "dayjs";
 import {openCalcMenu} from "./calc";
 import {avRender} from "./render";
 import {addView, openViewMenu} from "./view";
-import {isOnlyMeta, writeText} from "../../util/compatibility";
+import {isOnlyMeta, updateHotkeyTip, writeText} from "../../util/compatibility";
 import {openSearchAV} from "./relation";
 import {Constants} from "../../../constants";
 import {hideElements} from "../../ui/hideElements";
@@ -39,7 +38,7 @@ import {escapeHtml} from "../../../util/escape";
 import {editGalleryItem, openGalleryItemMenu} from "./gallery/util";
 import {clearSelect} from "../../util/clear";
 import {removeCompressURL} from "../../../util/image";
-import {callMobileAppShowKeyboard} from "../../../mobile/util/mobileAppUtil";
+import {checkFold} from "../../../util/noRelyPCFunction";
 
 let foldTimeout: number;
 export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLElement }) => {
@@ -338,14 +337,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             if (viewsElement) {
                 viewsElement.classList.add("av__views--show");
             }
-            if (window.JSAndroid && window.JSAndroid.showKeyboard || window.JSHarmony && window.JSHarmony.showKeyboard) {
-                callMobileAppShowKeyboard();
-                setTimeout(() => {
-                    searchElement.focus();
-                }, Constants.TIMEOUT_TRANSITION);
-            } else {
-                searchElement.focus();
-            }
+            searchElement.focus();
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -389,9 +381,42 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     const keyCellElement = rowElements[0].querySelector('.av__cell[data-dtype="block"]') as HTMLElement;
     const ids = Array.from(rowElements).map(item => item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-id"));
     if (rowElements.length === 1 && keyCellElement.getAttribute("data-detached") !== "true") {
-        /// #if !MOBILE
         const blockId = ids[0];
-        const openSubmenus = openEditorTab(protyle.app, [blockId], undefined, undefined, true);
+        const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
+            checkFold(blockId, (zoomIn) => {
+                protyle.host.dispatch({
+                    type: "open-document",
+                    documentId: blockId,
+                    disposition,
+                    scope: zoomIn ? "subtree" : "context",
+                    attention: "focus",
+                    scroll: "auto",
+                    restoreScroll: zoomIn ? "never" : "if-document",
+                    zoom: zoomIn,
+                });
+            });
+        };
+        const openSubmenus: IMenu[] = [{
+            id: "insertRight",
+            icon: "iconLayoutRight",
+            label: window.siyuan.languages.insertRight,
+            accelerator: `${updateHotkeyTip(window.siyuan.config.keymap.editor.general.insertRight.custom)}/${updateHotkeyTip("⌥" + window.siyuan.languages.click)}`,
+            click: () => openDocument("split-right"),
+        }, {
+            id: "insertBottom",
+            icon: "iconLayoutBottom",
+            label: window.siyuan.languages.insertBottom,
+            accelerator: "⇧⌘" + window.siyuan.languages.click,
+            click: () => openDocument("split-bottom"),
+        }];
+        if (window.siyuan.config.fileTree.openFilesUseCurrentTab) {
+            openSubmenus.push({
+                id: "openInNewTab",
+                label: window.siyuan.languages.openInNewTab,
+                accelerator: "⌥⌘" + window.siyuan.languages.click,
+                click: () => openDocument("new-tab"),
+            });
+        }
         openSubmenus.push({id: "separator_3", type: "separator"});
         openSubmenus.push({
             id: "attr",
@@ -409,7 +434,6 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             icon: "iconOpen",
             submenu: openSubmenus,
         });
-        /// #endif
     }
     let hasBlock = false;
     rowElements.forEach((item) => {
@@ -780,18 +804,16 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
             submenu: editAttrSubmenu
         });
     }
-    if (protyle?.app?.plugins) {
-        emitOpenMenu({
-            plugins: protyle.app.plugins,
-            type: "open-menu-av",
-            detail: {
-                protyle,
-                element: blockElement,
-                selectRowElements: rowElements,
-            },
-            separatorPosition: "top",
-        });
-    }
+    emitProtylePluginMenu({
+        plugins: protyle.plugins,
+        type: "open-menu-av",
+        detail: {
+            protyle,
+            element: blockElement,
+            selectRowElements: rowElements,
+        },
+        separatorPosition: "top",
+    });
     menu.open(position);
     return true;
 };

@@ -1,9 +1,5 @@
 import {addClearButton} from "../../../util/addClearButton";
 import {focusBlock} from "../../util/selection";
-import {electronUndo} from "../../undo";
-/// #if MOBILE
-import {activeBlur} from "../../../mobile/util/keyboardToolbar";
-/// #endif
 
 const collapseAvSearch = (searchInputElement: HTMLElement, viewsElement: HTMLElement) => {
     viewsElement.classList.remove("av__views--show");
@@ -26,12 +22,6 @@ export const bindAvSearch = (options: {
     }
     searchInputElement.addEventListener("compositionstart", (event: KeyboardEvent) => {
         event.stopPropagation();
-    });
-    searchInputElement.addEventListener("keydown", (event: KeyboardEvent) => {
-        if (event.isComposing) {
-            return;
-        }
-        electronUndo(event);
     });
     const searchInputChange = (event: Event) => {
         event.stopPropagation();
@@ -72,9 +62,6 @@ export const bindAvSearch = (options: {
             collapseAvSearch(searchInputElement, viewsElement);
             focusBlock(options.blockElement);
             options.onChange();
-            /// #if MOBILE
-            activeBlur();
-            /// #endif
         }
     });
 };

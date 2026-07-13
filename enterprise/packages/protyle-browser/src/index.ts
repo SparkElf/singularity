@@ -1,0 +1,17 @@
+export type {
+  CreateProtyleOptions,
+  ProtyleController,
+  ProtyleDocumentAttention,
+  ProtyleDocumentDisposition,
+  ProtyleDocumentScope,
+  ProtyleDocumentScroll,
+  ProtyleDocumentScrollRestore,
+  ProtyleFactory,
+  ProtyleHostEvent,
+  ProtyleHostPort,
+  ProtylePluginEvent,
+  ProtylePluginEventType,
+  ProtylePluginPort,
+  ProtylePluginSlashItem,
+  ProtyleSession,
+} from "./contracts.ts";
