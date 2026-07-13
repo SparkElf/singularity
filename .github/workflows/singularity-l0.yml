@@ -117,5 +117,5 @@ jobs:
           cache-dependency-path: kernel/go.sum
 
       - name: Test Kernel
-        run: go test -vet=off ./...
+        run: go test -vet=off -tags=fts5 ./...
         working-directory: kernel
