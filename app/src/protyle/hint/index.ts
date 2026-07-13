@@ -37,10 +37,6 @@ import {
 } from "../../emoji";
 import {blockRender} from "../render/blockRender";
 import {uploadFiles} from "../upload";
-/// #if !MOBILE
-import {openFileById} from "../../editor/util";
-/// #endif
-import {openMobileFileById} from "../../mobile/editor";
 import {processRender} from "../util/processCode";
 import {AIChat} from "../../ai/chat";
 import {isMobile} from "../../util/functions";
@@ -220,20 +216,12 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
             if (this.source === "av") {
                 const cellElement = hasClosestByClassName(protyle.toolbar.range.startContainer, "av__cell");
                 if (cellElement) {
-                    /// #if !MOBILE
                     const cellRect = cellElement.getBoundingClientRect();
                     setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
-                    /// #else
-                    setPosition(this.element, 0, 0);
-                    /// #endif
                 }
             } else {
-                /// #if !MOBILE
                 const textareaPosition = getSelectionPosition(protyle.wysiwyg.element);
                 setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
-                /// #else
-                setPosition(this.element, 0, 0);
-                /// #endif
             }
         } else {
             this.element.insertAdjacentHTML("beforeend", '<div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div>');
@@ -299,19 +287,11 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
             const cellElement = hasClosestByClassName(protyle.toolbar.range.startContainer, "av__cell");
             if (cellElement) {
                 const cellRect = cellElement.getBoundingClientRect();
-                /// #if !MOBILE
                 setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
-                /// #else
-                setPosition(this.element, 0, 0);
-                /// #endif
             }
         } else {
             const textareaPosition = getSelectionPosition(protyle.wysiwyg.element);
-            /// #if !MOBILE
             setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
-            /// #else
-            setPosition(this.element, 0, 0);
-            /// #endif
         }
         this.element.scrollTop = 0;
         let currentHintElement = this.element.querySelector(".b3-list-item--focus") as HTMLElement;
@@ -702,15 +682,16 @@ ${genHintItemHTML(item)}
                     md: ""
                 }, () => {
                     insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
-                    /// #if MOBILE
-                    openMobileFileById(protyle.app, newSubDocId, [Constants.CB_GET_CONTEXT, Constants.CB_GET_OPENNEW]);
-                    /// #else
-                    openFileById({
-                        app: protyle.app,
-                        id: newSubDocId,
-                        action: [Constants.CB_GET_CONTEXT, Constants.CB_GET_OPENNEW]
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: newSubDocId,
+                        disposition: "current",
+                        scope: "context",
+                        attention: "none",
+                        scroll: "auto",
+                        restoreScroll: "never",
+                        zoom: false,
                     });
-                    /// #endif
                 });
                 return;
             } else if (value === Constants.ZWSP + 5) {
@@ -740,18 +721,8 @@ ${genHintItemHTML(item)}
                 updateTransaction(protyle, nodeElement, html);
                 return;
             } else if (value.startsWith("plugin")) {
-                protyle.app.plugins.find((plugin) => {
-                    const ids = value.split(Constants.ZWSP);
-                    if (ids[1] === plugin.name) {
-                        plugin.protyleSlash.find((slash) => {
-                            if (slash.id === ids[2]) {
-                                slash.callback(protyle.getInstance(), nodeElement);
-                                return true;
-                            }
-                        });
-                        return true;
-                    }
-                });
+                const ids = value.split(Constants.ZWSP);
+                protyle.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
                 return;
             } else {
                 range.deleteContents();

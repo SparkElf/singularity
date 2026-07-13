@@ -14,9 +14,6 @@ import {Constants} from "../../constants";
 import {matchHotKey} from "../util/hotKey";
 import {isMac, readText} from "../util/compatibility";
 import * as dayjs from "dayjs";
-/// #if !MOBILE
-import {openFileById} from "../../editor/util";
-/// #endif
 import {getDocDisplayName} from "../../util/pathName";
 import {getContenteditableElement, getNoContainerElement} from "../wysiwyg/getBlock";
 import {commonHotkey} from "../wysiwyg/commonHotkey";
@@ -26,7 +23,6 @@ import {transaction} from "../wysiwyg/transaction";
 import {hideTooltip} from "../../dialog/tooltip";
 import {commonClick} from "../wysiwyg/commonClick";
 import {openTitleMenu} from "./openTitleMenu";
-import {electronUndo} from "../undo";
 import {enableLuteMarkdownSyntax, restoreLuteMarkdownSyntax} from "../util/paste";
 
 export class Title {
@@ -123,19 +119,19 @@ export class Title {
                 if (matchHotKey(window.siyuan.config.keymap.general.enterBack.custom, event)) {
                     const ids = protyle.path.split("/");
                     if (ids.length > 2) {
-                        /// #if !MOBILE
-                        openFileById({
-                            app: protyle.app,
-                            id: ids[ids.length - 2],
-                            action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
+                        protyle.host.dispatch({
+                            type: "open-document",
+                            documentId: ids[ids.length - 2],
+                            disposition: "current",
+                            scope: "target",
+                            attention: "focus",
+                            scroll: "auto",
+                            restoreScroll: "always",
+                            zoom: false,
                         });
-                        /// #endif
                     }
                     event.preventDefault();
                     event.stopPropagation();
-                    return;
-                }
-                if (electronUndo(event)) {
                     return;
                 }
                 if (event.key === "ArrowDown") {
@@ -341,22 +337,9 @@ export class Title {
     }
 
     public setTitle(title: string, empty = false) {
-        /// #if MOBILE
-        if (this.editElement) {
-            if (nbsp2space(title) !== nbsp2space(this.editElement.textContent)) {
-                this.editElement.textContent = empty ? "" : title;
-            }
-        } else {
-            const inputElement = document.getElementById("toolbarName") as HTMLInputElement;
-            if (nbsp2space(title) !== nbsp2space(inputElement.value)) {
-                inputElement.value = empty ? "" : title;
-            }
-        }
-        /// #else
         if (nbsp2space(title) !== nbsp2space(this.editElement.textContent)) {
             this.editElement.textContent = empty ? "" : title;
         }
-        /// #endif
     }
 
     public render(protyle: IProtyle, response: IWebSocketData) {

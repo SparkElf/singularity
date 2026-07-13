@@ -1,0 +1,113 @@
+name: Singularity L0
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/singularity-l0.yml"
+      - "app/src/boot/onGetConfig.ts"
+      - "app/src/card/makeCard.ts"
+      - "app/src/editor/util.ts"
+      - "app/src/host/protyle.ts"
+      - "app/src/index.ts"
+      - "app/src/protyle/**"
+      - "app/src/types/protyle.d.ts"
+      - "app/src/window/init.ts"
+      - "config/**"
+      - "enterprise/**"
+      - "kernel/**"
+      - "scripts/singularity/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/singularity-l0.yml"
+      - "app/src/boot/onGetConfig.ts"
+      - "app/src/card/makeCard.ts"
+      - "app/src/editor/util.ts"
+      - "app/src/host/protyle.ts"
+      - "app/src/index.ts"
+      - "app/src/protyle/**"
+      - "app/src/types/protyle.d.ts"
+      - "app/src/window/init.ts"
+      - "config/**"
+      - "enterprise/**"
+      - "kernel/**"
+      - "scripts/singularity/**"
+
+permissions:
+  contents: read
+
+jobs:
+  enterprise-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Register SiYuan upstream
+        run: git remote add upstream https://github.com/siyuan-note/siyuan.git
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install enterprise dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Verify upstream baseline
+        run: node scripts/singularity/verify-upstream-baseline.mjs
+
+      - name: Lint
+        run: pnpm lint
+        working-directory: enterprise
+
+      - name: Typecheck
+        run: pnpm typecheck
+        working-directory: enterprise
+
+      - name: Unit tests
+        run: pnpm test
+        working-directory: enterprise
+
+      - name: Production build
+        run: pnpm build
+        working-directory: enterprise
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @singularity/web exec playwright install --with-deps chromium
+        working-directory: enterprise
+
+      - name: Browser tests
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ""
+        run: pnpm e2e
+        working-directory: enterprise
+
+  kernel-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: kernel/go.mod
+          cache-dependency-path: kernel/go.sum
+
+      - name: Test Kernel
+        run: go test ./...
+        working-directory: kernel

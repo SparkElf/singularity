@@ -511,6 +511,12 @@ interface IProtyleOptions {
     after?(protyle: import("../protyle").Protyle): void;
 }
 
+type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginPort<
+    IProtyleOptions | undefined,
+    Array<string | IMenuItem>,
+    IProtyle
+>;
+
 interface IProtyle {
     highlight: {
         mark: Highlight
@@ -523,6 +529,8 @@ interface IProtyle {
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
     app: import("../index").App,
+    host: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort,
+    plugins: TProtylePluginPort,
     id: string,
     query?: {
         key: string,

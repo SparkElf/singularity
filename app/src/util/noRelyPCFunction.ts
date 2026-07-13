@@ -10,7 +10,6 @@ import {upDownHint} from "./upDownHint";
 import {escapeHtml} from "./escape";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {isNotCtrl} from "../protyle/util/compatibility";
-import {electronUndo} from "../protyle/undo";
 
 export const genTagList = (listElement: Element, k: string) => {
     listElement.classList.remove("fn__none");
@@ -93,8 +92,6 @@ export const renameTag = (labelName: string) => {
                 listElement.classList.add("fn__none");
             }
             event.preventDefault();
-        } else {
-            electronUndo(event);
         }
     });
     inputElement.addEventListener("input", (event: KeyboardEvent) => {

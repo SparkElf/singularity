@@ -1,11 +1,10 @@
 import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {updateAttrViewCellAnimation} from "./action";
-import {isMobile} from "../../../util/functions";
+import {getSearch, isMobile} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {uploadFiles} from "../../upload";
-import {pathPosix} from "../../../util/pathName";
-import {openMenu} from "../../../menus/commonMenuItem";
+import {isLocalPath, pathPosix} from "../../../util/pathName";
 import {MenuItem} from "../../../menus/Menu";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "../../../menus/util";
 import {setPosition} from "../../../util/setPosition";
@@ -338,7 +337,44 @@ export const editAssetItem = (options: {
             }
         });
     }
-    const openSubMenu = openMenu(options.protyle ? options.protyle.app : window.siyuan.ws.app, linkAddress, true, false);
+    const openSubMenu: IMenu[] = [];
+    if (linkAddress) {
+        const assetPath = linkAddress.trim();
+        const isSupportedAsset = isLocalPath(assetPath) &&
+            Constants.SIYUAN_ASSETS_EXTS.includes(pathPosix().extname(assetPath).split("?")[0]) &&
+            (!assetPath.endsWith(".pdf") || !assetPath.startsWith("file://"));
+        if (isSupportedAsset) {
+            const page = parseInt(getSearch("page", assetPath));
+            openSubMenu.push({
+                id: "insertRight",
+                icon: "iconLayoutRight",
+                label: window.siyuan.languages.insertRight,
+                click: () => options.protyle.host.dispatch({
+                    type: "open-asset",
+                    assetPath,
+                    page,
+                    disposition: "split-right",
+                }),
+            }, {
+                id: "openBy",
+                icon: "iconOpen",
+                label: window.siyuan.languages.openBy,
+                click: () => options.protyle.host.dispatch({
+                    type: "open-asset",
+                    assetPath,
+                    page,
+                    disposition: "current",
+                }),
+            });
+        } else {
+            const url = isLocalPath(assetPath) || assetPath.includes(":") ? assetPath : `https://${assetPath}`;
+            openSubMenu.push({
+                id: "useBrowserView",
+                label: window.siyuan.languages.useBrowserView,
+                click: () => options.protyle.host.dispatch({type: "open-external", url}),
+            });
+        }
+    }
     if (type !== "file" || openSubMenu.length > 0) {
         menu.addSeparator({id: "separator_2"});
     }
@@ -370,16 +406,12 @@ export const editAssetItem = (options: {
         window.siyuan.menus.menu.append(new MenuItem(writeAssetToClipboard(decodeURI(linkAddress))).element);
     }
     const rect = options.rect;
-    /// #if MOBILE
-    menu.fullscreen();
-    /// #else
     menu.open({
         x: rect.right,
         y: rect.top,
         w: rect.width,
         h: rect.height,
     });
-    /// #endif
     const textElements = menu.element.querySelectorAll("textarea");
     textElements[0].value = decodeURI(linkAddress);
     textElements[0].focus();

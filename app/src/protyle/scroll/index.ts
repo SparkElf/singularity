@@ -37,14 +37,12 @@ export class Scroll {
             this.element.setAttribute("aria-label", `Blocks ${this.inputElement.value}/${protyle.block.blockCount}`);
             showTooltip(this.element.getAttribute("aria-label"), this.element);
         });
-        /// #if BROWSER
         this.inputElement.addEventListener("change", () => {
             this.setIndex(protyle);
         });
         this.inputElement.addEventListener("touchend", () => {
             this.setIndex(protyle);
         });
-        /// #endif
         this.parentElement.addEventListener("click", (event) => {
             const target = event.target as HTMLElement;
             if (hasClosestByClassName(target, "protyle-scroll__up")) {

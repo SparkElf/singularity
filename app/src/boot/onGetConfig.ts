@@ -1,6 +1,6 @@
 import {adjustLayout, exportLayout, JSONToLayout, resetLayout, resizeTopBar} from "../layout/util";
 import {resizeTabs, setTabPosition} from "../layout/tabUtil";
-import {initNativeDialogOverride, isWindows, setStorageVal} from "../protyle/util/compatibility";
+import {isWindows, setStorageVal} from "../protyle/util/compatibility";
 /// #if !BROWSER
 import {ipcRenderer, webFrame} from "electron";
 import * as fs from "fs";
@@ -71,9 +71,6 @@ export const onGetConfig = (isStart: boolean, app: App) => {
     initBar(app);
     initStatus();
     initWindow(app);
-    /// #if !BROWSER
-    initNativeDialogOverride();
-    /// #endif
     appearanceConfigApi.apply(window.siyuan.config.appearance);
     initAssets();
     setInlineStyle();

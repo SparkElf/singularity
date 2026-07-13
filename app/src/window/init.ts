@@ -12,9 +12,6 @@ import {initWindow} from "../boot/onGetConfig";
 import {App} from "../index";
 import {afterLoadPlugin} from "../plugin/loader";
 import {Tab} from "../layout/Tab";
-/// #if !BROWSER
-import {initNativeDialogOverride} from "../protyle/util/compatibility";
-/// #endif
 import {initWindowEvent} from "../boot/globalEvent/event";
 import {getAllEditor} from "../layout/getAll";
 
@@ -60,9 +57,6 @@ export const init = (app: App) => {
     });
     initStatus(true);
     initWindow(app);
-    /// #if !BROWSER
-    initNativeDialogOverride();
-    /// #endif
     appearanceConfigApi.apply(window.siyuan.config.appearance);
     initAssets();
     setInlineStyle();

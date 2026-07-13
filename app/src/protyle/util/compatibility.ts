@@ -1,9 +1,6 @@
 import {focusByRange} from "./selection";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
+import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
-/// #if !BROWSER
-import {ipcRenderer} from "electron";
-/// #endif
 import {getDefaultSubType, getDefaultType} from "../../search/getDefault";
 import {hideMessage, showMessage} from "../../dialog/message";
 
@@ -63,57 +60,10 @@ export const getTextSiyuanFromTextHTML = (html: string) => {
     };
 };
 
-export const saveExportFile = async (uri: string, msgId?: string) => {
+export const saveExportFile = (uri: string, msgId?: string) => {
     if (!uri) {
         return;
     }
-    /// #if !BROWSER
-    try {
-        const resolved = new URL(uri, `${location.origin}/`);
-        const pathSeg = resolved.pathname.substring(resolved.pathname.lastIndexOf("/") + 1);
-        let fileName: string;
-        try {
-            fileName = decodeURIComponent(pathSeg);
-        } catch {
-            fileName = pathSeg;
-        }
-        if (!fileName) {
-            fileName = "download";
-        }
-        const result = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
-            cmd: "showSaveDialog",
-            defaultPath: fileName,
-            properties: ["showOverwriteConfirmation"],
-        });
-        if (result.canceled || !result.filePath) {
-            if (msgId) {
-                hideMessage(msgId);
-            }
-            return;
-        }
-        const copyResponse = await (await fetch("/api/export/copyExportFile", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                srcPath: resolved.pathname,
-                dest: result.filePath,
-            }),
-        })).json();
-        if (copyResponse.code !== 0) {
-            throw new Error(copyResponse.msg);
-        }
-        if (msgId) {
-            hideMessage(msgId);
-        }
-        showMessage(window.siyuan.languages.exported);
-        return;
-    } catch (e) {
-        if (msgId) {
-            hideMessage(msgId);
-        }
-        showMessage("saveExportFile failed: " + e);
-    }
-    /// #else
     try {
         if (isInAndroid()) {
             window.JSAndroid.saveExportFile(uri);
@@ -148,7 +98,6 @@ export const saveExportFile = async (uri: string, msgId?: string) => {
         }
         showMessage("saveExportFile failed: " + e);
     }
-    /// #endif
 };
 
 export const readText = () => {
@@ -166,31 +115,6 @@ export const readText = () => {
     }) || "";
 };
 
-/// #if !BROWSER
-export const getLocalFiles = async () => {
-    // 不再支持 PC 浏览器 https://github.com/siyuan-note/siyuan/issues/7206
-    let localFiles: ILocalFiles[] = [];
-    if ("darwin" === window.siyuan.config.system.os) {
-        const xmlString = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
-            cmd: "clipboardRead",
-            format: "NSFilenamesPboardType",
-        });
-        if (xmlString) {
-            const domParser = new DOMParser();
-            const xmlDom = domParser.parseFromString(xmlString, "application/xml");
-            Array.from(xmlDom.getElementsByTagName("string")).forEach(item => {
-                localFiles.push({path: item.childNodes[0].nodeValue, size: null});
-            });
-        }
-    } else {
-        const xmlString = await fetchSyncPost("/api/clipboard/readFilePaths", {});
-        if (xmlString.data.length > 0) {
-            localFiles = xmlString.data;
-        }
-    }
-    return localFiles;
-};
-/// #endif
 
 export const readClipboard = async () => {
     const text: IClipboardData = {textPlain: "", textHTML: "", siyuanHTML: ""};
@@ -244,11 +168,6 @@ export const readClipboard = async () => {
                 text.files = [new File([blob], "image.png", {type: "image/png", lastModified: Date.now()})];
             }
         }
-        /// #if !BROWSER
-        if (!text.textHTML && !text.files) {
-            text.localFiles = await getLocalFiles();
-        }
-        /// #endif
         return text;
     } catch (e) {
         return text;
@@ -628,40 +547,3 @@ export const setStorageVal = (key: string, val: any, cb?: () => void) => {
         }
     });
 };
-
-/// #if !BROWSER
-export const initNativeDialogOverride = () => {
-    const originalAlert = window.alert;
-    const originalConfirm = window.confirm;
-
-    window.alert = function (message: string) {
-        try {
-            ipcRenderer.sendSync(Constants.SIYUAN_ALERT_DIALOG, {
-                title: window.siyuan.languages.siyuanNote,
-                message,
-                buttons: [window.siyuan.languages.confirm],
-                noLink: true,
-            });
-            return undefined;
-        } catch (error) {
-            return originalAlert.call(this, message);
-        }
-    };
-
-    window.confirm = function (message: string): boolean {
-        try {
-            const buttonIndex = ipcRenderer.sendSync(Constants.SIYUAN_CONFIRM_DIALOG, {
-                title: window.siyuan?.languages?.siyuanNote || "SiYuan",
-                message,
-                buttons: [window.siyuan?.languages?.cancel || "Cancel", window.siyuan?.languages?.confirm || "OK"],
-                cancelId: 0,
-                defaultId: 1,
-                noLink: true,
-            });
-            return buttonIndex === 1;
-        } catch (error) {
-            return originalConfirm.call(this, message);
-        }
-    };
-};
-/// #endif

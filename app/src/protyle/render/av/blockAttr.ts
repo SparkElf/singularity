@@ -9,12 +9,8 @@ import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
 import {uploadFiles} from "../../upload";
 import {openLink} from "../../../editor/openLink";
-import {dragUpload, editAssetItem} from "./asset";
+import {editAssetItem} from "./asset";
 import {previewImages} from "../../preview/image";
-/// #if !BROWSER
-import {webUtils} from "electron";
-/// #endif
-import {isBrowser} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {getCompressURL, removeCompressURL} from "../../../util/image";
 
@@ -271,20 +267,6 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                         }
                     }
                     targetElement.classList.remove("dragover__bottom", "dragover__top");
-                } else if (!window.siyuan.dragElement && event.dataTransfer.types[0] === "Files") {
-                    const cellElement = element.querySelector(".custom-attr__avvalue--active") as HTMLElement;
-                    if (cellElement) {
-                        if (event.dataTransfer.types[0] === "Files" && !isBrowser()) {
-                            const files: ILocalFiles[] = [];
-                            for (let i = 0; i < event.dataTransfer.files.length; i++) {
-                                files.push({
-                                    path: webUtils.getPathForFile(event.dataTransfer.files[i]),
-                                    size: event.dataTransfer.files[i].size
-                                });
-                            }
-                            dragUpload(files, protyle, cellElement);
-                        }
-                    }
                 }
                 if (window.siyuan.dragElement) {
                     window.siyuan.dragElement.style.opacity = "";

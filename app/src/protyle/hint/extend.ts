@@ -353,16 +353,14 @@ export const hintSlash = (key: string, protyle: IProtyle) => {
         html: "separator",
     }];
     let hasPlugin = false;
-    protyle.app.plugins.forEach((plugin) => {
-        plugin.protyleSlash.forEach(slash => {
-            allList.push({
-                filter: slash.filter,
-                id: slash.id,
-                value: `plugin${Constants.ZWSP}${plugin.name}${Constants.ZWSP}${slash.id}`,
-                html: slash.html
-            });
-            hasPlugin = true;
+    protyle.plugins.forEachSlashItem((pluginName, slashItem) => {
+        allList.push({
+            filter: slashItem.filter,
+            id: slashItem.id,
+            value: `plugin${Constants.ZWSP}${pluginName}${Constants.ZWSP}${slashItem.id}`,
+            html: slashItem.html
         });
+        hasPlugin = true;
     });
     if (!hasPlugin) {
         allList.pop();

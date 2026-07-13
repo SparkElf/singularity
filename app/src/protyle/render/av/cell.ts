@@ -15,11 +15,9 @@ import {hintRef} from "../../hint/extend";
 import {getAssetName, pathPosix} from "../../../util/pathName";
 import {mergeAddOption} from "./select";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
-import {electronUndo} from "../../undo";
 import {getFieldIdByCellElement} from "./row";
 import {getFieldsByData} from "./view";
 import {getCompressURL, removeCompressURL} from "../../../util/image";
-import {callMobileAppShowKeyboard} from "../../../mobile/util/mobileAppUtil";
 
 const renderCellURL = (urlContent: string) => {
     let host = urlContent;
@@ -415,26 +413,6 @@ export const cellScrollIntoView = (blockElement: HTMLElement, cellElement: Eleme
             }
         }
     }
-    /// #if MOBILE
-    const contentElement = hasClosestByClassName(blockElement, "protyle-content", true);
-    if (contentElement && cellElement.getAttribute("data-dtype") !== "checkbox") {
-        let keyboardToolbarTop = window.innerHeight / 2 - 48;
-        if (window.siyuan.mobile.size.isLandscape) {
-            if (window.siyuan.mobile.size.landscape.height1 !== window.siyuan.mobile.size.landscape.height2) {
-                keyboardToolbarTop = window.siyuan.mobile.size.landscape.height2 - 48;
-            }
-        } else {
-            if (window.siyuan.mobile.size.portrait.height1 !== window.siyuan.mobile.size.portrait.height2) {
-                keyboardToolbarTop = window.siyuan.mobile.size.portrait.height2 - 48;
-            }
-        }
-        if (cellRect.bottom > keyboardToolbarTop) {
-            contentElement.scrollTop = contentElement.scrollTop + (cellRect.bottom - keyboardToolbarTop);
-        } else if (cellRect.top < 110) {
-            contentElement.scrollTop -= 110 - cellRect.top;
-        }
-    }
-    /// #else
     if (!blockElement.querySelector(".av__header")) {
         // 属性面板
         return;
@@ -469,7 +447,6 @@ export const cellScrollIntoView = (blockElement: HTMLElement, cellElement: Eleme
             }
         }
     }
-    /// #endif
 };
 
 export const getTypeByCellElement = (cellElement: Element) => {
@@ -567,7 +544,6 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         }
         inputElement.select();
         inputElement.focus();
-        callMobileAppShowKeyboard();
         if (type === "template") {
             fetchPost("/api/av/renderAttributeView", {
                 id: blockElement.dataset.avId,
@@ -615,9 +591,6 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         }
         inputElement.addEventListener("keydown", (event) => {
             if (event.isComposing) {
-                return;
-            }
-            if (electronUndo(event)) {
                 return;
             }
             if (event.key === "Escape" || event.key === "Tab" ||

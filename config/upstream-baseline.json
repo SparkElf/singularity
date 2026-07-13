@@ -1,0 +1,10 @@
+{
+  "product": "Singularity",
+  "upstreamRepository": "https://github.com/siyuan-note/siyuan.git",
+  "upstreamCommit": "41f2861c87575ff5ac4b50a0520b1a4fe55b4a70",
+  "upstreamVersion": "3.7.1",
+  "goVersion": "1.25.4",
+  "packageManager": "pnpm@11.9.0",
+  "license": "AGPL-3.0",
+  "architectureDocument": "output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md"
+}

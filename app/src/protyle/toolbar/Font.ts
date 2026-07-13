@@ -22,10 +22,8 @@ export class Font extends ToolbarItem {
             protyle.toolbar.subElement.classList.remove("fn__none");
             protyle.toolbar.subElementCloseCB = undefined;
             focusByRange(protyle.toolbar.range);
-            /// #if !MOBILE
             const position = getSelectionPosition(protyle.wysiwyg.element, protyle.toolbar.range);
             setPosition(protyle.toolbar.subElement, position.left, position.top + 18, 26);
-            /// #endif
         });
     }
 }

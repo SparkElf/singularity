@@ -109,24 +109,9 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         event.stopPropagation();
         return true;
     }
-    /// #if !MOBILE
-    let matchCommand = false;
-    protyle.app.plugins.find(item => {
-        item.commands.find(command => {
-            if (command.editorCallback && matchHotKey(command.customHotkey, event)) {
-                matchCommand = true;
-                command.editorCallback(protyle);
-                return true;
-            }
-        });
-        if (matchCommand) {
-            return true;
-        }
-    });
-    if (matchCommand) {
+    if (protyle.plugins.runEditorCommand(protyle, event, matchHotKey)) {
         return true;
     }
-    /// #endif
 };
 
 export const upSelect = (options: {

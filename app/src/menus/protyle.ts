@@ -41,7 +41,6 @@ import {getSearch, isMobile} from "../util/functions";
 import * as dayjs from "dayjs";
 import {blockRender} from "../protyle/render/blockRender";
 import {renameAsset} from "../editor/rename";
-import {electronUndo} from "../protyle/undo";
 import {pushBack} from "../mobile/util/MobileBackFoward";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "./util";
 import {removeInlineType} from "../protyle/toolbar/util";
@@ -250,8 +249,6 @@ export const fileAnnotationRefMenu = (protyle: IProtyle, refElement: HTMLElement
                 }
                 if (event.key === "Enter" && !event.isComposing) {
                     window.siyuan.menus.menu.remove();
-                } else if (electronUndo(event)) {
-                    return;
                 }
             });
         }
@@ -374,8 +371,6 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
                     }
                     if (event.key === "Enter" && !event.isComposing) {
                         window.siyuan.menus.menu.remove();
-                    } else if (electronUndo(event)) {
-                        return;
                     }
                 });
             }
@@ -1520,8 +1515,6 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
                         event.preventDefault();
                         event.stopPropagation();
                         inputElements[1].focus();
-                    } else if (electronUndo(event)) {
-                        return;
                     }
                 });
 
@@ -1557,8 +1550,6 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
                         } else {
                             inputElements[2].focus();
                         }
-                    } else if (electronUndo(event)) {
-                        return;
                     }
                 });
 
@@ -1572,8 +1563,6 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
                         event.preventDefault();
                         event.stopPropagation();
                         inputElements[1].focus();
-                    } else if (electronUndo(event)) {
-                        return;
                     }
                 });
 
@@ -1826,7 +1815,6 @@ export const tagMenu = (protyle: IProtyle, tagElement: HTMLElement) => {
                     window.siyuan.menus.menu.remove();
                     event.preventDefault();
                 } else {
-                    electronUndo(event);
                     upDownHint(listElement, event);
                 }
             });

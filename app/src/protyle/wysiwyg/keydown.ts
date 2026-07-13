@@ -49,10 +49,6 @@ import {fontEvent} from "../toolbar/Font";
 import {addSubList, listIndent, listOutdent, toggleTaskListItem} from "./list";
 import {newFileContentBySelect, rename, replaceFileName} from "../../editor/rename";
 import {cancelSB, insertEmptyBlock, jumpToParent} from "../../block/util";
-import {isLocalPath} from "../../util/pathName";
-/// #if !MOBILE
-import {openBy, openFileById} from "../../editor/util";
-/// #endif
 import {alignImgCenter, alignImgLeft, commonHotkey, downSelect, getStartEndElement, upSelect} from "./commonHotkey";
 import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../../menus/protyle";
 import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
@@ -1152,11 +1148,9 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        /// #if !MOBILE
         if (commonHotkey(protyle, event, nodeElement)) {
             return true;
         }
-        /// #endif
 
         if (matchHotKey(window.siyuan.config.keymap.editor.general.copyText.custom, event)) {
             // 用于标识复制文本 *
@@ -1856,13 +1850,16 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
             });
             const id = nodeElement.getAttribute("data-node-id");
-            checkFold(id, (zoomIn, action) => {
-                openFileById({
-                    app: protyle.app,
-                    id,
-                    action,
-                    zoomIn,
-                    openNewTab: true
+            checkFold(id, (zoomIn) => {
+                protyle.host.dispatch({
+                    type: "open-document",
+                    documentId: id,
+                    disposition: "duplicate-tab",
+                    scope: zoomIn ? "subtree" : "context",
+                    attention: "focus",
+                    scroll: "auto",
+                    restoreScroll: zoomIn ? "never" : "if-document",
+                    zoom: zoomIn,
                 });
                 blockPanel.destroy();
             });
@@ -1896,21 +1893,20 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        /// #if !MOBILE
         const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
         if (refElement) {
             const id = refElement.getAttribute("data-id");
             if (matchHotKey(window.siyuan.config.keymap.editor.general.openBy.custom, event)) {
-                checkFold(id, (zoomIn, action, isRoot) => {
-                    if (!isRoot) {
-                        action.push(Constants.CB_GET_HL);
-                    }
-                    openFileById({
-                        app: protyle.app,
-                        id,
-                        action,
-                        zoomIn,
-                        scrollPosition: "start"
+                checkFold(id, (zoomIn, _action, isRoot) => {
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: id,
+                        disposition: "current",
+                        scope: zoomIn ? "subtree" : "context",
+                        attention: isRoot ? "focus" : "focus-and-highlight",
+                        scroll: "start",
+                        restoreScroll: zoomIn ? "never" : "if-document",
+                        zoom: zoomIn,
                     });
                 });
                 event.preventDefault();
@@ -1919,47 +1915,47 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.refTab.custom, event)) {
                 // 打开块引和编辑器中引用、反链、书签中点击事件需保持一致，都加载上下文
                 checkFold(id, (zoomIn) => {
-                    openFileById({
-                        app: protyle.app,
-                        id,
-                        action: zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
-                        keepCursor: true,
-                        zoomIn,
-                        scrollPosition: "start"
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: id,
+                        disposition: "background-tab",
+                        scope: zoomIn ? "subtree" : "context",
+                        attention: "highlight",
+                        scroll: "start",
+                        restoreScroll: zoomIn ? "never" : "if-document",
+                        zoom: zoomIn,
                     });
                 });
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertRight.custom, event)) {
-                checkFold(id, (zoomIn, action, isRoot) => {
-                    if (!isRoot) {
-                        action.push(Constants.CB_GET_HL);
-                    }
-                    openFileById({
-                        app: protyle.app,
-                        id,
-                        position: "right",
-                        action,
-                        zoomIn,
-                        scrollPosition: "start"
+                checkFold(id, (zoomIn, _action, isRoot) => {
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: id,
+                        disposition: "split-right",
+                        scope: zoomIn ? "subtree" : "context",
+                        attention: isRoot ? "focus" : "focus-and-highlight",
+                        scroll: "start",
+                        restoreScroll: zoomIn ? "never" : "if-document",
+                        zoom: zoomIn,
                     });
                 });
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertBottom.custom, event)) {
-                checkFold(id, (zoomIn, action, isRoot) => {
-                    if (!isRoot) {
-                        action.push(Constants.CB_GET_HL);
-                    }
-                    openFileById({
-                        app: protyle.app,
-                        id,
-                        position: "bottom",
-                        action,
-                        zoomIn,
-                        scrollPosition: "start"
+                checkFold(id, (zoomIn, _action, isRoot) => {
+                    protyle.host.dispatch({
+                        type: "open-document",
+                        documentId: id,
+                        disposition: "split-bottom",
+                        scope: zoomIn ? "subtree" : "context",
+                        attention: isRoot ? "focus" : "focus-and-highlight",
+                        scroll: "start",
+                        restoreScroll: zoomIn ? "never" : "if-document",
+                        zoom: zoomIn,
                     });
                 });
                 event.preventDefault();
@@ -1978,7 +1974,6 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return true;
             }
         }
-        /// #endif
 
         if (matchHotKey("⇧⌘V", event)) {
             event.returnValue = false;
@@ -1989,20 +1984,6 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        /// #if !BROWSER
-        if (matchHotKey(window.siyuan.config.keymap.editor.general.showInFolder.custom, event)) {
-            const aElement = hasClosestByAttribute(range.startContainer, "data-type", "a");
-            if (aElement) {
-                const linkAddress = aElement.getAttribute("data-href");
-                if (isLocalPath(linkAddress)) {
-                    openBy(linkAddress, "folder");
-                    event.preventDefault();
-                    event.stopPropagation();
-                }
-            }
-            return;
-        }
-        /// #endif
 
         if (matchHotKey(window.siyuan.config.keymap.editor.general.openBy.custom, event)) {
             const aElement = hasClosestByAttribute(range.startContainer, "data-type", "a");

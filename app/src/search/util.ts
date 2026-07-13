@@ -46,7 +46,6 @@ import {isSupportCSSHL, searchMarkRender} from "../protyle/render/searchMarkRend
 import {saveKeyList, toggleAssetHistory, toggleReplaceHistory, toggleSearchHistory} from "./toggleHistory";
 import {highlightById} from "../util/highlightById";
 import {getSelectionOffset} from "../protyle/util/selection";
-import {electronUndo} from "../protyle/undo";
 import {getContenteditableElement} from "../protyle/wysiwyg/getBlock";
 
 export const openGlobalSearch = (app: App, text: string, replace: boolean, searchData?: Config.IUILayoutTabSearchConfig) => {
@@ -903,12 +902,6 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
             setStorageVal(Constants.LOCAL_SEARCHDATA, window.siyuan.storage[Constants.LOCAL_SEARCHDATA]);
         }
         saveKeyList("keys", searchInputElement.value);
-    });
-    searchInputElement.addEventListener("keydown", (event) => {
-        electronUndo(event);
-    });
-    replaceInputElement.addEventListener("keydown", (event) => {
-        electronUndo(event);
     });
     addClearButton({
         inputElement: searchInputElement,
