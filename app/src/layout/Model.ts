@@ -17,6 +17,8 @@ interface IConnectOptions {
 export class Model {
     public ws: WebSocket;
     public reqId: number;
+    private disconnected = false;
+    private reconnectTimer: number | undefined;
 
     public parent:
 
@@ -35,6 +37,10 @@ export class Model {
     }
 
     public connect(options: IConnectOptions) {
+        if (this.disconnected) {
+            return;
+        }
+        this.clearReconnect();
         const websocketURL = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
         const ws = new WebSocket(`${websocketURL}?app=${Constants.SIYUAN_APPID}&id=${options.id}${options.type ? "&type=" + options.type : ""}`);
         ws.onopen = () => {
@@ -68,7 +74,12 @@ export class Model {
 
             if (0 > ev.reason.indexOf("close websocket")) {
                 console.warn("WebSocket is closed. Reconnect will be attempted in 3 second.", ev);
-                setTimeout(() => {
+                this.clearReconnect();
+                this.reconnectTimer = window.setTimeout(() => {
+                    this.reconnectTimer = undefined;
+                    if (this.disconnected) {
+                        return;
+                    }
                     this.connect({
                         id: options.id,
                         type: options.type,
@@ -89,6 +100,21 @@ export class Model {
         this.ws = ws;
     }
 
+    public disconnect() {
+        if (this.disconnected) {
+            return;
+        }
+        this.disconnected = true;
+        this.clearReconnect();
+        if (this.ws) {
+            this.ws.onopen = null;
+            this.ws.onmessage = null;
+            this.ws.onclose = null;
+            this.ws.onerror = null;
+            this.ws.close();
+        }
+    }
+
     public send(cmd: string, param: Record<string, unknown>, process = false) {
         if (!this.ws) { // Inbox 无 ws
             return;
@@ -106,5 +132,12 @@ export class Model {
             // 5：单个应用内所有会话广播
             // 6：非自我应用主会话广播
         }));
+    }
+
+    private clearReconnect() {
+        if (typeof this.reconnectTimer === "number") {
+            window.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
     }
 }

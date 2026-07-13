@@ -3,24 +3,21 @@ import {setPadding} from "../ui/initUI";
 import {hasClosestBlock, hasClosestByClassName} from "./hasClosest";
 import {Constants} from "../../constants";
 import {lineNumberRender} from "../render/highlightRender";
-import {getAllModels} from "../../layout/getAll";
 import {stickyRow} from "../render/av/row";
 
-export const clearBeforeResizeTop = () => {
-    getAllModels().editor.forEach((item) => {
-        if (item.editor && item.editor.protyle &&
-            item.element.parentElement && !item.element.classList.contains("fn__none")) {
-            item.editor.protyle.wysiwyg.element.querySelector("[data-resize-top]")?.removeAttribute("data-resize-top");
+export const clearBeforeResizeTop = (editors: TProtyleEditorRegistry) => {
+    editors.forEach((editor) => {
+        if (editor.element.isConnected && editor.element.getClientRects().length > 0) {
+            editor.wysiwyg.element.querySelector("[data-resize-top]")?.removeAttribute("data-resize-top");
         }
     });
 };
 
-export const recordBeforeResizeTop = () => {
-    getAllModels().editor.forEach((item) => {
-        if (item.editor && item.editor.protyle &&
-            item.element.parentElement && !item.element.classList.contains("fn__none")) {
-            item.editor.protyle.wysiwyg.element.querySelector("[data-resize-top]")?.removeAttribute("data-resize-top");
-            const contentRect = item.editor.protyle.contentElement.getBoundingClientRect();
+export const recordBeforeResizeTop = (editors: TProtyleEditorRegistry) => {
+    editors.forEach((editor) => {
+        if (editor.element.isConnected && editor.element.getClientRects().length > 0) {
+            editor.wysiwyg.element.querySelector("[data-resize-top]")?.removeAttribute("data-resize-top");
+            const contentRect = editor.contentElement.getBoundingClientRect();
             let topElement = document.elementFromPoint(contentRect.left + (contentRect.width / 2), contentRect.top);
             if (hasClosestByClassName(topElement, "b3-menu")) {
                 window.siyuan.menus.menu.remove();

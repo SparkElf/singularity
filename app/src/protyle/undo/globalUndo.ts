@@ -2,7 +2,6 @@ import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
 import {confirmDialog} from "../../dialog/confirmDialog";
 import {showMessage} from "../../dialog/message";
-import {getActiveTab} from "../../layout/tabUtil";
 
 // 本地镜像：按 rootID 缓存 {canUndo, canRedo}，按钮态零 fetch 读取。
 // 在编辑（add 落点）、撤销/重做响应、WS 广播（context.undoState）时更新。
@@ -73,22 +72,6 @@ export const refreshUndoButtons = (protyle: IProtyle) => {
     }
 };
 
-export const getActiveProtyle = (): IProtyle => {
-    const activeTab = getActiveTab();
-    const model = activeTab?.model;
-    if (model && (model as any).editor?.protyle) {
-        return (model as any).editor.protyle;
-    }
-    // 兜底：搜索/反链/自定义编辑器中聚焦的那个
-    const allProtyle = (window as any).siyuan?.blockPanels || [];
-    for (const panel of allProtyle) {
-        if (panel.element && document.activeElement && panel.element.contains(document.activeElement)) {
-            return panel.editor?.protyle;
-        }
-    }
-    return undefined;
-};
-
 // 解析 rootID 列表为文档名，用于跨文档撤销确认提示
 const resolveRootNames = async (rootIDs: string[]): Promise<string[]> => {
     const names: string[] = [];
@@ -107,9 +90,9 @@ const resolveRootNames = async (rootIDs: string[]): Promise<string[]> => {
     return names;
 };
 
-const focusRootIDs = (rootIDs: string[], focusBlockId?: string) => {
+const focusRootIDs = (editors: TProtyleEditorRegistry, rootIDs: string[], focusBlockId?: string) => {
     // 只滚动发起窗口的焦点 protyle 到变更块；其它文档不强制重开（撤销物理结果在发起文档）
-    const protyle = getActiveProtyle();
+    const protyle = editors.getActive();
     if (protyle && rootIDs.includes(protyle.block?.rootID) && focusBlockId) {
         const target = protyle.wysiwyg.element.querySelector(`[data-node-id="${focusBlockId}"]`);
         if (target) {
@@ -210,7 +193,7 @@ export const requestUndo = async (protyle: IProtyle) => {
             protyle.undo.renderLocal(protyle, data.doOperations);
             refreshUndoButtons(protyle);
             const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(mutatedRootIDs, focusBlockId);
+            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
         }
     });
 };
@@ -262,7 +245,7 @@ export const requestRedo = async (protyle: IProtyle) => {
             protyle.undo.renderLocal(protyle, data.doOperations);
             refreshUndoButtons(protyle);
             const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(mutatedRootIDs, focusBlockId);
+            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
         }
     });
 };

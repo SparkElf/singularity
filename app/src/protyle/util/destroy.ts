@@ -5,6 +5,11 @@ export const destroy = (protyle: IProtyle) => {
     if (!protyle) {
         return;
     }
+    if (protyle.destroyed) {
+        return;
+    }
+    protyle.destroyed = true;
+    protyle.editors.unregister(protyle);
     hideElements(["util"], protyle);
     if (isSupportCSSHL()) {
         protyle.highlight.markHL.clear();
@@ -22,13 +27,7 @@ export const destroy = (protyle: IProtyle) => {
     if (protyle.undo) {
         protyle.undo.clear();
     }
-    try {
-        protyle.ws.send("closews", {});
-    } catch (e) {
-        setTimeout(() => {
-            protyle.ws.send("closews", {});
-        }, 10240);
-    }
+    protyle.ws?.disconnect();
     protyle.plugins.emit({
         type: "destroy-protyle",
         detail: {

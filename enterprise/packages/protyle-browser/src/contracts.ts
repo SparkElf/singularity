@@ -101,6 +101,16 @@ export interface ProtyleHostPort {
   dispatch: (event: ProtyleHostEvent) => void;
 }
 
+export interface ProtyleEditorRegistry<TEditor> {
+  register: (editor: TEditor) => () => void;
+  unregister: (editor: TEditor) => void;
+  forEach: (visitor: (editor: TEditor) => void) => void;
+  find: (predicate: (editor: TEditor) => boolean) => TEditor | undefined;
+  activate: (editor: TEditor) => boolean;
+  getActive: () => TEditor | undefined;
+  dispose: () => void;
+}
+
 export interface ProtyleSession {
   readonly spaceId: string;
   readonly host: ProtyleHostPort;

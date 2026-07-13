@@ -29,7 +29,6 @@ import {transaction, turnsIntoOneTransaction} from "../wysiwyg/transaction";
 import {updateListOrder} from "../wysiwyg/list";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {onGet} from "./onGet";
-import {getAllEditor} from "../../layout/getAll";
 import {updatePanelByEditor} from "../../editor/util";
 import {blockRender} from "../render/blockRender";
 import {uploadFiles} from "../upload";
@@ -46,7 +45,7 @@ import {dragoverTab} from "../render/av/view";
 import {setFold} from "./blockFold";
 
 // position: afterbegin 为拖拽成超级块; "afterend", "beforebegin" 一般拖拽
-const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElement: Element,
+const moveTo = async (protyle: IProtyle, sourceProtyle: IProtyle, sourceElements: Element[], targetElement: Element,
                       isSameDoc: boolean, position: InsertPosition, isCopy: boolean) => {
     const doOperations: IOperation[] = [];
     const undoOperations: IOperation[] = [];
@@ -76,22 +75,7 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
             const parentBlock = getParentBlock(item);
             let srcParentID = parentBlock?.getAttribute("data-node-id");
             if (!srcParentID) {
-                // 顶层块：父是 .protyle-wysiwyg 容器（无 data-node-id）。
-                let srcRootID = "";
-                // 通过 getAllEditor 反查 item 所属的源 protyle，取其 block.rootID。
-                const sourceEditor = getAllEditor().find(editor =>
-                    editor.protyle.wysiwyg.element === parentBlock);
-                if (sourceEditor?.protyle?.block?.rootID) {
-                    srcRootID = sourceEditor.protyle.block.rootID;
-                }
-                if (srcRootID) {
-                    srcParentID = srcRootID;
-                } else {
-                    // 跨窗口/移动端 getAllEditor 找不到源编辑器，用 kernel API 反查块的真实 rootID。
-                    // 不能 fallback 到目标 protyle 的 rootID（会导致撤销把块移到错误文档）。
-                    const response = await fetchSyncPost("/api/block/getBlockInfo", {id});
-                    srcParentID = response?.data?.rootID || "";
-                }
+                srcParentID = sourceProtyle.block.parentID || sourceProtyle.block.rootID;
             }
             sourcePositions.set(id, {
                 previousID: getPreviousBlockSibling(item)?.getAttribute("data-node-id") || "",
@@ -102,7 +86,7 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
     for (let index = sourceElements.length - 1; index >= 0; index--) {
         const item = sourceElements[index];
         const id = item.getAttribute("data-node-id");
-        const parentID = getParentBlock(item).getAttribute("data-node-id") || protyle.block.parentID || protyle.block.rootID;
+        const parentID = getParentBlock(item).getAttribute("data-node-id") || sourceProtyle.block.parentID || sourceProtyle.block.rootID;
         if (item.getAttribute("data-type") === "NodeListItem" && !newListId && !isSameLi) {
             newListId = Lute.NewNodeID();
             newListElement = document.createElement("div");
@@ -218,7 +202,7 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
                     data: topSourceElement.outerHTML,
                     id: topSourceElement.getAttribute("data-node-id"),
                     previousID: topSourceElement.previousElementSibling?.getAttribute("data-node-id"),
-                    parentID: getParentBlock(topSourceElement)?.getAttribute("data-node-id") || protyle.block.parentID || protyle.block.rootID
+                    parentID: getParentBlock(topSourceElement)?.getAttribute("data-node-id") || sourceProtyle.block.parentID || sourceProtyle.block.rootID
                 });
                 const topSourceParentElement = topSourceElement.parentElement;
                 topSourceElement.remove();
@@ -236,16 +220,10 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
                         doOperations.push(sbData.doOperations[0], sbData.doOperations[1]);
                         undoOperations.push(sbData.undoOperations[1], sbData.undoOperations[0]);
                     } else {
-                        const allEditor = getAllEditor();
-                        for (let i = 0; i < allEditor.length; i++) {
-                            if (allEditor[i].protyle.element.contains(topSourceParentElement)) {
-                                const otherSbData = await cancelSB(allEditor[i].protyle, topSourceParentElement);
-                                doOperations.push(otherSbData.doOperations[0], otherSbData.doOperations[1]);
-                                undoOperations.push(otherSbData.undoOperations[1], otherSbData.undoOperations[0]);
-                                // 全局撤销栈下跨文档移动为可逆条目，无需清空源编辑器历史
-                                break;
-                            }
-                        }
+                        const otherSbData = await cancelSB(sourceProtyle, topSourceParentElement);
+                        doOperations.push(otherSbData.doOperations[0], otherSbData.doOperations[1]);
+                        undoOperations.push(otherSbData.undoOperations[1], otherSbData.undoOperations[0]);
+                        // 全局撤销栈下跨文档移动为可逆条目，无需清空源编辑器历史
                     }
                 }
             } else if (oldSourceParentElement.classList.contains("sb") && getSbChildBlockCount(oldSourceParentElement) === 1) {
@@ -255,39 +233,28 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
                     doOperations.push(sbData.doOperations[0], sbData.doOperations[1]);
                     undoOperations.push(sbData.undoOperations[1], sbData.undoOperations[0]);
                 } else {
-                    const allEditor = getAllEditor();
-                    for (let i = 0; i < allEditor.length; i++) {
-                        if (allEditor[i].protyle.element.contains(oldSourceParentElement)) {
-                            const otherSbData = await cancelSB(allEditor[i].protyle, oldSourceParentElement);
-                            doOperations.push(otherSbData.doOperations[0], otherSbData.doOperations[1]);
-                            undoOperations.push(otherSbData.undoOperations[1], otherSbData.undoOperations[0]);
-                            // 全局撤销栈下跨文档移动为可逆条目，无需清空源编辑器历史
-                            break;
-                        }
-                    }
+                    const otherSbData = await cancelSB(sourceProtyle, oldSourceParentElement);
+                    doOperations.push(otherSbData.doOperations[0], otherSbData.doOperations[1]);
+                    undoOperations.push(otherSbData.undoOperations[1], otherSbData.undoOperations[0]);
+                    // 全局撤销栈下跨文档移动为可逆条目，无需清空源编辑器历史
                 }
             } else if (oldSourceParentElement.classList.contains("protyle-wysiwyg") && oldSourceParentElement.childElementCount === 0) {
                 // 拖拽后，根文档原内容为空
-                getAllEditor().find(item => {
-                    if (item.protyle.element.contains(oldSourceParentElement)) {
-                        if (!item.protyle.block.showAll) {
-                            const newId = Lute.NewNodeID();
-                            doOperations.splice(0, 0, {
-                                action: "insert",
-                                id: newId,
-                                data: genEmptyElement(false, false, newId).outerHTML,
-                                parentID: item.protyle.block.parentID
-                            });
-                            undoOperations.splice(0, 0, {
-                                action: "delete",
-                                id: newId,
-                            });
-                        } else {
-                            zoomOut({protyle: item.protyle, id: item.protyle.block.rootID});
-                        }
-                        return true;
-                    }
-                });
+                if (!sourceProtyle.block.showAll) {
+                    const newId = Lute.NewNodeID();
+                    doOperations.splice(0, 0, {
+                        action: "insert",
+                        id: newId,
+                        data: genEmptyElement(false, false, newId).outerHTML,
+                        parentID: sourceProtyle.block.parentID
+                    });
+                    undoOperations.splice(0, 0, {
+                        action: "delete",
+                        id: newId,
+                    });
+                } else {
+                    zoomOut({protyle: sourceProtyle, id: sourceProtyle.block.rootID});
+                }
             }
         }
 
@@ -369,7 +336,17 @@ const moveTo = async (protyle: IProtyle, sourceElements: Element[], targetElemen
 
 const dragSb = async (protyle: IProtyle, sourceElements: Element[], targetElement: Element, isBottom: boolean,
                       direct: "col" | "row", isCopy: boolean) => {
-    const isSameDoc = protyle.element.contains(sourceElements[0]);
+    const sourceElement = sourceElements[0];
+    if (!sourceElement) {
+        console.error("[protyle.registry] drag source editor was not found");
+        return;
+    }
+    const isSameDoc = protyle.element.contains(sourceElement);
+    const sourceProtyle = isSameDoc ? protyle : protyle.editors.find(editor => editor.element.contains(sourceElement));
+    if (!sourceProtyle?.block.rootID) {
+        console.error("[protyle.registry] drag source editor was not found");
+        return;
+    }
     // 移动前记录源块所在的超级块，移动后刷新其手柄（移出后需重建）https://github.com/siyuan-note/siyuan/issues/9521
     const originSbSet = new Set<Element>();
     sourceElements.forEach(el => {
@@ -413,7 +390,7 @@ const dragSb = async (protyle: IProtyle, sourceElements: Element[], targetElemen
     }];
     // 临时插入，防止后面计算错误，最终再移动矫正
     sbElement.lastElementChild.before(targetElement);
-    const moveToResult = await moveTo(protyle, sourceElements, sbElement, isSameDoc, "afterbegin", isCopy);
+    const moveToResult = await moveTo(protyle, sourceProtyle, sourceElements, sbElement, isSameDoc, "afterbegin", isCopy);
     doOperations.push(...moveToResult.doOperations);
     undoOperations.push(...moveToResult.undoOperations);
     const newSourceParentElement = moveToResult.newSourceElements;
@@ -492,7 +469,17 @@ const dragSb = async (protyle: IProtyle, sourceElements: Element[], targetElemen
 };
 
 const dragSame = async (protyle: IProtyle, sourceElements: Element[], targetElement: Element, isBottom: boolean, isCopy: boolean) => {
-    const isSameDoc = protyle.element.contains(sourceElements[0]);
+    const sourceElement = sourceElements[0];
+    if (!sourceElement) {
+        console.error("[protyle.registry] drag source editor was not found");
+        return;
+    }
+    const isSameDoc = protyle.element.contains(sourceElement);
+    const sourceProtyle = isSameDoc ? protyle : protyle.editors.find(editor => editor.element.contains(sourceElement));
+    if (!sourceProtyle?.block.rootID) {
+        console.error("[protyle.registry] drag source editor was not found");
+        return;
+    }
     const doOperations: IOperation[] = [];
     const undoOperations: IOperation[] = [];
     // 移动前记录源块所在的超级块，移动后刷新其手柄（移出后需重建）
@@ -504,7 +491,7 @@ const dragSame = async (protyle: IProtyle, sourceElements: Element[], targetElem
         }
     });
 
-    const moveToResult = await moveTo(protyle, sourceElements, targetElement, isSameDoc, isBottom ? "afterend" : "beforebegin", isCopy);
+    const moveToResult = await moveTo(protyle, sourceProtyle, sourceElements, targetElement, isSameDoc, isBottom ? "afterend" : "beforebegin", isCopy);
     doOperations.push(...moveToResult.doOperations);
     undoOperations.push(...moveToResult.undoOperations);
     const newSourceParentElement = moveToResult.newSourceElements;

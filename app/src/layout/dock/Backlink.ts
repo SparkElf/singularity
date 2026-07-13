@@ -21,6 +21,7 @@ export class Backlink extends Model {
     public rootId: string; // "local" 必传
     public tree: Tree;
     private notebookId: string;
+    private abortController = new AbortController();
     public mTree: Tree;
     public editors: Protyle[] = [];
     public status: {
@@ -305,7 +306,7 @@ export class Backlink extends Model {
                 if (!existResponse.data) {
                     this.parent.parent.removeTab(this.parent.id);
                 }
-            });
+            }, undefined, undefined, this.abortController.signal);
         }
     }
 
@@ -471,6 +472,9 @@ export class Backlink extends Model {
                 highlight: !isSupportCSSHL(),
                 keyword,
             }, (response) => {
+                if (this.abortController.signal.aborted || !liElement.isConnected) {
+                    return;
+                }
                 svgElement.removeAttribute("disabled");
                 svgElement.classList.add("b3-list-item__arrow--open");
                 const editorElement = document.createElement("div");
@@ -494,7 +498,7 @@ export class Backlink extends Model {
                 editor.protyle.notebookId = liElement.getAttribute("data-notebook-id");
                 searchMarkRender(editor.protyle, response.data.keywords);
                 this.editors.push(editor);
-            });
+            }, undefined, undefined, this.abortController.signal);
         }
     }
 
@@ -509,7 +513,7 @@ export class Backlink extends Model {
         }, () => {
             element.classList.remove("fn__rotate");
             this.searchBacklinks();
-        });
+        }, undefined, undefined, this.abortController.signal);
     }
 
     private searchBacklinks(init = false) {
@@ -529,7 +533,27 @@ export class Backlink extends Model {
                 this.saveStatus();
             }
             this.render(response.data);
-        });
+        }, undefined, undefined, this.abortController.signal);
+    }
+
+    public updateForCurrentEditor(blockId: string, isCurrent: () => boolean) {
+        const element = this.element.querySelector('.block__icon[data-type="refresh"] svg');
+        element.classList.add("fn__rotate");
+        fetchPost("/api/ref/getBacklink2", {
+            sort: this.status[blockId] ? this.status[blockId].sort.toString() : window.siyuan.config.editor.backlinkSort.toString(),
+            mSort: this.status[blockId] ? this.status[blockId].mSort.toString() : window.siyuan.config.editor.backmentionSort.toString(),
+            id: blockId,
+            k: this.inputsElement[0].value,
+            mk: this.inputsElement[1].value,
+        }, response => {
+            if (!isCurrent() || this.blockId === blockId) {
+                element.classList.remove("fn__rotate");
+                return;
+            }
+            this.saveStatus();
+            this.blockId = blockId;
+            this.render(response.data);
+        }, undefined, undefined, this.abortController.signal);
     }
 
     public saveStatus() {
@@ -561,6 +585,15 @@ export class Backlink extends Model {
                 this.status[this.blockId].backlinkMStatus = 2;
             }
         }
+    }
+
+    public destroy() {
+        if (this.abortController.signal.aborted) {
+            return;
+        }
+        this.abortController.abort();
+        this.editors.forEach(item => item.destroy());
+        this.editors = [];
     }
 
     public render(data: {

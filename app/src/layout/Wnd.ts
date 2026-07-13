@@ -52,6 +52,7 @@ import {clearOBG} from "./dock/util";
 import {recordBeforeResizeTop} from "../protyle/util/resize";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {setTitle} from "../util/processTitle";
+import {Backlink} from "./dock/Backlink";
 
 export class Wnd {
     private app: App;
@@ -399,7 +400,7 @@ export class Wnd {
                 return;
             }
             if (targetWnd) {
-                recordBeforeResizeTop();
+                recordBeforeResizeTop(this.app.protyleEditors);
                 targetWnd.headersElement.append(oldTab.headElement);
                 targetWnd.headersElement.parentElement.classList.remove("fn__none");
                 targetWnd.moveTab(oldTab);
@@ -751,6 +752,9 @@ export class Wnd {
             model.editors.unRefEdit.destroy();
             return;
         }
+        if (model instanceof Backlink) {
+            model.destroy();
+        }
         if (model instanceof Asset) {
             if (model.pdfObject && model.pdfObject.pdfLoadingTask) {
                 model.pdfObject.pdfLoadingTask.destroy();
@@ -761,7 +765,7 @@ export class Wnd {
                 model.destroy();
             }
         }
-        model.send("closews", {});
+        model.disconnect();
     }
 
     private removeTabAction = (id: string, isBatchClose = false, animate = true, isSaveLayout = true) => {
@@ -794,7 +798,7 @@ export class Wnd {
                 if (["bottom", "left", "right"].includes(this.parent.type)) {
                     item.panelElement.remove();
                 } else {
-                    recordBeforeResizeTop();
+                    recordBeforeResizeTop(this.app.protyleEditors);
                     this.remove();
                 }
                 // 关闭分屏页签后光标消失
@@ -978,7 +982,7 @@ export class Wnd {
             // 场景：没有打开的文档，点击标签面板打开
             return this;
         }
-        recordBeforeResizeTop();
+        recordBeforeResizeTop(this.app.protyleEditors);
         const wnd = new Wnd(this.app, direction);
         if (direction === this.parent.direction) {
             this.parent.addWnd(wnd, this.id, after);
