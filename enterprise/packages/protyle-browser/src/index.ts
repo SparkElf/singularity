@@ -10,11 +10,19 @@ export type {
   ProtyleFactory,
   ProtyleHostEvent,
   ProtyleHostPort,
+  ProtyleMenuPort,
+  ProtyleOverlayPort,
   ProtylePluginEvent,
   ProtylePluginEventType,
   ProtylePluginPort,
   ProtylePluginSlashItem,
+  ProtyleRequestOptions,
+  ProtyleRuntime,
   ProtyleSession,
+  ProtyleSubscription,
+  ProtyleSubscriptionOptions,
+  ProtyleSurface,
+  ProtyleTransport,
 } from "./contracts.ts";
 
 export { createProtyleEditorRegistry } from "./registry.ts";

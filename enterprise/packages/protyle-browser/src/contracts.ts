@@ -111,6 +111,60 @@ export interface ProtyleEditorRegistry<TEditor> {
   dispose: () => void;
 }
 
+export type ProtyleSurface = "workspace" | "embedded";
+
+export interface ProtyleRequestOptions {
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly signal?: AbortSignal;
+}
+
+export interface ProtyleTransport<TMessage> {
+  request: <TResponse>(
+    path: string,
+    body?: unknown,
+    options?: ProtyleRequestOptions,
+  ) => Promise<TResponse>;
+  subscribe: (options: ProtyleSubscriptionOptions<TMessage>) => ProtyleSubscription;
+  dispose: () => void;
+}
+
+export interface ProtyleSubscription {
+  disconnect: () => void;
+}
+
+export interface ProtyleSubscriptionOptions<TMessage> {
+  readonly id: string;
+  readonly type: "protyle";
+  readonly onMessage: (message: TMessage) => void;
+}
+
+export interface ProtyleMenuPort<TMenu> {
+  readonly current: TMenu;
+  dispose: () => void;
+}
+
+export interface ProtyleOverlayPort<TOverlay> {
+  add: (overlay: TOverlay) => () => void;
+  forEach: (visitor: (overlay: TOverlay) => void) => void;
+  dispose: () => void;
+}
+
+export interface ProtyleRuntime<
+  TEditor,
+  TOptions,
+  TToolbar,
+  TMessage,
+  TMenu,
+  TOverlay,
+> {
+  readonly editors: ProtyleEditorRegistry<TEditor>;
+  readonly host: ProtyleHostPort;
+  readonly menu: ProtyleMenuPort<TMenu>;
+  readonly overlays: ProtyleOverlayPort<TOverlay>;
+  readonly plugins: ProtylePluginPort<TOptions, TToolbar, TEditor>;
+  readonly transport: ProtyleTransport<TMessage>;
+}
+
 export interface ProtyleSession {
   readonly spaceId: string;
   readonly host: ProtyleHostPort;

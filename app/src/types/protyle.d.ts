@@ -519,6 +519,17 @@ type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/s
 
 type TProtyleEditorRegistry = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleEditorRegistry<IProtyle>;
 
+type TProtyleRuntime = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleRuntime<
+    IProtyle,
+    IProtyleOptions | undefined,
+    Array<string | IMenuItem>,
+    IWebSocketData,
+    import("../plugin/Menu").Menu,
+    import("../block/Panel").BlockPanel
+>;
+
+type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSurface;
+
 interface IProtyle {
     highlight: {
         mark: Highlight
@@ -530,10 +541,8 @@ interface IProtyle {
     getInstance: () => import("../protyle").Protyle,
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
-    app: import("../index").App,
-    editors: TProtyleEditorRegistry,
-    host: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort,
-    plugins: TProtylePluginPort,
+    runtime: TProtyleRuntime,
+    surface: TProtyleSurface,
     id: string,
     destroyed?: boolean,
     query?: {
@@ -555,7 +564,6 @@ interface IProtyle {
     },
     disabled: boolean,
     selectElement?: HTMLElement,
-    ws?: import("../layout/Model").Model,
     notebookId?: string
     path?: string
     model?: import("../../src/editor").Editor,
