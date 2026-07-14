@@ -15,8 +15,11 @@ export default defineConfig({
       ),
     ],
     hookTimeout: 30_000,
-    include: ["test/**/*.http.test.ts"],
-    name: "api-http-contract",
+    include: [
+      "test/**/*.http.test.ts",
+      "test/**/*.operations.test.ts",
+    ],
+    name: "api-http-contract-operations-integration",
     testTimeout: 15_000,
   },
 });

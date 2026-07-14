@@ -87,14 +87,6 @@ jobs:
         run: pnpm verify:b4
         working-directory: enterprise
 
-      - name: Install Playwright Chromium
-        run: pnpm --filter @singularity/web exec playwright install --with-deps chromium
-        working-directory: enterprise
-
-      - name: Static workspace browser check
-        run: pnpm test:shell
-        working-directory: enterprise
-
   space-session:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -132,6 +124,10 @@ jobs:
 
       - name: Install enterprise dependencies
         run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @singularity/web exec playwright install --with-deps chromium
         working-directory: enterprise
 
       - name: Verify S0-S3

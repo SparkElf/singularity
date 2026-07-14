@@ -17,10 +17,15 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "pnpm --filter @singularity/authorization build && tsc -p tsconfig.build.json && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@singularity/authorization": "workspace:*",
+    "zod": "3.25.76"
   }
 }

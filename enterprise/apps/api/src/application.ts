@@ -9,20 +9,39 @@ import {
   type NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import cookie from "@fastify/cookie";
 import { OPENAPI_DOCUMENT_PATH } from "@singularity/contracts";
 
-import { AppModule, type AppModuleOptions } from "./app.module.js";
+import { AppModule } from "./app.module.js";
+import {
+  parsePublicOrigin,
+  parseTrustedProxyCidrs,
+} from "./configuration.js";
+import { SystemClock, type Clock } from "./identity/clock.js";
+import { ApiProblemFilter } from "./problem.js";
 
-export interface CreateApiApplicationOptions extends AppModuleOptions {
+export interface CreateApiApplicationOptions {
+  clock?: Clock;
+  databaseUrl: string | undefined;
   logger?: LoggerService;
+  publicOrigin: string | undefined;
+  trustedProxyCidrs?: string | undefined;
 }
 
 export async function createApiApplication(
   options: CreateApiApplicationOptions,
 ): Promise<NestFastifyApplication> {
+  const configuration = {
+    publicOrigin: parsePublicOrigin(options.publicOrigin),
+    trustedProxyCidrs: parseTrustedProxyCidrs(options.trustedProxyCidrs),
+  };
   const adapter = new FastifyAdapter({
+    bodyLimit: 16 * 1_024,
     genReqId: () => randomUUID(),
     requestIdHeader: false,
+    ...(configuration.trustedProxyCidrs.length === 0
+      ? {}
+      : { trustProxy: [...configuration.trustedProxyCidrs] }),
   });
 
   adapter.getInstance().addHook("onRequest", async (request, reply) => {
@@ -30,10 +49,16 @@ export async function createApiApplication(
   });
 
   const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule.register({ databaseUrl: options.databaseUrl }),
+    AppModule.register({
+      clock: options.clock ?? new SystemClock(),
+      configuration,
+      databaseUrl: options.databaseUrl,
+    }),
     adapter,
     options.logger === undefined ? {} : { logger: options.logger },
   );
+  await app.register(cookie);
+  app.useGlobalFilters(new ApiProblemFilter());
 
   const openApi = SwaggerModule.createDocument(
     app,

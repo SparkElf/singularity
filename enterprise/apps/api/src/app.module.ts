@@ -1,10 +1,14 @@
 import type { DynamicModule } from "@nestjs/common";
 import { Module } from "@nestjs/common";
-import { DatabaseRuntime } from "@singularity/database";
 
+import type { ApiConfiguration } from "./configuration.js";
+import { CoreModule } from "./core.module.js";
 import { DatabaseHealthController } from "./database-health.controller.js";
+import type { Clock } from "./identity/clock.js";
 
 export interface AppModuleOptions {
+  clock: Clock;
+  configuration: ApiConfiguration;
   databaseUrl: string | undefined;
 }
 
@@ -13,13 +17,8 @@ export class AppModule {
   static register(options: AppModuleOptions): DynamicModule {
     return {
       module: AppModule,
+      imports: [CoreModule.register(options)],
       controllers: [DatabaseHealthController],
-      providers: [
-        {
-          provide: DatabaseRuntime,
-          useFactory: () => new DatabaseRuntime(options.databaseUrl),
-        },
-      ],
     };
   }
 }

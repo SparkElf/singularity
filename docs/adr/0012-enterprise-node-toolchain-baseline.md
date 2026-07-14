@@ -3,7 +3,7 @@ title: "ADR-012: 企业Node工具链与集成测试时限基线"
 description: "统一企业工作区与L0 CI的Node版本，并保证数据库迁移watchdog先于Vitest case超时收敛"
 author: "Codex"
 date: "2026-07-14"
-version: "1.0.0"
+version: "1.1.0"
 status: "accepted"
 tags: ["adr", "node", "pnpm", "vitest", "ci"]
 ---
@@ -15,6 +15,7 @@ tags: ["adr", "node", "pnpm", "vitest", "ci"]
 | Version | Date | Author | Changes |
 | --- | --- | --- | --- |
 | 1.0.0 | 2026-07-14 | Codex | 统一Node 24工具链并对齐数据库集成测试时限 |
+| 1.1.0 | 2026-07-15 | Codex | 对齐S1落地后的browser integration门禁并删除失效shell配置引用 |
 
 ## Status
 
@@ -29,7 +30,7 @@ Accepted
 ## Decision
 
 1. 企业工作区的运行时基线固定为Node 24；`engines.node`使用`>=24.0.0 <25.0.0`，`pnpm-workspace.yaml`通过`engineStrict: true`拒绝范围外运行时。根工具链和Node目标importer直接锁定`@types/node` 24.13.3，workspace `overrides`将Vite与Vitest optional peer固定到同一版本。浏览器安全基础tsconfig固定`types: []`，Node tsconfig显式使用`types: ["node"]`。Web生产`tsconfig.json`只包含非测试`src`并使用`types: ["vite/client"]`，`tsconfig.test.json`拥有Vitest测试和setup，`tsconfig.tooling.json`拥有Vite/Playwright配置及浏览器测试；Web `build`只检查生产配置，`typecheck`聚合三套配置。Protyle生产`tsconfig.json`排除同目录测试，`tsconfig.test.json`拥有Vitest tests。ESLint对浏览器TypeScript显式列出Web三套与Protyle两套project，不使用`allowDefaultProject`或把测试重新并入生产配置。L0的enterprise Web和space-session job均使用Node 24。
-2. pnpm以企业工作区`packageManager`锁定11.9.0，CI setup保持同值；Playwright shell server只调用`corepack pnpm`并消费该工作区事实源，不再硬编码第三份版本。
+2. pnpm以企业工作区`packageManager`锁定11.9.0，CI setup保持同值；Playwright browser integration的Vite `webServer`直接调用工作区`pnpm build && pnpm preview`并消费该工作区事实源，不再硬编码第三份版本。
 3. database integration默认`testTimeout`和`hookTimeout`分别保持15秒、30秒；仅完整迁移回放case使用60秒上限，以覆盖20秒迁移watchdog、1秒强制终止宽限以及有界的schema创建、Prisma探测、业务探针和清理。
 4. API HTTP contract case本身不回放迁移，继续使用15秒`testTimeout`；API `globalSetup`仍消费共享PostgreSQL support执行迁移，并由support自身20秒watchdog约束，不受case timeout替代。
 5. 保留现有真实PostgreSQL测试、随机schema隔离、失败清理support与`test:s0-s3 -> verify:s0-s3`聚合入口；Web与React Router继续由`verify:b4`覆盖。不新增helper、runner、fallback或重复suite。
@@ -65,4 +66,4 @@ Accepted
 3. [企业工作区清单](../../enterprise/package.json)
 4. [pnpm工作区配置](../../enterprise/pnpm-workspace.yaml)
 5. [数据库Vitest配置](../../enterprise/packages/database/vitest.integration.config.ts)
-6. [Playwright shell配置](../../enterprise/apps/web/playwright.shell.config.ts)
+6. [Playwright browser integration配置](../../enterprise/apps/web/playwright.integration.config.ts)
