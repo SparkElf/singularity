@@ -62,7 +62,7 @@ ${padHTML}
                 const type = target.getAttribute("data-type");
                 if (id) {
                     if (protyle.options.render.breadcrumbDocName && window.siyuan.ctrlIsPressed) {
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: id,
                             disposition: "current",
@@ -517,7 +517,7 @@ ${padHTML}
                 }).element);
             }
             emitProtylePluginMenu({
-                plugins: protyle.plugins,
+                plugins: protyle.session.runtime.plugins,
                 type: "open-menu-breadcrumbmore",
                 detail: {
                     protyle,

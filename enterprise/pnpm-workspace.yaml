@@ -1,4 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
-
+engineStrict: true
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  prisma: true

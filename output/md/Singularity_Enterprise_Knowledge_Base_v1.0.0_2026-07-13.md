@@ -3,7 +3,7 @@ title: "奇点企业知识库完整方案"
 description: "定义奇点云端企业知识库的产品边界、目标架构、长期路线与本期交付计划"
 author: "Codex"
 date: "2026-07-13"
-version: "1.0.0"
+version: "1.3.4"
 status: "approved"
 tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 ---
@@ -17,6 +17,14 @@ tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0.0 | 2026-07-13 | Codex | 建立云端权威架构、L0-L6路线和L0/L1实施合同 |
+| 1.1.0 | 2026-07-14 | Codex | 前移真实企业空间Session组合根与Kernel Gateway启动切片，修正Protyle迁移顺序 |
+| 1.2.0 | 2026-07-14 | Codex | 闭合Kernel服务认证、空间资源、撤权、CSRF、S3/B4依赖与S0-S3测试门禁 |
+| 1.2.1 | 2026-07-14 | Codex | 明确Protyle WebSocket只接收推送，所有正式写入统一走HTTP策略 |
+| 1.3.0 | 2026-07-14 | Codex | 固定两级成员完整性、mTLS、主动内容隔离、撤权竞态、错误映射与分阶段非空门禁 |
+| 1.3.1 | 2026-07-14 | Codex | 架构、安全与测试治理复评通过，批准作为后续实施权威依据 |
+| 1.3.2 | 2026-07-14 | Codex | 固定S0数据库readiness HTTP路径、成功与不可用响应语义 |
+| 1.3.3 | 2026-07-14 | Codex | 固定数据库配置脱敏、有限连接/查询时限与公开枚举单一事实源 |
+| 1.3.4 | 2026-07-14 | Codex | 统一企业工作区Node 24工具链，并对齐数据库集成测试与迁移watchdog时限 |
 
 ## Table of Contents
 
@@ -65,6 +73,9 @@ tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 9. PostgreSQL不复制文档、块和索引；`.sy`与SQLite仍是内容事实源。
 10. 本期完成L0基础工程与L1企业基础版，不实现实时协作。
 11. 不引入Electron、`gomobile`、Rust客户端内核或原生移动客户端。
+12. 生产`ProtyleSession`只能由授权后的企业空间启动响应创建；不得以工作区路径、设备ID、随机App ID或其他本地标识近似`spaceId`。
+13. Gateway到Kernel的HTTPS、WSS和readiness统一使用mTLS与短期Ed25519服务JWT；验证精确证书身份，禁止明文与`InsecureSkipVerify`，浏览器Cookie、用户API token和空锁屏密码不得承担私网服务认证。
+14. 应用源只内联安全MIME allowlist中的惰性资源；HTML、JavaScript、SVG、XML、PDF、未知类型和导出HTML强制下载并使用`nosniff`与sandbox CSP。
 
 ## 3. 产品模型
 
@@ -124,6 +135,7 @@ tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 
 | 领域 | 目标方案 |
 |------|----------|
+| 运行时与包管理 | Node 24（`>=24 <25`且严格执行）、`@types/node` 24.13.3、pnpm 11.9.0 |
 | Web UI | React 19、TypeScript、Vite 8 |
 | 样式 | Tailwind CSS 4、Design Tokens |
 | 组件系统 | shadcn、Radix UI、Lucide React |
@@ -181,6 +193,10 @@ Tailwind只用于新React页面。Protyle保留现有Sass，并通过Design Toke
 
 NestJS采用模块化单体。`api`处理HTTP与WebSocket，`worker`处理备份、通知与审计归档；未出现独立扩缩容需求前不拆微服务。
 
+S0固定提供未认证的`GET /api/v1/health/database`作为数据库readiness合同。配置边界只接受`postgres:`和`postgresql:`，缺失、畸形或错误协议不会保留原始URL或阻止readiness HTTP建立，而是统一返回`503 {"status":"unavailable"}`。有效配置对PostgreSQL执行真实轻量查询：可用时返回`200 {"status":"ready"}`；单副本连接池上限5，连接建立与池等待上限3秒，客户端查询上限5秒，PostgreSQL语句上限4秒。两种响应均使用`Cache-Control: no-store`，且不暴露数据库地址、名称、schema、异常文本或凭证。该接口只表达数据库readiness，不兼作进程liveness、迁移状态或业务健康汇总。
+
+组织与空间角色由`authorization` package拥有，浏览器可见Kernel状态由`contracts` package拥有，公开值统一使用小写字符串。Prisma标识符和PostgreSQL枚举值必须与公开合同相同；database package不再公开同名大写枚举，持久化测试直接消费上述公开常量验证往返结果。
+
 建议目录：
 
 ```text
@@ -195,7 +211,7 @@ enterprise/
 │   ├── database/
 │   ├── authorization/
 │   ├── platform/
-│   ├── protyle-react/
+│   ├── protyle-browser/
 │   └── kernel-client/
 └── pnpm-workspace.yaml
 ```
@@ -206,8 +222,10 @@ Kernel Gateway承担真实边界职责：
 
 - 根据`spaceId`解析唯一Kernel实例。
 - 验证组织成员与空间角色。
-- 签发最小生命周期的内部服务凭证。
-- 转发HTTP与WebSocket并转换错误语义。
+- 为每次HTTPS、WSS握手和readiness建立mTLS并签发最长30秒的Ed25519内部服务JWT。
+- 转发空间化Kernel API、资源、上传、导出与WebSocket并转换错误语义。
+- 按`HTTP method + canonical route template`重建允许头，拒绝任意浏览器头透传、重定向、环境代理和内部地址泄露。
+- 强制主动内容下载或通过受信渲染器安全预览，不在应用源执行上传与导出内容。
 - 隐藏内核端口、工作空间路径和内部地址。
 - 记录`organizationId`、`spaceId`、`userId`、路由、结果与耗时。
 - 提供启动状态、健康检查、容量和连接诊断。
@@ -227,6 +245,8 @@ Kernel Gateway承担真实边界职责：
 | 备份、导出、分享快照 | Worker | S3/MinIO |
 
 禁止在PostgreSQL与`.sy`之间双写文档内容。浏览器缓存不构成内容事实源，退出登录后应清除敏感查询缓存。
+
+`SpaceMembership`同时保存`organizationId`、`spaceId`和`userId`，以复合外键分别引用同一组织的`Space`与`OrganizationMembership`；该低频所有权字段用于数据库参照完整性，不能仅靠Service先查后写。
 
 ### 6.2 权限模型
 
@@ -270,11 +290,12 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 2. 固定思源上游基线和可机器校验的版本记录。
 3. 建立品牌、许可证、构建与发布元数据。
 4. 建立React、Vite 8、Tailwind CSS 4与TypeScript严格模式基座。
-5. 建立Protyle React生命周期边界并迁移Web入口。
-6. 建立前端类型检查、Lint、测试与生产构建。
-7. 建立Go Kernel编译、测试和兼容测试入口。
-8. 建立Docker构建、SBOM、漏洞与许可证扫描。
-9. 建立上游影响报告、merge流程和回归门禁。
+5. 建立真实身份、组织、空间与Kernel Gateway最小启动切片，为浏览器提供授权后的`spaceId`。
+6. 建立Protyle React生命周期边界、唯一空间Session组合根并迁移Web入口。
+7. 建立前端类型检查、Lint、测试与生产构建。
+8. 建立Go Kernel编译、测试和兼容测试入口。
+9. 建立Docker构建、SBOM、漏洞与许可证扫描。
+10. 建立上游影响报告、merge流程和回归门禁。
 
 ### 8.2 上游同步策略
 
@@ -288,6 +309,7 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 
 - 可从干净Linux环境重复构建奇点产物。
 - React壳可打开、编辑、保存和搜索文档。
+- React壳从真实组织/空间路由和授权启动响应创建Session，不存在硬编码或本地近似`spaceId`。
 - 块引用、属性视图、图谱、插件和快捷键无功能回退。
 - Vite生产构建不依赖旧Webpack Web入口。
 - 构建产物可追溯到奇点提交和思源上游提交。
@@ -319,9 +341,11 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 ### 9.3 L1验收
 
 - 不同空间不能通过API、搜索、引用或附件互访。
-- `viewer`不能通过HTTP、WebSocket或插件入口提交写事务。
+- `viewer`不能通过HTTP或插件入口提交写事务；Protyle WebSocket对所有角色都只接收服务端推送并拒绝浏览器数据帧。
 - 内核端口无法从公网访问。
-- 禁用用户的现有会话立即失效。
+- 会话撤销/到期、用户禁用、组织/空间停用以及组织/空间成员撤销或角色变化会关闭pending/active连接；关闭前后无迟到推送。
+- 认证或权限失效后等待Session有序销毁并清除编辑器DOM；Kernel或网络故障保留当前内容。
+- HTML、JavaScript、SVG、XML、PDF、未知附件和导出HTML不能在应用源执行。
 - 过期或撤销的分享立即不可访问。
 - 分享页不泄露内核地址、文件路径和未授权引用。
 - 权限变更、导出、分享和删除均产生审计事件。
@@ -329,25 +353,27 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 
 ## 10. 实施顺序
 
-1. 完成L0仓库、基线、文档和上游同步工具。
+1. 完成L0仓库、基线、文档、设计系统和上游同步工具。
 2. 建立pnpm workspace与React/Vite/Tailwind最小应用。
-3. 提取Protyle生命周期边界并完成Web入口切换。
-4. 建立NestJS/Prisma模块化单体与OpenAPI合同。
-5. 实现组织、用户组、空间和授权合同。
-6. 实现Kernel Gateway与空间实例隔离。
-7. 实现分享、审计、备份和恢复。
-8. 完成集中代码评审、安全审查和批量验证。
+3. 建立S0 NestJS/Fastify、Prisma/PostgreSQL和OpenAPI基础工程，并在同批落非空数据库/API证据与S0形态的`verify:s0-s3` production build。
+4. 实现S1本地账号会话、最小组织/空间模型、两级成员授权与真实空间启动合同，并在同批扩展HTTP contract和React路由component。
+5. 实现S2 Kernel实例解析、mTLS与服务JWT、显式Kernel路径/头策略、主动内容隔离及同源HTTP/WebSocket Gateway，并在同批扩展真实HTTPS/WSS和Go服务认证测试。
+6. 实现S3无Core唯一Session组合根，装配生产HostPort、正式零插件PluginPort、Registry、Transport、ResourcePort、Menu、Overlay和完整Runtime，并在同批扩展Session component与Web build。
+7. 原子接通公共Factory与Protyle Core，迁移L0所需嵌入式所有者并完成Vite Web生产入口切换。
+8. 以P3/P4 browser integration验证真实DOM、编辑、插件和复杂内容，再以P5全链E2E删除旧Web入口、Adapter和重复runner。
+9. 补齐用户组、OIDC、完整空间管理、分享、审计、备份和恢复。
+10. 完成集中代码评审、安全审查、许可证审查和批量验证。
 
-每个阶段完成后更新执行计划；不得保留旧入口、新入口双运行或同义字段兼容层。
+L0与L1是能力范围而非严格串行编号。Protyle生产迁移依赖最小企业空间启动切片；不得保留旧入口、新入口双运行、本地Session变体或同义字段兼容层。
 
 ## 11. 验证策略
 
 ### 11.1 自动验证
 
 - 前端：类型检查、ESLint、Vitest、Testing Library、生产构建。
-- 后端：NestJS单元测试、API集成测试、Prisma迁移回放。
-- Kernel：Go测试、核心API黄金样例、`.sy`与SQLite一致性验证。
-- E2E：复用Playwright helper、fixture和page object覆盖登录、空间、编辑、分享与越权。
+- 后端：NestJS单元/真实HTTPS/WSS集成、API合同、Prisma随机schema迁移回放与production build。database与API的普通case继续使用15秒上限；仅完整迁移回放case使用60秒上限，以容纳20秒迁移watchdog、1秒强制终止宽限及有界schema创建、探测和清理。
+- Kernel：`kernel/serviceauth`由`verify:s0-s3`直接运行Go测试，广泛Kernel基线继续覆盖核心API黄金样例、`.sy`与SQLite一致性。
+- E2E：使用独立Playwright配置覆盖登录、空间、编辑、分享与越权；只有至少两个稳定合同共享技术生命周期时才抽取fixture或page object。
 - 构建：Docker冷构建、SBOM、依赖漏洞和许可证扫描。
 
 ### 11.2 浏览器验证
@@ -358,19 +384,25 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 
 长期保留以下稳定日志标签：
 
-- `auth.session`：`userId`、`sessionId`、结果，不记录令牌。
-- `authorization.decision`：`organizationId`、`spaceId`、角色、动作、结果。
-- `kernel.route`：`kernelInstanceId`、路由、耗时、状态，不记录文档正文。
-- `kernel.lifecycle`：实例状态转移、原因和耗时。
-- `share.access`：`shareId`、结果和来源摘要，不记录密码。
-- `backup.job`：`spaceId`、任务状态、对象键和校验结果。
+- `auth.session`：`userId`、`authSessionId`、结果、`requestId`，不记录令牌。
+- `authorization.decision`：`organizationId`、`spaceId`、角色、动作、结果、`requestId`。
+- `kernel.route`：`kernelInstanceId`、路由、耗时、状态、`requestId`，不记录文档正文。
+- `kernel.lifecycle`：实例状态转移、原因、耗时和触发`requestId`。
+- `protyle.lifecycle`：`spaceId`、`documentId`、阶段、结果和`requestId`，不记录正文或选区。
+- `share.access`：`shareId`、结果、来源摘要和`requestId`，不记录密码。
+- `backup.job`：`spaceId`、任务状态、对象键、校验结果和触发`requestId`。
+
+NestJS边缘为每个HTTP请求和WebSocket升级生成不可由浏览器覆盖的`requestId`，并把同一值写入Problem、响应头、服务JWT `jti`与Kernel日志。`authSessionId`、浏览器`ProtyleSession`和WebSocket `connectionId`保持不同字段名，不使用同义`sessionId`。
 
 ## 12. 安全与合规
 
 - Go Kernel仅监听私有网络，拒绝外部直连。
 - 浏览器采用同源安全Cookie；敏感令牌不进入`localStorage`。
+- 生产会话使用`__Host-` Cookie、精确Origin和CSRF token保护；WebSocket升级同样校验Origin。
 - 所有企业实体查询必须带`organizationId`或`spaceId`所有权约束。
 - 文件路径、对象键和内核地址不得作为公共API字段。
+- Kernel部署只保存可信部署句柄，私网客户端强制mTLS、禁用重定向与环境代理，并按路由白名单重建请求/响应头。
+- 应用源禁止执行上传或导出的主动内容；PDF只通过PDF.js绘制，不以内联原文件预览。
 - 分享使用独立凭证与只读路径，不复用成员会话。
 - 日志、测试产物和快照不得包含密码、令牌、正文或内部提示信息。
 - 保留思源AGPL-3.0许可证和适当法律声明。
@@ -383,9 +415,13 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 | React迁移破坏Protyle | 生命周期边界、黄金样例与浏览器回归 |
 | Tailwind污染旧样式 | 禁用全局Preflight、Design Tokens桥接 |
 | Kernel非多租户导致越权 | 一空间一实例、私网隔离、Gateway授权 |
+| 上传或导出主动内容劫持成员会话 | MIME allowlist、强制下载、`nosniff`、sandbox CSP与受信PDF渲染 |
+| 撤权与WebSocket注册竞态产生迟到推送 | pending登记、最终复验、四索引Registry和关闭后零推送合同 |
+| 私网Bearer凭证被窃听或重放 | mTLS传输身份、短期服务JWT、网络策略和精确证书校验 |
 | 上游合并成本增加 | Kernel最小补丁、影响报告、固定基线 |
 | 内容与企业数据双事实源 | 严格数据所有权、禁止内容双写 |
 | 测试覆盖不足 | 先补核心API与内容兼容黄金样例 |
+| 空suite或分散CI误报绿色 | 分阶段原子扩展非空`verify:s0-s3`，统一收集build、Go与服务证据 |
 | 实时协作破坏块语义 | L3独立原型门禁，不提前承诺实现 |
 | AGPL或商标风险 | 法律声明、源码提供机制、商标审查 |
 
@@ -401,6 +437,8 @@ L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤
 6. 实时协作必须经过独立技术验证。
 7. Go Kernel不进行TypeScript或Rust重写。
 8. Kernel与Protyle采用差异化上游同步策略。
+9. 企业空间Session组合根与Kernel Gateway启动切片先于生产Protyle迁移。
+10. 企业工作区、L0 CI与正式CD统一使用严格的Node 24主版本基线。
 
 ## 15. 完成定义
 
@@ -419,3 +457,6 @@ L0完成须满足第8.3节全部验收，且代码评审、测试和许可证审
 7. [Vite documentation](https://vite.dev/)
 8. [Tailwind CSS documentation](https://tailwindcss.com/docs)
 9. [奇点设计系统](./Singularity_Design_System_v1.0.0_2026-07-13.md)
+10. [企业空间Session组合根与Kernel Gateway启动方案](../../docs/architecture/space-session-composition-root.md)
+11. [ADR-011：企业空间Session组合根前移](../../docs/adr/0011-space-session-composition-root.md)
+12. [ADR-012：企业Node工具链与集成测试时限基线](../../docs/adr/0012-enterprise-node-toolchain-baseline.md)

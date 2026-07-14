@@ -125,9 +125,9 @@ export class Protyle {
 
         this.init();
         if (participateInSession) {
-            this.protyle.editors.register(this.protyle);
+            this.protyle.session.runtime.editors.register(this.protyle);
             this.protyle.wysiwyg.element.addEventListener("focusin", () => {
-                this.protyle.editors.activate(this.protyle);
+                this.protyle.session.runtime.editors.activate(this.protyle);
             });
             this.protyle.ws = new Model({app});
             this.protyle.ws.connect({
@@ -240,7 +240,7 @@ export class Protyle {
                         case "removeBox":
                             if (this.protyle.notebookId === data.data.box) {
                                 if (this.protyle.model) {
-                                    this.protyle.host.dispatch({
+                                    this.protyle.session.runtime.host.dispatch({
                                         type: "close-document",
                                         documentId: this.protyle.block.rootID,
                                         reason: "notebook-closed",
@@ -251,7 +251,7 @@ export class Protyle {
                         case "removeDoc":
                             if (data.data.ids.includes(this.protyle.block.rootID)) {
                                 if (this.protyle.model) {
-                                    this.protyle.host.dispatch({
+                                    this.protyle.session.runtime.host.dispatch({
                                         type: "close-document",
                                         documentId: this.protyle.block.rootID,
                                         reason: "deleted",

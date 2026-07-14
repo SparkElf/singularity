@@ -119,7 +119,7 @@ export class Title {
                 if (matchHotKey(window.siyuan.config.keymap.general.enterBack.custom, event)) {
                     const ids = protyle.path.split("/");
                     if (ids.length > 2) {
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: ids[ids.length - 2],
                             disposition: "current",

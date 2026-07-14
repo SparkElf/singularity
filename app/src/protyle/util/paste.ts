@@ -238,7 +238,7 @@ export const restoreLuteMarkdownSyntax = (protyle: IProtyle) => {
 };
 
 const readLocalFile = async (protyle: IProtyle, localFiles: ILocalFiles[]) => {
-    const transformed = await protyle.plugins.transformPaste(protyle, {
+    const transformed = await protyle.session.runtime.plugins.transformPaste(protyle, {
         textHTML: "",
         textPlain: "",
         siyuanHTML: "",
@@ -316,7 +316,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
         textHTML = Lute.Sanitize(textHTML);
     }
 
-    const transformed = await protyle.plugins.transformPaste(protyle, {
+    const transformed = await protyle.session.runtime.plugins.transformPaste(protyle, {
         textHTML,
         textPlain,
         siyuanHTML,

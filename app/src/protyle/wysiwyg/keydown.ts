@@ -1851,7 +1851,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             });
             const id = nodeElement.getAttribute("data-node-id");
             checkFold(id, (zoomIn) => {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-document",
                     documentId: id,
                     disposition: "duplicate-tab",
@@ -1898,7 +1898,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             const id = refElement.getAttribute("data-id");
             if (matchHotKey(window.siyuan.config.keymap.editor.general.openBy.custom, event)) {
                 checkFold(id, (zoomIn, _action, isRoot) => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: id,
                         disposition: "current",
@@ -1915,7 +1915,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.refTab.custom, event)) {
                 // 打开块引和编辑器中引用、反链、书签中点击事件需保持一致，都加载上下文
                 checkFold(id, (zoomIn) => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: id,
                         disposition: "background-tab",
@@ -1931,7 +1931,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertRight.custom, event)) {
                 checkFold(id, (zoomIn, _action, isRoot) => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: id,
                         disposition: "split-right",
@@ -1947,7 +1947,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertBottom.custom, event)) {
                 checkFold(id, (zoomIn, _action, isRoot) => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: id,
                         disposition: "split-bottom",

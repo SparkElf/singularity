@@ -384,7 +384,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         const blockId = ids[0];
         const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
             checkFold(blockId, (zoomIn) => {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-document",
                     documentId: blockId,
                     disposition,
@@ -805,7 +805,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
         });
     }
     emitProtylePluginMenu({
-        plugins: protyle.plugins,
+        plugins: protyle.session.runtime.plugins,
         type: "open-menu-av",
         detail: {
             protyle,

@@ -21,6 +21,21 @@ export type ProtyleDocumentScrollRestore =
   | "always"
   | "if-document";
 
+export type ProtyleRuntimeErrorCategory =
+  | "unauthenticated"
+  | "forbidden"
+  | "kernel-unavailable"
+  | "network-failure";
+
+export interface ProtyleDocumentStatistics {
+  readonly runeCount: number;
+  readonly wordCount: number;
+  readonly linkCount: number;
+  readonly imageCount: number;
+  readonly refCount: number;
+  readonly blockCount: number;
+}
+
 export type ProtyleHostEvent =
   | {
       type: "open-document";
@@ -92,6 +107,46 @@ export type ProtyleHostEvent =
       reason: "deleted" | "notebook-closed";
     }
   | {
+      type: "refresh-outline";
+      documentId: string;
+    }
+  | {
+      type: "refresh-backlinks";
+      documentId: string;
+    }
+  | {
+      type: "set-document-title";
+      documentId: string;
+      title: string;
+    }
+  | {
+      type: "set-document-icon";
+      documentId: string;
+      icon: string;
+    }
+  | {
+      type: "activate-document";
+      documentId: string;
+    }
+  | {
+      type: "toggle-document-fullscreen";
+      documentId: string;
+    }
+  | {
+      type: "persist-workspace-layout";
+      documentId: string;
+    }
+  | {
+      type: "update-document-statistics";
+      documentId: string;
+      statistics: ProtyleDocumentStatistics;
+    }
+  | {
+      type: "runtime-error";
+      category: ProtyleRuntimeErrorCategory;
+      requestId: string;
+    }
+  | {
       type: "notify";
       level: "info" | "success" | "warning" | "error";
       message: string;
@@ -112,6 +167,8 @@ export interface ProtyleEditorRegistry<TEditor> {
 }
 
 export type ProtyleSurface = "workspace" | "embedded";
+
+export type ProtyleParticipation = "live" | "detached";
 
 export interface ProtyleRequestOptions {
   readonly headers?: Readonly<Record<string, string>>;
@@ -139,23 +196,32 @@ export interface ProtyleSubscriptionOptions<TMessage> {
 }
 
 export interface ProtyleMenuPort<TMenu> {
-  readonly current: TMenu;
+  open: () => ProtyleMenuHandle<TMenu>;
   dispose: () => void;
 }
 
+export interface ProtyleMenuHandle<TMenu> {
+  readonly menu: TMenu;
+  close: () => void;
+}
+
 export interface ProtyleOverlayPort<TOverlay> {
-  add: (overlay: TOverlay) => () => void;
+  add: (overlay: TOverlay) => ProtyleOverlayHandle;
   forEach: (visitor: (overlay: TOverlay) => void) => void;
   dispose: () => void;
 }
 
+export interface ProtyleOverlayHandle {
+  close: () => void;
+}
+
 export interface ProtyleRuntime<
-  TEditor,
-  TOptions,
-  TToolbar,
-  TMessage,
-  TMenu,
-  TOverlay,
+  TEditor = unknown,
+  TOptions = unknown,
+  TToolbar = unknown,
+  TMessage = unknown,
+  TMenu = unknown,
+  TOverlay = unknown,
 > {
   readonly editors: ProtyleEditorRegistry<TEditor>;
   readonly host: ProtyleHostPort;
@@ -165,10 +231,25 @@ export interface ProtyleRuntime<
   readonly transport: ProtyleTransport<TMessage>;
 }
 
-export interface ProtyleSession {
+export interface ProtyleSession<TRuntime = ProtyleRuntime> {
   readonly spaceId: string;
-  readonly host: ProtyleHostPort;
+  readonly runtime: TRuntime;
+  retrySubmission: () => Promise<void>;
   dispose: () => void | Promise<void>;
+}
+
+export type ProtyleSessionRuntime = {
+  readonly editors: Pick<ProtyleEditorRegistry<never>, "dispose">;
+  readonly menu: Pick<ProtyleMenuPort<never>, "dispose">;
+  readonly overlays: Pick<ProtyleOverlayPort<never>, "dispose">;
+  readonly plugins: Pick<ProtylePluginPort<never, never, never>, "dispose">;
+  readonly transport: Pick<ProtyleTransport<never>, "dispose">;
+};
+
+export interface CreateProtyleSessionOptions<TRuntime extends ProtyleSessionRuntime> {
+  readonly spaceId: string;
+  readonly runtime: TRuntime;
+  readonly retrySubmission: () => Promise<void>;
 }
 
 export type ProtylePluginEventType =
@@ -233,17 +314,51 @@ export interface ProtylePluginPort<TOptions, TToolbar, TEditor> {
 export interface ProtyleController {
   destroy: () => void;
   focus: () => void;
-  setReadOnly: (readOnly: boolean) => void;
+  setHostReadOnly: (readOnly: boolean) => void;
 }
 
-export interface CreateProtyleOptions {
+export interface CreateProtyleOptions<TRuntime = ProtyleRuntime> {
   readonly documentId: string;
   readonly host: HTMLElement;
   readonly readOnly: boolean;
-  readonly session: ProtyleSession;
+  readonly session: ProtyleSession<TRuntime>;
   readonly signal: AbortSignal;
 }
 
-export interface ProtyleFactory {
-  create: (options: CreateProtyleOptions) => Promise<ProtyleController>;
+export interface ProtyleFactory<TRuntime = ProtyleRuntime> {
+  create: (options: CreateProtyleOptions<TRuntime>) => Promise<ProtyleController>;
+}
+
+export interface ProtyleCoreDocumentOptions {
+  readonly blockId?: string;
+}
+
+export interface ProtyleCoreBaseOptions<TRuntime = ProtyleRuntime> {
+  readonly host: HTMLElement;
+  readonly session: ProtyleSession<TRuntime>;
+  readonly readOnly: boolean;
+  readonly signal: AbortSignal;
+  readonly surface: ProtyleSurface;
+}
+
+export type ProtyleCoreCreateOptions<
+  TOptions extends ProtyleCoreDocumentOptions,
+  TRuntime = ProtyleRuntime,
+> = ProtyleCoreBaseOptions<TRuntime> &
+  (
+    | {
+        readonly participation: "live";
+        readonly options: Omit<TOptions, "blockId"> & { readonly blockId: string };
+      }
+    | {
+        readonly participation: "detached";
+        readonly options: Omit<TOptions, "blockId"> & { readonly blockId?: string };
+      }
+  );
+
+export interface ProtyleCoreFactory<
+  TOptions extends ProtyleCoreDocumentOptions,
+  TRuntime = ProtyleRuntime,
+> {
+  create: (options: ProtyleCoreCreateOptions<TOptions, TRuntime>) => Promise<ProtyleController>;
 }

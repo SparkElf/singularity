@@ -2929,7 +2929,7 @@ export class WYSIWYG {
                 this.preventClick = false;
                 return;
             }
-            protyle.plugins.emit({
+            protyle.session.runtime.plugins.emit({
                 type: "click-editorcontent",
                 detail: {
                     protyle,
@@ -2943,7 +2943,7 @@ export class WYSIWYG {
                 if (breadcrumbId) {
                     if (ctrlIsPressed && !event.shiftKey && !event.altKey) {
                         checkFold(breadcrumbId, (zoomIn) => {
-                            protyle.host.dispatch({
+                            protyle.session.runtime.host.dispatch({
                                 type: "open-document",
                                 documentId: breadcrumbId,
                                 disposition: "current",
@@ -3027,7 +3027,7 @@ export class WYSIWYG {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : (ctrlIsPressed ? "background-tab" : "current"));
                         const opensInBackground = disposition === "background-tab";
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: refBlockId,
                             disposition,
@@ -3099,7 +3099,7 @@ export class WYSIWYG {
 
             const tagElement = hasClosestByAttribute(event.target, "data-type", "tag");
             if (tagElement && !event.altKey && !event.shiftKey && range.toString() === "") {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-search",
                     query: `#${tagElement.textContent}#`,
                     queryMode: ctrlIsPressed ? "toggle-term" : "replace",
@@ -3145,7 +3145,7 @@ export class WYSIWYG {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : "background-tab");
                         const opensInBackground = disposition === "background-tab";
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: embedId,
                             disposition,

@@ -1,5 +1,6 @@
-import { createProtyleEditorRegistry } from "@singularity/protyle-browser";
 import { describe, expect, it, vi } from "vitest";
+
+import { createProtyleEditorRegistry } from "./index.ts";
 
 describe("createProtyleEditorRegistry", () => {
   it("keeps insertion order and returns one idempotent unregister action per editor", () => {

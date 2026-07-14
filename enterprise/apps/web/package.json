@@ -6,8 +6,10 @@
   "scripts": {
     "build": "tsc -b && vite build",
     "dev": "vite --host 0.0.0.0",
-    "e2e": "playwright test",
     "test": "vitest run",
+    "test:browser-integration": "playwright test --config playwright.integration.config.ts --pass-with-no-tests",
+    "test:e2e": "playwright test --config playwright.e2e.config.ts --pass-with-no-tests",
+    "test:shell": "playwright test --config playwright.shell.config.ts",
     "typecheck": "tsc -b"
   },
   "dependencies": {

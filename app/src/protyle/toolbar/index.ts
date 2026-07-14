@@ -59,7 +59,7 @@ export class Toolbar {
         this.subElement = document.createElement("div");
         this.subElement.className = "protyle-util fn__none";
         this.toolbarHeight = 29;
-        options.toolbar = protyle.plugins.extendToolbar(options.toolbar, toolbarKeyToMenu);
+        options.toolbar = protyle.session.runtime.plugins.extendToolbar(options.toolbar, toolbarKeyToMenu);
         options.toolbar.forEach((menuItem: IMenuItem) => {
             const itemElement = this.genItem(protyle, menuItem);
             this.element.appendChild(itemElement);
@@ -102,7 +102,7 @@ export class Toolbar {
             "inline-math",
             "inline-memo",
         ]);
-        protyle.options.toolbar = protyle.plugins.extendToolbar(protyle.options.toolbar, toolbarKeyToMenu);
+        protyle.options.toolbar = protyle.session.runtime.plugins.extendToolbar(protyle.options.toolbar, toolbarKeyToMenu);
         protyle.options.toolbar.forEach((menuItem: IMenuItem) => {
             const itemElement = this.genItem(protyle, menuItem);
             this.element.appendChild(itemElement);
@@ -1219,7 +1219,7 @@ export class Toolbar {
         if (!protyle.disabled) {
             textElement.select();
         }
-        protyle.plugins.emit({
+        protyle.session.runtime.plugins.emit({
             type: "open-noneditableblock",
             detail: {
                 protyle,
@@ -1251,7 +1251,7 @@ export class Toolbar {
         let hljsLanguages = Constants.ALIAS_CODE_LANGUAGES.concat(window.hljs?.listLanguages() ?? []).sort();
 
         const eventDetail = {languages: hljsLanguages, type: "init", listElement};
-        protyle.plugins.emit({type: "code-language-update", detail: eventDetail});
+        protyle.session.runtime.plugins.emit({type: "code-language-update", detail: eventDetail});
 
         hljsLanguages = eventDetail.languages;
         hljsLanguages.forEach((item) => {
@@ -1321,7 +1321,7 @@ export class Toolbar {
             }
 
             const eventDetail = {languages: value ? matchLanguages : hljsLanguages, type: "match", value, listElement};
-            protyle.plugins.emit({type: "code-language-update", detail: eventDetail});
+            protyle.session.runtime.plugins.emit({type: "code-language-update", detail: eventDetail});
 
             matchLanguages = eventDetail.languages;
             if (value) {
@@ -1817,7 +1817,7 @@ export class Toolbar {
     private updateLanguage(languageElements: HTMLElement[], protyle: IProtyle, selectedLang: string) {
         const currentLang = selectedLang === window.siyuan.languages.clear ? "" : selectedLang;
 
-        protyle.plugins.emit({
+        protyle.session.runtime.plugins.emit({
             type: "code-language-change",
             detail: {
                 language: currentLang,

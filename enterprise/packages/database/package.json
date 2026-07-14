@@ -1,0 +1,44 @@
+{
+  "name": "@singularity/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing/postgres": {
+      "development": {
+        "types": "./test/support/postgres.ts",
+        "default": "./test/support/postgres.ts"
+      }
+    }
+  },
+  "scripts": {
+    "build": "pnpm generate && tsc -p tsconfig.build.json",
+    "generate": "prisma generate --config prisma.config.ts",
+    "test:integration": "pnpm generate && vitest run --config vitest.integration.config.ts",
+    "typecheck": "pnpm generate && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@singularity/authorization": "workspace:*",
+    "@singularity/contracts": "workspace:*",
+    "@types/node": "22.20.1",
+    "@types/pg": "8.20.0",
+    "prisma": "7.8.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
