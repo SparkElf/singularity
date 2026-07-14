@@ -161,11 +161,6 @@
       "reason": "Alpine libbz2 permissive license alias"
     },
     {
-      "license": "curl",
-      "packages": ["curl", "libcurl"],
-      "reason": "Alpine curl permissive license alias"
-    },
-    {
       "license": "custom",
       "packages": ["aom-libs"],
       "reason": "Alpine AOM package BSD-style and patent notices"
