@@ -1,39 +1,22 @@
-## Description / 描述
+## Summary / 摘要
 
-<!--
-Please provide a summary of the change and the issue being fixed. Include relevant motivation and context.
-请说明更改的摘要以及修复了哪个问题，包含相关的动机和上下文。
--->
+<!-- Describe the purpose and user-visible or contract impact. / 说明变更目的，以及用户可见变化或合同影响。 -->
 
-## Type of change / 变更类型
+Related issue / 关联 Issue: https://github.com/SparkElf/singularity/issues/
 
-<!--
-A PR should have a single purpose. Please do not include multiple changes such as bug fixes, refactoring, or new features in one PR; otherwise, the PR will be rejected.
-一个 PR 应该只包含一个目的，请勿将缺陷修复、代码重构或新功能等多个变更包含在同一个 PR 中，否则 PR 将被拒绝。
--->
+## Scope / 范围
 
-- [ ] Bug fix
-      缺陷修复
-- [ ] Refactoring
-      代码重构
-- [ ] New feature
-      新功能
-- [ ] Text updates or new language additions
-      修改文案或增加新语言
+<!-- List the affected modules and explicitly identify anything intentionally excluded. / 列出受影响模块，并明确本次有意不处理的内容。 -->
 
-<!--
-If you want to contribute a feature, or refactoring, or bug fix, please submit an issue first. After sufficient discussion in the community, we will decide whether to make the change. Do not submit contribution code directly, otherwise it may be rejected.
-如果你想贡献一个特性、重构或者缺陷修复，请先提交一个 issue。在社区充分讨论后，我们会决定是否进行变更。不要直接提交贡献代码，否则可能会被拒绝。
+## Verification / 验证
 
-If your contribution involves text updates or adding new languages, please submit directly, and we will evaluate.
-如果你的贡献涉及文案修改或增加新语言，请直接提交，我们会进行评估。
--->
+<!-- List exact commands and outcomes. State any environment that was not verified. / 列出实际执行的命令与结果，并说明未验证的环境。 -->
 
 ## Checklist / 检查清单
 
-- [ ] I have performed a self-review of my own code
-      我对自己的代码进行了自我审查
-- [ ] I have full rights to the submitted code and agree to license it under this project's AGPL-3.0 license
-      我拥有所提交代码的完整权利，并同意其以本项目的 AGPL-3.0 许可证授权
-- [ ] PR is submitted to the `dev` branch and has no merge conflicts
-      PR 提交到 `dev` 分支，并且没有合并冲突
+- [ ] This pull request has one coherent purpose. / 本 PR 只处理一个连贯目标。
+- [ ] I reviewed my changes and removed unrelated modifications. / 我已自查并移除无关改动。
+- [ ] I followed the applicable `AGENTS.md`, plan, and repository guidance. / 我已遵守适用的 `AGENTS.md`、方案和仓库规范。
+- [ ] I updated documentation and verification evidence where the changed contract requires it. / 我已按合同变化更新文档与验证证据。
+- [ ] I have the right to submit this work and agree to distribute it under AGPL-3.0. / 我有权提交这些内容，并同意按照 AGPL-3.0 发布。
+- [ ] This PR targets `SparkElf/singularity:master` and has no unresolved merge conflicts. / 本 PR 目标为 `SparkElf/singularity:master`，且没有未解决的合并冲突。

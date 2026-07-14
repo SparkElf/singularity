@@ -9,6 +9,7 @@ const DATABASE_CONNECTION_TIMEOUT_MS = 3_000;
 const DATABASE_QUERY_TIMEOUT_MS = 5_000;
 const DATABASE_STATEMENT_TIMEOUT_MS = 4_000;
 const DATABASE_POOL_MAX_CONNECTIONS = 5;
+const DATABASE_SCHEMA_NAME_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
 
 export class DatabaseConfigurationError extends Error {
   constructor() {
@@ -37,11 +38,15 @@ function parseDatabaseUrl(databaseUrl: string | undefined): {
   }
 
   const schema = url.searchParams.get("schema") ?? undefined;
+  if (schema !== undefined && !DATABASE_SCHEMA_NAME_PATTERN.test(schema)) {
+    throw new DatabaseConfigurationError();
+  }
   url.searchParams.delete("schema");
   url.searchParams.delete("connect_timeout");
   url.searchParams.delete("connectionTimeoutMillis");
   url.searchParams.delete("query_timeout");
   url.searchParams.delete("statement_timeout");
+  url.searchParams.delete("options");
 
   return {
     poolConfig: {
@@ -50,6 +55,9 @@ function parseDatabaseUrl(databaseUrl: string | undefined): {
       max: DATABASE_POOL_MAX_CONNECTIONS,
       query_timeout: DATABASE_QUERY_TIMEOUT_MS,
       statement_timeout: DATABASE_STATEMENT_TIMEOUT_MS,
+      ...(schema === undefined
+        ? {}
+        : { options: `-c search_path=${schema}` }),
     },
     schema,
   };

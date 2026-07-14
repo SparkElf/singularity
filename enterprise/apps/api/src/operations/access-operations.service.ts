@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import { Injectable, Logger } from "@nestjs/common";
 import type {
-  AccessOperationBareResult,
   AccessOperation,
   AccessOperationResult,
   InitializeAccessOperation,
@@ -17,6 +16,10 @@ import { SpaceAccessService } from "../spaces/space-access.service.js";
 
 type Transaction = Prisma.TransactionClient;
 type OperationOutcome = AccessOperationResult["outcome"];
+type OperationBaseResult<Outcome extends OperationOutcome> = {
+  operationId: string;
+  outcome: Outcome;
+};
 
 @Injectable()
 export class AccessOperationsService {
@@ -452,10 +455,26 @@ export class AccessOperationsService {
         return this.#result(operationId, "conflict");
       }
       await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "spaces" WHERE "organization_id" = ${organizationId} ORDER BY "id" FOR UPDATE`,
+        Prisma.sql`
+          SELECT space."id"
+          FROM "spaces" AS space
+          INNER JOIN "space_memberships" AS membership
+            ON membership."space_id" = space."id"
+          WHERE membership."organization_id" = ${organizationId}
+            AND membership."user_id" = ${userId}
+          ORDER BY space."id"
+          FOR UPDATE OF space
+        `,
       );
       await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "space_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" = ${userId} ORDER BY "id" FOR UPDATE`,
+        Prisma.sql`
+          SELECT "id"
+          FROM "space_memberships"
+          WHERE "organization_id" = ${organizationId}
+            AND "user_id" = ${userId}
+          ORDER BY "space_id", "id"
+          FOR UPDATE
+        `,
       );
       await transaction.organizationMembership.update({
         where: { organizationId_userId: { organizationId, userId } },
@@ -566,26 +585,11 @@ export class AccessOperationsService {
     );
   }
 
-  #result(
+  #result<Outcome extends OperationOutcome>(
     operationId: string,
-    outcome: OperationOutcome,
-  ): AccessOperationBareResult {
-    switch (outcome) {
-      case "created":
-        return { operationId, outcome };
-      case "updated":
-        return { operationId, outcome };
-      case "revoked":
-        return { operationId, outcome };
-      case "already-initialized":
-        return { operationId, outcome };
-      case "conflict":
-        return { operationId, outcome };
-      case "not-found":
-        return { operationId, outcome };
-      case "failed":
-        return { operationId, outcome };
-    }
+    outcome: Outcome,
+  ): OperationBaseResult<Outcome> {
+    return { operationId, outcome };
   }
 
   #log(command: AccessOperation, result: AccessOperationResult): void {

@@ -9,8 +9,9 @@ import type {
   AuthorizedSpaceSummary,
   SpaceRuntimePathParameters,
 } from "@singularity/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeftIcon,
   BookOpenIcon,
   CircleOffIcon,
   LogOutIcon,
@@ -54,14 +55,19 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 import {
   getSpaceRuntime,
+  authorizedSpacesQueryKey,
   spaceRuntimeQueryKey,
 } from "@/spaces/api.ts";
 import { roleBadgeVariant, roleLabel } from "@/spaces/space-labels.ts";
-import { spacePagePath } from "@/spaces/space-route.ts";
+import {
+  EXPLICIT_SPACE_LIST_STATE,
+  spacePagePath,
+} from "@/spaces/space-route.ts";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 
 const MAX_STARTING_POLLS = 30;
@@ -127,6 +133,38 @@ interface WorkspaceFrameProps {
   spaces: AuthorizedSpaceSummary[];
 }
 
+interface WorkspaceSpaceLinkProps {
+  active: boolean;
+  space: AuthorizedSpaceSummary;
+}
+
+function WorkspaceSpaceLink({ active, space }: WorkspaceSpaceLinkProps) {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        asChild
+        isActive={active}
+        tooltip={space.spaceName}
+      >
+        <Link
+          aria-current={active ? "page" : undefined}
+          onClick={() => {
+            if (isMobile) {
+              setOpenMobile(false);
+            }
+          }}
+          to={spacePagePath(space)}
+        >
+          <BookOpenIcon aria-hidden="true" />
+          <span title={space.spaceName}>{space.spaceName}</span>
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
+
 function WorkspaceFrame({
   children,
   currentSpace,
@@ -157,21 +195,11 @@ function WorkspaceFrame({
                   {spaces.map((space) => {
                     const active = currentSpace?.spaceId === space.spaceId;
                     return (
-                      <SidebarMenuItem key={space.spaceId}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={active}
-                          tooltip={space.spaceName}
-                        >
-                          <Link
-                            aria-current={active ? "page" : undefined}
-                            to={spacePagePath(space)}
-                          >
-                            <BookOpenIcon aria-hidden="true" />
-                            <span title={space.spaceName}>{space.spaceName}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
+                      <WorkspaceSpaceLink
+                        active={active}
+                        key={space.spaceId}
+                        space={space}
+                      />
                     );
                   })}
                 </SidebarMenu>
@@ -183,7 +211,6 @@ function WorkspaceFrame({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  className="max-md:h-10"
                   disabled={logoutPending}
                   onClick={onLogout}
                   tooltip="退出登录"
@@ -203,6 +230,15 @@ function WorkspaceFrame({
         <SidebarInset>
           <header className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
             <SidebarTrigger />
+            <Button asChild size="icon-sm" variant="ghost">
+              <Link
+                aria-label="返回空间列表"
+                state={EXPLICIT_SPACE_LIST_STATE}
+                to={SPACES_PATH}
+              >
+                <ArrowLeftIcon aria-hidden="true" />
+              </Link>
+            </Button>
             <Separator orientation="vertical" className="h-4" />
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="truncate text-xs text-muted-foreground">
@@ -246,6 +282,7 @@ export function SpacePage() {
   const organizationId = params.organizationId ?? "";
   const spaceId = params.spaceId ?? "";
   const identity: SpaceRuntimePathParameters = { organizationId, spaceId };
+  const queryClient = useQueryClient();
   const spacesQuery = useAuthorizedSpaces();
   const runtimeQuery = useQuery({
     enabled: organizationId !== "" && spaceId !== "",
@@ -254,10 +291,14 @@ export function SpacePage() {
     refetchOnMount: "always",
     staleTime: 0,
   });
-  const runtimeDataUpdatedAt = runtimeQuery.dataUpdatedAt;
+  const runtime =
+    runtimeQuery.isSuccess && !runtimeQuery.isFetching
+      ? runtimeQuery.data
+      : undefined;
+  const runtimeDataUpdatedAt = runtime ? runtimeQuery.dataUpdatedAt : 0;
   const runtimeError = runtimeQuery.error;
   const runtimeIsFetching = runtimeQuery.isFetching;
-  const runtimeKernelState = runtimeQuery.data?.kernelState;
+  const runtimeKernelState = runtime?.kernelState;
   const refetchRuntime = runtimeQuery.refetch;
   const logoutMutation = useLogout();
   const pageVisible = usePageVisible();
@@ -265,12 +306,34 @@ export function SpacePage() {
   const [pollState, setPollState] = useState({ attempts: 0, routeKey });
   const pollAttempts =
     pollState.routeKey === routeKey ? pollState.attempts : 0;
-  const spaces = spacesQuery.data?.spaces ?? [];
+  const runtimeNotFound =
+    !runtimeQuery.isFetching && isApiProblem(runtimeQuery.error, "not-found");
+  const authorizedSpaces =
+    spacesQuery.isSuccess && !spacesQuery.isFetching
+      ? spacesQuery.data.spaces
+      : [];
+  const spaces = runtimeNotFound
+    ? authorizedSpaces.filter(
+        (space) =>
+          space.organizationId !== organizationId || space.spaceId !== spaceId,
+      )
+    : authorizedSpaces;
   const currentSpace =
     spaces.find(
       (space) =>
         space.organizationId === organizationId && space.spaceId === spaceId,
     ) ?? null;
+
+  useEffect(() => {
+    if (!runtimeNotFound) {
+      return;
+    }
+
+    void queryClient.invalidateQueries({
+      exact: true,
+      queryKey: authorizedSpacesQueryKey,
+    });
+  }, [organizationId, queryClient, runtimeNotFound, spaceId]);
 
   useEffect(() => {
     if (
@@ -319,7 +382,6 @@ export function SpacePage() {
     return <SessionRedirect returnTo={locationTarget(location)} />;
   }
 
-  const runtime = runtimeQuery.data;
   const runtimeMatchesRoute =
     runtime?.organizationId === organizationId && runtime.spaceId === spaceId;
   const role = runtime && runtimeMatchesRoute && currentSpace ? runtime.role : null;
@@ -333,13 +395,35 @@ export function SpacePage() {
         立即重试
       </Button>
       <Button asChild variant="ghost">
-        <Link to={SPACES_PATH}>返回空间列表</Link>
+        <Link state={EXPLICIT_SPACE_LIST_STATE} to={SPACES_PATH}>
+          返回空间列表
+        </Link>
       </Button>
     </div>
   );
 
   let content: ReactNode;
-  if (spacesQuery.isPending || runtimeQuery.isPending) {
+  if (runtimeNotFound) {
+    content = (
+      <WorkspaceState
+        actions={
+          <Button asChild variant="outline">
+            <Link state={EXPLICIT_SPACE_LIST_STATE} to={SPACES_PATH}>
+              返回空间列表
+            </Link>
+          </Button>
+        }
+        description="该空间不存在，或你已不再拥有访问权限。"
+        icon={SearchXIcon}
+        title="找不到该空间"
+      />
+    );
+  } else if (
+    spacesQuery.isPending ||
+    spacesQuery.isFetching ||
+    runtimeQuery.isPending ||
+    runtimeQuery.isFetching
+  ) {
     content = (
       <WorkspaceState
         description="正在读取最新授权与内容服务状态。"
@@ -361,15 +445,16 @@ export function SpacePage() {
       />
     );
   } else if (
-    isApiProblem(runtimeQuery.error, "not-found") ||
     isApiProblem(runtimeQuery.error, "forbidden") ||
-    (spacesQuery.isSuccess && !currentSpace)
+    (spacesQuery.isSuccess && !spacesQuery.isFetching && !currentSpace)
   ) {
     content = (
       <WorkspaceState
         actions={
           <Button asChild variant="outline">
-            <Link to={SPACES_PATH}>返回空间列表</Link>
+            <Link state={EXPLICIT_SPACE_LIST_STATE} to={SPACES_PATH}>
+              返回空间列表
+            </Link>
           </Button>
         }
         description="该空间不存在，或你已不再拥有访问权限。"
@@ -400,7 +485,7 @@ export function SpacePage() {
         title="无法加载空间"
       />
     );
-  } else if (runtimeQuery.data?.kernelState === "unavailable") {
+  } else if (runtime?.kernelState === "unavailable") {
     content = (
       <WorkspaceState
         actions={actions}
@@ -418,7 +503,7 @@ export function SpacePage() {
         title="无法加载空间"
       />
     );
-  } else if (runtimeQuery.data.kernelState === "starting") {
+  } else if (runtime?.kernelState === "starting") {
     content = (
       <WorkspaceState
         actions={actions}

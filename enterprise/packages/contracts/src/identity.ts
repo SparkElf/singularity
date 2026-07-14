@@ -80,11 +80,13 @@ export const LOGIN_REQUEST_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   },
 });
 
+export const CSRF_TOKEN_OPENAPI_SCHEMA = {
+  type: "string" as const,
+  pattern: token32ByteBase64UrlPattern.source,
+};
+
 export const CSRF_TOKEN_RESPONSE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
-  csrfToken: {
-    type: "string",
-    pattern: token32ByteBase64UrlPattern.source,
-  },
+  csrfToken: CSRF_TOKEN_OPENAPI_SCHEMA,
 });
 
 export const LOGIN_RESPONSE_OPENAPI_SCHEMA: OpenApiSchema =

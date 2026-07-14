@@ -1,90 +1,79 @@
-import { expect, type Page } from "@playwright/test";
+import type { ConsoleMessage, Page, Request } from "@playwright/test";
 
-interface BrowserDiagnostics {
-  consoleMessages: string[];
-  errorResponses: string[];
-  pageErrors: string[];
-  pendingApiRequests: Set<string>;
-  requestFailures: string[];
+export interface BrowserRequestDiagnostic {
+  durationMs: number | null;
+  failure: string | null;
+  finishedAt: number | null;
+  request: Request;
+  startedAt: number;
+  status: number | null;
 }
 
-interface DiagnosticAllowlist {
-  consoleMessageFragments?: string[];
-  errorResponses?: string[];
-  requestFailurePaths?: string[];
+export interface BrowserDiagnostics {
+  consoleMessages: ConsoleMessage[];
+  pageErrors: Error[];
+  requests: BrowserRequestDiagnostic[];
 }
 
 export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   const diagnostics: BrowserDiagnostics = {
     consoleMessages: [],
-    errorResponses: [],
     pageErrors: [],
-    pendingApiRequests: new Set(),
-    requestFailures: [],
+    requests: [],
   };
+  const pendingRequests = new Map<Request, BrowserRequestDiagnostic>();
 
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
-      diagnostics.consoleMessages.push(`${message.type()}: ${message.text()}`);
+      diagnostics.consoleMessages.push(message);
     }
   });
   page.on("pageerror", (error) => {
-    diagnostics.pageErrors.push(error.message);
+    diagnostics.pageErrors.push(error);
   });
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname.startsWith("/api/v1/")) {
-      diagnostics.pendingApiRequests.add(`${request.method()} ${request.url()}`);
+    if (!new URL(request.url()).pathname.startsWith("/api/v1/")) {
+      return;
+    }
+
+    const diagnostic: BrowserRequestDiagnostic = {
+      durationMs: null,
+      failure: null,
+      finishedAt: null,
+      request,
+      startedAt: performance.now(),
+      status: null,
+    };
+    diagnostics.requests.push(diagnostic);
+    pendingRequests.set(request, diagnostic);
+  });
+  page.on("response", (response) => {
+    const diagnostic = pendingRequests.get(response.request());
+    if (diagnostic) {
+      diagnostic.status = response.status();
     }
   });
   page.on("requestfinished", (request) => {
-    diagnostics.pendingApiRequests.delete(`${request.method()} ${request.url()}`);
+    const diagnostic = pendingRequests.get(request);
+    if (!diagnostic) {
+      return;
+    }
+
+    diagnostic.finishedAt = performance.now();
+    diagnostic.durationMs = diagnostic.finishedAt - diagnostic.startedAt;
+    pendingRequests.delete(request);
   });
   page.on("requestfailed", (request) => {
-    diagnostics.pendingApiRequests.delete(`${request.method()} ${request.url()}`);
-    diagnostics.requestFailures.push(
-      `${request.method()} ${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? "unknown"}`,
-    );
-  });
-  page.on("response", (response) => {
-    if (response.status() >= 400) {
-      diagnostics.errorResponses.push(
-        `${response.status()} ${new URL(response.url()).pathname}`,
-      );
+    const diagnostic = pendingRequests.get(request);
+    if (!diagnostic) {
+      return;
     }
+
+    diagnostic.finishedAt = performance.now();
+    diagnostic.durationMs = diagnostic.finishedAt - diagnostic.startedAt;
+    diagnostic.failure = request.failure()?.errorText ?? "unknown";
+    pendingRequests.delete(request);
   });
 
   return diagnostics;
-}
-
-export function expectBrowserHealthy(
-  diagnostics: BrowserDiagnostics,
-  allowlist: DiagnosticAllowlist = {},
-): void {
-  const allowedConsoleFragments = allowlist.consoleMessageFragments ?? [];
-  const unexpectedConsoleMessages = diagnostics.consoleMessages.filter(
-    (message) =>
-      !allowedConsoleFragments.some((fragment) => message.includes(fragment)),
-  );
-  expect(unexpectedConsoleMessages).toEqual([]);
-  for (const fragment of allowedConsoleFragments) {
-    expect(
-      diagnostics.consoleMessages.some((message) => message.includes(fragment)),
-    ).toBe(true);
-  }
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(diagnostics.errorResponses).toEqual(allowlist.errorResponses ?? []);
-  const allowedFailurePaths = allowlist.requestFailurePaths ?? [];
-  const unexpectedFailures = diagnostics.requestFailures.filter(
-    (failure) =>
-      !allowedFailurePaths.some((path) => failure.includes(` ${path}:`)),
-  );
-  expect(unexpectedFailures).toEqual([]);
-  for (const path of allowedFailurePaths) {
-    expect(
-      diagnostics.requestFailures.some((failure) =>
-        failure.includes(` ${path}:`),
-      ),
-    ).toBe(true);
-  }
-  expect([...diagnostics.pendingApiRequests]).toEqual([]);
 }

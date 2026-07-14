@@ -1,9 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import {
-  collectBrowserDiagnostics,
-  expectBrowserHealthy,
-} from "./support/diagnostics.ts";
+import { collectBrowserDiagnostics } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
@@ -11,6 +8,7 @@ const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
 const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const CSRF_TOKEN = "A".repeat(43);
+const MAX_API_REQUEST_DURATION_MS = 5_000;
 
 const LONG_ORGANIZATION_NAME =
   "银河系企业知识与工程协作研究中心超长组织名称用于验证最窄布局";
@@ -97,6 +95,15 @@ test("keyboard login reaches only the authorized responsive space list", async (
   const password = page.getByLabel("密码");
   const submit = page.getByRole("button", { name: "登录" });
 
+  if (testInfo.project.name !== "desktop") {
+    for (const control of [identifier, password, submit]) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(40);
+      expect(box!.width).toBeGreaterThanOrEqual(40);
+    }
+  }
+
   await page.keyboard.press("Tab");
   await expect(identifier).toBeFocused();
   await expect(identifier).not.toHaveCSS("box-shadow", "none");
@@ -111,8 +118,14 @@ test("keyboard login reaches only the authorized responsive space list", async (
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("heading", { name: "选择知识空间" })).toBeVisible();
-  await expect(page.getByRole("link", { name: new RegExp(LONG_SPACE_NAME) })).toBeVisible();
-  await expect(page.getByRole("link", { name: /星际工程手册/ })).toBeVisible();
+  const longSpaceLink = page.getByRole("link", {
+    name: new RegExp(LONG_SPACE_NAME),
+  });
+  const engineeringSpaceLink = page.getByRole("link", {
+    name: /星际工程手册/,
+  });
+  await expect(longSpaceLink).toBeVisible();
+  await expect(engineeringSpaceLink).toBeVisible();
 
   const longSpaceText = page.getByTitle(LONG_SPACE_NAME);
   const longOrganizationText = page.getByTitle(LONG_ORGANIZATION_NAME);
@@ -132,9 +145,14 @@ test("keyboard login reaches only the authorized responsive space list", async (
 
   const search = page.getByLabel("搜索空间");
   await search.fill("工程中心");
-  await expect(page.getByRole("link", { name: /星际工程手册/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: new RegExp(LONG_SPACE_NAME) })).toBeHidden();
+  await expect(engineeringSpaceLink).toBeVisible();
+  await expect(longSpaceLink).toBeHidden();
   await search.fill("");
+  await search.focus();
+  await page.keyboard.press("Tab");
+  await expect(longSpaceLink).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(engineeringSpaceLink).toBeFocused();
 
   const expectedViewportWidths: Record<string, number> = {
     desktop: 1440,
@@ -174,13 +192,47 @@ test("keyboard login reaches only the authorized responsive space list", async (
   ).toBeGreaterThanOrEqual(4.5);
 
   if (testInfo.project.name !== "desktop") {
-    await expect(page.getByRole("button", { name: "退出登录" })).toHaveCSS(
-      "height",
-      "40px",
-    );
+    for (const control of [
+      page.locator('[data-slot="input-group"]'),
+      longSpaceLink,
+      engineeringSpaceLink,
+      page.getByRole("button", { name: "退出登录" }),
+    ]) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(40);
+      expect(box!.width).toBeGreaterThanOrEqual(40);
+    }
   }
 
-  expectBrowserHealthy(diagnostics);
+  expect(diagnostics.consoleMessages).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(
+    diagnostics.requests.map((request) => ({
+      failure: request.failure,
+      method: request.request.method(),
+      path: new URL(request.request.url()).pathname,
+      status: request.status,
+    })),
+  ).toEqual([
+    {
+      failure: null,
+      method: "POST",
+      path: "/api/v1/auth/login",
+      status: 200,
+    },
+    {
+      failure: null,
+      method: "GET",
+      path: "/api/v1/spaces",
+      status: 200,
+    },
+  ]);
+  for (const request of diagnostics.requests) {
+    expect(request.finishedAt).not.toBeNull();
+    expect(request.durationMs).not.toBeNull();
+    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
+  }
 });
 
 test("an account without space access sees an explicit empty state", async ({ page }) => {
@@ -196,5 +248,60 @@ test("an account without space access sees an explicit empty state", async ({ pa
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
-  expectBrowserHealthy(diagnostics);
+  expect(diagnostics.consoleMessages).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.requests).toHaveLength(1);
+  expect(diagnostics.requests[0]?.request.method()).toBe("GET");
+  expect(new URL(diagnostics.requests[0]!.request.url()).pathname).toBe(
+    "/api/v1/spaces",
+  );
+  expect(diagnostics.requests[0]?.status).toBe(200);
+  expect(diagnostics.requests[0]?.failure).toBeNull();
+  expect(diagnostics.requests[0]?.finishedAt).not.toBeNull();
+  expect(diagnostics.requests[0]?.durationMs).not.toBeNull();
+  expect(diagnostics.requests[0]!.durationMs!).toBeLessThan(
+    MAX_API_REQUEST_DURATION_MS,
+  );
+});
+
+test("dark design tokens keep the authorized space list readable", async ({
+  page,
+}) => {
+  const diagnostics = collectBrowserDiagnostics(page);
+  await installIdentityRoutes(page);
+  await page.goto("/spaces");
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+  });
+
+  const heading = page.getByRole("heading", { name: "选择知识空间" });
+  const description = page.getByText("这里只显示你当前有权访问的空间。");
+  await expect(heading).toBeVisible();
+  const colors = await page.evaluate(() => ({
+    background: getComputedStyle(document.body).backgroundColor,
+    colorScheme: getComputedStyle(document.documentElement).colorScheme,
+    foreground: getComputedStyle(document.body).color,
+  }));
+  expect(colors.colorScheme).toBe("dark");
+  expect(colors.background).not.toBe("rgb(255, 255, 255)");
+  expect(contrastRatio(colors.foreground, colors.background)).toBeGreaterThanOrEqual(
+    4.5,
+  );
+  const descriptionColor = await description.evaluate(
+    (element) => getComputedStyle(element).color,
+  );
+  expect(contrastRatio(descriptionColor, colors.background)).toBeGreaterThanOrEqual(
+    4.5,
+  );
+
+  expect(diagnostics.consoleMessages).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.requests).toHaveLength(1);
+  expect(diagnostics.requests[0]?.status).toBe(200);
+  expect(diagnostics.requests[0]?.failure).toBeNull();
+  expect(diagnostics.requests[0]?.finishedAt).not.toBeNull();
+  expect(diagnostics.requests[0]?.durationMs).not.toBeNull();
+  expect(diagnostics.requests[0]!.durationMs!).toBeLessThan(
+    MAX_API_REQUEST_DURATION_MS,
+  );
 });

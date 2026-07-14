@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 🏘️ Marketplace package feature request
-    url: https://github.com/siyuan-community/ideas/issues
-    about: Request new features to the community marketplace package developers
-  - name: 🔀 X
-    url: https://x.com/b3logos
-    about: Follow @b3logos on X
+  - name: 🔒 Private security report
+    url: https://github.com/SparkElf/singularity/security/policy
+    about: Follow the Singularity security policy for suspected vulnerabilities
+  - name: 📖 Project status and documentation
+    url: https://github.com/SparkElf/singularity#readme
+    about: Review the active-development status, project direction, and contribution links

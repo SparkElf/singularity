@@ -3,7 +3,7 @@ title: "Protyle浏览器宿主与Vite抽取方案"
 description: "定义奇点React应用与思源Protyle之间的运行时、传输、插件和生命周期边界"
 author: "Codex"
 date: "2026-07-13"
-version: "2.2.0"
+version: "2.2.1"
 status: "approved"
 tags: ["architecture", "protyle", "react", "vite", "testing"]
 ---
@@ -40,6 +40,7 @@ tags: ["architecture", "protyle", "react", "vite", "testing"]
 | 2.1.0 | 2026-07-14 | Codex | 固定B4唯一生产接线、撤权清理、结构化请求选项、主动内容与P3-P5证据职责 |
 | 2.1.1 | 2026-07-14 | Codex | 架构、安全与测试治理复评通过，批准后续按S0-S3与B4顺序实施 |
 | 2.2.0 | 2026-07-15 | Codex | 对齐S1已落地的browser integration并移除已退役静态shell与空E2E入口 |
+| 2.2.1 | 2026-07-15 | Codex | 收紧browser诊断为原始Request证据并把WebSocket诊断留到S2真实消费者落地 |
 
 ## Table of Contents
 
@@ -613,13 +614,13 @@ verify:b4
   -> pnpm build
 ```
 
-`verify:b4`由`enterprise/package.json`拥有，按固定顺序执行static/ESLint、typecheck、统一`pnpm test`和Vite生产构建。统一`pnpm test`必须同时发现：公共浏览器包自己的Vitest、React宿主Vitest、`enterprise/scripts`的`node:test` AST case，以及独立`app`包的Core/旧壳行为Adapter `node:test`。命令失败即停止，不依赖人工补跑，也不调用当前静态壳Playwright冒充编辑器集成。该命令是B4源码合同的唯一聚合入口，但在S0至S3真实空间与Gateway门禁通过前不能单独证明B4生产完成。
+`verify:b4`由`enterprise/package.json`拥有，按固定顺序执行static/ESLint、typecheck、统一`pnpm test`和Vite生产构建。统一`pnpm test`必须同时发现：公共浏览器包自己的Vitest、React宿主Vitest、`enterprise/scripts`的`node:test` AST case，以及独立`app`包的Core/旧壳行为Adapter `node:test`。命令失败即停止，不依赖人工补跑，也不恢复已退役静态壳Playwright来冒充编辑器集成。该命令是B4源码合同的唯一聚合入口，但在S0至S3真实空间与Gateway门禁通过前不能单独证明B4生产完成。
 
 公共包声明并锁定自己的Vitest依赖，不借用Web包runner。`AppProtylePluginPort.test.js`迁回`app/src/host`并改为`node:test`原生case；Core只读与生命周期case同样归`app`。`ProtyleSourceBoundary.test.js`迁到`enterprise/scripts/protyle-browser-source-audit.test.mjs`，由Node标准runner管理；Registry测试迁回公共包。迁移同批删除旧错放文件、旧Model测试和重复case。
 
 `app`拥有独立`pnpm-lock.yaml`和`tsx` runner依赖。CI必须分别按`enterprise/pnpm-lock.yaml`与`app/pnpm-lock.yaml`执行冻结安装，再只调用`pnpm verify:b4`收集B4证据；不得因企业工作区安装成功而假定`app`测试依赖存在。B3/B4继续扩展现有AST实现，不新增第二套扫描器。
 
-Playwright按交付证据分为两个阶段。S1已经用`tests/browser-integration/`与`playwright.integration.config.ts`收集可替换外部身份、空间或Gateway边界的浏览器集成，并把原静态shell的布局、响应式和浏览器健康合同并入真实身份/空间流程后删除shell runner。P3/P4继续扩展同一browser integration入口；P5首个真实全链合同时再原子建立`tests/e2e/`、独立配置与非空命令，且禁止拦截目标React/Gateway/Kernel链路。B4已删除单消费者fixture与page object；当前诊断support由两个独立browser integration文件共同消费，并统一覆盖console error/warn、pageerror、requestfailed、意外4xx/5xx、CORS、资源失败、关键长pending与WebSocket异常。
+Playwright按交付证据分为两个阶段。S1已经用`tests/browser-integration/`与`playwright.integration.config.ts`收集可替换外部身份、空间或Gateway边界的浏览器集成，并把原静态shell的布局、响应式和浏览器健康合同并入真实身份/空间流程后删除shell runner。P3/P4继续扩展同一browser integration入口；P5首个真实全链合同时再原子建立`tests/e2e/`、独立配置与非空命令，且禁止拦截目标React/Gateway/Kernel链路。B4已删除单消费者fixture与page object；当前诊断support由两个独立browser integration文件共同消费，只按Playwright Request对象原样采集console error/warn、pageerror、requestfailed、HTTP状态、资源失败和请求持续时间，业务允许状态由各spec判断。WebSocket异常采集在S2真实browser消费者出现时同批加入，不预建无消费者分支。
 
 B4先把现有门禁的证据边界说清：2026-07-14实测`verify-protyle-browser-source.mjs`只证明118个Core文件和4个边界文件的平台及已迁移import规则，`verify-protyle-browser-boundary.mjs`当前只证明尚未接入Core的公共包闭包；两者不能合并声称真实入口已经安全。旧文档中的固定文件数快照不作为验收阈值。B4-Gate在公共入口接入Core后扩展现有AST/import图实现，覆盖TS/TSX/JS、静态与动态import、require、re-export、import type及非字面量加载，并由`pnpm lint`发现；通过条件是从真实公共入口遍历的每个加载边均在正向allowlist内，不是达到某个文件数。永久行为测试只保护Runtime/Transport/Menu/Overlay的稳定状态、取消和错误分类；真实菜单、浮层、面板、全屏和字数统计留给P3/P4浏览器集成，真实Gateway序列化、授权和空间路由由S2起建立并在P5 E2E收口，不新增完整内部mock链。
 

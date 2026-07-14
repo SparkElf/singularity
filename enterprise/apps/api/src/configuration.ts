@@ -82,12 +82,3 @@ export function parseTrustedProxyCidrs(
 
   return entries;
 }
-
-export function parseApiConfiguration(environment: NodeJS.ProcessEnv): ApiConfiguration {
-  return {
-    publicOrigin: parsePublicOrigin(environment.SINGULARITY_PUBLIC_ORIGIN),
-    trustedProxyCidrs: parseTrustedProxyCidrs(
-      environment.SINGULARITY_TRUSTED_PROXY_CIDRS,
-    ),
-  };
-}

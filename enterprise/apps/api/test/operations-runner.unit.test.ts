@@ -229,36 +229,52 @@ describe("controlled access operation runner", () => {
     expectSanitizedFailure(run, "disable-space", [rawOperationId]);
   });
 
-  test("sanitizes invalid input and unexpected service failures", async () => {
+  test("sanitizes invalid input failures", async () => {
     const sentinel = "raw-password-and-database-sentinel";
-    for (const testInput of [
-      input(sentinel),
-      input(
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const execute = vi.fn(() => Promise.resolve({ outcome: "must-not-run" }));
+    const service = { execute } satisfies AccessOperationExecutor;
+    const exitCode = await runAccessOperation({
+      service,
+      stderr,
+      stdin: input(sentinel),
+      stdout,
+    });
+    const stdoutText = outputText(stdout);
+    const stderrText = outputText(stderr);
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdoutText)).toMatchObject({ outcome: "failed" });
+    expect(stderrText).toBe("access-operation failed\n");
+    expect(`${stdoutText}${stderrText}`).not.toContain(sentinel);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("sanitizes unexpected service exceptions", async () => {
+    const sentinel = "raw-password-and-database-sentinel";
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const service = {
+      execute: vi.fn(() => Promise.reject(new Error(sentinel))),
+    } satisfies AccessOperationExecutor;
+    const exitCode = await runAccessOperation({
+      service,
+      stderr,
+      stdin: input(
         JSON.stringify({
           operation: "disable-user",
           userId: "29e0b920-5cf0-497c-a9b8-f26cc9c3414a",
         }),
       ),
-    ]) {
-      const stdout = new PassThrough();
-      const stderr = new PassThrough();
-      const service = {
-        execute: vi.fn(() => Promise.reject(new Error(sentinel))),
-      } satisfies AccessOperationExecutor;
-      const exitCode = await runAccessOperation({
-        service,
-        stderr,
-        stdin: testInput,
-        stdout,
-      });
-      const stdoutText = outputText(stdout);
-      const stderrText = outputText(stderr);
-      const observed = `${stdoutText}${stderrText}`;
+      stdout,
+    });
+    const stdoutText = outputText(stdout);
+    const stderrText = outputText(stderr);
 
-      expect(exitCode).toBe(1);
-      expect(JSON.parse(stdoutText)).toMatchObject({ outcome: "failed" });
-      expect(stderrText).toBe("access-operation failed\n");
-      expect(observed).not.toContain(sentinel);
-    }
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdoutText)).toMatchObject({ outcome: "failed" });
+    expect(stderrText).toBe("access-operation failed\n");
+    expect(`${stdoutText}${stderrText}`).not.toContain(sentinel);
   });
 });

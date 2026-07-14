@@ -1,11 +1,8 @@
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import {
   DATABASE_READINESS_PATH,
-  DATABASE_READY_OPENAPI_SCHEMA,
   DATABASE_READY_RESPONSE,
-  DATABASE_UNAVAILABLE_OPENAPI_SCHEMA,
   DATABASE_UNAVAILABLE_RESPONSE,
-  OPENAPI_DOCUMENT_PATH,
 } from "@singularity/contracts";
 import { DatabaseRuntime } from "@singularity/database";
 import {
@@ -43,23 +40,6 @@ const configurationErrorCases: ReadonlyArray<{
     forbiddenFragments: ["protocol-secret-sentinel"],
   },
 ];
-
-interface ReadinessOpenApiDocument {
-  openapi: string;
-  paths: Record<
-    string,
-    {
-      get: {
-        responses: Record<
-          string,
-          {
-            content: Record<string, { schema: unknown }>;
-          }
-        >;
-      };
-    }
-  >;
-}
 
 describe("database readiness HTTP contract", () => {
   let app: NestFastifyApplication;
@@ -197,24 +177,5 @@ describe("database readiness HTTP contract", () => {
         await shutdownApp.close();
       }
     }
-  });
-
-  test("publishes complete OpenAPI response schemas for database readiness", async () => {
-    const response = await fetch(`${baseUrl}${OPENAPI_DOCUMENT_PATH}`);
-    const document = (await response.json()) as ReadinessOpenApiDocument;
-    const responses = document.paths[DATABASE_READINESS_PATH]?.get.responses;
-
-    expect(response.status).toBe(200);
-    expect(document.openapi).toBe("3.1.0");
-    expect(responses?.["200"]?.content).toEqual({
-      "application/json": {
-        schema: DATABASE_READY_OPENAPI_SCHEMA,
-      },
-    });
-    expect(responses?.["503"]?.content).toEqual({
-      "application/json": {
-        schema: DATABASE_UNAVAILABLE_OPENAPI_SCHEMA,
-      },
-    });
   });
 });

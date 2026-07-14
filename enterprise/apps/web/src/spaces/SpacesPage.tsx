@@ -41,7 +41,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 import { roleBadgeVariant, roleLabel } from "@/spaces/space-labels.ts";
-import { spacePagePath } from "@/spaces/space-route.ts";
+import {
+  EXPLICIT_SPACE_LIST_STATE,
+  spacePagePath,
+} from "@/spaces/space-route.ts";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 
 const EMPTY_SPACES: AuthorizedSpacesResponse["spaces"] = [];
@@ -61,8 +64,13 @@ export function SpacesPage() {
   const spacesQuery = useAuthorizedSpaces();
   const logoutMutation = useLogout();
   const [search, setSearch] = useState("");
+  const explicitSpaceList = location.state === EXPLICIT_SPACE_LIST_STATE;
 
-  const spaces = spacesQuery.data?.spaces ?? EMPTY_SPACES;
+  const hasCurrentAuthorization =
+    spacesQuery.isSuccess && !spacesQuery.isFetching;
+  const spaces = hasCurrentAuthorization
+    ? spacesQuery.data.spaces
+    : EMPTY_SPACES;
   const normalizedSearch = search.trim().normalize("NFKC").toLocaleLowerCase();
   const filteredSpaces = useMemo(() => {
     if (!normalizedSearch) {
@@ -81,7 +89,12 @@ export function SpacesPage() {
     return <SessionRedirect returnTo={locationTarget(location)} />;
   }
 
-  if (spacesQuery.isSuccess && spaces.length === 1 && spaces[0]) {
+  if (
+    hasCurrentAuthorization &&
+    spaces.length === 1 &&
+    spaces[0] &&
+    !explicitSpaceList
+  ) {
     return <Navigate replace to={spacePagePath(spaces[0])} />;
   }
 
@@ -93,7 +106,6 @@ export function SpacesPage() {
           <span className="truncate text-sm font-semibold">奇点</span>
         </div>
         <Button
-          className="max-sm:h-10"
           disabled={logoutMutation.isPending}
           onClick={() => logoutMutation.mutate()}
           size="sm"
@@ -124,7 +136,9 @@ export function SpacesPage() {
           </Alert>
         ) : null}
 
-        {spacesQuery.isPending ? <SpaceListLoading /> : null}
+        {spacesQuery.isPending || spacesQuery.isFetching ? (
+          <SpaceListLoading />
+        ) : null}
 
         {spacesQuery.isError ? (
           <Empty className="min-h-72 rounded-md border">
@@ -149,7 +163,7 @@ export function SpacesPage() {
           </Empty>
         ) : null}
 
-        {spacesQuery.isSuccess && spaces.length === 0 ? (
+        {hasCurrentAuthorization && spaces.length === 0 ? (
           <Empty className="min-h-72 rounded-md border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -165,24 +179,27 @@ export function SpacesPage() {
           </Empty>
         ) : null}
 
-        {spacesQuery.isSuccess && spaces.length > 1 ? (
+        {hasCurrentAuthorization &&
+        (spaces.length > 1 || (explicitSpaceList && spaces.length === 1)) ? (
           <>
-            <Field>
-              <FieldLabel className="sr-only" htmlFor="space-search">
-                搜索空间
-              </FieldLabel>
-              <InputGroup className="h-9 max-sm:h-10">
-                <InputGroupAddon>
-                  <SearchIcon aria-hidden="true" />
-                </InputGroupAddon>
-                <InputGroupInput
-                  id="space-search"
-                  onChange={(event) => setSearch(event.currentTarget.value)}
-                  placeholder="搜索组织或空间"
-                  value={search}
-                />
-              </InputGroup>
-            </Field>
+            {spaces.length > 1 ? (
+              <Field>
+                <FieldLabel className="sr-only" htmlFor="space-search">
+                  搜索空间
+                </FieldLabel>
+                <InputGroup className="h-9 max-sm:h-10">
+                  <InputGroupAddon>
+                    <SearchIcon aria-hidden="true" />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="space-search"
+                    onChange={(event) => setSearch(event.currentTarget.value)}
+                    placeholder="搜索组织或空间"
+                    value={search}
+                  />
+                </InputGroup>
+              </Field>
+            ) : null}
 
             {filteredSpaces.length === 0 ? (
               <Empty className="min-h-56 rounded-md border">

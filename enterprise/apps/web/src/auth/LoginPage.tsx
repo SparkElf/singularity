@@ -1,6 +1,6 @@
 import { loginRequestSchema } from "@singularity/contracts";
-import { useLayoutEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { OrbitIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -27,13 +27,27 @@ import {
 import { Input } from "@/components/ui/input.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 
-function loginErrorMessage(error: unknown): string {
+interface LoginState {
+  error: unknown;
+  pending: boolean;
+}
+
+interface LoginCooldown {
+  remainingSeconds: number;
+  until: number;
+}
+
+const IDLE_LOGIN_STATE: LoginState = { error: null, pending: false };
+
+function loginErrorMessage(error: unknown, cooldownSeconds: number): string {
   if (isApiProblem(error, "unauthenticated")) {
     return "账号或密码错误。";
   }
 
   if (isApiProblem(error, "rate-limited")) {
-    return "尝试次数过多，请稍后再试。";
+    return cooldownSeconds > 0
+      ? `尝试次数过多，请在 ${cooldownSeconds} 秒后重试。`
+      : "尝试次数过多，现在可以重试。";
   }
 
   if (error instanceof ApiProblemError) {
@@ -53,23 +67,52 @@ export function LoginPage() {
   const queryClient = useQueryClient();
   const setCsrfToken = useCsrfStore((state) => state.setCsrfToken);
   const [validationError, setValidationError] = useState(false);
+  const [loginState, setLoginState] = useState<LoginState>(IDLE_LOGIN_STATE);
+  const [cooldown, setCooldown] = useState<LoginCooldown | null>(null);
+  const activeController = useRef<AbortController | null>(null);
+  const attemptGeneration = useRef(0);
+  const mounted = useRef(true);
+  const cooldownSeconds = cooldown?.remainingSeconds ?? 0;
 
   useLayoutEffect(() => {
     clearClientSession(queryClient);
   }, [queryClient]);
 
-  const mutation = useMutation({
-    mutationFn: (request: Parameters<typeof login>[0]) => login(request),
-    onSuccess: ({ csrfToken }) => {
-      queryClient.removeQueries();
-      setCsrfToken(csrfToken);
-      const returnTo = parseReturnTo(location.search, window.location.origin);
-      void navigate(returnTo ?? SPACES_PATH, { replace: true });
-    },
-  });
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      attemptGeneration.current += 1;
+      activeController.current?.abort();
+      activeController.current = null;
+    };
+  }, []);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  useEffect(() => {
+    if (!cooldown) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const remainingSeconds = Math.max(
+        0,
+        Math.ceil((cooldown.until - Date.now()) / 1_000),
+      );
+      setCooldown(
+        remainingSeconds > 0
+          ? { remainingSeconds, until: cooldown.until }
+          : null,
+      );
+    }, Math.max(1, Math.min(1_000, cooldown.until - Date.now())));
+    return () => window.clearTimeout(timeout);
+  }, [cooldown]);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (cooldownSeconds > 0) {
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const request = loginRequestSchema.safeParse({
       loginIdentifier: formData.get("loginIdentifier"),
@@ -77,16 +120,58 @@ export function LoginPage() {
     });
 
     if (!request.success) {
-      mutation.reset();
+      setLoginState(IDLE_LOGIN_STATE);
       setValidationError(true);
       return;
     }
 
+    activeController.current?.abort();
+    const controller = new AbortController();
+    const generation = attemptGeneration.current + 1;
+    attemptGeneration.current = generation;
+    activeController.current = controller;
     setValidationError(false);
-    mutation.mutate(request.data);
+    setLoginState({ error: null, pending: true });
+
+    try {
+      const { csrfToken } = await login(request.data, controller.signal);
+      if (
+        !mounted.current ||
+        controller.signal.aborted ||
+        generation !== attemptGeneration.current
+      ) {
+        return;
+      }
+
+      queryClient.removeQueries();
+      setCsrfToken(csrfToken);
+      const returnTo = parseReturnTo(location.search, window.location.origin);
+      void navigate(returnTo ?? SPACES_PATH, { replace: true });
+    } catch (error) {
+      if (
+        !mounted.current ||
+        controller.signal.aborted ||
+        generation !== attemptGeneration.current
+      ) {
+        return;
+      }
+
+      if (isApiProblem(error, "rate-limited")) {
+        const retryAfterSeconds = error.retryAfterSeconds as number;
+        setCooldown({
+          remainingSeconds: retryAfterSeconds,
+          until: Date.now() + retryAfterSeconds * 1_000,
+        });
+      }
+      setLoginState({ error, pending: false });
+    } finally {
+      if (generation === attemptGeneration.current) {
+        activeController.current = null;
+      }
+    }
   };
 
-  const hasError = validationError || mutation.isError;
+  const hasError = validationError || loginState.error !== null;
 
   return (
     <main
@@ -108,9 +193,13 @@ export function LoginPage() {
           className="flex flex-col gap-5"
           onInput={() => {
             setValidationError(false);
-            mutation.reset();
+            if (cooldownSeconds === 0) {
+              setLoginState((current) =>
+                current.pending ? current : IDLE_LOGIN_STATE,
+              );
+            }
           }}
-          onSubmit={handleSubmit}
+          onSubmit={(event) => void handleSubmit(event)}
         >
           <FieldGroup>
             <Field data-invalid={hasError || undefined}>
@@ -118,7 +207,6 @@ export function LoginPage() {
               <Input
                 autoComplete="username"
                 className="h-9 max-sm:h-10"
-                disabled={mutation.isPending}
                 id="login-identifier"
                 name="loginIdentifier"
                 required
@@ -130,7 +218,6 @@ export function LoginPage() {
               <Input
                 autoComplete="current-password"
                 className="h-9 max-sm:h-10"
-                disabled={mutation.isPending}
                 id="login-password"
                 name="password"
                 required
@@ -141,24 +228,24 @@ export function LoginPage() {
           </FieldGroup>
 
           <div className="min-h-16">
-            {validationError || mutation.isError ? (
+            {validationError || loginState.error !== null ? (
               <Alert variant="destructive">
                 <AlertTitle>无法登录</AlertTitle>
                 <AlertDescription>
                   {validationError
                     ? "请输入有效的账号和密码。"
-                    : loginErrorMessage(mutation.error)}
+                    : loginErrorMessage(loginState.error, cooldownSeconds)}
                 </AlertDescription>
               </Alert>
             ) : null}
           </div>
 
           <Button
-            className="w-full max-sm:h-10"
-            disabled={mutation.isPending}
+            className="w-full"
+            disabled={cooldownSeconds > 0}
             type="submit"
           >
-            {mutation.isPending ? (
+            {loginState.pending ? (
               <Spinner data-icon="inline-start" aria-label="正在登录" />
             ) : null}
             登录

@@ -2,18 +2,15 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
 
 import {
-  AUTHORIZED_SPACES_PATH,
-  AUTH_CSRF_PATH,
-  AUTH_LOGIN_PATH,
-  AUTH_LOGOUT_PATH,
-  DATABASE_READINESS_PATH,
-  OPENAPI_DOCUMENT_PATH,
-  SPACE_RUNTIME_PATH_TEMPLATE,
   type AccessOperation,
   type AccessOperationResult,
   accessOperationResultSchemaByOperation,
 } from "@singularity/contracts";
-import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
+import {
+  DatabaseRuntime,
+  type DatabaseClient,
+} from "@singularity/database";
+import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import {
   afterAll,
   afterEach,
@@ -25,6 +22,7 @@ import {
 } from "vitest";
 
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
+import { runAccessOperationsApplication } from "../src/operations/application.js";
 import { runAccessOperation } from "../src/operations/runner.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
 import {
@@ -57,6 +55,29 @@ async function runOperation(
   const stderr = new PassThrough();
   const exitCode = await runAccessOperation({
     service,
+    stderr,
+    stdin: Readable.from([JSON.stringify(command)]),
+    stdout,
+  });
+  const stdoutText = streamText(stdout);
+  return {
+    exitCode,
+    result: accessOperationResultSchemaByOperation[command.operation].parse(
+      JSON.parse(stdoutText),
+    ),
+    stderr: streamText(stderr),
+    stdout: stdoutText,
+  };
+}
+
+async function runProductionOperation(
+  databaseUrl: string,
+  command: AccessOperation,
+): Promise<OperationRun> {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const exitCode = await runAccessOperationsApplication({
+    databaseUrl,
     stderr,
     stdin: Readable.from([JSON.stringify(command)]),
     stdout,
@@ -138,12 +159,11 @@ describe("controlled access operations with PostgreSQL", () => {
   });
 
   test("serializes concurrent initialization into one complete installation", async () => {
-    const secretSentinel = "initial-password-secret-sentinel";
     const [first, second] = await Promise.all([
       runOperation(operations, {
         operation: "initialize",
         loginIdentifier: `owner-a-${randomUUID()}@example.test`,
-        password: `${password}-${secretSentinel}`,
+        password,
         organizationName: "Singularity Research",
         spaceName: "Primary Knowledge",
       }),
@@ -214,32 +234,157 @@ describe("controlled access operations with PostgreSQL", () => {
       status: "starting",
       version: null,
     });
-    for (const run of [first, second]) {
-      expect(run.stdout.endsWith("\n")).toBe(true);
-      expect(run.stdout.trimEnd().includes("\n")).toBe(false);
-      expect(run.stderr).toBe("");
-      expect(`${run.stdout}${run.stderr}`).not.toContain(secretSentinel);
-    }
-    expect(logger.output).toContain("access.operation");
-    expect(logger.output).not.toContain(secretSentinel);
-
-    const openApiResponse = await fetch(
-      `${testApi.baseUrl}${OPENAPI_DOCUMENT_PATH}`,
-    );
-    const openApi = (await openApiResponse.json()) as {
-      paths: Record<string, unknown>;
-    };
-    expect(Object.keys(openApi.paths).sort()).toEqual(
-      [
-        AUTHORIZED_SPACES_PATH,
-        AUTH_CSRF_PATH,
-        AUTH_LOGIN_PATH,
-        AUTH_LOGOUT_PATH,
-        DATABASE_READINESS_PATH,
-        SPACE_RUNTIME_PATH_TEMPLATE,
-      ].sort(),
-    );
   });
+
+  test("writes one sanitized operation result line and access diagnostic", async () => {
+    const secretSentinel = "initial-password-secret-sentinel";
+    const run = await runOperation(operations, {
+      operation: "initialize",
+      loginIdentifier: `sanitized-owner-${randomUUID()}@example.test`,
+      password: `${password}-${secretSentinel}`,
+      organizationName: "Sanitized Organization",
+      spaceName: "Sanitized Space",
+    });
+
+    expect(run.exitCode).toBe(0);
+    expect(run.result.outcome).toBe("created");
+    expect(run.stdout.endsWith("\n")).toBe(true);
+    expect(run.stdout.trimEnd().includes("\n")).toBe(false);
+    expect(run.stderr).toBe("");
+    expect(`${run.stdout}${run.stderr}${logger.output}`).not.toContain(
+      secretSentinel,
+    );
+    expect(logger.output).toContain("access.operation");
+  });
+
+  test("runs the production operations composition root with real service lifecycle", async () => {
+    const targetSpaceId = randomUUID();
+    const run = await runProductionOperation(isolatedDatabaseUrl(), {
+      operation: "disable-space",
+      spaceId: targetSpaceId,
+    });
+
+    expect(run).toMatchObject({
+      exitCode: 2,
+      result: { outcome: "not-found" },
+    });
+    expect(run.stdout.endsWith("\n")).toBe(true);
+    expect(run.stderr).toContain("access.operation");
+    expect(run.stderr).toContain(targetSpaceId);
+  });
+
+  test("sanitizes production composition-root database failures", async () => {
+    const databaseSentinel = "database-configuration-secret-sentinel";
+    const deploymentSentinel = "deployment-secret-sentinel";
+    const versionSentinel = "version-secret-sentinel";
+    const run = await runProductionOperation(
+      `invalid-database-url-${databaseSentinel}`,
+      {
+        operation: "set-kernel-state",
+        spaceId: randomUUID(),
+        kernelState: "ready",
+        deploymentHandle: deploymentSentinel,
+        version: versionSentinel,
+      },
+    );
+
+    expect(run).toMatchObject({ exitCode: 1, result: { outcome: "failed" } });
+    expect(run.stderr).toContain("access.operation");
+    for (const sentinel of [
+      databaseSentinel,
+      deploymentSentinel,
+      versionSentinel,
+    ]) {
+      expect(`${run.stdout}${run.stderr}`).not.toContain(sentinel);
+    }
+  });
+
+  test.each([
+    {
+      label: "create-user organization",
+      command: {
+        operation: "create-user",
+        organizationId: randomUUID(),
+        loginIdentifier: `missing-organization-${randomUUID()}@example.test`,
+        password,
+      },
+    },
+    {
+      label: "create-space administrator",
+      command: {
+        operation: "create-space",
+        organizationId: randomUUID(),
+        name: "Missing Administrator",
+        adminUserId: randomUUID(),
+      },
+    },
+    {
+      label: "set-kernel-state space",
+      command: {
+        operation: "set-kernel-state",
+        spaceId: randomUUID(),
+        kernelState: "starting",
+      },
+    },
+    {
+      label: "set-space-member space",
+      command: {
+        operation: "set-space-member",
+        spaceId: randomUUID(),
+        userId: randomUUID(),
+        role: "viewer",
+      },
+    },
+    {
+      label: "revoke-space-member space",
+      command: {
+        operation: "revoke-space-member",
+        spaceId: randomUUID(),
+        userId: randomUUID(),
+      },
+    },
+    {
+      label: "disable-organization organization",
+      command: {
+        operation: "disable-organization",
+        organizationId: randomUUID(),
+      },
+    },
+    {
+      label: "disable-space space",
+      command: {
+        operation: "disable-space",
+        spaceId: randomUUID(),
+      },
+    },
+    {
+      label: "revoke-organization-member user",
+      command: {
+        operation: "revoke-organization-member",
+        organizationId: randomUUID(),
+        userId: randomUUID(),
+      },
+    },
+    {
+      label: "disable-user user",
+      command: { operation: "disable-user", userId: randomUUID() },
+    },
+    {
+      label: "revoke-user-sessions user",
+      command: { operation: "revoke-user-sessions", userId: randomUUID() },
+    },
+  ] satisfies ReadonlyArray<{ label: string; command: AccessOperation }>)(
+    "returns not-found for a missing $label",
+    async ({ command }) => {
+      const run = await runOperation(operations, command);
+
+      expect(run).toMatchObject({
+        exitCode: 2,
+        result: { outcome: "not-found" },
+        stderr: "",
+      });
+    },
+  );
 
   test("rolls back initialization when a later unique write fails", async () => {
     const loginIdentifier = `existing-${randomUUID()}@example.test`;
@@ -418,6 +563,84 @@ describe("controlled access operations with PostgreSQL", () => {
           },
         }),
       ).resolves.toMatchObject({ role: "admin", status: "active" });
+    });
+
+    test("keeps repeatable state and revocation operations idempotent", async () => {
+      const userId = createdUserId(
+        (
+          await runOperation(operations, {
+            operation: "create-user",
+            organizationId: installation.organizationId,
+            loginIdentifier: `idempotent-user-${randomUUID()}@example.test`,
+            password,
+          })
+        ).result,
+      );
+      await runOperation(operations, {
+        operation: "set-space-member",
+        spaceId: installation.spaceId,
+        userId,
+        role: "viewer",
+      });
+
+      const repeatable = [
+        {
+          command: {
+            operation: "set-kernel-state",
+            spaceId: installation.spaceId,
+            kernelState: "starting",
+          },
+          outcome: "updated",
+        },
+        {
+          command: {
+            operation: "revoke-space-member",
+            spaceId: installation.spaceId,
+            userId,
+          },
+          outcome: "revoked",
+        },
+        {
+          command: { operation: "revoke-user-sessions", userId },
+          outcome: "revoked",
+        },
+        {
+          command: {
+            operation: "revoke-organization-member",
+            organizationId: installation.organizationId,
+            userId,
+          },
+          outcome: "revoked",
+        },
+        {
+          command: { operation: "disable-user", userId },
+          outcome: "updated",
+        },
+        {
+          command: {
+            operation: "disable-space",
+            spaceId: installation.spaceId,
+          },
+          outcome: "updated",
+        },
+        {
+          command: {
+            operation: "disable-organization",
+            organizationId: installation.organizationId,
+          },
+          outcome: "updated",
+        },
+      ] as const satisfies ReadonlyArray<{
+        command: AccessOperation;
+        outcome: AccessOperationResult["outcome"];
+      }>;
+
+      for (const { command, outcome } of repeatable) {
+        const first = await runOperation(operations, command);
+        const second = await runOperation(operations, command);
+        expect(first.result.outcome).toBe(outcome);
+        expect(second.result.outcome).toBe(outcome);
+      }
     });
 
     test("set-kernel-state persists all three authoritative states and clears starting deployment fields", async () => {

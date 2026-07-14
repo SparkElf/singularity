@@ -14,7 +14,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.tsx";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
-import { authorizedSpacesQueryKey } from "@/spaces/api.ts";
+import {
+  authorizedSpacesQueryKey,
+  spaceRuntimeQueryKey,
+} from "@/spaces/api.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -81,13 +84,19 @@ function mockFetch(
   );
 }
 
-function renderApp(initialEntry: string) {
-  const queryClient = new QueryClient({
+function createTestQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false, staleTime: 0 },
       mutations: { retry: false },
     },
   });
+}
+
+function renderApp(
+  initialEntry: string,
+  queryClient = createTestQueryClient(),
+) {
 
   const result = render(
     <QueryClientProvider client={queryClient}>
@@ -237,18 +246,120 @@ describe("S1 identity and space routes", () => {
     ).toBeVisible();
   });
 
-  it("keeps login failures generic and distinguishes rate limiting", async () => {
-    let attempts = 0;
+  it("cancels the previous login attempt and ignores its late success", async () => {
+    const firstLogin = deferred<Response>();
+    let firstSignal: AbortSignal | null | undefined;
+    let loginAttempts = 0;
+    const submittedPasswords: string[] = [];
     vi.stubGlobal(
       "fetch",
-      mockFetch(() => {
-        attempts += 1;
-        return attempts === 1
-          ? jsonResponse(problem("unauthenticated", 401), 401)
-          : jsonResponse(problem("rate-limited", 429), 429, {
-              "Retry-After": "90",
-            });
+      mockFetch((input, init) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/login") {
+          loginAttempts += 1;
+          submittedPasswords.push(
+            (JSON.parse(requestBodyText(init?.body)) as { password: string })
+              .password,
+          );
+          if (loginAttempts === 1) {
+            firstSignal = init?.signal;
+            return firstLogin.promise;
+          }
+          return jsonResponse({ csrfToken: CSRF_TOKEN });
+        }
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [] });
+        }
+        throw new Error(`Unexpected request: ${path}`);
       }),
+    );
+
+    const { queryClient } = renderApp("/login");
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "correct horse battery staple" },
+    });
+    const submit = screen.getByRole("button", { name: "登录" });
+    fireEvent.click(submit);
+    await waitFor(() => expect(firstSignal).toBeDefined());
+    expect(submit).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "replacement password value" },
+    });
+
+    const form = submit.closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "尚未获得空间访问权限",
+      }),
+    ).toBeVisible();
+    expect(firstSignal?.aborted).toBe(true);
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
+    expect(submittedPasswords).toEqual([
+      "correct horse battery staple",
+      "replacement password value",
+    ]);
+    queryClient.setQueryData(["current-identity"], { active: true });
+
+    await act(async () => {
+      firstLogin.resolve(jsonResponse({ csrfToken: "B".repeat(43) }));
+      await firstLogin.promise;
+    });
+
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
+    expect(queryClient.getQueryData(["current-identity"])).toEqual({
+      active: true,
+    });
+  });
+
+  it("aborts an in-flight login when the page unmounts", async () => {
+    const loginResponse = deferred<Response>();
+    let loginSignal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input, init) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/login") {
+          loginSignal = init?.signal;
+          return loginResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    const { queryClient, unmount } = renderApp("/login");
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    await waitFor(() => expect(loginSignal).toBeDefined());
+    queryClient.setQueryData(["current-page"], { active: true });
+
+    unmount();
+    expect(loginSignal?.aborted).toBe(true);
+    await act(async () => {
+      loginResponse.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
+      await loginResponse.promise;
+    });
+
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryData(["current-page"])).toEqual({
+      active: true,
+    });
+  });
+
+  it("keeps invalid credential failures generic", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(() => jsonResponse(problem("unauthenticated", 401), 401)),
     );
 
     renderApp("/login");
@@ -260,12 +371,101 @@ describe("S1 identity and space routes", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     expect(await screen.findByText("账号或密码错误。")).toBeVisible();
+  });
+
+  it("keeps a rate-limited login disabled until Retry-After expires", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/login") {
+          attempts += 1;
+          return attempts === 1
+            ? jsonResponse(problem("rate-limited", 429), 429, {
+                "Retry-After": "2",
+              })
+            : jsonResponse({ csrfToken: CSRF_TOKEN });
+        }
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [] });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/login");
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    const password = screen.getByLabelText("密码");
+    fireEvent.change(password, {
+      target: { value: "wrong password value" },
+    });
+    const submit = screen.getByRole("button", { name: "登录" });
+    fireEvent.click(submit);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("尝试次数过多，请在 2 秒后重试。")).toBeVisible();
+    expect(submit).toBeDisabled();
 
     fireEvent.change(password, {
-      target: { value: "another wrong password" },
+      target: { value: "correct horse battery staple" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "登录" }));
-    expect(await screen.findByText("尝试次数过多，请稍后再试。")).toBeVisible();
+    expect(screen.getByText("尝试次数过多，请在 2 秒后重试。")).toBeVisible();
+    expect(submit).toBeDisabled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByText("尝试次数过多，请在 1 秒后重试。")).toBeVisible();
+    expect(submit).toBeDisabled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByText("尝试次数过多，现在可以重试。")).toBeVisible();
+    expect(submit).toBeEnabled();
+
+    fireEvent.click(submit);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("heading", { name: "选择知识空间" })).toBeVisible();
+    expect(attempts).toBe(2);
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
+  });
+
+  it.each([
+    ["缺失", undefined],
+    ["非正整数", "0"],
+  ])("treats a %s Retry-After as a response contract error", async (_label, retryAfter) => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(() =>
+        jsonResponse(
+          problem("rate-limited", 429),
+          429,
+          retryAfter ? { "Retry-After": retryAfter } : undefined,
+        ),
+      ),
+    );
+
+    renderApp("/login");
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "wrong password value" },
+    });
+    const submit = screen.getByRole("button", { name: "登录" });
+    fireEvent.click(submit);
+
+    expect(await screen.findByText("登录失败，请稍后重试。")).toBeVisible();
+    expect(submit).toBeEnabled();
   });
 
   it("renders only the authorized multi-space collection and filters it locally", async () => {
@@ -296,6 +496,146 @@ describe("S1 identity and space routes", () => {
     expect(screen.getByRole("heading", { name: "没有匹配的空间" })).toBeVisible();
   });
 
+  it("does not auto-enter a cached single space while authorization is revalidating", async () => {
+    const freshAuthorization = deferred<Response>();
+    const requestedPaths: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        requestedPaths.push(path);
+        if (path === "/api/v1/spaces") {
+          return freshAuthorization.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(authorizedSpacesQueryKey, {
+      spaces: [SPACE_A_SUMMARY],
+    });
+
+    renderApp("/spaces", queryClient);
+    expect(screen.getByLabelText("正在加载空间")).toBeVisible();
+    expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(requestedPaths).toEqual(["/api/v1/spaces"]),
+    );
+
+    await act(async () => {
+      freshAuthorization.resolve(
+        jsonResponse({ spaces: [SPACE_A_SUMMARY, SPACE_B_SUMMARY] }),
+      );
+      await freshAuthorization.promise;
+    });
+
+    expect(
+      await screen.findByRole("link", { name: /深空知识空间/ }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: /星际工程手册/ })).toBeVisible();
+    expect(requestedPaths).toEqual(["/api/v1/spaces"]);
+  });
+
+  it("hides cached space identity and ready state until both revalidations succeed", async () => {
+    const freshAuthorization = deferred<Response>();
+    const freshRuntime = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return freshAuthorization.promise;
+        }
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return freshRuntime.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(authorizedSpacesQueryKey, {
+      spaces: [SPACE_A_SUMMARY],
+    });
+    queryClient.setQueryData(
+      spaceRuntimeQueryKey({
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+      }),
+      {
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+        role: "admin",
+        kernelState: "ready",
+      },
+    );
+
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A), queryClient);
+    expect(screen.getByRole("heading", { name: "正在加载空间" })).toBeVisible();
+    expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
+    expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "空间已就绪" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      freshAuthorization.resolve(
+        jsonResponse({ spaces: [SPACE_A_SUMMARY] }),
+      );
+      freshRuntime.resolve(
+        jsonResponse({
+          organizationId: ORGANIZATION_A,
+          spaceId: SPACE_A,
+          role: "viewer",
+          kernelState: "ready",
+        }),
+      );
+      await Promise.all([freshAuthorization.promise, freshRuntime.promise]);
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "空间已就绪" }),
+    ).toBeVisible();
+    expect(screen.getByText("阅读者")).toBeVisible();
+    expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+  });
+
+  it("shows an explicitly requested list after returning from a single space", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
+        }
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return jsonResponse({
+            organizationId: ORGANIZATION_A,
+            spaceId: SPACE_A,
+            role: "admin",
+            kernelState: "ready",
+          });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/spaces");
+    expect(
+      await screen.findByRole("heading", { name: "空间已就绪" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("link", { name: "返回空间列表" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "选择知识空间" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: /深空知识空间/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "空间已就绪" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("clears all client session state after a protected query returns 401", async () => {
     vi.stubGlobal(
       "fetch",
@@ -314,8 +654,7 @@ describe("S1 identity and space routes", () => {
     });
   });
 
-  it("shows starting, unavailable, network, and hidden-resource states without creating ready UI", async () => {
-    let runtimeResult: "network" | "starting" | "unavailable" = "starting";
+  it("shows an unavailable content service without creating ready UI", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((input) => {
@@ -324,35 +663,27 @@ describe("S1 identity and space routes", () => {
           return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
         }
         if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
-          if (runtimeResult === "network") {
-            return Promise.reject(new TypeError("network unavailable"));
-          }
           return jsonResponse({
             organizationId: ORGANIZATION_A,
             spaceId: SPACE_A,
             role: "admin",
-            kernelState: runtimeResult,
+            kernelState: "unavailable",
           });
         }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
 
-    const { unmount } = renderApp(spacePath(ORGANIZATION_A, SPACE_A));
-    expect(await screen.findByRole("heading", { name: "空间正在启动" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "空间已就绪" })).not.toBeInTheDocument();
-
-    runtimeResult = "unavailable";
-    fireEvent.click(screen.getByRole("button", { name: "立即重试" }));
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A));
     expect(
       await screen.findByRole("heading", { name: "内容服务暂不可用" }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "空间已就绪" }),
+    ).not.toBeInTheDocument();
+  });
 
-    runtimeResult = "network";
-    fireEvent.click(screen.getByRole("button", { name: "立即重试" }));
-    expect(await screen.findByRole("heading", { name: "无法加载空间" })).toBeVisible();
-    unmount();
-
+  it("keeps a browser network failure distinct from service unavailability", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((input) => {
@@ -360,11 +691,51 @@ describe("S1 identity and space routes", () => {
         if (path === "/api/v1/spaces") {
           return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
         }
-        return jsonResponse(problem("not-found", 404), 404);
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return Promise.reject(new TypeError("network unavailable"));
+        }
+        throw new Error(`Unexpected request: ${path}`);
       }),
     );
+
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A));
+    expect(
+      await screen.findByRole("heading", { name: "无法加载空间" }),
+    ).toBeVisible();
+    expect(screen.getByText("无法连接到服务，请检查网络后重试。")).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "内容服务暂不可用" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides a revoked space immediately and revalidates the authorization list", async () => {
+    let authorizationRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          authorizationRequests += 1;
+          return jsonResponse({
+            spaces:
+              authorizationRequests === 1
+                ? [SPACE_A_SUMMARY, SPACE_B_SUMMARY]
+                : [SPACE_B_SUMMARY],
+          });
+        }
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return jsonResponse(problem("not-found", 404), 404);
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
     renderApp(spacePath(ORGANIZATION_A, SPACE_A));
     expect(await screen.findByRole("heading", { name: "找不到该空间" })).toBeVisible();
+    expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
+    expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+    await waitFor(() => expect(authorizationRequests).toBe(2));
+    expect(screen.getByText("星际工程手册")).toBeVisible();
   });
 
   it("auto-enters one space and polls only while visible with a 30-attempt limit", async () => {

@@ -34,7 +34,7 @@ interface ConcurrencyTestContext {
   passwordHasher: PasswordHasher;
 }
 
-interface HeldUserLock {
+interface HeldRowLock {
   completed: Promise<void>;
   lockerPid: number;
   release(): void;
@@ -169,10 +169,45 @@ async function createMemberGraph(
   };
 }
 
-async function holdUserRow(
+async function createOrganizationRevocationLockGraph(
   database: DatabaseClient,
-  userId: string,
-): Promise<HeldUserLock> {
+): Promise<{
+  organizationId: string;
+  relatedSpaceId: string;
+  unrelatedSpaceId: string;
+  userId: string;
+}> {
+  const graph = await createMemberGraph(database);
+  const unrelatedSpace = await database.space.create({
+    data: {
+      name: `Unrelated Space ${randomUUID()}`,
+      organizationId: graph.organizationId,
+      status: "active",
+    },
+    select: { id: true },
+  });
+  await database.spaceMembership.create({
+    data: {
+      organizationId: graph.organizationId,
+      role: "editor",
+      spaceId: graph.spaceId,
+      status: "active",
+      userId: graph.userId,
+    },
+  });
+  return {
+    organizationId: graph.organizationId,
+    relatedSpaceId: graph.spaceId,
+    unrelatedSpaceId: unrelatedSpace.id,
+    userId: graph.userId,
+  };
+}
+
+async function holdRow(
+  database: DatabaseClient,
+  query: Prisma.Sql,
+  missingTargetMessage: string,
+): Promise<HeldRowLock> {
   let resolveReady!: (pid: number) => void;
   let rejectReady!: (reason?: unknown) => void;
   const ready = new Promise<number>((resolve, reject) => {
@@ -194,16 +229,11 @@ async function holdUserRow(
   const completed = database.$transaction(
     async (transaction) => {
       const rows = await transaction.$queryRaw<Array<{ pid: number }>>(
-        Prisma.sql`
-          SELECT pg_backend_pid() AS "pid"
-          FROM "users"
-          WHERE "id" = ${userId}
-          FOR UPDATE
-        `,
+        query,
       );
       const backend = rows[0];
       if (backend === undefined) {
-        throw new Error("The user row lock target does not exist");
+        throw new Error(missingTargetMessage);
       }
       resolveReady(backend.pid);
       await released;
@@ -221,6 +251,38 @@ async function holdUserRow(
     await Promise.allSettled([completed]);
     throw error;
   }
+}
+
+function holdUserRow(
+  database: DatabaseClient,
+  userId: string,
+): Promise<HeldRowLock> {
+  return holdRow(
+    database,
+    Prisma.sql`
+      SELECT pg_backend_pid() AS "pid"
+      FROM "users"
+      WHERE "id" = ${userId}
+      FOR UPDATE
+    `,
+    "The user row lock target does not exist",
+  );
+}
+
+function holdSpaceRow(
+  database: DatabaseClient,
+  spaceId: string,
+): Promise<HeldRowLock> {
+  return holdRow(
+    database,
+    Prisma.sql`
+      SELECT pg_backend_pid() AS "pid"
+      FROM "spaces"
+      WHERE "id" = ${spaceId}
+      FOR UPDATE
+    `,
+    "The space row lock target does not exist",
+  );
 }
 
 async function blockedBackendPids(
@@ -275,6 +337,35 @@ async function waitForBlockedBackendCount(
       throw new Error(
         `Did not observe ${String(expectedCount)} PostgreSQL lock waiters`,
       );
+    }
+  }
+}
+
+async function observeCompletionOrBlock(
+  database: DatabaseClient,
+  lockerPid: number,
+  action: Promise<unknown>,
+  deadline: number,
+): Promise<"blocked" | "completed"> {
+  let completed = false;
+  void action.then(
+    () => {
+      completed = true;
+    },
+    () => {
+      completed = true;
+    },
+  );
+
+  for (;;) {
+    if (completed) {
+      return "completed";
+    }
+    if ((await blockedBackendPids(database, lockerPid)).length > 0) {
+      return "blocked";
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("The operation neither completed nor waited for the row lock");
     }
   }
 }
@@ -555,6 +646,123 @@ describe("access concurrency invariants with PostgreSQL", () => {
         ).resolves.toMatchObject({
           status: mutation === "disable-user" ? "disabled" : "active",
         });
+      });
+    },
+    caseTimeoutMilliseconds,
+  );
+
+  test(
+    "revokes an organization member without waiting for an unrelated space lock",
+    async () => {
+      await withTestApplication(async (context) => {
+        const graph = await createOrganizationRevocationLockGraph(
+          context.database,
+        );
+        const heldLock = await holdSpaceRow(
+          context.database,
+          graph.unrelatedSpaceId,
+        );
+        const revocation = context.operations.execute({
+          operation: "revoke-organization-member",
+          organizationId: graph.organizationId,
+          userId: graph.userId,
+        });
+
+        try {
+          expect(
+            await observeCompletionOrBlock(
+              context.database,
+              heldLock.lockerPid,
+              revocation,
+              Date.now() + lockObservationWindowMilliseconds,
+            ),
+          ).toBe("completed");
+          await expect(revocation).resolves.toMatchObject({ outcome: "revoked" });
+        } finally {
+          heldLock.release();
+          await Promise.allSettled([heldLock.completed, revocation]);
+        }
+
+        await expect(
+          context.database.spaceMembership.findUnique({
+            where: {
+              spaceId_userId: {
+                spaceId: graph.relatedSpaceId,
+                userId: graph.userId,
+              },
+            },
+          }),
+        ).resolves.toMatchObject({ status: "inactive" });
+      });
+    },
+    caseTimeoutMilliseconds,
+  );
+
+  test(
+    "waits for a related space lock before revoking an organization member",
+    async () => {
+      await withTestApplication(async (context) => {
+        const graph = await createOrganizationRevocationLockGraph(
+          context.database,
+        );
+        const heldLock = await holdSpaceRow(
+          context.database,
+          graph.relatedSpaceId,
+        );
+        const revocation = context.operations.execute({
+          operation: "revoke-organization-member",
+          organizationId: graph.organizationId,
+          userId: graph.userId,
+        });
+
+        try {
+          expect(
+            await observeCompletionOrBlock(
+              context.database,
+              heldLock.lockerPid,
+              revocation,
+              Date.now() + lockObservationWindowMilliseconds,
+            ),
+          ).toBe("blocked");
+          await expect(
+            context.database.organizationMembership.findUnique({
+              where: {
+                organizationId_userId: {
+                  organizationId: graph.organizationId,
+                  userId: graph.userId,
+                },
+              },
+            }),
+          ).resolves.toMatchObject({ status: "active" });
+
+          heldLock.release();
+          await heldLock.completed;
+          await expect(revocation).resolves.toMatchObject({ outcome: "revoked" });
+        } finally {
+          heldLock.release();
+          await Promise.allSettled([heldLock.completed, revocation]);
+        }
+
+        await expect(
+          context.database.organizationMembership.findUnique({
+            where: {
+              organizationId_userId: {
+                organizationId: graph.organizationId,
+                userId: graph.userId,
+              },
+            },
+          }),
+        ).resolves.toMatchObject({ status: "inactive" });
+        await expect(
+          context.database.spaceMembership.findUnique({
+            where: {
+              spaceId_userId: {
+                spaceId: graph.relatedSpaceId,
+                userId: graph.userId,
+              },
+            },
+          }),
+        ).resolves.toMatchObject({ status: "inactive" });
       });
     },
     caseTimeoutMilliseconds,

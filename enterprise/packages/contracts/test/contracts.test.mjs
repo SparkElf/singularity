@@ -5,7 +5,7 @@ import { spaceRoles } from "@singularity/authorization";
 
 import {
   ACCESS_OPERATION_INPUT_MAX_BYTES,
-  API_PROBLEM_OPENAPI_SCHEMA,
+  API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
@@ -88,6 +88,38 @@ describe("HTTP contracts", () => {
       }).success,
       false,
     );
+
+    const openApiCodesByStatus = {
+      400: "validation-failed",
+      401: "unauthenticated",
+      403: "forbidden",
+      404: "not-found",
+      409: "conflict",
+      422: "validation-failed",
+      429: "rate-limited",
+      502: "service-unavailable",
+      503: "service-unavailable",
+      504: "service-unavailable",
+    };
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS).map(
+          ([status, schema]) => [
+            status,
+            {
+              code: schema.properties.code.enum[0],
+              status: schema.properties.status.enum[0],
+            },
+          ],
+        ),
+      ),
+      Object.fromEntries(
+        Object.entries(openApiCodesByStatus).map(([status, code]) => [
+          status,
+          { code, status: Number(status) },
+        ]),
+      ),
+    );
     assert.equal(
       apiProblemSchema.safeParse({
         code: "not-found",
@@ -149,7 +181,6 @@ describe("HTTP contracts", () => {
       SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA.properties.kernelState.enum,
       [...kernelInstanceStates],
     );
-    assert.equal(API_PROBLEM_OPENAPI_SCHEMA.oneOf.length, 7);
   });
 });
 

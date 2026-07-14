@@ -1,15 +1,19 @@
-name: 🐛 Bug report
-description: Report defects to help us improve
-title: "Please enter the title of the bug report"
+name: 🐛 Singularity bug report
+description: Report a reproducible defect in Singularity
+title: "[Bug]: "
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [Singularity issue tracker](https://github.com/SparkElf/singularity/issues) before filing a report. For suspected vulnerabilities, use the [private security process](https://github.com/SparkElf/singularity/security/policy) instead.
   - type: checkboxes
     attributes:
       label: Is there an existing issue for this?
       description: |
-        Please search to see if an issue already exists for the bug you encountered.
+        Please search the Singularity repository to see whether this defect has already been reported.
       options:
         - label: | 
-            I have searched the existing issues
+            I have searched the existing Singularity issues
           required: true
   - type: checkboxes
     attributes:
@@ -64,7 +68,7 @@ body:
     attributes:
       label: Log file
       description: |
-        The program log file is located at `workspace/temp/siyuan.log`
+        The current runtime log is normally located at `workspace/temp/siyuan.log`. Remove credentials, personal data, workspace contents, and tokens before attaching it.
     validations:
       required: true
   - type: textarea
