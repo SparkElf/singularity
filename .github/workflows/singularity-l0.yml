@@ -66,31 +66,25 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22.21.1
+          node-version: 24
           cache: pnpm
-          cache-dependency-path: enterprise/pnpm-lock.yaml
+          cache-dependency-path: |
+            enterprise/pnpm-lock.yaml
+            app/pnpm-lock.yaml
 
       - name: Install enterprise dependencies
         run: pnpm install --frozen-lockfile
         working-directory: enterprise
 
+      - name: Install SiYuan app dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: app
+
       - name: Verify upstream baseline
         run: node scripts/singularity/verify-upstream-baseline.mjs
 
-      - name: Lint
-        run: pnpm lint
-        working-directory: enterprise
-
-      - name: Typecheck
-        run: pnpm typecheck
-        working-directory: enterprise
-
-      - name: Unit tests
-        run: pnpm test
-        working-directory: enterprise
-
-      - name: Production build
-        run: pnpm build
+      - name: Verify B4
+        run: pnpm verify:b4
         working-directory: enterprise
 
       - name: Install Playwright Chromium
@@ -98,9 +92,50 @@ jobs:
         working-directory: enterprise
 
       - name: Static workspace browser check
+        run: pnpm test:shell
+        working-directory: enterprise
+
+  space-session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SINGULARITY_TEST_DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:5432/singularity_test
+    services:
+      postgres:
+        image: postgres:17-alpine
         env:
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ""
-        run: pnpm e2e
+          POSTGRES_USER: singularity_test
+          POSTGRES_PASSWORD: singularity_test
+          POSTGRES_DB: singularity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U singularity_test -d singularity_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install enterprise dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Verify S0-S3
+        run: pnpm verify:s0-s3
         working-directory: enterprise
 
   kernel-baseline:

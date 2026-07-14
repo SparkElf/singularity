@@ -92,7 +92,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.outline,
             accelerator: window.siyuan.config.keymap.editor.general.outline.custom,
             click: () => {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-outline",
                     documentId: protyle.block.rootID,
                     preview: !protyle.preview.element.classList.contains("fn__none"),
@@ -105,7 +105,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.backlinks,
             accelerator: window.siyuan.config.keymap.editor.general.backlinks.custom,
             click: () => {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-backlinks",
                     documentId: protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
                 });
@@ -117,7 +117,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.graphView,
             accelerator: window.siyuan.config.keymap.editor.general.graphView.custom,
             click: () => {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-graph",
                     scope: "document",
                     documentId: protyle.block.id,
@@ -152,7 +152,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.spaceRepetition,
                 accelerator: window.siyuan.config.keymap.editor.general.spaceRepetition.custom,
                 click: () => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-card-review",
                         documentId: protyle.block.rootID,
                     });
@@ -162,7 +162,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 iconHTML: "",
                 label: window.siyuan.languages.manage,
                 click: () => {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-card-browser",
                         documentId: protyle.block.rootID,
                     });
@@ -188,7 +188,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                     iconHTML: "",
                     label: window.siyuan.languages.addToDeck,
                     click: () => {
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-card-deck-picker",
                             blockIds: [protyle.block.rootID],
                         });
@@ -209,7 +209,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             icon: "iconSearch",
             accelerator: window.siyuan.config.keymap.general.search.custom,
             click() {
-                protyle.host.dispatch({
+                protyle.session.runtime.host.dispatch({
                     type: "open-document-search",
                     documentId: protyle.block.rootID,
                 });
@@ -225,7 +225,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.openBy,
                 icon: "iconOpen",
                 click() {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: protyle.block.id,
                         disposition: "current",
@@ -244,7 +244,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.fileHistory,
                 icon: "iconHistory",
                 click() {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document-history",
                         documentId: protyle.block.rootID,
                     });
@@ -255,7 +255,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
 
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_4", type: "separator"}).element);
         emitProtylePluginMenu({
-            plugins: protyle.plugins,
+            plugins: protyle.session.runtime.plugins,
             type: "click-editortitleicon",
             detail: {
                 protyle,

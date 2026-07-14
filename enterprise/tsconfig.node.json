@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "baseUrl": ".",
+    "customConditions": ["development"],
+    "esModuleInterop": true,
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "paths": {
+      "@singularity/authorization": ["packages/authorization/src/index.ts"],
+      "@singularity/contracts": ["packages/contracts/src/index.ts"],
+      "@singularity/database": ["packages/database/src/index.ts"],
+      "@singularity/database/testing/postgres": [
+        "packages/database/test/support/postgres.ts"
+      ],
+      "@singularity/kernel-client": ["packages/kernel-client/src/index.ts"]
+    },
+    "types": ["node"]
+  }
+}

@@ -5,24 +5,30 @@ import type {
 } from "@singularity/protyle-browser";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-interface ProtyleHostProps {
+interface ProtyleHostProps<TRuntime> {
   documentId: string;
-  factory: ProtyleFactory;
+  factory: ProtyleFactory<TRuntime>;
   onError?: (error: unknown) => void;
   readOnly: boolean;
-  session: ProtyleSession;
+  session: ProtyleSession<TRuntime>;
 }
 
 type ProtyleHostStatus = "error" | "loading" | "ready";
 
-export function ProtyleHost({ documentId, factory, onError, readOnly, session }: ProtyleHostProps) {
+export function ProtyleHost<TRuntime>({
+  documentId,
+  factory,
+  onError,
+  readOnly,
+  session,
+}: ProtyleHostProps<TRuntime>) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<ProtyleController>(null);
   const [status, setStatus] = useState<ProtyleHostStatus>("loading");
   const getCurrentReadOnly = useEffectEvent(() => readOnly);
   const applyLatestReadOnly = useEffectEvent((controller: ProtyleController, initialReadOnly: boolean) => {
     if (readOnly !== initialReadOnly) {
-      controller.setReadOnly(readOnly);
+      controller.setHostReadOnly(readOnly);
     }
   });
   const reportError = useEffectEvent((error: unknown) => {
@@ -76,7 +82,7 @@ export function ProtyleHost({ documentId, factory, onError, readOnly, session }:
   }, [documentId, factory, session]);
 
   useEffect(() => {
-    controllerRef.current?.setReadOnly(readOnly);
+    controllerRef.current?.setHostReadOnly(readOnly);
   }, [readOnly]);
 
   return (

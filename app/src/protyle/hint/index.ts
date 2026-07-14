@@ -682,7 +682,7 @@ ${genHintItemHTML(item)}
                     md: ""
                 }, () => {
                     insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-document",
                         documentId: newSubDocId,
                         disposition: "current",
@@ -722,7 +722,7 @@ ${genHintItemHTML(item)}
                 return;
             } else if (value.startsWith("plugin")) {
                 const ids = value.split(Constants.ZWSP);
-                protyle.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
+                protyle.session.runtime.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
                 return;
             } else {
                 range.deleteContents();

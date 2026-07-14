@@ -4,10 +4,18 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
-const typescriptFiles = [
+const browserTypescriptFiles = [
   "apps/web/**/*.{ts,tsx}",
   "packages/protyle-browser/src/**/*.{ts,tsx}",
 ];
+const nodeTypescriptFiles = [
+  "apps/api/**/*.ts",
+  "packages/authorization/**/*.ts",
+  "packages/contracts/**/*.ts",
+  "packages/database/**/*.ts",
+  "packages/kernel-client/**/*.ts",
+];
+const typescriptFiles = [...browserTypescriptFiles, ...nodeTypescriptFiles];
 const reactFiles = ["apps/web/src/**/*.{ts,tsx}"];
 
 export default tseslint.config(
@@ -16,6 +24,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/node_modules/**",
       "**/playwright-report/**",
+      "**/src/generated/**",
       "**/test-results/**",
     ],
   },
@@ -40,7 +49,7 @@ export default tseslint.config(
     },
   },
   {
-    files: typescriptFiles,
+    files: browserTypescriptFiles,
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -50,6 +59,40 @@ export default tseslint.config(
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+  },
+  {
+    files: nodeTypescriptFiles,
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: [
+      "apps/api/src/**/*.ts",
+      "packages/authorization/src/**/*.ts",
+      "packages/contracts/src/**/*.ts",
+      "packages/database/src/**/*.ts",
+      "packages/kernel-client/src/**/*.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@singularity/database/testing/postgres",
+              message: "The PostgreSQL test lifecycle is not a production API.",
+            },
+          ],
+        },
+      ],
     },
   },
 );

@@ -423,7 +423,7 @@ export class Gutter {
             if (isOnlyMeta(event)) {
                 if (protyle.options.backlinkData) {
                     checkFold(id, (zoomIn) => {
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: id,
                             disposition: "current",
@@ -1103,7 +1103,7 @@ export class Gutter {
                         }
                         ids.push(item.getAttribute("data-node-id"));
                     });
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-card-deck-picker",
                         blockIds: ids,
                     });
@@ -1112,7 +1112,7 @@ export class Gutter {
         }
 
         emitProtylePluginMenu({
-            plugins: protyle.plugins,
+            plugins: protyle.session.runtime.plugins,
             type: "click-blockicon",
             detail: {
                 protyle,
@@ -2129,7 +2129,7 @@ export class Gutter {
                 label: window.siyuan.languages.openBy,
                 click: () => {
                     checkFold(id, (zoomIn) => {
-                        protyle.host.dispatch({
+                        protyle.session.runtime.host.dispatch({
                             type: "open-document",
                             documentId: id,
                             disposition: "current",
@@ -2301,7 +2301,7 @@ export class Gutter {
                 ignore: !window.siyuan.config.flashcard.deck,
                 icon: "iconRiffCard",
                 click() {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-card-deck-picker",
                         blockIds: [id],
                     });
@@ -2311,7 +2311,7 @@ export class Gutter {
         }
 
         emitProtylePluginMenu({
-            plugins: protyle.plugins,
+            plugins: protyle.session.runtime.plugins,
             type: "click-blockicon",
             detail: {
                 protyle,

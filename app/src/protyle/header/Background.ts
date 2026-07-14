@@ -384,7 +384,7 @@ export class Background {
                     event.stopPropagation();
                     break;
                 } else if (type === "open-search") {
-                    protyle.host.dispatch({
+                    protyle.session.runtime.host.dispatch({
                         type: "open-search",
                         query: `#${target.textContent}#`,
                         queryMode: window.siyuan.ctrlIsPressed ? "toggle-term" : "replace",

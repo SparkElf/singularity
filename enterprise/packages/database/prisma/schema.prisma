@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+enum OrganizationStatus {
+  active
+  disabled
+
+  @@map("organization_status")
+}
+
+enum OrganizationRole {
+  owner
+  admin
+  member
+
+  @@map("organization_role")
+}
+
+enum MembershipStatus {
+  active
+  inactive
+
+  @@map("membership_status")
+}
+
+enum SpaceStatus {
+  active
+  disabled
+
+  @@map("space_status")
+}
+
+enum SpaceRole {
+  admin
+  editor
+  viewer
+
+  @@map("space_role")
+}
+
+enum KernelInstanceStatus {
+  starting
+  ready
+  unavailable
+
+  @@map("kernel_instance_status")
+}
+
+model User {
+  id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  loginIdentifier         String                   @unique(map: "users_login_identifier_key") @map("login_identifier")
+  passwordDigest          String                   @map("password_digest")
+  status                  UserStatus
+  authSessions            AuthSession[]
+  organizationMemberships OrganizationMembership[]
+
+  @@map("users")
+}
+
+model AuthSession {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tokenDigest       String    @unique(map: "auth_sessions_token_digest_key") @map("token_digest")
+  csrfDigest        String    @map("csrf_digest")
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "auth_sessions_user_id_fkey")
+
+  @@index([userId], map: "auth_sessions_user_id_idx")
+  @@map("auth_sessions")
+}
+
+model Organization {
+  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  status      OrganizationStatus
+  memberships OrganizationMembership[]
+  spaces      Space[]
+
+  @@map("organizations")
+}
+
+model OrganizationMembership {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  role             OrganizationRole
+  status           MembershipStatus
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_memberships_organization_id_fkey")
+  user             User              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_memberships_user_id_fkey")
+  spaceMemberships SpaceMembership[] @relation("SpaceMembershipOrganizationMembership")
+
+  @@unique([organizationId, userId], map: "organization_memberships_organization_id_user_id_key")
+  @@index([userId], map: "organization_memberships_user_id_idx")
+  @@map("organization_memberships")
+}
+
+model Space {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  name           String
+  status         SpaceStatus
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "spaces_organization_id_fkey")
+  memberships    SpaceMembership[] @relation("SpaceMembershipSpace")
+  kernelInstance KernelInstance?
+
+  @@unique([id, organizationId], map: "spaces_id_organization_id_key")
+  @@index([organizationId], map: "spaces_organization_id_idx")
+  @@map("spaces")
+}
+
+model SpaceMembership {
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId         String                 @map("organization_id") @db.Uuid
+  spaceId                String                 @map("space_id") @db.Uuid
+  userId                 String                 @map("user_id") @db.Uuid
+  role                   SpaceRole
+  status                 MembershipStatus
+  space                  Space                  @relation("SpaceMembershipSpace", fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_memberships_space_id_organization_id_fkey")
+  organizationMembership OrganizationMembership @relation("SpaceMembershipOrganizationMembership", fields: [organizationId, userId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "space_memberships_organization_id_user_id_fkey")
+
+  @@unique([spaceId, userId], map: "space_memberships_space_id_user_id_key")
+  @@index([spaceId, organizationId], map: "space_memberships_space_id_organization_id_idx")
+  @@index([organizationId, userId], map: "space_memberships_organization_id_user_id_idx")
+  @@map("space_memberships")
+}
+
+model KernelInstance {
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  spaceId          String               @unique(map: "kernel_instances_space_id_key") @map("space_id") @db.Uuid
+  status           KernelInstanceStatus
+  deploymentHandle String               @map("deployment_handle")
+  version          String
+  space            Space                @relation(fields: [spaceId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "kernel_instances_space_id_fkey")
+
+  @@map("kernel_instances")
+}

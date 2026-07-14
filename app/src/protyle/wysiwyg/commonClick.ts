@@ -10,7 +10,7 @@ export const commonClick = (event: MouseEvent & {
     const attrBookmarkElement = hasClosestByClassName(event.target, "protyle-attr--bookmark");
     if (attrBookmarkElement) {
         if (!isM && isOnlyMeta(event)) {
-            protyle.host.dispatch({
+            protyle.session.runtime.host.dispatch({
                 type: "open-search",
                 query: attrBookmarkElement.textContent.trim(),
                 queryMode: "replace",
@@ -30,7 +30,7 @@ export const commonClick = (event: MouseEvent & {
     const attrNameElement = hasClosestByClassName(event.target, "protyle-attr--name");
     if (attrNameElement) {
         if (!isM && isOnlyMeta(event)) {
-            protyle.host.dispatch({
+            protyle.session.runtime.host.dispatch({
                 type: "open-search",
                 query: attrNameElement.textContent.trim(),
                 queryMode: "replace",
@@ -61,7 +61,7 @@ export const commonClick = (event: MouseEvent & {
     const attrAliasElement = hasClosestByClassName(event.target, "protyle-attr--alias");
     if (attrAliasElement) {
         if (!isM && isOnlyMeta(event)) {
-            protyle.host.dispatch({
+            protyle.session.runtime.host.dispatch({
                 type: "open-search",
                 query: attrAliasElement.textContent.trim(),
                 queryMode: "replace",
@@ -81,7 +81,7 @@ export const commonClick = (event: MouseEvent & {
     const attrMemoElement = hasClosestByClassName(event.target, "protyle-attr--memo");
     if (attrMemoElement) {
         if (!isM && isOnlyMeta(event)) {
-            protyle.host.dispatch({
+            protyle.session.runtime.host.dispatch({
                 type: "open-search",
                 query: attrMemoElement.getAttribute("aria-label").trim(),
                 queryMode: "replace",

@@ -109,7 +109,7 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         event.stopPropagation();
         return true;
     }
-    if (protyle.plugins.runEditorCommand(protyle, event, matchHotKey)) {
+    if (protyle.session.runtime.plugins.runEditorCommand(protyle, event, matchHotKey)) {
         return true;
     }
 };

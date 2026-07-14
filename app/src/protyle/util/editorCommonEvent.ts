@@ -342,7 +342,7 @@ const dragSb = async (protyle: IProtyle, sourceElements: Element[], targetElemen
         return;
     }
     const isSameDoc = protyle.element.contains(sourceElement);
-    const sourceProtyle = isSameDoc ? protyle : protyle.editors.find(editor => editor.element.contains(sourceElement));
+    const sourceProtyle = isSameDoc ? protyle : protyle.session.runtime.editors.find(editor => editor.element.contains(sourceElement));
     if (!sourceProtyle?.block.rootID) {
         console.error("[protyle.registry] drag source editor was not found");
         return;
@@ -475,7 +475,7 @@ const dragSame = async (protyle: IProtyle, sourceElements: Element[], targetElem
         return;
     }
     const isSameDoc = protyle.element.contains(sourceElement);
-    const sourceProtyle = isSameDoc ? protyle : protyle.editors.find(editor => editor.element.contains(sourceElement));
+    const sourceProtyle = isSameDoc ? protyle : protyle.session.runtime.editors.find(editor => editor.element.contains(sourceElement));
     if (!sourceProtyle?.block.rootID) {
         console.error("[protyle.registry] drag source editor was not found");
         return;

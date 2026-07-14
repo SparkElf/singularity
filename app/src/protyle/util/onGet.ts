@@ -270,7 +270,7 @@ const setHTML = (options: {
     });
     protyle.options.defIds = [];
     if (options.action.includes(Constants.CB_GET_APPEND) || options.action.includes(Constants.CB_GET_BEFORE)) {
-        protyle.plugins.emit({
+        protyle.session.runtime.plugins.emit({
             type: "loaded-protyle-dynamic",
             detail: {
                 protyle,
@@ -333,7 +333,7 @@ const setHTML = (options: {
         }
 
     }
-    protyle.plugins.emit({type: "loaded-protyle-static", detail: {protyle}});
+    protyle.session.runtime.plugins.emit({type: "loaded-protyle-static", detail: {protyle}});
 };
 
 export const disabledForeverProtyle = (protyle: IProtyle) => {

@@ -20,6 +20,9 @@ enterprise/apps/*/dist
 enterprise/apps/*/*.tsbuildinfo
 enterprise/apps/*/playwright-report
 enterprise/apps/*/test-results
+enterprise/packages/*/dist
+enterprise/packages/*/*.tsbuildinfo
+enterprise/packages/database/src/generated
 ios
 pprof
 

@@ -353,7 +353,7 @@ export const hintSlash = (key: string, protyle: IProtyle) => {
         html: "separator",
     }];
     let hasPlugin = false;
-    protyle.plugins.forEachSlashItem((pluginName, slashItem) => {
+    protyle.session.runtime.plugins.forEachSlashItem((pluginName, slashItem) => {
         allList.push({
             filter: slashItem.filter,
             id: slashItem.id,
