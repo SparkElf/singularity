@@ -44,7 +44,7 @@ export default tseslint.config(
       ...reactRefresh.configs.vite.rules,
       "react-refresh/only-export-components": [
         "error",
-        { allowExportNames: ["buttonVariants", "useSidebar"] },
+        { allowExportNames: ["badgeVariants", "buttonVariants", "useSidebar"] },
       ],
     },
   },

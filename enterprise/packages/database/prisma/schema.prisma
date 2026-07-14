@@ -70,6 +70,13 @@ model User {
   @@map("users")
 }
 
+model SystemInstallation {
+  id            Int      @id
+  initializedAt DateTime @map("initialized_at") @db.Timestamptz(3)
+
+  @@map("system_installations")
+}
+
 model AuthSession {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId            String    @map("user_id") @db.Uuid
@@ -143,8 +150,8 @@ model KernelInstance {
   id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   spaceId          String               @unique(map: "kernel_instances_space_id_key") @map("space_id") @db.Uuid
   status           KernelInstanceStatus
-  deploymentHandle String               @map("deployment_handle")
-  version          String
+  deploymentHandle String?              @map("deployment_handle")
+  version          String?
   space            Space                @relation(fields: [spaceId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "kernel_instances_space_id_fkey")
 
   @@map("kernel_instances")

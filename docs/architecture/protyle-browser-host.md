@@ -3,7 +3,7 @@ title: "Protyle浏览器宿主与Vite抽取方案"
 description: "定义奇点React应用与思源Protyle之间的运行时、传输、插件和生命周期边界"
 author: "Codex"
 date: "2026-07-13"
-version: "2.1.1"
+version: "2.2.0"
 status: "approved"
 tags: ["architecture", "protyle", "react", "vite", "testing"]
 ---
@@ -39,6 +39,7 @@ tags: ["architecture", "protyle", "react", "vite", "testing"]
 | 2.0.1 | 2026-07-14 | Codex | 统一传输阶段命名，明确WebSocket只接收推送并补齐Runtime资源能力 |
 | 2.1.0 | 2026-07-14 | Codex | 固定B4唯一生产接线、撤权清理、结构化请求选项、主动内容与P3-P5证据职责 |
 | 2.1.1 | 2026-07-14 | Codex | 架构、安全与测试治理复评通过，批准后续按S0-S3与B4顺序实施 |
+| 2.2.0 | 2026-07-15 | Codex | 对齐S1已落地的browser integration并移除已退役静态shell与空E2E入口 |
 
 ## Table of Contents
 
@@ -618,7 +619,7 @@ verify:b4
 
 `app`拥有独立`pnpm-lock.yaml`和`tsx` runner依赖。CI必须分别按`enterprise/pnpm-lock.yaml`与`app/pnpm-lock.yaml`执行冻结安装，再只调用`pnpm verify:b4`收集B4证据；不得因企业工作区安装成功而假定`app`测试依赖存在。B3/B4继续扩展现有AST实现，不新增第二套扫描器。
 
-Playwright目标形态物理分层：B4把当前静态壳`workspace.spec.ts`移到`tests/shell/`并由`playwright.shell.config.ts`、`pnpm test:shell`单独收集；它不属于B4编辑器证据。P3/P4只从`tests/browser-integration/`与`playwright.integration.config.ts`收集，可替换外部Gateway；P5只从`tests/e2e/`与`playwright.e2e.config.ts`收集，禁止拦截目标React/Gateway/Kernel链路。三个`testDir`不得重叠，CI显式运行shell检查而非人工补跑。B4同时把当前单消费者fixture与page object内联后删除共享文件；P3出现至少两个独立稳定浏览器合同时，才可重新抽取统一诊断support，并覆盖console error/warn、pageerror、requestfailed、意外4xx/5xx、CORS、资源失败、关键长pending与WebSocket异常。
+Playwright按交付证据分为两个阶段。S1已经用`tests/browser-integration/`与`playwright.integration.config.ts`收集可替换外部身份、空间或Gateway边界的浏览器集成，并把原静态shell的布局、响应式和浏览器健康合同并入真实身份/空间流程后删除shell runner。P3/P4继续扩展同一browser integration入口；P5首个真实全链合同时再原子建立`tests/e2e/`、独立配置与非空命令，且禁止拦截目标React/Gateway/Kernel链路。B4已删除单消费者fixture与page object；当前诊断support由两个独立browser integration文件共同消费，并统一覆盖console error/warn、pageerror、requestfailed、意外4xx/5xx、CORS、资源失败、关键长pending与WebSocket异常。
 
 B4先把现有门禁的证据边界说清：2026-07-14实测`verify-protyle-browser-source.mjs`只证明118个Core文件和4个边界文件的平台及已迁移import规则，`verify-protyle-browser-boundary.mjs`当前只证明尚未接入Core的公共包闭包；两者不能合并声称真实入口已经安全。旧文档中的固定文件数快照不作为验收阈值。B4-Gate在公共入口接入Core后扩展现有AST/import图实现，覆盖TS/TSX/JS、静态与动态import、require、re-export、import type及非字面量加载，并由`pnpm lint`发现；通过条件是从真实公共入口遍历的每个加载边均在正向allowlist内，不是达到某个文件数。永久行为测试只保护Runtime/Transport/Menu/Overlay的稳定状态、取消和错误分类；真实菜单、浮层、面板、全屏和字数统计留给P3/P4浏览器集成，真实Gateway序列化、授权和空间路由由S2起建立并在P5 E2E收口，不新增完整内部mock链。
 

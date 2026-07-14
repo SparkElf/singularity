@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
+    conditions: ["development"],
   },
   server: {
     port: 4173,

@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "customConditions": ["development"],
     "types": ["node"]
   },
   "include": ["vite.config.ts", "playwright*.config.ts", "tests/**/*.ts"]

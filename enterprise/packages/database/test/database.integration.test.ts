@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { Pool } from "pg";
@@ -21,7 +22,22 @@ const uuidPattern =
 const [organizationOwnerRole, organizationAdminRole, organizationMemberRole] =
   organizationRoles;
 const [, spaceEditorRole, spaceViewerRole] = spaceRoles;
-const [kernelStartingState, kernelReadyState] = kernelInstanceStates;
+const [kernelStartingState, kernelReadyState, kernelUnavailableState] =
+  kernelInstanceStates;
+const s0MigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20260714000000_s0_enterprise_control_plane/migration.sql",
+    import.meta.url,
+  ),
+);
+const s1MigrationPath = fileURLToPath(
+  new URL(
+    "../prisma/migrations/20260715000000_s1_identity_space_access/migration.sql",
+    import.meta.url,
+  ),
+);
+const s1NonemptyMigrationDiagnostic =
+  "SINGULARITY_S1_REQUIRES_EMPTY_S0_DOMAIN_TABLES";
 
 async function countSchemas(pool: Pool, prefix: string): Promise<number> {
   const result = await pool.query<{ count: string }>(
@@ -31,7 +47,7 @@ async function countSchemas(pool: Pool, prefix: string): Promise<number> {
   return Number(result.rows[0]?.count ?? "0");
 }
 
-describe("S0 PostgreSQL contracts", () => {
+describe("S0-S1 PostgreSQL contracts", () => {
   let database: DatabaseClient;
 
   beforeAll(async () => {
@@ -40,6 +56,7 @@ describe("S0 PostgreSQL contracts", () => {
   });
 
   afterEach(async () => {
+    await database.systemInstallation.deleteMany();
     await database.kernelInstance.deleteMany();
     await database.spaceMembership.deleteMany();
     await database.authSession.deleteMany();
@@ -68,8 +85,12 @@ describe("S0 PostgreSQL contracts", () => {
             status: "active",
           },
         });
+        const installation = await replayDatabase.systemInstallation.create({
+          data: { id: 1, initializedAt: new Date() },
+        });
 
         expect(user.id).toMatch(uuidPattern);
+        expect(installation.id).toBe(1);
       } finally {
         await replayDatabase.$disconnect();
         await replay.dispose();
@@ -77,6 +98,63 @@ describe("S0 PostgreSQL contracts", () => {
       }
     },
   );
+
+  test("rejects an S1 migration over nonempty S0 domain data without rewriting it", async () => {
+    const configuredUrl = new URL(process.env.SINGULARITY_TEST_DATABASE_URL!);
+    configuredUrl.searchParams.delete("schema");
+    const schemaName = `sg_s1_guard_${randomUUID().replaceAll("-", "")}`;
+    const pool = new Pool({ connectionString: configuredUrl.toString() });
+    const client = await pool.connect();
+
+    try {
+      await client.query(`CREATE SCHEMA "${schemaName}"`);
+      await client.query(`SET search_path TO "${schemaName}"`);
+      await client.query(await readFile(s0MigrationPath, "utf8"));
+      const inserted = await client.query<{ id: string }>(`
+        INSERT INTO "users" ("login_identifier", "password_digest", "status")
+        VALUES ('manual-s0-user', 'sensitive-digest-sentinel', 'active')
+        RETURNING "id"::text
+      `);
+
+      await expect(
+        client.query(await readFile(s1MigrationPath, "utf8")),
+      ).rejects.toThrow(s1NonemptyMigrationDiagnostic);
+
+      const retained = await client.query<{ passwordDigest: string }>(`
+        SELECT "password_digest" AS "passwordDigest"
+        FROM "users"
+        WHERE "id" = $1::uuid
+      `, [inserted.rows[0]?.id]);
+      const deploymentColumns = await client.query<{ isNullable: string }>(`
+        SELECT is_nullable AS "isNullable"
+        FROM information_schema.columns
+        WHERE table_schema = $1
+          AND table_name = 'kernel_instances'
+          AND column_name IN ('deployment_handle', 'version')
+        ORDER BY column_name
+      `, [schemaName]);
+      const installationTable = await client.query<{ tableName: string | null }>(`
+        SELECT to_regclass($1)::text AS "tableName"
+      `, [`${schemaName}.system_installations`]);
+
+      expect(retained.rows).toEqual([
+        { passwordDigest: "sensitive-digest-sentinel" },
+      ]);
+      expect(deploymentColumns.rows).toEqual([
+        { isNullable: "NO" },
+        { isNullable: "NO" },
+      ]);
+      expect(installationTable.rows).toEqual([{ tableName: null }]);
+    } finally {
+      try {
+        await client.query("SET search_path TO public");
+        await client.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+      } finally {
+        client.release();
+        await pool.end();
+      }
+    }
+  });
 
   test("rejects a test database URL whose database name is not isolated", async () => {
     const originalUrl = process.env.SINGULARITY_TEST_DATABASE_URL!;
@@ -191,13 +269,50 @@ describe("S0 PostgreSQL contracts", () => {
       FROM information_schema.columns
       WHERE table_schema = ${schema}
         AND column_name = 'id'
-        AND table_name <> '_prisma_migrations'
+        AND table_name IN (
+          'users',
+          'auth_sessions',
+          'organizations',
+          'organization_memberships',
+          'spaces',
+          'space_memberships',
+          'kernel_instances'
+        )
       ORDER BY table_name
     `;
 
     expect(defaults).toHaveLength(7);
     expect(defaults.every(({ columnDefault }) => columnDefault === "gen_random_uuid()"))
       .toBe(true);
+  });
+
+  test("accepts only the fixed SystemInstallation key", async () => {
+    const initializedAt = new Date();
+    const installation = await database.systemInstallation.create({
+      data: { id: 1, initializedAt },
+    });
+
+    expect(installation).toEqual({ id: 1, initializedAt });
+    await expect(
+      database.systemInstallation.create({
+        data: { id: 2, initializedAt },
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("serializes concurrent SystemInstallation creation to one row", async () => {
+    const attempts = await Promise.allSettled([
+      database.systemInstallation.create({
+        data: { id: 1, initializedAt: new Date("2026-07-15T00:00:00.000Z") },
+      }),
+      database.systemInstallation.create({
+        data: { id: 1, initializedAt: new Date("2026-07-15T00:00:01.000Z") },
+      }),
+    ]);
+
+    expect(attempts.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect(await database.systemInstallation.count()).toBe(1);
   });
 
   test("keeps the Space composite ownership key in PostgreSQL", async () => {
@@ -301,12 +416,69 @@ describe("S0 PostgreSQL contracts", () => {
         data: {
           spaceId: space.id,
           status,
-          deploymentHandle: `kernel-${status}-${randomUUID()}`,
-          version: "3.7.1",
+          ...(status === kernelStartingState
+            ? { deploymentHandle: null, version: null }
+            : {
+                deploymentHandle: `kernel-${status}-${randomUUID()}`,
+                version: "3.7.1",
+              }),
         },
       });
 
       expect(kernelInstance.status).toBe(status);
+      expect(kernelInstance.deploymentHandle === null).toBe(
+        status === kernelStartingState,
+      );
+      expect(kernelInstance.version === null).toBe(
+        status === kernelStartingState,
+      );
+    },
+  );
+
+  test.each([
+    {
+      deploymentHandle: "kernel-starting",
+      label: "starting with deployment metadata",
+      status: kernelStartingState,
+      version: "3.7.1",
+    },
+    {
+      deploymentHandle: null,
+      label: "ready without deployment metadata",
+      status: kernelReadyState,
+      version: null,
+    },
+    {
+      deploymentHandle: "kernel-ready",
+      label: "ready without a version",
+      status: kernelReadyState,
+      version: null,
+    },
+    {
+      deploymentHandle: null,
+      label: "unavailable without a deployment handle",
+      status: kernelUnavailableState,
+      version: "3.7.1",
+    },
+  ])(
+    "rejects Kernel state $label",
+    async ({ deploymentHandle, status, version }) => {
+      const organization = await database.organization.create({
+        data: { name: `Invalid Kernel ${randomUUID()}`, status: "active" },
+      });
+      const space = await database.space.create({
+        data: {
+          organizationId: organization.id,
+          name: "Invalid Kernel Space",
+          status: "active",
+        },
+      });
+
+      await expect(
+        database.kernelInstance.create({
+          data: { deploymentHandle, spaceId: space.id, status, version },
+        }),
+      ).rejects.toThrow();
     },
   );
 
@@ -462,8 +634,8 @@ describe("S0 PostgreSQL contracts", () => {
         data: {
           spaceId: space.id,
           status: kernelStartingState,
-          deploymentHandle: `kernel-${randomUUID()}`,
-          version: "3.7.1",
+          deploymentHandle: null,
+          version: null,
         },
       }),
     ).rejects.toMatchObject({ code: "P2002" });

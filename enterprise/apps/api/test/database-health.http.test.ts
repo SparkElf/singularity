@@ -1,6 +1,3 @@
-import { inspect } from "node:util";
-
-import type { LoggerService } from "@nestjs/common";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import {
   DATABASE_READINESS_PATH,
@@ -18,45 +15,11 @@ import {
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import { createApiApplication } from "../src/application.js";
+import { CapturingLogger } from "./support/capturing-logger.js";
 
 const requestIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-class CapturingLogger implements LoggerService {
-  readonly #entries: string[] = [];
-
-  get output(): string {
-    return this.#entries.join("\n");
-  }
-
-  log(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  error(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  warn(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  debug(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  verbose(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  fatal(message: unknown, ...optionalParams: unknown[]): void {
-    this.#capture(message, optionalParams);
-  }
-
-  #capture(message: unknown, optionalParams: unknown[]): void {
-    this.#entries.push(inspect([message, ...optionalParams], { depth: null }));
-  }
-}
+const publicOrigin = "https://singularity.test/";
 
 const configurationErrorCases: ReadonlyArray<{
   databaseUrl: string | undefined;
@@ -103,7 +66,10 @@ describe("database readiness HTTP contract", () => {
   let baseUrl: string;
 
   beforeAll(async () => {
-    app = await createApiApplication({ databaseUrl: isolatedDatabaseUrl() });
+    app = await createApiApplication({
+      databaseUrl: isolatedDatabaseUrl(),
+      publicOrigin,
+    });
     await app.listen(0, "127.0.0.1");
     baseUrl = await app.getUrl();
   });
@@ -133,6 +99,7 @@ describe("database readiness HTTP contract", () => {
       const unavailableApp = await createApiApplication({
         databaseUrl,
         logger,
+        publicOrigin,
       });
 
       try {
@@ -173,6 +140,7 @@ describe("database readiness HTTP contract", () => {
     try {
       unavailableApp = await createApiApplication({
         databaseUrl: unavailableUrl.toString(),
+        publicOrigin,
       });
       await unavailableApp.listen(0, "127.0.0.1");
       const unavailableBaseUrl = await unavailableApp.getUrl();
@@ -203,6 +171,7 @@ describe("database readiness HTTP contract", () => {
   test("disconnects PostgreSQL only after the HTTP server closes", async () => {
     const shutdownApp = await createApiApplication({
       databaseUrl: isolatedDatabaseUrl(),
+      publicOrigin,
     });
     await shutdownApp.listen(0, "127.0.0.1");
     const server = shutdownApp.getHttpServer();

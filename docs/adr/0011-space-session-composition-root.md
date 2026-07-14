@@ -3,7 +3,7 @@ title: "ADR-011: 企业空间Session组合根前移"
 description: "确定生产Protyle迁移前必须先建立真实空间身份、Gateway和唯一浏览器Session组合根"
 author: "Codex"
 date: "2026-07-14"
-version: "1.2.3"
+version: "1.4.1"
 status: "accepted"
 tags: ["adr", "space", "session", "gateway", "composition-root"]
 ---
@@ -20,6 +20,9 @@ tags: ["adr", "space", "session", "gateway", "composition-root"]
 | 1.2.1 | 2026-07-14 | Codex | 架构、安全与测试治理复评通过并接受决策 |
 | 1.2.2 | 2026-07-14 | Codex | 固定S0数据库readiness HTTP公开合同 |
 | 1.2.3 | 2026-07-14 | Codex | 固定数据库配置脱敏、有限等待与公开枚举单一事实源 |
+| 1.3.0 | 2026-07-14 | Codex | 增补S1受控运维、身份与空间发现前置切片，并延后无消费者事件总线 |
+| 1.4.0 | 2026-07-14 | Codex | 闭合S1 Kernel三态生产路径、代理安全、撤权并发与非空浏览器门禁 |
+| 1.4.1 | 2026-07-14 | Codex | S1增量经架构、安全、Schema与测试治理复评通过并接受 |
 
 ## Status
 
@@ -46,6 +49,8 @@ Accepted
 11. S0合同与数据库、S1身份与空间启动、S2 Gateway、S3无Core浏览器组合根完成后，才能恢复B4 Core迁移。`verify:s0-s3`按阶段原子增加非空suite，最终含production build与`kernel/serviceauth` Go unit；B4是Host/正式PluginPort/Factory/Core唯一生产接线，P3/P4只保留浏览器行为证据，P5完成真实E2E和旧Web文件删除。
 12. S0数据库readiness使用未认证的`GET /api/v1/health/database`，真实查询成功返回`200 {"status":"ready"}`，数据库配置、连接或查询不可用返回`503 {"status":"unavailable"}`。配置只接受PostgreSQL协议，错误结果不保留原始URL；单副本连接池上限5，连接建立与池等待上限3秒，客户端查询上限5秒，PostgreSQL语句上限4秒。响应禁止缓存且不暴露连接信息；它不兼作进程liveness或后续Kernel健康聚合。
 13. 组织/空间角色以`authorization`的小写合同为唯一事实源，浏览器可见Kernel状态以`contracts`的小写合同为唯一事实源；Prisma标识符和PostgreSQL枚举值保持一致，database package不再公开同名大写枚举。
+14. S1以API package内受控运维组合根从部署主机非TTY pipe创建账号、组织、空间、成员及Kernel三态事实；首次初始化使用数据库固定单例行，React从授权空间列表与启动响应建立真实路由。身份使用有界Argon2id、可信来源双键限流、必填公开Origin、HttpOnly Cookie、内存CSRF、条件会话续期和固定行锁顺序，具体合同由ADR-013拥有。
+15. S1所有撤权变更集中到Identity/SpaceAccess Service并由真实HTTP读取新事实，不预建无人消费的`AccessChanged` publisher；S2在SpaceConnectionRegistry首个生产消费者落地时同批增加事务提交后事件和WebSocket证据。
 
 ## Alternatives
 
@@ -69,6 +74,7 @@ Accepted
 - 后端须新增PostgreSQL集成、真实HTTP和真实WebSocket测试；浏览器静态壳不能冒充空间或Gateway证据。
 - 生产系统只有一个活动空间Session、一个同源Gateway路径和一个内容事实源，不保留旧直连或自动fallback。
 - 本期API部署限制单副本；横向扩展前必须把进程内撤权事件替换为跨副本消息总线并新增合同测试。
+- S1受控运维是正式生产入口但不暴露公网；普通成员管理UI、邀请与自助密码能力仍留在L1后续批次。
 - 认证或权限失效会等待Session销毁并清除编辑器DOM；Kernel或网络故障保留当前内容且只允许显式重试。
 - 私网需同时运维mTLS证书与JWT密钥，换取传输机密性、服务身份和请求级授权的独立边界。
 
@@ -80,3 +86,5 @@ Accepted
 4. [ADR-004：空间级Kernel实例隔离](0004-space-kernel-isolation.md)
 5. [ADR-009：Protyle浏览器运行时边界](0009-protyle-browser-runtime-boundary.md)
 6. [ADR-010：Protyle宿主动作与合同所有权](0010-protyle-host-actions-and-contract-ownership.md)
+7. [S1身份与空间启动产品需求](../product/s1-identity-space-startup.md)
+8. [ADR-013：S1受控运维、身份会话与空间发现](0013-s1-identity-space-access.md)

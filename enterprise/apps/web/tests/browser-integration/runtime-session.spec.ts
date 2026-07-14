@@ -1,0 +1,183 @@
+import { expect, test, type Page } from "@playwright/test";
+
+import {
+  collectBrowserDiagnostics,
+  expectBrowserHealthy,
+} from "./support/diagnostics.ts";
+import { fulfillJson } from "./support/http.ts";
+
+const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
+const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
+const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+const CSRF_TOKEN = "A".repeat(43);
+
+const spaces = [
+  {
+    organizationId: ORGANIZATION_A,
+    organizationName: "银河研究院",
+    spaceId: SPACE_A,
+    spaceName: "深空知识空间",
+    role: "viewer",
+  },
+  {
+    organizationId: ORGANIZATION_B,
+    organizationName: "奇点工程中心",
+    spaceId: SPACE_B,
+    spaceName: "星际工程手册",
+    role: "editor",
+  },
+] as const;
+
+function workspacePath(organizationId = ORGANIZATION_A, spaceId = SPACE_A) {
+  return `/organizations/${organizationId}/spaces/${spaceId}`;
+}
+
+function runtimePath(organizationId = ORGANIZATION_A, spaceId = SPACE_A) {
+  return `/api/v1/organizations/${organizationId}/spaces/${spaceId}/runtime`;
+}
+
+async function openMobileSidebarIfNeeded(page: Page) {
+  const logout = page.getByRole("button", { name: "退出登录" });
+  if (!(await logout.isVisible())) {
+    await page.getByRole("button", { name: "切换侧栏" }).click();
+    await expect(logout).toBeVisible();
+  }
+}
+
+test("logout clears authorized history and sends the in-memory CSRF token", async ({ page }) => {
+  const diagnostics = collectBrowserDiagnostics(page);
+  let authenticated = true;
+  let logoutHeaders: Record<string, string> | null = null;
+
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/spaces") {
+      if (!authenticated) {
+        await fulfillJson(
+          route,
+          { code: "unauthenticated", requestId: REQUEST_ID, status: 401 },
+          401,
+        );
+        return;
+      }
+      await fulfillJson(route, { spaces });
+      return;
+    }
+    if (path === runtimePath()) {
+      await fulfillJson(route, {
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+        role: "viewer",
+        kernelState: "ready",
+      });
+      return;
+    }
+    if (path === "/api/v1/auth/csrf") {
+      await fulfillJson(route, { csrfToken: CSRF_TOKEN });
+      return;
+    }
+    if (path === "/api/v1/auth/logout") {
+      logoutHeaders = request.headers();
+      authenticated = false;
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto("/spaces");
+  await page.getByRole("link", { name: /深空知识空间/ }).click();
+  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+  await expect(page.getByText("阅读者")).toBeVisible();
+
+  await openMobileSidebarIfNeeded(page);
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
+  await expect(page).toHaveURL("/login");
+  expect(logoutHeaders?.["x-csrf-token"]).toBe(CSRF_TOKEN);
+
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
+  await expect(page).toHaveURL("/login?returnTo=%2Fspaces");
+  await expect(page.getByRole("heading", { name: "空间已就绪" })).toHaveCount(0);
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
+  await expect(page).toHaveURL("/login");
+  await expect(page.getByRole("heading", { name: "空间已就绪" })).toHaveCount(0);
+  expectBrowserHealthy(diagnostics, {
+    consoleMessageFragments: ["401 (Unauthorized)"],
+    errorResponses: ["401 /api/v1/spaces"],
+  });
+});
+
+test("a visible starting page polls once and adopts the new ready state", async ({ page }) => {
+  const diagnostics = collectBrowserDiagnostics(page);
+  let runtimeRequests = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/spaces") {
+      await fulfillJson(route, { spaces: [spaces[0]] });
+      return;
+    }
+    if (path === runtimePath()) {
+      runtimeRequests += 1;
+      await fulfillJson(route, {
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+        role: "viewer",
+        kernelState: runtimeRequests === 1 ? "starting" : "ready",
+      });
+      return;
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto(workspacePath());
+  await expect(page.getByRole("heading", { name: "空间正在启动" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible({
+    timeout: 5_000,
+  });
+  expect(runtimeRequests).toBe(2);
+  expectBrowserHealthy(diagnostics);
+});
+
+test("a browser network failure remains distinct and explicit retry recovers", async ({ page }) => {
+  const diagnostics = collectBrowserDiagnostics(page);
+  let networkFailure = true;
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/spaces") {
+      await fulfillJson(route, { spaces: [spaces[0]] });
+      return;
+    }
+    if (path === runtimePath()) {
+      if (networkFailure) {
+        await route.abort("connectionfailed");
+        return;
+      }
+      await fulfillJson(route, {
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+        role: "viewer",
+        kernelState: "ready",
+      });
+      return;
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto(workspacePath());
+  await expect(page.getByRole("heading", { name: "无法加载空间" })).toBeVisible();
+  await expect(page.getByText("无法连接到服务，请检查网络后重试。")).toBeVisible();
+
+  networkFailure = false;
+  await page.getByRole("button", { name: "立即重试" }).click();
+  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+  expectBrowserHealthy(diagnostics, {
+    consoleMessageFragments: ["net::ERR_CONNECTION_FAILED"],
+    requestFailurePaths: [runtimePath()],
+  });
+});
