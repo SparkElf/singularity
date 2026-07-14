@@ -18,11 +18,11 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      use: { viewport: { width: 390, height: 844 } },
+      use: { hasTouch: true, viewport: { width: 390, height: 844 } },
     },
     {
       name: "narrow-320",
-      use: { viewport: { width: 320, height: 568 } },
+      use: { hasTouch: true, viewport: { width: 320, height: 568 } },
     },
   ],
   webServer: {

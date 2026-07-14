@@ -3,68 +3,110 @@ name: Singularity L0
 on:
   pull_request:
     paths:
-      - ".github/workflows/singularity-l0.yml"
-      - "app/src/block/Panel.ts"
-      - "app/src/boot/onGetConfig.ts"
-      - "app/src/card/makeCard.ts"
-      - "app/src/editor/util.ts"
-      - "app/src/host/**"
-      - "app/src/index.ts"
-      - "app/src/layout/**"
-      - "app/src/menus/commonMenuItem.ts"
-      - "app/src/protyle/**"
-      - "app/src/types/protyle.d.ts"
-      - "app/src/window/init.ts"
-      - "app/webpack*.js"
+      - ".github/**"
+      - "README*.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "Dockerfile*"
+      - "app/**"
       - "config/**"
+      - "docs/**"
       - "enterprise/**"
       - "kernel/**"
+      - "output/md/**"
+      - "plans/**"
       - "scripts/singularity/**"
   push:
     branches:
       - master
     paths:
-      - ".github/workflows/singularity-l0.yml"
-      - "app/src/block/Panel.ts"
-      - "app/src/boot/onGetConfig.ts"
-      - "app/src/card/makeCard.ts"
-      - "app/src/editor/util.ts"
-      - "app/src/host/**"
-      - "app/src/index.ts"
-      - "app/src/layout/**"
-      - "app/src/menus/commonMenuItem.ts"
-      - "app/src/protyle/**"
-      - "app/src/types/protyle.d.ts"
-      - "app/src/window/init.ts"
-      - "app/webpack*.js"
+      - ".github/**"
+      - "README*.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "Dockerfile*"
+      - "app/**"
       - "config/**"
+      - "docs/**"
       - "enterprise/**"
       - "kernel/**"
+      - "output/md/**"
+      - "plans/**"
       - "scripts/singularity/**"
 
 permissions:
   contents: read
 
 jobs:
-  enterprise-web:
+  repository-governance:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
-      - name: Register SiYuan upstream
-        run: git remote add upstream https://github.com/siyuan-note/siyuan.git
+      - name: Register read-only SiYuan upstream
+        run: |
+          git remote add upstream https://github.com/siyuan-note/siyuan.git
+          git remote set-url --push upstream DISABLED
+          git fetch --no-tags upstream master
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 11.9.0
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install governance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Verify fork governance
+        run: node scripts/singularity/verify-upstream-baseline.mjs
+
+      - name: Test governance policy
+        run: pnpm run test:l0-governance
+        working-directory: enterprise
+
+      - name: Report pinned upstream impact
+        run: |
+          node scripts/singularity/report-upstream-impact.mjs \
+            --json artifacts/upstream-impact/upstream-impact.json \
+            --markdown artifacts/upstream-impact/upstream-impact.md
+
+      - name: Upload upstream impact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: upstream-impact-${{ github.sha }}
+          path: artifacts/upstream-impact/
+          if-no-files-found: error
+          retention-days: 30
+
+  enterprise-web:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    needs: repository-governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
           cache: pnpm
@@ -80,21 +122,20 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: app
 
-      - name: Verify upstream baseline
-        run: node scripts/singularity/verify-upstream-baseline.mjs
-
       - name: Verify B4
         run: pnpm verify:b4
         working-directory: enterprise
 
   space-session:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    needs: repository-governance
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       SINGULARITY_TEST_DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:5432/singularity_test
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
         env:
           POSTGRES_USER: singularity_test
           POSTGRES_PASSWORD: singularity_test
@@ -108,15 +149,15 @@ jobs:
           --health-retries 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 11.9.0
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
           cache: pnpm
@@ -135,14 +176,16 @@ jobs:
         working-directory: enterprise
 
   kernel-baseline:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    needs: repository-governance
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: kernel/go.mod
           cache-dependency-path: kernel/go.sum
@@ -150,3 +193,196 @@ jobs:
       - name: Test Kernel
         run: go test -vet=off -tags=fts5 ./...
         working-directory: kernel
+
+  supply-chain:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    needs: repository-governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      API_IMAGE: singularity-api:${{ github.sha }}
+      WEB_IMAGE: singularity-web:${{ github.sha }}
+      UPSTREAM_COMMIT: 41f2861c87575ff5ac4b50a0520b1a4fe55b4a70
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+
+      - name: Build enterprise images
+        run: |
+          docker build \
+            --file enterprise/apps/api/Dockerfile \
+            --build-arg VCS_REF="$GITHUB_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag "$API_IMAGE" \
+            .
+          docker build \
+            --file enterprise/apps/web/Dockerfile \
+            --build-arg VCS_REF="$GITHUB_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag "$WEB_IMAGE" \
+            .
+
+      - name: Verify image metadata
+        run: |
+          node scripts/singularity/verify-container-metadata.mjs \
+            --revision "$GITHUB_SHA" \
+            --upstream "$UPSTREAM_COMMIT" \
+            -- "$API_IMAGE" "$WEB_IMAGE"
+
+      - name: Prepare supply-chain reports
+        run: mkdir -p artifacts/supply-chain
+
+      - name: Generate source SBOM
+        id: source_sbom
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: artifacts/supply-chain/source.cdx.json
+
+      - name: Generate API image SBOM
+        id: api_sbom
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.API_IMAGE }}
+          format: cyclonedx
+          output: artifacts/supply-chain/api.cdx.json
+
+      - name: Generate Web image SBOM
+        id: web_sbom
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WEB_IMAGE }}
+          format: cyclonedx
+          output: artifacts/supply-chain/web.cdx.json
+
+      - name: Scan source licenses
+        id: source_license
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: fs
+          scan-ref: .
+          scanners: license
+          format: json
+          output: artifacts/supply-chain/source-licenses.json
+          trivy-config: config/trivy.yaml
+
+      - name: Scan API image licenses
+        id: api_license
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.API_IMAGE }}
+          scanners: license
+          format: json
+          output: artifacts/supply-chain/api-licenses.json
+
+      - name: Scan Web image licenses
+        id: web_license
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WEB_IMAGE }}
+          scanners: license
+          format: json
+          output: artifacts/supply-chain/web-licenses.json
+
+      - name: Enforce license policy
+        id: license_policy
+        continue-on-error: true
+        run: |
+          node scripts/singularity/check-license-reports.mjs \
+            --policy config/license-policy.json \
+            --output artifacts/supply-chain/license-policy.json \
+            artifacts/supply-chain/source-licenses.json \
+            artifacts/supply-chain/api-licenses.json \
+            artifacts/supply-chain/web-licenses.json
+
+      - name: Scan fixable API vulnerabilities
+        id: api_vulnerability
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.API_IMAGE }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          format: json
+          output: artifacts/supply-chain/api-vulnerabilities.json
+
+      - name: Scan fixable Web vulnerabilities
+        id: web_vulnerability
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WEB_IMAGE }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          format: json
+          output: artifacts/supply-chain/web-vulnerabilities.json
+
+      - name: Upload supply-chain reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: singularity-supply-chain-${{ github.sha }}
+          path: artifacts/supply-chain/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce supply-chain outcomes
+        if: ${{ always() }}
+        env:
+          API_LICENSE: ${{ steps.api_license.outcome }}
+          API_SBOM: ${{ steps.api_sbom.outcome }}
+          API_VULNERABILITY: ${{ steps.api_vulnerability.outcome }}
+          LICENSE_POLICY: ${{ steps.license_policy.outcome }}
+          SOURCE_LICENSE: ${{ steps.source_license.outcome }}
+          SOURCE_SBOM: ${{ steps.source_sbom.outcome }}
+          WEB_LICENSE: ${{ steps.web_license.outcome }}
+          WEB_SBOM: ${{ steps.web_sbom.outcome }}
+          WEB_VULNERABILITY: ${{ steps.web_vulnerability.outcome }}
+        run: |
+          for outcome in \
+            "$API_LICENSE" \
+            "$API_SBOM" \
+            "$API_VULNERABILITY" \
+            "$LICENSE_POLICY" \
+            "$SOURCE_LICENSE" \
+            "$SOURCE_SBOM" \
+            "$WEB_LICENSE" \
+            "$WEB_SBOM" \
+            "$WEB_VULNERABILITY"; do
+            if [ "$outcome" != "success" ]; then
+              exit 1
+            fi
+          done

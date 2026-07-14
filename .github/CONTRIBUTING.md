@@ -1,100 +1,76 @@
-**English**
-| [中文](CONTRIBUTING.zh-CN.md)
+---
+title: "Contributing to Singularity"
+description: "Repository workflow, quality expectations, and licensing requirements for Singularity contributions."
+author: "Singularity Contributors"
+date: "2026-07-15"
+version: "1.0.0"
+status: "approved"
+tags: ["contributing", "development", "agpl"]
+---
 
-## Get the source code
+# Contributing to Singularity
 
-* `git clone git@github.com:siyuan-note/siyuan.git`
-* Switch to dev branch `git checkout dev`
+> Keep changes scoped, reviewable, verifiable, and aligned with the current Singularity plan.
 
-## NPM dependencies
+**English** | [中文](CONTRIBUTING.zh-CN.md)
 
-Install pnpm: `npm install -g pnpm@11.9.0`
+## Change Log
 
-<details>
-<summary>For China mainland</summary>
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0.0 | 2026-07-15 | Singularity Contributors | Established the independent Singularity contribution workflow |
 
-Set the Electron mirror environment variable and install Electron:
+## Table of Contents
 
-* macOS/Linux: `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ pnpm install electron@42.5.0 -D`
-* Windows:
-  * `SET ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
-  * `pnpm install electron@42.5.0 -D`
+- [Before making a change](#before-making-a-change)
+- [Repository setup](#repository-setup)
+- [Implementation and verification](#implementation-and-verification)
+- [Pull requests](#pull-requests)
+- [License and upstream attribution](#license-and-upstream-attribution)
+- [References](#references)
 
-NPM mirror:
+## Before making a change
 
-* Use npmmirror China mirror repository `pnpm --registry https://registry.npmmirror.com/ i`
-* Revert to using official repository `pnpm --registry https://registry.npmjs.org i`
-</details>
+Search the [Singularity issue tracker](https://github.com/SparkElf/singularity/issues) before starting. Open an issue for a nontrivial feature, behavior change, migration, or architectural decision so its scope and acceptance criteria can be agreed before implementation.
 
-Enter the app folder and execute:
+Read the applicable `AGENTS.md` files and current plans in the repository. Singularity is under active development, so a planning document may describe work that is not implemented yet.
 
-* `pnpm install electron@42.5.0 -D`
-* `pnpm run install:electron`
-* `pnpm run dev`
-* `pnpm run start`
+## Repository setup
 
-Note: Electron 42 no longer downloads its binary automatically during `pnpm install`. Run `pnpm run install:electron` (or set `ELECTRON_MIRROR` first on China mainland) to fetch the binary before `pnpm run start`.
+Clone this repository and create a focused branch from `master`:
 
-Note: In the development environment, the kernel process will not be automatically started, and you need to manually start the kernel process first.
+```bash
+git clone https://github.com/SparkElf/singularity.git
+cd singularity
+git switch master
+git switch -c your-branch-name
+```
 
-## Kernel
+Use the tool versions declared by the repository. The Go version is defined in `kernel/go.mod`; Node and pnpm requirements are defined by the relevant package manifests and continuous-integration configuration. Before installing dependencies, review the lockfiles, registry configuration, authentication sources, and CI setup that apply to the changed module.
 
-1. Install the latest version of [golang](https://go.dev/)
-2. Open CGO support, that is, configure the environment variable `CGO_ENABLED=1`
+## Implementation and verification
 
-### Desktop
+- Keep each change limited to one coherent purpose.
+- Preserve existing notices and clearly identify behavior inherited from SiYuan.
+- Add or update verification only where the changed contract needs evidence.
+- Run the lint, type-check, test, and build commands required by the applicable project guide.
+- Do not include generated output or unrelated formatting changes unless the task requires them.
 
-* `cd kernel`
-* Windows: `go build -tags "fts5" -o "../app/kernel/SiYuan-Kernel.exe"`
-* Linux/macOS: `go build -tags "fts5" -o "../app/kernel/SiYuan-Kernel"`
-* `cd ../app/kernel`
-* Windows: `./SiYuan-Kernel.exe serve --mode=dev`
-* Linux/macOS: `./SiYuan-Kernel serve --mode=dev`
+## Pull requests
 
-### iOS
+Open pull requests against the Singularity `master` branch using the [repository pull-request page](https://github.com/SparkElf/singularity/pulls). Link the governing issue, describe user-visible and contract changes, list verification evidence, and disclose any known limitation or unverified environment.
 
-* `cd kernel`
-* `gomobile bind -tags fts5 -ldflags '-s -w' -v -o ./ios/iosk.xcframework -target=ios ./mobile/`
-* https://github.com/siyuan-note/siyuan-ios
+Maintainers may ask for a change to be split when it combines unrelated behavior, refactoring, documentation, or generated artifacts.
 
-### Android
+## License and upstream attribution
 
-* `cd kernel`
-* `set JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8`
-* `gomobile bind -tags fts5 -ldflags "-s -w"  -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/`
-* https://github.com/siyuan-note/siyuan-android
+By contributing, you represent that you have the right to submit the contribution and agree that it is distributed under this repository's [AGPL-3.0 license](../LICENSE). Preserve upstream and third-party copyright, license, attribution, and trademark notices.
 
-### Harmony
+Changes intended only for the upstream SiYuan product should be coordinated with the [SiYuan upstream repository](https://github.com/siyuan-note/siyuan). Singularity-specific reports and proposals belong in this repository.
 
-Only support compilation under Linux, need to install Harmony SDK, and need to modify Go source code.
+## References
 
-* `cd kernel/harmony`
-* `./build.sh` (`./build-win.sh` for Windows Emulator)
-* https://github.com/siyuan-note/siyuan-harmony
-
-Modify Go source code:
-
-1. go/src/runtime/vim tls_arm64.s
-
-   Change the ending `DATA runtime·tls_g+0(SB)/8, $16` to `DATA runtime·tls_g+0(SB)/8, $-144`
-
-2. go/src/runtime/cgo/gcc_android.c
-
-   Clear the inittls function
-
-   ```c
-   inittls(void **tlsg, void **tlsbase)
-   {
-     return;
-   }
-   ```
-3. go/src/net/cgo_resold.go
-   `C.size_t(len(b))` to `C.socklen_t(len(b))`
-
-For other details, please refer to https://github.com/siyuan-note/siyuan/issues/13184
-
-## Issue workflow
-
-* Issues and pull requests that have been closed with no activity for 30 days are locked automatically to keep the tracker focused on open work.
-* If you run into a problem similar to a locked one, please open a new issue and link back to the original. Avoid replying on old, closed threads — that revives stale context and pings everyone who participated.
-* A new issue with a clear reproduction and a reference to the closed one is far easier to act on than a comment appended to a months-old thread.
+1. [Singularity repository](https://github.com/SparkElf/singularity)
+2. [Singularity issue tracker](https://github.com/SparkElf/singularity/issues)
+3. [Singularity notice](../NOTICE)
+4. [SiYuan upstream repository](https://github.com/siyuan-note/siyuan)

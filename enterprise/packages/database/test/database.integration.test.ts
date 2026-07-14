@@ -15,7 +15,10 @@ import {
 } from "@singularity/database/testing/postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
-import { DatabaseClient } from "../src/index.js";
+import {
+  DatabaseClient,
+  DatabaseConfigurationError,
+} from "../src/index.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -98,6 +101,41 @@ describe("S0-S1 PostgreSQL contracts", () => {
       }
     },
   );
+
+  test("uses the configured schema for generated and raw queries", async () => {
+    const configuredUrl = new URL(isolatedDatabaseUrl());
+    configuredUrl.searchParams.set("options", "-c search_path=public");
+    const rawDatabase = new DatabaseClient(configuredUrl.toString());
+
+    try {
+      const user = await rawDatabase.user.create({
+        data: {
+          loginIdentifier: `raw-schema-${randomUUID()}`,
+          passwordDigest: "digest",
+          status: "active",
+        },
+      });
+
+      const rows = await rawDatabase.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"::text
+        FROM "users"
+        WHERE "id" = ${user.id}::uuid
+      `;
+
+      expect(rows).toEqual([{ id: user.id }]);
+    } finally {
+      await rawDatabase.$disconnect();
+    }
+  });
+
+  test("rejects schema names that cannot be safe startup options", () => {
+    const configuredUrl = new URL(isolatedDatabaseUrl());
+    configuredUrl.searchParams.set("schema", "public -c role=postgres");
+
+    expect(() => new DatabaseClient(configuredUrl.toString())).toThrow(
+      DatabaseConfigurationError,
+    );
+  });
 
   test("rejects an S1 migration over nonempty S0 domain data without rewriting it", async () => {
     const configuredUrl = new URL(process.env.SINGULARITY_TEST_DATABASE_URL!);
@@ -459,6 +497,30 @@ describe("S0-S1 PostgreSQL contracts", () => {
       label: "unavailable without a deployment handle",
       status: kernelUnavailableState,
       version: "3.7.1",
+    },
+    {
+      deploymentHandle: "",
+      label: "ready with an empty deployment handle",
+      status: kernelReadyState,
+      version: "3.7.1",
+    },
+    {
+      deploymentHandle: " \t\n",
+      label: "unavailable with a whitespace deployment handle",
+      status: kernelUnavailableState,
+      version: "3.7.1",
+    },
+    {
+      deploymentHandle: "kernel-ready",
+      label: "ready with an empty version",
+      status: kernelReadyState,
+      version: "",
+    },
+    {
+      deploymentHandle: "kernel-unavailable",
+      label: "unavailable with a whitespace version",
+      status: kernelUnavailableState,
+      version: " \t\n",
     },
   ])(
     "rejects Kernel state $label",

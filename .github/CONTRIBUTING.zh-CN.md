@@ -1,100 +1,76 @@
-[English](CONTRIBUTING.md)
-| **中文**
+---
+title: "参与奇点项目"
+description: "奇点项目的仓库工作流、质量要求和许可证要求。"
+author: "奇点贡献者"
+date: "2026-07-15"
+version: "1.0.0"
+status: "approved"
+tags: ["贡献", "开发", "AGPL"]
+---
 
-## 获取源码
+# 参与奇点项目
 
-* `git clone git@github.com:siyuan-note/siyuan.git`
-* 切换到 dev 分支 `git checkout dev`
+> 让每次变更范围明确、便于审阅、能够验证，并与奇点当前方案保持一致。
 
-## NPM 依赖
+[English](CONTRIBUTING.md) | **中文**
 
-安装 pnpm：`npm install -g pnpm@11.9.0`
+## 变更记录
 
-<details>
-<summary>适用于中国大陆</summary>
+| 版本 | 日期 | 作者 | 变更 |
+|------|------|------|------|
+| 1.0.0 | 2026-07-15 | 奇点贡献者 | 建立奇点独立仓库的贡献流程 |
 
-设置 Electron 镜像环境变量并安装 Electron：
+## 目录
 
-* macOS/Linux：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ pnpm install electron@42.5.0 -D`
-* Windows：
-  * `SET ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
-  * `pnpm install electron@42.5.0 -D`
+- [开始变更前](#开始变更前)
+- [仓库准备](#仓库准备)
+- [实现与验证](#实现与验证)
+- [拉取请求](#拉取请求)
+- [许可证与上游署名](#许可证与上游署名)
+- [参考资料](#参考资料)
 
-NPM 镜像：
+## 开始变更前
 
-* 使用 npmmirror 中国镜像仓库 `pnpm --registry https://registry.npmmirror.com/ i`
-* 恢复使用官方仓库 `pnpm --registry https://registry.npmjs.org i`
-</details>
+开始工作前请先搜索[奇点 Issue 列表](https://github.com/SparkElf/singularity/issues)。非简单功能、行为变更、迁移或架构决策应先建立 Issue，在实现前明确范围和验收标准。
 
-进入 app 文件夹执行：
+请阅读变更路径适用的 `AGENTS.md` 和仓库中的当前计划。奇点仍处于持续开发阶段，计划文档中描述的工作可能尚未实现。
 
-* `pnpm install electron@42.5.0 -D`
-* `pnpm run install:electron`
-* `pnpm run dev`
-* `pnpm run start`
+## 仓库准备
 
-注意：Electron 42 起在 `pnpm install` 时不再自动下载二进制。需先执行 `pnpm run install:electron`（中国大陆请先设置 `ELECTRON_MIRROR`）拉取二进制，再 `pnpm run start`。
+克隆本仓库，并从 `master` 创建范围明确的分支：
 
-注意：在开发环境下不会自动拉起内核进程，需要先手动拉起内核进程。
+```bash
+git clone https://github.com/SparkElf/singularity.git
+cd singularity
+git switch master
+git switch -c your-branch-name
+```
 
-## 内核
+请使用仓库声明的工具版本。Go 版本以 `kernel/go.mod` 为准；Node 和 pnpm 要求以相关包清单和持续集成配置为准。安装依赖前，应检查变更模块适用的锁文件、registry 配置、认证源和持续集成设置。
 
-1. 安装最新版 [golang](https://go.dev/)
-2. 打开 CGO 支持，即配置环境变量 `CGO_ENABLED=1`
+## 实现与验证
 
-### 桌面端
+- 每次变更只处理一个连贯目标。
+- 保留现有声明，并清楚标识继承自思源笔记的行为。
+- 只在变更后的稳定合同需要证据时新增或修改验证。
+- 执行项目指南要求的 lint、类型检查、测试和构建命令。
+- 除非任务明确需要，否则不要包含生成产物或无关格式化变更。
 
-* `cd kernel`
-* Windows: `go build -tags "fts5" -o "../app/kernel/SiYuan-Kernel.exe"`
-* Linux/macOS: `go build -tags "fts5" -o "../app/kernel/SiYuan-Kernel"`
-* `cd ../app/kernel`
-* Windows: `./SiYuan-Kernel.exe serve --mode=dev`
-* Linux/macOS: `./SiYuan-Kernel serve --mode=dev`
+## 拉取请求
 
-### iOS
+通过[仓库拉取请求页面](https://github.com/SparkElf/singularity/pulls)向奇点的 `master` 分支提交 PR。请关联对应 Issue，说明用户可见变化和合同变化，列出验证证据，并披露已知限制或未验证的环境。
 
-* `cd kernel`
-* `gomobile bind -tags fts5 -ldflags '-s -w' -v -o ./ios/iosk.xcframework -target=ios ./mobile/`
-* https://github.com/siyuan-note/siyuan-ios
+如果一个变更混合了无关的行为、重构、文档或生成产物，维护者可能要求拆分。
 
-### Android
+## 许可证与上游署名
 
-* `cd kernel`
-* `set JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8`
-* `gomobile bind -tags fts5 -ldflags "-s -w"  -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/`
-* https://github.com/siyuan-note/siyuan-android
+提交贡献即表示你有权提供这些内容，并同意按照本仓库的 [AGPL-3.0 许可证](../LICENSE)发布。请保留上游和第三方的版权、许可证、署名与商标声明。
 
-### Harmony
+仅面向上游思源笔记产品的变更，应与[思源笔记上游仓库](https://github.com/siyuan-note/siyuan)协调。奇点特有的问题和建议应提交到本仓库。
 
-仅支持在 Linux 下编译，需要安装鸿蒙 SDK，并且需要修改 Go 源码。
+## 参考资料
 
-* `cd kernel/harmony`
-* `./build.sh` （Windows 模拟器使用 `./build-win.sh`）
-* https://github.com/siyuan-note/siyuan-harmony
-
-修改 Go 源码：
-
-1. go/src/runtime/tls_arm64.s
-
-   结尾 `DATA runtime·tls_g+0(SB)/8, $16` 改为 `DATA runtime·tls_g+0(SB)/8, $-144`
-
-2. go/src/runtime/cgo/gcc_android.c
-
-   清空 inittls 函数
-
-   ```c
-   inittls(void **tlsg, void **tlsbase)
-   {
-     return;
-   }
-   ```
-3. go/src/net/cgo_resold.go
-   `C.size_t(len(b))` 改为 `C.socklen_t(len(b))`
-
-其他细节请参考 https://github.com/siyuan-note/siyuan/issues/13184
-
-## Issue 流程
-
-* 已关闭且连续 30 天无新动态的 issue 和 PR 会被自动锁定，以保持 issue 列表聚焦在尚未解决的问题上。
-* 如果你遇到的问题与某个已锁定 issue 类似，请新开一个 issue 并附上原 issue 的链接，不要在已关闭的旧 issue 下追加回复——这会让过时的上下文重新浮现，并打扰所有历史参与者。
-* 一个带有清晰复现步骤并引用原 issue 的新 issue，远比在几个月前的讨论下追加一条评论更容易被处理。
+1. [奇点代码仓库](https://github.com/SparkElf/singularity)
+2. [奇点 Issue 列表](https://github.com/SparkElf/singularity/issues)
+3. [奇点声明](../NOTICE)
+4. [思源笔记上游仓库](https://github.com/siyuan-note/siyuan)

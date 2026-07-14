@@ -1,0 +1,45 @@
+name: Singularity Upstream Impact
+
+on:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+
+      - name: Fetch read-only SiYuan upstream
+        run: |
+          git remote add upstream https://github.com/siyuan-note/siyuan.git
+          git remote set-url --push upstream DISABLED
+          git fetch --no-tags upstream master
+
+      - name: Generate pinned candidate report
+        run: |
+          node scripts/singularity/report-upstream-impact.mjs \
+            --json artifacts/upstream-impact/upstream-impact.json \
+            --markdown artifacts/upstream-impact/upstream-impact.md
+
+      - name: Upload upstream impact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: scheduled-upstream-impact-${{ github.run_id }}
+          path: artifacts/upstream-impact/
+          if-no-files-found: error
+          retention-days: 30

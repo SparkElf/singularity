@@ -1,26 +1,36 @@
-name: ✨ Request new features
-description: Come up with the features you expected
-title: "Please enter the title of the feature request"
+name: ✨ Singularity feature request
+description: Propose a scoped capability or product change for Singularity
+title: "[Feature]: "
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Singularity is under active development. Search the [Singularity issue tracker](https://github.com/SparkElf/singularity/issues) and describe the user problem before proposing an implementation.
+  - type: checkboxes
+    attributes:
+      label: Is there an existing request for this?
+      options:
+        - label: I have searched the existing Singularity issues
+          required: true
   - type: textarea
     attributes:
       label: In what scenarios do you need this feature?
       description: |
-        Please describe the functions and application scenarios you expect as clearly and accurately as possible.
+        Describe the user, problem, and scenario as clearly and accurately as possible.
     validations:
       required: true
   - type: textarea
     attributes:
       label: Describe the optimal solution
       description: |
-        Please try to describe the best solution. There may be similar software that implements this feature. Please also list it for our reference.
+        Describe the intended behavior and acceptance criteria. You may link comparable implementations for context.
     validations:
       required: true
   - type: textarea
     attributes:
       label: Describe the candidate solution
       description: |
-        Please describe the candidate solutions you can accept as clearly and accurately as possible.
+        Describe alternative outcomes or tradeoffs you would accept.
     validations:
       required: false
   - type: textarea

@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "allowedCategories": [
+    "notice",
+    "permissive",
+    "reciprocal",
+    "unencumbered"
+  ],
+  "allowedLicenses": [
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "BSD-0-Clause",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-2.0",
+    "LGPL-2.0-only",
+    "LGPL-2.0-or-later",
+    "LGPL-2.1",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "OFL-1.1",
+    "WTFPL"
+  ],
+  "allowedFindings": [
+    {
+      "license": "ad-hoc",
+      "packages": ["media-types"],
+      "reason": "Debian media-types data file redistribution terms"
+    },
+    {
+      "license": "BSD-3-clause-Berkeley",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "BSD-3-clause-Carnegie",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "BSD-3-clause-Oracle",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "BSD-3-clause-WIDE",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "BSD-like-Spencer",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "Carnegie",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "CORE-MATH",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive math component notice"
+    },
+    {
+      "license": "DEC",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "FSFAP",
+      "packages": ["libc6"],
+      "reason": "glibc bundled FSF all-permissive notice"
+    },
+    {
+      "license": "GFDL-1.2-only",
+      "packages": ["gcc-14-base"],
+      "reason": "GCC package documentation notice"
+    },
+    {
+      "license": "GPL-1.0-only",
+      "packages": ["libssl3t64"],
+      "reason": "OpenSSL package aggregation notice; not linked project code"
+    },
+    {
+      "license": "GPL-1.0-or-later",
+      "packages": ["libssl3t64"],
+      "reason": "OpenSSL package aggregation notice; not linked project code"
+    },
+    {
+      "license": "GPL-2+-with-link-exception",
+      "packages": ["libc6"],
+      "reason": "glibc bundled component with explicit linking exception"
+    },
+    {
+      "license": "IBM",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "Inner-Net",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "LGPL-2.1+-with-link-exception",
+      "packages": ["libc6"],
+      "reason": "glibc bundled component with explicit linking exception"
+    },
+    {
+      "license": "MIT-like-Lord",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "PCRE",
+      "packages": ["libc6"],
+      "reason": "glibc bundled BSD-style component notice"
+    },
+    {
+      "license": "public-domain",
+      "packages": ["libc6", "tzdata", "tzdata-legacy"],
+      "reason": "distroless public-domain runtime data"
+    },
+    {
+      "license": "SunPro",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "Univ-Coimbra",
+      "packages": ["libc6"],
+      "reason": "glibc bundled permissive component notice"
+    },
+    {
+      "license": "verbatim",
+      "packages": ["base-files"],
+      "reason": "Debian base-files verbatim redistribution notice"
+    },
+    {
+      "license": "2-clause",
+      "packages": ["nginx", "nginx-module-geoip", "nginx-module-image-filter", "nginx-module-njs", "nginx-module-xslt"],
+      "reason": "Alpine Nginx package BSD two-clause alias"
+    },
+    {
+      "license": "Beerware",
+      "packages": ["libmd"],
+      "reason": "Alpine libmd permissive component notice"
+    },
+    {
+      "license": "bzip-2-1.0.6",
+      "packages": ["libbz2"],
+      "reason": "Alpine libbz2 permissive license alias"
+    },
+    {
+      "license": "curl",
+      "packages": ["curl", "libcurl"],
+      "reason": "Alpine curl permissive license alias"
+    },
+    {
+      "license": "custom",
+      "packages": ["aom-libs"],
+      "reason": "Alpine AOM package BSD-style and patent notices"
+    },
+    {
+      "license": "Domain",
+      "packages": ["libmd"],
+      "reason": "Alpine libmd public-domain component notice"
+    },
+    {
+      "license": "GD",
+      "packages": ["libgd"],
+      "reason": "Alpine libgd permissive license alias"
+    },
+    {
+      "license": "IJG",
+      "packages": ["libjpeg-turbo"],
+      "reason": "Alpine libjpeg-turbo permissive component notice"
+    },
+    {
+      "license": "libtiff",
+      "packages": ["tiff"],
+      "reason": "Alpine libtiff permissive license alias"
+    },
+    {
+      "license": "license",
+      "packages": ["nginx", "nginx-module-geoip", "nginx-module-image-filter", "nginx-module-njs", "nginx-module-xslt"],
+      "reason": "Alpine Nginx package canonical license file marker"
+    },
+    {
+      "license": "Public",
+      "packages": ["libmd"],
+      "reason": "Alpine libmd public-domain component notice"
+    },
+    {
+      "license": "Public-Domain",
+      "packages": ["tzdata", "xz-libs"],
+      "reason": "Alpine public-domain runtime data and component notice"
+    },
+    {
+      "license": "X-11",
+      "packages": ["libice", "libncursesw", "libx11", "libxpm", "libxslt", "ncurses-terminfo-base"],
+      "reason": "Alpine X11-style permissive license alias"
+    }
+  ],
+  "deniedCategories": [
+    "forbidden",
+    "restricted"
+  ],
+  "deniedLicenses": [
+    "BUSL-1.1",
+    "CC-BY-NC-1.0",
+    "CC-BY-NC-2.0",
+    "CC-BY-NC-2.5",
+    "CC-BY-NC-3.0",
+    "CC-BY-NC-4.0",
+    "CC-BY-NC-ND-1.0",
+    "CC-BY-NC-ND-2.0",
+    "CC-BY-NC-ND-2.5",
+    "CC-BY-NC-ND-3.0",
+    "CC-BY-NC-ND-4.0",
+    "CC-BY-NC-SA-1.0",
+    "CC-BY-NC-SA-2.0",
+    "CC-BY-NC-SA-2.5",
+    "CC-BY-NC-SA-3.0",
+    "CC-BY-NC-SA-4.0",
+    "CC-BY-ND-1.0",
+    "CC-BY-ND-2.0",
+    "CC-BY-ND-2.5",
+    "CC-BY-ND-3.0",
+    "CC-BY-ND-4.0",
+    "Commons-Clause",
+    "Elastic-2.0",
+    "JSON",
+    "PolyForm-Noncommercial-1.0.0",
+    "PolyForm-Small-Business-1.0.0",
+    "SSPL-1.0"
+  ]
+}

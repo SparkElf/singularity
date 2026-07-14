@@ -1,128 +1,92 @@
-# Contributor Covenant Code of Conduct
+---
+title: "Singularity Code of Conduct"
+description: "Community standards and enforcement guidelines for Singularity project spaces."
+author: "Singularity Contributors"
+date: "2026-07-15"
+version: "1.0.0"
+status: "approved"
+tags: ["community", "conduct", "contributor-covenant"]
+---
 
-## Our Pledge
+# Singularity Code of Conduct
 
-We as members, contributors, and leaders pledge to make participation in our
-community a harassment-free experience for everyone, regardless of age, body
-size, visible or invisible disability, ethnicity, sex characteristics, gender
-identity and expression, level of experience, education, socio-economic status,
-nationality, personal appearance, race, religion, or sexual identity
-and orientation.
+> The Singularity project follows the Contributor Covenant to keep collaboration open, respectful, and safe.
 
-We pledge to act and interact in ways that contribute to an open, welcoming,
-diverse, inclusive, and healthy community.
+## Change Log
 
-## Our Standards
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0.0 | 2026-07-15 | Singularity Contributors | Adopted project-specific reporting and enforcement guidance |
 
-Examples of behavior that contributes to a positive environment for our
-community include:
+## Table of Contents
 
-* Demonstrating empathy and kindness toward other people
-* Being respectful of differing opinions, viewpoints, and experiences
-* Giving and gracefully accepting constructive feedback
-* Accepting responsibility and apologizing to those affected by our mistakes,
-  and learning from the experience
-* Focusing on what is best not just for us as individuals, but for the
-  overall community
+- [Our pledge](#our-pledge)
+- [Expected behavior](#expected-behavior)
+- [Unacceptable behavior](#unacceptable-behavior)
+- [Scope](#scope)
+- [Reporting and enforcement](#reporting-and-enforcement)
+- [Enforcement guidelines](#enforcement-guidelines)
+- [Attribution](#attribution)
+- [References](#references)
 
-Examples of unacceptable behavior include:
+## Our pledge
 
-* The use of sexualized language or imagery, and sexual attention or
-  advances of any kind
-* Trolling, insulting or derogatory comments, and personal or political attacks
-* Public or private harassment
-* Publishing others' private information, such as a physical or email
-  address, without their explicit permission
-* Other conduct which could reasonably be considered inappropriate in a
-  professional setting
+We as members, contributors, and leaders pledge to make participation in the Singularity community a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socioeconomic status, nationality, personal appearance, race, caste, color, religion, or sexual identity and orientation.
 
-## Enforcement Responsibilities
+We pledge to act and interact in ways that contribute to an open, welcoming, diverse, inclusive, and healthy community.
 
-Community leaders are responsible for clarifying and enforcing our standards of
-acceptable behavior and will take appropriate and fair corrective action in
-response to any behavior that they deem inappropriate, threatening, offensive,
-or harmful.
+## Expected behavior
 
-Community leaders have the right and responsibility to remove, edit, or reject
-comments, commits, code, wiki edits, issues, and other contributions that are
-not aligned to this Code of Conduct, and will communicate reasons for moderation
-decisions when appropriate.
+- Demonstrate empathy and kindness toward other people.
+- Respect differing opinions, viewpoints, and experiences.
+- Give and gracefully accept constructive feedback.
+- Accept responsibility, apologize to people affected by mistakes, and learn from the experience.
+- Focus on what is best for the project community rather than only for an individual.
+
+## Unacceptable behavior
+
+- Use sexualized language or imagery, or direct sexual attention or advances at another participant.
+- Troll, insult, threaten, or make derogatory personal or political attacks.
+- Engage in public or private harassment.
+- Publish another person's private information without explicit permission.
+- Act in another way that could reasonably be considered inappropriate in a professional setting.
 
 ## Scope
 
-This Code of Conduct applies within all community spaces, and also applies when
-an individual is officially representing the community in public spaces.
-Examples of representing our community include using an official e-mail address,
-posting via an official social media account, or acting as an appointed
-representative at an online or offline event.
+This Code of Conduct applies in all [Singularity repository spaces](https://github.com/SparkElf/singularity), including issues, pull requests, reviews, discussions, and project-managed communication channels. It also applies when a person officially represents the project in a public space.
 
-## Enforcement
+## Reporting and enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-os@b3log.org.
-All complaints will be reviewed and investigated promptly and fairly.
+Community leaders are responsible for clarifying and enforcing these standards. They may remove, edit, or reject comments, commits, issues, pull requests, or other contributions that do not align with this Code of Conduct and will explain moderation decisions when appropriate.
 
-All community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
+Report conduct concerns through the [Singularity issue chooser](https://github.com/SparkElf/singularity/issues/new/choose) when a public report is safe. When privacy is required, use the repository's [private reporting channel](https://github.com/SparkElf/singularity/security/advisories/new) and state clearly that the report concerns community conduct. Do not include another person's sensitive information in a public issue.
 
-## Enforcement Guidelines
+Maintainers will review reports as promptly and fairly as practical, protect the reporter's privacy and security, and avoid conflicts of interest in enforcement decisions.
 
-Community leaders will follow these Community Impact Guidelines in determining
-the consequences for any action they deem in violation of this Code of Conduct:
+## Enforcement guidelines
 
-### 1. Correction
+### Correction
 
-**Community Impact**: Use of inappropriate language or other behavior deemed
-unprofessional or unwelcome in the community.
+For isolated unprofessional or unwelcome behavior, maintainers may provide a private warning and request a correction or apology.
 
-**Consequence**: A private, written warning from community leaders, providing
-clarity around the nature of the violation and an explanation of why the
-behavior was inappropriate. A public apology may be requested.
+### Warning
 
-### 2. Warning
+For a violation or repeated pattern, maintainers may issue a warning with stated consequences and restrict interaction for a defined period.
 
-**Community Impact**: A violation through a single incident or series
-of actions.
+### Temporary ban
 
-**Consequence**: A warning with consequences for continued behavior. No
-interaction with the people involved, including unsolicited interaction with
-those enforcing the Code of Conduct, for a specified period of time. This
-includes avoiding interactions in community spaces as well as external channels
-like social media. Violating these terms may lead to a temporary or
-permanent ban.
+For serious or sustained violations, maintainers may temporarily prohibit participation or communication in project spaces.
 
-### 3. Temporary Ban
+### Permanent ban
 
-**Community Impact**: A serious violation of community standards, including
-sustained inappropriate behavior.
-
-**Consequence**: A temporary ban from any sort of interaction or public
-communication with the community for a specified period of time. No public or
-private interaction with the people involved, including unsolicited interaction
-with those enforcing the Code of Conduct, is allowed during this period.
-Violating these terms may lead to a permanent ban.
-
-### 4. Permanent Ban
-
-**Community Impact**: Demonstrating a pattern of violation of community
-standards, including sustained inappropriate behavior,  harassment of an
-individual, or aggression toward or disparagement of classes of individuals.
-
-**Consequence**: A permanent ban from any sort of public interaction within
-the community.
+For a persistent pattern of violations, harassment, aggression, or deliberate disregard for community safety, maintainers may permanently prohibit participation in project spaces.
 
 ## Attribution
 
-This Code of Conduct is adapted from the [Contributor Covenant][homepage],
-version 2.0, available at
-https://www.contributor-covenant.org/version/2/0/code_of_conduct.html.
+This Code of Conduct is adapted from the [Contributor Covenant version 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html). Its enforcement ladder is informed by the [Mozilla Community Participation Guidelines enforcement process](https://www.mozilla.org/about/governance/policies/participation/).
 
-Community Impact Guidelines were inspired by [Mozilla's code of conduct
-enforcement ladder](https://github.com/mozilla/diversity).
+## References
 
-[homepage]: https://www.contributor-covenant.org
-
-For answers to common questions about this code of conduct, see the FAQ at
-https://www.contributor-covenant.org/faq. Translations are available at
-https://www.contributor-covenant.org/translations.
+1. [Singularity repository](https://github.com/SparkElf/singularity)
+2. [Contributor Covenant](https://www.contributor-covenant.org/)
+3. [Mozilla Community Participation Guidelines](https://www.mozilla.org/about/governance/policies/participation/)

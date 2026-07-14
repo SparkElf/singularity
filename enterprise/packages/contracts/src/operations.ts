@@ -204,12 +204,6 @@ export const accessOperationOutcomes = [
 ] as const;
 
 export type AccessOperationOutcome = (typeof accessOperationOutcomes)[number];
-export type AccessOperationBareResult = {
-  [Outcome in AccessOperationOutcome]: {
-    operationId: string;
-    outcome: Outcome;
-  };
-}[AccessOperationOutcome];
 
 const resultBaseShape = {
   operationId: uuidSchema,

@@ -4,11 +4,8 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import { AUTH_SESSION_COOKIE_NAME } from "@singularity/contracts";
 
-export const SESSION_COOKIE_NAME = AUTH_SESSION_COOKIE_NAME;
 export const SESSION_TOKEN_BYTES = 32;
-export const SESSION_TOKEN_LENGTH = 43;
 export const SESSION_IDLE_MILLISECONDS = 30 * 60 * 1_000;
 export const SESSION_ABSOLUTE_MILLISECONDS = 12 * 60 * 60 * 1_000;
 
@@ -56,7 +53,6 @@ export function decodeOpaqueToken(value: string): Buffer | undefined {
 export function createSessionToken(): {
   csrfDigest: string;
   csrfToken: string;
-  tokenBytes: Buffer;
   tokenDigest: string;
   tokenValue: string;
 } {
@@ -67,7 +63,6 @@ export function createSessionToken(): {
 export function sessionTokenFromBytes(tokenBytes: Buffer): {
   csrfDigest: string;
   csrfToken: string;
-  tokenBytes: Buffer;
   tokenDigest: string;
   tokenValue: string;
 } {
@@ -81,7 +76,6 @@ export function sessionTokenFromBytes(tokenBytes: Buffer): {
   return {
     csrfDigest: domainSeparatedDigest(CSRF_DIGEST_DOMAIN, csrfBytes),
     csrfToken: csrfBytes.toString("base64url"),
-    tokenBytes,
     tokenDigest: domainSeparatedDigest(SESSION_DIGEST_DOMAIN, tokenBytes),
     tokenValue: tokenBytes.toString("base64url"),
   };
@@ -91,7 +85,6 @@ export function sessionTokenFromValue(value: string):
   | {
       csrfDigest: string;
       csrfToken: string;
-      tokenBytes: Buffer;
       tokenDigest: string;
       tokenValue: string;
     }
@@ -106,10 +99,6 @@ export function isMatchingDigest(actual: string, expected: string): boolean {
   }
 
   return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
-}
-
-export function isValidCsrfToken(value: string | undefined): boolean {
-  return value !== undefined && decodeOpaqueToken(value) !== undefined;
 }
 
 export function isMatchingOpaqueToken(

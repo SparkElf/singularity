@@ -10,7 +10,10 @@ import {
 } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookie from "@fastify/cookie";
-import { OPENAPI_DOCUMENT_PATH } from "@singularity/contracts";
+import {
+  AUTH_SESSION_COOKIE_NAME,
+  OPENAPI_DOCUMENT_PATH,
+} from "@singularity/contracts";
 
 import { AppModule } from "./app.module.js";
 import {
@@ -65,6 +68,15 @@ export async function createApiApplication(
     new DocumentBuilder()
       .setTitle("Singularity Enterprise API")
       .setVersion("0.1.0")
+      .addCookieAuth(
+        AUTH_SESSION_COOKIE_NAME,
+        {
+          type: "apiKey",
+          in: "cookie",
+          name: AUTH_SESSION_COOKIE_NAME,
+        },
+        AUTH_SESSION_COOKIE_NAME,
+      )
       .build(),
   );
   openApi.openapi = "3.1.0";

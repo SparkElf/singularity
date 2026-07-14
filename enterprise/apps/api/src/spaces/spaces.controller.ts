@@ -1,5 +1,6 @@
 import { Controller, Get, Header, Param, Req, Res } from "@nestjs/common";
 import {
+  ApiCookieAuth,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -7,7 +8,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import {
-  API_PROBLEM_OPENAPI_SCHEMA,
+  API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTHORIZED_SPACES_RESPONSE_OPENAPI_SCHEMA,
   type AuthorizedSpacesResponse,
@@ -23,7 +24,12 @@ import type {
   HttpReplyBoundary,
   HttpRequestBoundary,
 } from "../http-boundary.js";
-import { ApiProblemError, notFound, serviceUnavailable, validationFailed } from "../problem.js";
+import {
+  ApiProblemError,
+  notFound,
+  serviceUnavailable,
+  validationFailed,
+} from "../problem.js";
 import { IdentityService } from "../identity/identity.service.js";
 import { SESSION_COOKIE_OPTIONS } from "../identity/session-crypto.js";
 import { SpaceAccessService } from "./space-access.service.js";
@@ -39,8 +45,16 @@ export class SpacesController {
   @Get(AUTHORIZED_SPACES_PATH)
   @Header("Cache-Control", "no-store")
   @ApiOperation({ summary: "List the current user's authorized spaces" })
+  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
   @ApiOkResponse({ schema: AUTHORIZED_SPACES_RESPONSE_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 401, schema: API_PROBLEM_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 401,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[401],
+  })
+  @ApiResponse({
+    status: 503,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
+  })
   async listSpaces(
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
@@ -52,13 +66,26 @@ export class SpacesController {
   @Get(SPACE_RUNTIME_CONTROLLER_PATH)
   @Header("Cache-Control", "no-store")
   @ApiOperation({ summary: "Read an authorized space runtime state" })
+  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
   @ApiParam({ name: "organizationId", schema: UUID_OPENAPI_SCHEMA })
   @ApiParam({ name: "spaceId", schema: UUID_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 400, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 401, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 404, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 503, schema: API_PROBLEM_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 400,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[400],
+  })
+  @ApiResponse({
+    status: 401,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[401],
+  })
+  @ApiResponse({
+    status: 404,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[404],
+  })
+  @ApiResponse({
+    status: 503,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
+  })
   async getRuntime(
     @Param() parameters: unknown,
     @Req() request: HttpRequestBoundary,

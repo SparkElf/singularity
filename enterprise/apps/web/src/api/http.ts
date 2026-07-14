@@ -36,7 +36,7 @@ function parseRetryAfter(value: string | null): number | null {
   }
 
   const seconds = Number(value);
-  return Number.isSafeInteger(seconds) ? seconds : null;
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -86,10 +86,14 @@ async function assertSuccessful(response: Response): Promise<void> {
     );
   }
 
-  throw new ApiProblemError(
-    problem,
-    parseRetryAfter(response.headers.get("Retry-After")),
-  );
+  const retryAfterSeconds = parseRetryAfter(response.headers.get("Retry-After"));
+  if (response.status === 429 && retryAfterSeconds === null) {
+    throw new ResponseContractError(
+      new Error("HTTP 429 requires a positive integer Retry-After header"),
+    );
+  }
+
+  throw new ApiProblemError(problem, retryAfterSeconds);
 }
 
 export async function requestJson<T>(

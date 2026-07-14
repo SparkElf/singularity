@@ -42,6 +42,8 @@ ALTER TABLE "kernel_instances"
         (
             "status" IN ('ready', 'unavailable')
             AND "deployment_handle" IS NOT NULL
+            AND "deployment_handle" ~ '[^[:space:]]'
             AND "version" IS NOT NULL
+            AND "version" ~ '[^[:space:]]'
         )
     );

@@ -328,6 +328,51 @@ describe("identity HTTP contract with PostgreSQL", () => {
     expect(logger.output).not.toContain(cookieValue(rotatedCookie));
   });
 
+  test("rejects a canonical CSRF token from another session without renewal or revocation", async () => {
+    const loginIdentifier = `cross-session-csrf-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    const firstLogin = await loginRequest(
+      testApi.baseUrl,
+      { loginIdentifier, password },
+      { origin: TEST_PUBLIC_ORIGIN },
+    );
+    const firstCookie = cookiePair(requireSetCookie(firstLogin));
+    const firstToken = sessionTokenFromValue(cookieValue(firstCookie));
+    if (firstToken === undefined) {
+      throw new Error("The first session token was not canonical");
+    }
+    const secondLogin = await loginRequest(
+      testApi.baseUrl,
+      { loginIdentifier, password },
+      { origin: TEST_PUBLIC_ORIGIN },
+    );
+    const secondBody = (await secondLogin.json()) as { csrfToken: string };
+    const before = await database.authSession.findUniqueOrThrow({
+      where: { tokenDigest: firstToken.tokenDigest },
+    });
+    clock.set(new Date(initialTime.getTime() + 10 * 60 * 1_000));
+
+    const response = await fetch(`${testApi.baseUrl}${AUTH_LOGOUT_PATH}`, {
+      headers: {
+        Cookie: firstCookie,
+        Origin: TEST_PUBLIC_ORIGIN,
+        [CSRF_HEADER_NAME]: secondBody.csrfToken,
+      },
+      method: "POST",
+    });
+
+    await expectProblem(response, 403, "forbidden");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    const after = await database.authSession.findUniqueOrThrow({
+      where: { id: before.id },
+    });
+    expect(after.idleExpiresAt).toEqual(before.idleExpiresAt);
+    expect(after.revokedAt).toBeNull();
+    expect(
+      await database.authSession.count({ where: { userId, revokedAt: null } }),
+    ).toBe(2);
+  });
+
   test("returns one unauthenticated problem for unknown, incorrect, disabled, and malformed credentials", async () => {
     const loginIdentifier = `rejected-${randomUUID()}@example.test`;
     const userId = await createUser(loginIdentifier);

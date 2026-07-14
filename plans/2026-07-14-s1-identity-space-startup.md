@@ -3,8 +3,8 @@ title: "S1 Identity Space Startup Plan"
 description: "奇点S1身份、空间授权与启动切片之可恢复执行计划"
 author: "Codex"
 date: "2026-07-14"
-version: "1.5.0"
-status: "verification"
+version: "1.6.0"
+status: "active"
 tags: ["plan", "s1", "identity", "space", "authorization"]
 ---
 
@@ -21,7 +21,8 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 | 1.2.0 | 2026-07-14 | Codex | S1产品、安全、测试价值复评通过，进入架构阶段 |
 | 1.3.0 | 2026-07-14 | Codex | 补Kernel三态生产路径并经产品复评批准；架构按安全、Schema与测试复核修订 |
 | 1.4.0 | 2026-07-14 | Codex | 架构、安全、Schema与测试治理复评通过；进入S1实现阶段 |
-| 1.5.0 | 2026-07-15 | Codex | S1实现与代码复评通过，本地Node 24门禁完成，等待提交、推送及PostgreSQL CI收口 |
+| 1.5.0 | 2026-07-15 | Codex | S1首轮实现及本地Node 24门禁完成，进入代码复评 |
+| 1.6.0 | 2026-07-15 | Codex | 代码复评发现API/Web及L0阻断，补修复架构与供应链ADR并退回实现阶段 |
 
 ## Objective
 
@@ -63,18 +64,23 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - [x] S1三态生产路径增量经产品与测试安全复评通过，PRD v1.1.5重新approved。
 - [x] S1架构差距、公开合同、测试矩阵定稿并approved；ADR-011/013 accepted。
 - [x] S1实现。
-- [x] 代码与测试价值复评通过；无遗留运行时代码阻断，退役shell/E2E文档引用已收敛。
-- [x] Node 24本地static、unit、component、build与三视口browser integration验证通过。
-- [ ] 提交、推送及PostgreSQL CI收口。
+- [x] 首轮Node 24本地static、unit、component、build与三视口browser integration门禁通过。
+- [x] 代码与测试价值复评完成；结论不通过，已记录API/Web/L0阻断。
+- [x] S1复评修复架构定稿；L0 Fork与供应链决策见ADR-014。
+- [ ] 实现并复评OpenAPI、撤权锁、运维边界、数据库约束与死代码收敛。
+- [ ] 实现并复评登录代次/冷却、授权缓存失效、显式单空间返回、移动侧栏与原始浏览器诊断。
+- [ ] 完成L0 Fork隔离、品牌法律、企业镜像、SBOM、漏洞、许可证和上游merge演练。
+- [ ] 最终验证、提交、推送及PostgreSQL CI收口。
 
 ## Next Steps
 
-1. 复评`docs/product/s1-identity-space-startup.md`；修阻断；标approved。
-2. 启`architecture-planning`与`test-governance`；盘代码、依赖、公开API、受控运维边界、初始化竞态、限流、会话时钟、路由状态及browser门禁；修架构/ADR。
-3. 启`implementation`；先合同与schema，再API，再Web，再manifest/lock/CI；测试随稳定合同同批落。
-4. 启`code-review`与`test-governance`；边审边修，复评通过。
-5. 启`verification`与`test-governance`；Node24跑static/unit/build；真实PG交GitHub Actions；浏览器验桌面/移动/键盘/console/network。
-6. 更新总案与本计划进度；提交、推送`origin/master`；监CI至绿。
+1. 合同/API批次：固定状态Problem OpenAPI、Cookie/header/503合同、相关空间锁、CSRF交叉会话、运维组合根、部署字段约束与死代码收敛。
+2. Web批次：取消和代次保护、`Retry-After`冷却、只消费本轮成功授权、404失效列表、显式单空间返回、移动触控与侧栏关闭。
+3. 测试治理批次：OpenAPI独立case、运维结果独立case、组件状态拆分、浏览器原始Request诊断及深色/键盘/触控证据。
+4. L0批次：删除上游workflow，完成奇点品牌法律入口、企业镜像与Trivy供应链门禁，生成上游候选影响报告。
+5. 启`code-review`与`test-governance`复评；全部阻断清零后方可进入`verification`。
+6. Node 24执行最终static/unit/build/browser门禁；本地不启动PostgreSQL，真实数据库证据由GitHub Actions PostgreSQL 17提供。
+7. 先提交推送稳定S1，再以独立`--no-ff`提交合并固定上游候选、解决冲突并重跑全门禁；更新总案、基线和本计划。
 
 ## Risks
 
@@ -90,11 +96,11 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 
 - 产品：PRD逐项可判定；无实现型验收；两独立复评无阻断。
 - 架构：合同至层级矩阵、真实/模拟边界、runner、入口、清理齐。
-- 本地：Node 24.18.0与pnpm 11.9.0下`lint:s0-s3`、`typecheck:s0-s3`和`build:s0-s3`通过；contracts `10/10`、API unit `40/40`、React身份/空间component `9/9`通过。
+- 首轮实现证据：Node 24.18.0与pnpm 11.9.0下`lint:s0-s3`、`typecheck:s0-s3`和`build:s0-s3`通过；contracts `10/10`、API unit `40/40`、Web Vitest `20/20`，其中S1身份/空间目标`9/9`通过。该证据早于复评修复，不能替代最终验证。
 - PostgreSQL：本机服务按方案未启动；迁移回放、真实HTTP、运维与并发集成由GitHub `space-session` PostgreSQL 17 service运行，结果待推送后收口。
-- Web：Playwright browser integration在desktop、390x844 mobile与320x568三项目共`15/15`通过；键盘、响应式、退出历史、轮询、网络恢复及console/network/pending诊断均通过。
+- 首轮Web证据：Playwright browser integration在desktop、390x844 mobile与320x568三项目共`15/15`通过。复评发现原诊断对同URL并发和业务allowlist可能假绿，修复后必须重跑并替代该证据。
 - Git：`git diff --check`、工作树审计；提交后`origin/master`与HEAD同。
 
 ## Resume Guide
 
-先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构与ADR-011；再查`git status`、goal、agents。若产品复评未批，禁入架构。系统Node22；用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL。
+先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构、ADR-013与ADR-014；再查`git status`、goal、agents。当前处于复评失败后的implementation，禁止直接进入verification。系统Node22；用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL。

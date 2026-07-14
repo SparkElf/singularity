@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import {
   decodeOpaqueToken,
   isMatchingDigest,
-  isValidCsrfToken,
   sessionTokenFromBytes,
   sessionTokenFromValue,
 } from "../src/identity/session-crypto.js";
@@ -39,7 +38,6 @@ describe("session token byte contract", () => {
   ])("rejects malformed opaque input without throwing: %s", (value) => {
     expect(decodeOpaqueToken(value)).toBeUndefined();
     expect(sessionTokenFromValue(value)).toBeUndefined();
-    expect(isValidCsrfToken(value)).toBe(false);
   });
 
   test("compares only canonical fixed-length lowercase digests", () => {

@@ -7,21 +7,6 @@ import type {
 } from "@singularity/contracts";
 import { DatabaseRuntime, type Prisma } from "@singularity/database";
 
-export interface AuthorizedSpaceSummaryValue {
-  organizationId: string;
-  organizationName: string;
-  role: AuthorizedSpaceSummary["role"];
-  spaceId: string;
-  spaceName: string;
-}
-
-export interface SpaceRuntimeValue {
-  kernelState: "ready" | "starting" | "unavailable";
-  organizationId: string;
-  role: SpaceRuntimeBootstrap["role"];
-  spaceId: string;
-}
-
 export type SpaceTransactionResult =
   | "conflict"
   | "created"
@@ -44,7 +29,7 @@ export class SpaceAccessService {
 
   constructor(private readonly database: DatabaseRuntime) {}
 
-  async listAuthorizedSpaces(userId: string): Promise<AuthorizedSpaceSummaryValue[]> {
+  async listAuthorizedSpaces(userId: string): Promise<AuthorizedSpaceSummary[]> {
     const memberships = await this.database.client.spaceMembership.findMany({
       where: {
         status: "active",
@@ -102,7 +87,7 @@ export class SpaceAccessService {
     organizationId: string,
     spaceId: string,
     requestId: string,
-  ): Promise<SpaceRuntimeValue | null | "kernel-missing"> {
+  ): Promise<SpaceRuntimeBootstrap | null | "kernel-missing"> {
     const startedAt = performance.now();
     const membership = await this.database.client.spaceMembership.findFirst({
       where: {

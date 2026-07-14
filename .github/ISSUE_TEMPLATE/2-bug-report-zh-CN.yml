@@ -1,15 +1,19 @@
-name: 🐛 缺陷报告
-description: 报告缺陷以帮助我们改进
-title: "请输入缺陷报告标题"
+name: 🐛 奇点缺陷报告
+description: 报告奇点中可以复现的缺陷
+title: "[缺陷]："
 body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请搜索[奇点 Issue 列表](https://github.com/SparkElf/singularity/issues)。疑似安全漏洞请改用[私密安全报告流程](https://github.com/SparkElf/singularity/security/policy)。
   - type: checkboxes
     attributes:
       label: 是否存在已有相关 issue？
       description: |
-        请搜索查看是否已存在与您遇到的缺陷相关的 issue。
+        请搜索奇点仓库，确认是否已经有人报告相同缺陷。
       options:
         - label: |
-            我已搜索现有 issue
+            我已搜索现有奇点 Issue
           required: true
   - type: checkboxes
     attributes:
@@ -64,7 +68,7 @@ body:
     attributes:
       label: 日志文件
       description: |
-        程序日志文件位于 `工作空间/temp/siyuan.log`
+        当前运行时日志通常位于 `工作空间/temp/siyuan.log`。附加日志前请移除凭据、个人数据、工作空间内容和令牌。
     validations:
       required: true
   - type: textarea

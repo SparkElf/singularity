@@ -28,6 +28,9 @@ export const apiProblemStatuses = {
   "service-unavailable": [502, 503, 504],
 } as const satisfies Record<ApiProblemCode, readonly [number, ...number[]]>;
 
+export type ApiProblemStatus =
+  (typeof apiProblemStatuses)[ApiProblemCode][number];
+
 function statusSchema<const TStatuses extends readonly [number, ...number[]]>(
   statuses: TStatuses,
 ): z.ZodType<TStatuses[number]> {
@@ -70,7 +73,7 @@ export type ApiProblem = z.infer<typeof apiProblemSchema>;
 
 function createProblemVariantOpenApiSchema(
   code: ApiProblemCode,
-  statuses: readonly number[],
+  status: ApiProblemStatus,
 ): OpenApiSchema {
   return strictObjectOpenApiSchema({
     code: {
@@ -79,14 +82,21 @@ function createProblemVariantOpenApiSchema(
     },
     status: {
       type: "integer",
-      enum: [...statuses],
+      enum: [status],
     },
     requestId: UUID_OPENAPI_SCHEMA,
   });
 }
 
-export const API_PROBLEM_OPENAPI_SCHEMA: OpenApiSchema = {
-  oneOf: apiProblemCodes.map((code) =>
-    createProblemVariantOpenApiSchema(code, apiProblemStatuses[code]),
-  ),
-};
+export const API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS = {
+  400: createProblemVariantOpenApiSchema("validation-failed", 400),
+  401: createProblemVariantOpenApiSchema("unauthenticated", 401),
+  403: createProblemVariantOpenApiSchema("forbidden", 403),
+  404: createProblemVariantOpenApiSchema("not-found", 404),
+  409: createProblemVariantOpenApiSchema("conflict", 409),
+  422: createProblemVariantOpenApiSchema("validation-failed", 422),
+  429: createProblemVariantOpenApiSchema("rate-limited", 429),
+  502: createProblemVariantOpenApiSchema("service-unavailable", 502),
+  503: createProblemVariantOpenApiSchema("service-unavailable", 503),
+  504: createProblemVariantOpenApiSchema("service-unavailable", 504),
+} as const satisfies Record<ApiProblemStatus, OpenApiSchema>;

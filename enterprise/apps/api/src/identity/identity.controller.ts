@@ -11,6 +11,8 @@ import {
 } from "@nestjs/common";
 import {
   ApiBody,
+  ApiCookieAuth,
+  ApiHeader,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -18,12 +20,13 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import {
-  API_PROBLEM_OPENAPI_SCHEMA,
+  API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTH_CSRF_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  CSRF_TOKEN_OPENAPI_SCHEMA,
   CSRF_RESPONSE_OPENAPI_SCHEMA,
   type CsrfResponse,
   LOGIN_REQUEST_OPENAPI_SCHEMA,
@@ -47,6 +50,24 @@ import { IdentityService, type AuthenticatedSession } from "./identity.service.j
 import { SESSION_COOKIE_OPTIONS } from "./session-crypto.js";
 import { API_CONFIGURATION } from "../tokens.js";
 
+const ORIGIN_HEADER_OPENAPI = {
+  name: "Origin",
+  required: true,
+  schema: { type: "string" as const, format: "uri" },
+};
+
+const CSRF_HEADER_OPENAPI = {
+  name: CSRF_HEADER_NAME,
+  required: true,
+  schema: CSRF_TOKEN_OPENAPI_SCHEMA,
+};
+
+const RETRY_AFTER_RESPONSE_HEADER_OPENAPI = {
+  description: "Seconds until the login may be retried",
+  required: true,
+  schema: { type: "integer" as const, minimum: 1 },
+};
+
 @ApiTags("identity")
 @Controller()
 export class IdentityController {
@@ -60,12 +81,30 @@ export class IdentityController {
   @HttpCode(200)
   @Header("Cache-Control", "no-store")
   @ApiOperation({ summary: "Create a local authenticated session" })
+  @ApiHeader(ORIGIN_HEADER_OPENAPI)
   @ApiBody({ schema: LOGIN_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: LOGIN_RESPONSE_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 400, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 401, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 403, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 429, schema: API_PROBLEM_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 400,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[400],
+  })
+  @ApiResponse({
+    status: 401,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[401],
+  })
+  @ApiResponse({
+    status: 403,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[403],
+  })
+  @ApiResponse({
+    status: 429,
+    headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
+  })
+  @ApiResponse({
+    status: 503,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
+  })
   async login(
     @Body() body: unknown,
     @Req() request: HttpRequestBoundary,
@@ -95,8 +134,16 @@ export class IdentityController {
   @Get(AUTH_CSRF_PATH)
   @Header("Cache-Control", "no-store")
   @ApiOperation({ summary: "Recover the current session CSRF token" })
+  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
   @ApiOkResponse({ schema: CSRF_RESPONSE_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 401, schema: API_PROBLEM_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 401,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[401],
+  })
+  @ApiResponse({
+    status: 503,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
+  })
   async getCsrf(
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
@@ -109,9 +156,22 @@ export class IdentityController {
   @HttpCode(204)
   @Header("Cache-Control", "no-store")
   @ApiOperation({ summary: "Revoke the current local session" })
+  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
+  @ApiHeader(ORIGIN_HEADER_OPENAPI)
+  @ApiHeader(CSRF_HEADER_OPENAPI)
   @ApiNoContentResponse()
-  @ApiResponse({ status: 401, schema: API_PROBLEM_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 403, schema: API_PROBLEM_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 401,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[401],
+  })
+  @ApiResponse({
+    status: 403,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[403],
+  })
+  @ApiResponse({
+    status: 503,
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
+  })
   async logout(
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,

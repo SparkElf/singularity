@@ -1,0 +1,28 @@
+SINGULARITY NOTICE
+Updated: 2026-07-15
+
+1. PROJECT
+
+Singularity is an independent, modified work based on the SiYuan source code.
+Singularity repository: https://github.com/SparkElf/singularity
+
+2. UPSTREAM BASELINE
+
+Upstream project: SiYuan
+Upstream repository: https://github.com/siyuan-note/siyuan.git
+Upstream version: 3.7.1
+Upstream commit: 41f2861c87575ff5ac4b50a0520b1a4fe55b4a70
+
+Changes made after this baseline are maintained in the Singularity repository and its history. Upstream copyright notices remain attributable to their respective authors and copyright holders.
+
+3. LICENSE RELATIONSHIP
+
+SiYuan is distributed under the GNU Affero General Public License version 3. Singularity is a derivative work and distributes the SiYuan-derived source and Singularity modifications under the same license. The complete license text is provided in LICENSE.
+
+Deployers and redistributors are responsible for complying with the AGPL-3.0 requirements, including applicable source-code availability and preservation of legal notices. Individual third-party components may carry additional compatible notices or license terms that remain in their source or distribution files.
+
+4. TRADEMARKS AND PROJECT IDENTITY
+
+The SiYuan name, logos, and upstream project branding are names or marks of their respective owners. Singularity claims no ownership of those upstream marks. References to SiYuan identify the upstream project and the origin of this derivative work.
+
+Singularity uses separate project branding and is maintained independently. It is not sponsored, endorsed, or represented as an official release by the SiYuan project or its maintainers unless explicitly stated by those parties.
