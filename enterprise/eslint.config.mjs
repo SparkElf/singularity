@@ -56,7 +56,13 @@ export default tseslint.config(
         ...globals.node,
       },
       parserOptions: {
-        projectService: true,
+        project: [
+          "./apps/web/tsconfig.json",
+          "./apps/web/tsconfig.test.json",
+          "./apps/web/tsconfig.tooling.json",
+          "./packages/protyle-browser/tsconfig.json",
+          "./packages/protyle-browser/tsconfig.test.json",
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },
