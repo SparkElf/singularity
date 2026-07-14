@@ -182,7 +182,7 @@ describe("S0 PostgreSQL contracts", () => {
     }
   });
 
-  test("uses PostgreSQL UUID defaults for every primary key", async () => {
+  test("uses PostgreSQL UUID defaults for every domain primary key", async () => {
     const schema = new URL(isolatedDatabaseUrl()).searchParams.get("schema");
     const defaults = await database.$queryRaw<
       Array<{ tableName: string; columnDefault: string | null }>
@@ -191,6 +191,7 @@ describe("S0 PostgreSQL contracts", () => {
       FROM information_schema.columns
       WHERE table_schema = ${schema}
         AND column_name = 'id'
+        AND table_name <> '_prisma_migrations'
       ORDER BY table_name
     `;
 
