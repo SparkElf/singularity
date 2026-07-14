@@ -8,7 +8,7 @@ import {
     setDocumentReadOnlyAttribute,
     setDocumentReadOnlyFromResponse,
     setHostReadOnly,
-} from "./readOnly";
+} from "../../src/protyle/runtime/readOnly";
 
 describe("Protyle read-only policy", () => {
     it("keeps host and document sources independent", () => {
