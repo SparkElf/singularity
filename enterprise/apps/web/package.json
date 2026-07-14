@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "tsc -p tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "test": "vitest run",
     "test:browser-integration": "playwright test --config playwright.integration.config.ts --pass-with-no-tests",
     "test:e2e": "playwright test --config playwright.e2e.config.ts --pass-with-no-tests",
     "test:shell": "playwright test --config playwright.shell.config.ts",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && tsc -p tsconfig.tooling.json"
   },
   "dependencies": {
     "@singularity/protyle-browser": "workspace:*",

@@ -28,7 +28,7 @@ Accepted
 
 ## Decision
 
-1. 企业工作区的运行时基线固定为Node 24；`engines.node`使用`>=24.0.0 <25.0.0`，`pnpm-workspace.yaml`通过`engineStrict: true`拒绝范围外运行时。根工具链和Node目标importer直接锁定`@types/node` 24.13.3，workspace `overrides`将Vite与Vitest optional peer固定到同一版本。浏览器安全基础tsconfig固定`types: []`，Node tsconfig显式使用`types: ["node"]`，Web显式使用`types: ["vite/client"]`；Protyle生产tsconfig排除同目录测试，测试只在Vitest环境加载测试依赖类型。L0的enterprise Web和space-session job均使用Node 24。
+1. 企业工作区的运行时基线固定为Node 24；`engines.node`使用`>=24.0.0 <25.0.0`，`pnpm-workspace.yaml`通过`engineStrict: true`拒绝范围外运行时。根工具链和Node目标importer直接锁定`@types/node` 24.13.3，workspace `overrides`将Vite与Vitest optional peer固定到同一版本。浏览器安全基础tsconfig固定`types: []`，Node tsconfig显式使用`types: ["node"]`。Web生产`tsconfig.json`只包含非测试`src`并使用`types: ["vite/client"]`，`tsconfig.test.json`拥有Vitest测试和setup，`tsconfig.tooling.json`拥有Vite/Playwright配置及浏览器测试；Web `build`只检查生产配置，`typecheck`聚合三套配置。Protyle生产tsconfig排除同目录测试，测试只在Vitest环境加载测试依赖类型。L0的enterprise Web和space-session job均使用Node 24。
 2. pnpm以企业工作区`packageManager`锁定11.9.0，CI setup保持同值；Playwright shell server只调用`corepack pnpm`并消费该工作区事实源，不再硬编码第三份版本。
 3. database integration默认`testTimeout`和`hookTimeout`分别保持15秒、30秒；仅完整迁移回放case使用60秒上限，以覆盖20秒迁移watchdog、1秒强制终止宽限以及有界的schema创建、Prisma探测、业务探针和清理。
 4. API HTTP contract case本身不回放迁移，继续使用15秒`testTimeout`；API `globalSetup`仍消费共享PostgreSQL support执行迁移，并由support自身20秒watchdog约束，不受case timeout替代。
