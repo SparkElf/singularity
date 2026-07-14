@@ -25,7 +25,7 @@ COPY enterprise/ ./
 
 RUN pnpm --filter @singularity/web build
 
-FROM nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:a6c4f61f456b85b8fdf7ec7ab28cc3e299440e6fb4a9dea520e5fd8fd440025e AS runtime
+FROM nginxinc/nginx-unprivileged:1.31.2-alpine@sha256:6320020c7da8714feab524e02c08c5a1958675c4e68700e93a2fd8970b065786 AS runtime
 
 ARG VCS_REF=unknown
 ARG UPSTREAM_COMMIT=unknown
@@ -36,6 +36,9 @@ LABEL org.opencontainers.image.title="Singularity Enterprise Web" \
       org.opencontainers.image.revision=$VCS_REF \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       io.singularity.upstream.commit=$UPSTREAM_COMMIT
+
+USER root
+RUN apk del --no-network curl libcurl
 
 COPY enterprise/apps/web/nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /workspace/enterprise/apps/web/dist/ /usr/share/nginx/html/
