@@ -2,6 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
 engineStrict: true
+overrides:
+  '@types/node': 24.13.3
 allowBuilds:
   '@prisma/engines': true
   '@scarf/scarf': false
