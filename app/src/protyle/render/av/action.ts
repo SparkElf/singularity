@@ -375,6 +375,12 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             clearSelect(["galleryItem"], blockElement);
         }
         rowElement.classList.add("av__gallery-item--select");
+        const bodyElement = hasClosestByClassName(rowElement, "av__body") as HTMLElement;
+        const rowId = rowElement.getAttribute("data-id");
+        if (bodyElement && rowId) {
+            updateAVRowSelect(bodyElement, rowId, true);
+        }
+        updateHeader(rowElement);
     }
     const menu = new Menu();
     const rowElements = blockElement.querySelectorAll(".av__row--select:not(.av__row--header), .av__gallery-item--select");
@@ -384,7 +390,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         const blockId = ids[0];
         const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
             checkFold(blockId, (zoomIn) => {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-document",
                     documentId: blockId,
                     disposition,
@@ -805,7 +811,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
         });
     }
     emitProtylePluginMenu({
-        plugins: protyle.session.runtime.plugins,
+        plugins: protyle.plugins,
         type: "open-menu-av",
         detail: {
             protyle,

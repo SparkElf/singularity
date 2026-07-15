@@ -193,7 +193,7 @@ export const requestUndo = async (protyle: IProtyle) => {
             protyle.undo.renderLocal(protyle, data.doOperations);
             refreshUndoButtons(protyle);
             const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(protyle.session.runtime.editors, mutatedRootIDs, focusBlockId);
+            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
         }
     });
 };
@@ -245,7 +245,7 @@ export const requestRedo = async (protyle: IProtyle) => {
             protyle.undo.renderLocal(protyle, data.doOperations);
             refreshUndoButtons(protyle);
             const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(protyle.session.runtime.editors, mutatedRootIDs, focusBlockId);
+            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
         }
     });
 };

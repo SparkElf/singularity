@@ -193,7 +193,7 @@ jobs:
           cache-dependency-path: kernel/go.sum
 
       - name: Test Kernel
-        run: go test -vet=off -tags=fts5 ./...
+        run: go test -vet=off -tags="fts5 sqlcipher" ./...
         working-directory: kernel
 
   supply-chain:

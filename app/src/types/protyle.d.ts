@@ -327,7 +327,7 @@ interface IUpload {
     /** 跨站点访问控制。默认值: false */
     withCredentials?: boolean;
     /** 请求头设置 */
-    headers?: IObject;
+    headers?: Record<string, string>;
     /** 额外请求参数 */
     extraData?: { [key: string]: string | Blob };
     /** 上传字段名。默认值：file[] */
@@ -472,6 +472,7 @@ interface IProtyleOptions {
     mode?: TEditorMode,
     blockId?: string
     rootId?: string
+    notebookId?: string
     originalRefBlockIDs?: IObject
     key?: string
     defIds?: string[]
@@ -509,6 +510,9 @@ interface IProtyleOptions {
 
     /** 编辑器异步渲染完成后的回调方法 */
     after?(protyle: import("../protyle").Protyle): void;
+
+    /** 精简版本 */
+    lite?: boolean;
 }
 
 type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginPort<
@@ -519,16 +523,7 @@ type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/s
 
 type TProtyleEditorRegistry = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleEditorRegistry<IProtyle>;
 
-type TProtyleRuntime = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleRuntime<
-    IProtyle,
-    IProtyleOptions | undefined,
-    Array<string | IMenuItem>,
-    IWebSocketData,
-    import("../plugin/Menu").Menu,
-    import("../block/Panel").BlockPanel
->;
-
-type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSurface;
+type TProtyleHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort;
 
 interface IProtyle {
     highlight: {
@@ -541,8 +536,11 @@ interface IProtyle {
     getInstance: () => import("../protyle").Protyle,
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
-    runtime: TProtyleRuntime,
-    surface: TProtyleSurface,
+    app: import("../index").App,
+    editors: TProtyleEditorRegistry,
+    host: TProtyleHostPort,
+    plugins: TProtylePluginPort,
+    ws?: import("../layout/Model").Model,
     id: string,
     destroyed?: boolean,
     query?: {
@@ -563,6 +561,7 @@ interface IProtyle {
         action?: TProtyleAction[]
     },
     disabled: boolean,
+    lite?: boolean,
     selectElement?: HTMLElement,
     notebookId?: string
     path?: string
@@ -581,6 +580,6 @@ interface IProtyle {
     preview?: import("../protyle/preview").Preview;
     hint?: import("../protyle/hint").Hint;
     upload?: import("../protyle/upload").Upload;
-    undo?: import("../protyle/undo").Undo;
+    undo?: import("../protyle/undo").IUndo;
     wysiwyg?: import("../protyle/wysiwyg").WYSIWYG
 }

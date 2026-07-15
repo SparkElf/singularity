@@ -3,7 +3,7 @@ import {Hint} from "./hint";
 import {getLute} from "./render/setLute";
 import {Preview} from "./preview";
 import {addLoading, initUI, removeLoading} from "./ui/initUI";
-import {Undo} from "./undo";
+import {LocalUndo, Undo} from "./undo";
 import {Upload} from "./upload";
 import {Options} from "./util/Options";
 import {destroy} from "./util/destroy";
@@ -23,7 +23,7 @@ import {
     updateTransaction
 } from "./wysiwyg/transaction";
 import {fetchPost} from "../util/fetch";
-import {getDocDisplayName} from "../util/pathName";
+import {getDocDisplayName, isEncryptedBox} from "../util/pathName";
 import {initMirror, refreshUndoButtons, syncMirrorFromBroadcast} from "./undo/globalUndo";
 import {updatePanelByEditor} from "../editor/util";
 import {setPanelFocus} from "../layout/util";
@@ -55,12 +55,12 @@ export class Protyle {
      * @param id 要挂载 Protyle 的元素或者元素 ID。
      * @param options Protyle 参数
      */
-    constructor(app: App, id: HTMLElement, options?: IProtyleOptions, lifecycle?: {
+    constructor(app: App, id: HTMLElement, options: IProtyleOptions, lifecycle?: {
         participateInSession?: boolean,
     }) {
         this.version = Constants.SIYUAN_VERSION;
         const participateInSession = lifecycle?.participateInSession !== false &&
-            !options?.action?.includes(Constants.CB_GET_HISTORY);
+            !options.action?.includes(Constants.CB_GET_HISTORY);
         const pluginsOptions = app.protylePlugins.extendOptions(options);
         const getOptions = new Options(pluginsOptions);
         const mergedOptions = getOptions.merge();
@@ -72,8 +72,10 @@ export class Protyle {
             plugins: app.protylePlugins,
             id: genUUID(),
             disabled: false,
+            lite: !!options.lite,
             updated: false,
             element: id,
+            notebookId: mergedOptions.notebookId,
             options: mergedOptions,
             block: {},
             highlight: {
@@ -112,7 +114,8 @@ export class Protyle {
         if (mergedOptions.render.breadcrumb) {
             this.protyle.element.appendChild(this.protyle.breadcrumb.element.parentElement);
         }
-        this.protyle.undo = new Undo();
+        // lite 模式用前端操作日志 undo（不依赖 kernel），其余走 kernel 的 GlobalUndoLog。
+        this.protyle.undo = this.protyle.lite ? new LocalUndo() : new Undo();
         this.protyle.wysiwyg = new WYSIWYG(this.protyle);
         this.protyle.toolbar = new Toolbar(this.protyle);
         this.protyle.scroll = new Scroll(this.protyle); // 不能使用 render.scroll 来判读是否初始化，除非重构后面用到的相关变量
@@ -125,9 +128,9 @@ export class Protyle {
 
         this.init();
         if (participateInSession) {
-            this.protyle.session.runtime.editors.register(this.protyle);
+            this.protyle.editors.register(this.protyle);
             this.protyle.wysiwyg.element.addEventListener("focusin", () => {
-                this.protyle.session.runtime.editors.activate(this.protyle);
+                this.protyle.editors.activate(this.protyle);
             });
             this.protyle.ws = new Model({app});
             this.protyle.ws.connect({
@@ -140,10 +143,14 @@ export class Protyle {
                                 reloadProtyle(this.protyle, false);
                                 getAllModels().outline.forEach(item => {
                                     if (item.blockId === data.data) {
-                                        fetchPost("/api/outline/getDocOutline", {
+                                        const outlineParam: IObject = {
                                             id: item.blockId,
                                             preview: item.isPreview
-                                        }, response => {
+                                        };
+                                        if (isEncryptedBox(this.protyle.notebookId)) {
+                                            outlineParam.notebook = this.protyle.notebookId;
+                                        }
+                                        fetchPost("/api/outline/getDocOutline", outlineParam, response => {
                                             item.update(response);
                                         });
                                     }
@@ -175,10 +182,14 @@ export class Protyle {
                         case "li2doc":
                             if (this.protyle.block.rootID === data.data.srcRootBlockID) {
                                 if (this.protyle.block.showAll && data.cmd === "heading2doc" && !this.protyle.options.backlinkData) {
-                                    fetchPost("/api/filetree/getDoc", {
+                                    const getDocParam: IObject = {
                                         id: this.protyle.block.rootID,
                                         size: window.siyuan.config.editor.dynamicLoadBlocks,
-                                    }, getResponse => {
+                                    };
+                                    if (isEncryptedBox(this.protyle.notebookId)) {
+                                        getDocParam.notebook = this.protyle.notebookId;
+                                    }
+                                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
                                         onGet({data: getResponse, protyle: this.protyle});
                                     });
                                 } else {
@@ -240,7 +251,7 @@ export class Protyle {
                         case "removeBox":
                             if (this.protyle.notebookId === data.data.box) {
                                 if (this.protyle.model) {
-                                    this.protyle.session.runtime.host.dispatch({
+                                    this.protyle.host.dispatch({
                                         type: "close-document",
                                         documentId: this.protyle.block.rootID,
                                         reason: "notebook-closed",
@@ -251,7 +262,7 @@ export class Protyle {
                         case "removeDoc":
                             if (data.data.ids.includes(this.protyle.block.rootID)) {
                                 if (this.protyle.model) {
-                                    this.protyle.session.runtime.host.dispatch({
+                                    this.protyle.host.dispatch({
                                         type: "close-document",
                                         documentId: this.protyle.block.rootID,
                                         reason: "deleted",
@@ -376,14 +387,18 @@ export class Protyle {
     }
 
     private getDoc(mergedOptions: IProtyleOptions) {
-        fetchPost("/api/filetree/getDoc", {
+        const getDocParam: Record<string, any> = {
             id: mergedOptions.blockId,
             isBacklink: mergedOptions.action.includes(Constants.CB_GET_BACKLINK),
             originalRefBlockIDs: mergedOptions.originalRefBlockIDs,
             // 0: 仅当前 ID（默认值），1：向上 2：向下，3：上下都加载，4：加载最后
             mode: (mergedOptions.action && mergedOptions.action.includes(Constants.CB_GET_CONTEXT)) ? 3 : 0,
             size: mergedOptions.action?.includes(Constants.CB_GET_ALL) ? Constants.SIZE_GET_MAX : window.siyuan.config.editor.dynamicLoadBlocks,
-        }, getResponse => {
+        };
+        if (isEncryptedBox(this.protyle.notebookId)) {
+            getDocParam.notebook = this.protyle.notebookId;
+        }
+        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
             onGet({
                 data: getResponse,
                 protyle: this.protyle,

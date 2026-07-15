@@ -25,7 +25,7 @@ import {highlightRender} from "../render/highlightRender";
 import {assetMenu, imgMenu} from "../../menus/protyle";
 import {hideElements} from "../ui/hideElements";
 import {fetchPost} from "../../util/fetch";
-import {getDisplayName, pathPosix} from "../../util/pathName";
+import {getDisplayName, isEncryptedBox, pathPosix} from "../../util/pathName";
 import {
     addEmoji,
     filterEmoji,
@@ -192,9 +192,18 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
         // https://github.com/siyuan-note/siyuan/issues/5083
         if (this.splitChar === "/" || this.splitChar === "、") {
             clearTimeout(this.timeId);
-            const blockElement = hasClosestBlock(protyle.toolbar.range.startContainer);
-            if (this.enableSlash && !isMobile() && blockElement && !isInEmbedBlock(blockElement)) {
-                this.genHTML(hintSlash(key, protyle), protyle, false, "hint");
+            if (protyle.lite) {
+                protyle.options.hint.extend.find((item) => {
+                    if (item.key === "/" && item.hint) {
+                        item.hint(key, protyle, "hint");
+                        return true;
+                    }
+                });
+            } else {
+                const blockElement = hasClosestBlock(protyle.toolbar.range.startContainer);
+                if (this.enableSlash && !isMobile() && blockElement && !isInEmbedBlock(blockElement)) {
+                    this.genHTML(hintSlash(key, protyle), protyle, false, "hint");
+                }
             }
             return;
         }
@@ -340,13 +349,17 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
 
     private genSearchHTML(protyle: IProtyle, searchElement: HTMLInputElement, nodeElement: false | HTMLElement, oldValue: string, source: THintSource) {
         this.element.lastElementChild.innerHTML = '<div class="ft__center"><img style="height:32px;width:32px;" src="/stage/loading-pure.svg"></div>';
-        fetchPost("/api/search/searchRefBlock", {
+        const searchParam: IObject = {
             k: searchElement.value,
             id: nodeElement ? nodeElement.getAttribute("data-node-id") : protyle.block.parentID,
             beforeLen: Math.floor((Math.max(protyle.element.clientWidth / 2, 320) - 58) / 28.8),
             rootID: source === "av" ? "" : protyle.block.rootID,
             isDatabase: source === "av",
-        }, (response) => {
+        };
+        if (isEncryptedBox(protyle.notebookId)) {
+            searchParam.notebook = protyle.notebookId;
+        }
+        fetchPost("/api/search/searchRefBlock", searchParam, (response) => {
             let searchHTML = "";
             if (response.data.newDoc) {
                 const blockRefText = `((newFile "${oldValue}"${Constants.ZWSP}'${response.data.k}${Lute.Caret}'))`;
@@ -620,7 +633,9 @@ ${genHintItemHTML(item)}
             blockRender(protyle, protyle.wysiwyg.element);
             return;
         } else if (this.splitChar === "/" || this.splitChar === "、") {
-            if (value === "((" || value === "{{") {
+            if (protyle.lite) {
+                insertHTML(value, protyle);
+            } else if (value === "((" || value === "{{") {
                 this.enableExtend = true;
                 if (value === "((") {
                     hintRef("", protyle, "hint");
@@ -682,7 +697,7 @@ ${genHintItemHTML(item)}
                     md: ""
                 }, () => {
                     insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
-                    protyle.session.runtime.host.dispatch({
+                    protyle.host.dispatch({
                         type: "open-document",
                         documentId: newSubDocId,
                         disposition: "current",
@@ -722,7 +737,7 @@ ${genHintItemHTML(item)}
                 return;
             } else if (value.startsWith("plugin")) {
                 const ids = value.split(Constants.ZWSP);
-                protyle.session.runtime.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
+                protyle.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
                 return;
             } else {
                 range.deleteContents();
