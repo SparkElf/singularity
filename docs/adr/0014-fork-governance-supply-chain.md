@@ -3,7 +3,7 @@ title: "ADR-014: Fork治理、供应链与上游同步门禁"
 description: "定义奇点独立仓库的工作流隔离、品牌法律入口、制品扫描与可重复上游merge流程"
 author: "Codex"
 date: "2026-07-15"
-version: "1.2.0"
+version: "1.2.1"
 status: "accepted"
 tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 ---
@@ -19,6 +19,7 @@ tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 | 1.0.0 | 2026-07-15 | Codex | 接受独立Fork治理、品牌法律、SBOM、漏洞、许可证与上游同步门禁 |
 | 1.1.0 | 2026-07-15 | Codex | 增补缺失许可证正文的Go历史源码发布证明合同 |
 | 1.2.0 | 2026-07-15 | Codex | 固定离线来源证据、生产运行图闭包、非空漏洞报告与22路径上游冲突事实 |
+| 1.2.1 | 2026-07-15 | Codex | 限定exp-html完整来源证据替换Trivy源码头BSD-2-Clause误判 |
 
 ## Table of Contents
 
@@ -54,7 +55,7 @@ Accepted
 3. GitHub仓库description改为奇点企业知识库，homepage在没有奇点正式站点前留空，不继续指向B3log。远端元数据由`gh repo edit`修改，并以只读`gh repo view`复核；脚本不持有或输出GitHub凭证。
 4. 现有根`Dockerfile`使用Node 22、Webpack、思源路径和上游维护者元数据，不能代表奇点云端制品；将其改名为明确的上游参考文件。L0建立独立的企业API与Web镜像：API镜像用Node 24构建并运行Nest产物，Web镜像用Node 24构建Vite静态产物并由无特权静态服务器提供SPA回退。两者由部署入口保持同源，L0不在容器内增加临时反向代理、进程监督器或Kernel Gateway替身。
 5. 供应链只采用Trivy，避免同时维护Syft、Grype和另一套许可证分类器。GitHub Action固定为`aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25`，工具版本固定为`v0.72.0`；它生成源码及两个企业镜像的原始CycloneDX JSON，并分别输出漏洞与许可证JSON。补充许可证证据只写入独立canonical SBOM，原始Trivy SBOM继续作为不可覆盖的扫描证据。
-6. 许可证扫描启用Trivy标准包扫描、扩展文件扫描和开发依赖扫描。`config/license-policy.json`显式把本项目AGPL及兼容许可证归入允许集合，把商业限制、禁止再分发和非商业许可证归入拒绝集合；未知许可证阻断L0，必须审阅后更新唯一策略，不能靠忽略文件静默消失。企业API原始SBOM还必须与只读、断网运行镜像中从根`package.json`递归解析的`dependencies`和已安装`optionalDependencies`唯一PURL集合双向一致；Web运行镜像不得包含npm组件。
+6. 许可证扫描启用Trivy标准包扫描、扩展文件扫描和开发依赖扫描。`config/license-policy.json`显式把本项目AGPL及兼容许可证归入允许集合，把商业限制、禁止再分发和非商业许可证归入拒绝集合；未知许可证阻断L0，必须审阅后更新唯一策略，不能靠忽略文件静默消失。只有完整离线来源链验证通过的固定`exp-html`组件可以在canonical SBOM中把Trivy依据源码头推断的唯一`BSD-2-Clause`替换为历史许可证正文证明的`BSD-3-Clause`，并记录原scanner值；任何其他既有许可证冲突继续阻断，原始SBOM保持不变。企业API原始SBOM还必须与只读、断网运行镜像中从根`package.json`递归解析的`dependencies`和已安装`optionalDependencies`唯一PURL集合双向一致；Web运行镜像不得包含npm组件。
 7. 漏洞门禁扫描企业源码及两个企业镜像，三份报告都必须包含至少一个具有非空`Target`和`Type`的真实扫描结果。存在已有修复版本的High或Critical漏洞时阻断；未修复发现仍进入JSON报告并在后续版本治理，不把空报告、“尚无修复”或未识别目标误写为不存在漏洞。
 8. `config/upstream-baseline.json`继续拥有当前已集成上游提交、版本、工具链与许可证。校验器增加根`LICENSE`、`NOTICE`、仓库身份、只读upstream push URL和架构文档检查，不能只证明提交是HEAD祖先。
 9. 上游同步分两阶段。`report-upstream-impact.mjs`对固定候选提交生成机器JSON与可读Markdown，记录基线、候选、受影响模块和冲突路径；正式同步使用`git merge --no-ff`，禁止rebase。冲突解决后在merge结果上运行Node 24全门禁、Go Kernel测试、企业镜像构建和供应链扫描，再把候选提升为新基线。

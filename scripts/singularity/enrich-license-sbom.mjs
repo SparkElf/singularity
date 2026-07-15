@@ -489,7 +489,16 @@ function readComponentLicenses(component) {
 
 function addEvidence(component, evidence) {
   const licenses = readComponentLicenses(component);
+  let replacedScannerLicense;
   if (licenses.length === 0) {
+    component.licenses = [{ expression: evidence.license }];
+  } else if (
+    evidence.kind === "go-source-release" &&
+    component.purl === expHtmlPurl &&
+    licenses.length === 1 &&
+    licenses[0] === "BSD-2-Clause"
+  ) {
+    replacedScannerLicense = licenses[0];
     component.licenses = [{ expression: evidence.license }];
   } else if (!licenses.includes(evidence.license)) {
     throw new Error(`License evidence conflicts with existing SBOM licenses for ${component.purl}`);
@@ -502,6 +511,12 @@ function addEvidence(component, evidence) {
     { name: `${evidencePropertyPrefix}.reason`, value: evidence.reason },
     { name: `${evidencePropertyPrefix}.sha256`, value: evidence.sha256 },
   );
+  if (replacedScannerLicense !== undefined) {
+    component.properties.push({
+      name: `${evidencePropertyPrefix}.scanner.license`,
+      value: replacedScannerLicense,
+    });
+  }
   if (evidence.goModule !== undefined) {
     component.properties.push({
       name: `${evidencePropertyPrefix}.module`,

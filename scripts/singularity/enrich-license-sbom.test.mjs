@@ -524,6 +524,40 @@ test("Go source release evidence verifies the complete reviewed exp-html chain",
   );
 });
 
+test("Go source release evidence replaces only Trivy's BSD-2-Clause source-header inference", () => {
+  const fixture = createExpHtmlFixture();
+  const sbom = createExpHtmlSbom();
+  sbom.components[0].licenses = [{ license: { id: "BSD-2-Clause" } }];
+  const { output, result } = runEnrichment({
+    directory: fixture.directory,
+    env: fixture.env,
+    evidence: fixture.evidence,
+    sbom,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(output.components[0].licenses, [{ expression: "BSD-3-Clause" }]);
+  assert.equal(
+    output.components[0].properties.find((property) => property.name.endsWith(".scanner.license"))?.value,
+    "BSD-2-Clause",
+  );
+});
+
+test("Go source release evidence rejects any other scanner license conflict", () => {
+  const fixture = createExpHtmlFixture();
+  const sbom = createExpHtmlSbom();
+  sbom.components[0].licenses = [{ license: { id: "Apache-2.0" } }];
+  const { result } = runEnrichment({
+    directory: fixture.directory,
+    env: fixture.env,
+    evidence: fixture.evidence,
+    sbom,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /License evidence conflicts with existing SBOM licenses/);
+});
+
 test("Go source release evidence rejects reviewed source-coordinate drift", async (t) => {
   const cases = [
     ["repository", (evidence) => { evidence.sourceRelease.repository = "https://example.invalid/go.git"; }],
