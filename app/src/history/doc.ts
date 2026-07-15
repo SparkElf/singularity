@@ -9,11 +9,12 @@ import {isMobile} from "../util/functions";
 import {App} from "../index";
 import {resizeSide} from "./resizeSide";
 import {escapeHtml} from "../util/escape";
+import {isEncryptedBox} from "../util/pathName";
 
 let historyEditor: Protyle;
 let isLoading = false;
 
-const renderDoc = (element: HTMLElement, currentPage: number, id: string) => {
+const renderDoc = (element: HTMLElement, currentPage: number, id: string, notebookId: string) => {
     const previousElement = element.querySelector('[data-type="docprevious"]');
     const nextElement = element.querySelector('[data-type="docnext"]');
     if (currentPage > 1) {
@@ -26,12 +27,16 @@ const renderDoc = (element: HTMLElement, currentPage: number, id: string) => {
     element.querySelector(".protyle-title__input").classList.add("fn__none");
     element.querySelector('.history__text[data-type="docPanel"]').classList.add("fn__none");
     element.querySelector('.history__text[data-type="mdPanel"]').classList.add("fn__none");
-    fetchPost("/api/history/searchHistory", {
+    const searchHistoryParam: IObject = {
         query: id,
         page: currentPage,
         op: opElement.value,
         type: 3
-    }, (response) => {
+    };
+    if (isEncryptedBox(notebookId)) {
+        searchHistoryParam.notebook = notebookId;
+    }
+    fetchPost("/api/history/searchHistory", searchHistoryParam, (response) => {
         if (currentPage < response.data.pageCount) {
             nextElement.removeAttribute("disabled");
         } else {
@@ -116,13 +121,14 @@ export const openDocHistory = (options: {
 
     const opElement = dialog.element.querySelector(".b3-select") as HTMLSelectElement;
     opElement.addEventListener("change", () => {
-        renderDoc(dialog.element, 1, options.id);
+        renderDoc(dialog.element, 1, options.id, options.notebookId);
     });
     const docElement = dialog.element.querySelector('.history__text[data-type="docPanel"]') as HTMLElement;
     const mdElement = dialog.element.querySelector('.history__text[data-type="mdPanel"]') as HTMLTextAreaElement;
-    renderDoc(dialog.element, 1, options.id);
+    renderDoc(dialog.element, 1, options.id, options.notebookId);
     historyEditor = new Protyle(options.app, docElement, {
         blockId: "",
+        notebookId: options.notebookId,
         history: {
             created: ""
         },
@@ -143,26 +149,34 @@ export const openDocHistory = (options: {
         while (target && !target.isEqualNode(dialog.element)) {
             const type = target.getAttribute("data-type");
             if (type === "rollback" && !isLoading) {
-                getHistoryPath(target.parentElement, opElement.value, options.id, (item) => {
+                getHistoryPath(target.parentElement, opElement.value, options.id, options.notebookId, (item) => {
                     const dataPath = item.path;
                     isLoading = false;
                     const confirmTip = window.siyuan.languages.rollbackConfirm.replace("${name}", escapeHtml(item.title))
                         .replace("${time}", target.previousElementSibling.previousElementSibling.textContent.trim());
                     confirmDialog("⚠️ " + window.siyuan.languages.rollback, confirmTip, () => {
-                        fetchPost("/api/history/rollbackDocHistory", {
+                        const rollbackParam: IObject = {
                             historyPath: dataPath
-                        });
+                        };
+                        if (isEncryptedBox(options.notebookId)) {
+                            rollbackParam.notebook = options.notebookId;
+                        }
+                        fetchPost("/api/history/rollbackDocHistory", rollbackParam);
                     });
                 });
                 event.stopPropagation();
                 event.preventDefault();
                 break;
             } else if (target.classList.contains("b3-list-item") && !isLoading) {
-                getHistoryPath(target, opElement.value, options.id, (item) => {
+                getHistoryPath(target, opElement.value, options.id, options.notebookId, (item) => {
                     const dataPath = item.path;
-                    fetchPost("/api/history/getDocHistoryContent", {
+                    const historyContentParam: IObject = {
                         historyPath: dataPath,
-                    }, (response) => {
+                    };
+                    if (isEncryptedBox(options.notebookId)) {
+                        historyContentParam.notebook = options.notebookId;
+                    }
+                    fetchPost("/api/history/getDocHistoryContent", historyContentParam, (response) => {
                         if (response.data.isLargeDoc) {
                             mdElement.value = response.data.content;
                             mdElement.classList.remove("fn__none");
@@ -188,7 +202,8 @@ export const openDocHistory = (options: {
                 break;
             } else if ((type === "docprevious" || type === "docnext") && target.getAttribute("disabled") !== "disabled") {
                 const currentPage = parseInt(pageNumElement.textContent);
-                renderDoc(dialog.element, type === "docprevious" ? currentPage - 1 : currentPage + 1, options.id);
+                renderDoc(dialog.element, type === "docprevious" ? currentPage - 1 : currentPage + 1,
+                    options.id, options.notebookId);
                 event.stopPropagation();
                 event.preventDefault();
                 break;
@@ -202,7 +217,8 @@ export const openDocHistory = (options: {
                         if (inputElement.value === "") {
                             return;
                         }
-                        renderDoc(dialog.element, Math.max(1, Math.min(parseInt(inputElement.value), totalPage)), options.id);
+                        renderDoc(dialog.element, Math.max(1, Math.min(parseInt(inputElement.value), totalPage)),
+                            options.id, options.notebookId);
                     }
                 );
             }
@@ -212,7 +228,7 @@ export const openDocHistory = (options: {
     resizeSide(dialog.element.querySelector(".history__resize"), dialog.element.querySelector(".history__side"), "sideDocWidth");
 };
 
-const getHistoryPath = (target: Element, op: string, id: string, cb: (item: any) => void) => {
+const getHistoryPath = (target: Element, op: string, id: string, notebookId: string, cb: (item: any) => void) => {
     isLoading = true;
     const path = target.getAttribute("data-path");
     if (path) {
@@ -220,12 +236,16 @@ const getHistoryPath = (target: Element, op: string, id: string, cb: (item: any)
     }
     const created = target.getAttribute("data-created");
     historyEditor.protyle.options.history.created = created;
-    fetchPost("/api/history/getHistoryItems", {
+    const historyItemsParam: IObject = {
         query: id,
         op,
         type: 3,
         created
-    }, (response) => {
+    };
+    if (isEncryptedBox(notebookId)) {
+        historyItemsParam.notebook = notebookId;
+    }
+    fetchPost("/api/history/getHistoryItems", historyItemsParam, (response) => {
         cb(response.data.items[0]);
     });
 };

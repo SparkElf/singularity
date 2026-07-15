@@ -2968,6 +2968,7 @@ export class WYSIWYG {
                         checkFold(breadcrumbId, (zoomIn) => {
                             protyle.host.dispatch({
                                 type: "open-document",
+                                notebookId: protyle.notebookId,
                                 documentId: breadcrumbId,
                                 disposition: "current",
                                 scope: zoomIn ? "subtree" : "context",
@@ -3052,6 +3053,7 @@ export class WYSIWYG {
                         const opensInBackground = disposition === "background-tab";
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: refBlockId,
                             disposition,
                             scope: zoomIn ? "subtree" : "context",
@@ -3174,6 +3176,7 @@ export class WYSIWYG {
                         const opensInBackground = disposition === "background-tab";
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: embedId,
                             disposition,
                             scope: zoomIn ? "subtree" : "context",

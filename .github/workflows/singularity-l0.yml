@@ -121,7 +121,7 @@ jobs:
         working-directory: enterprise
 
       - name: Install SiYuan app dependencies
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm@11.12.0 install --frozen-lockfile
         working-directory: app
 
       - name: Verify B4
@@ -314,7 +314,7 @@ jobs:
         working-directory: enterprise
 
       - name: Materialize SiYuan license metadata
-        run: pnpm install --frozen-lockfile --force --ignore-scripts
+        run: corepack pnpm@11.12.0 install --frozen-lockfile --force --ignore-scripts
         working-directory: app
 
       - name: Materialize Go license metadata

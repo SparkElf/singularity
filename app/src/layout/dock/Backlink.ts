@@ -12,7 +12,6 @@ import {MenuItem} from "../../menus/Menu";
 import {App} from "../../index";
 import {isSupportCSSHL, searchMarkRender} from "../../protyle/render/searchMarkRender";
 import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
-import {getAllModels} from "../getAll";
 
 export class Backlink extends Model {
     public element: HTMLElement;
@@ -21,7 +20,7 @@ export class Backlink extends Model {
     public blockId: string;
     public rootId: string; // "local" 必传
     public tree: Tree;
-    private notebookId: string;
+    public notebookId: string;
     private abortController = new AbortController();
     public mTree: Tree;
     public editors: Protyle[] = [];
@@ -41,10 +40,16 @@ export class Backlink extends Model {
         app: App,
         tab: Tab,
         blockId: string,
+        notebookId: string,
         rootId?: string,
         type: "pin" | "local"
     }) {
         super({app: options.app});
+
+        this.blockId = options.blockId;
+        this.notebookId = options.notebookId;
+        this.rootId = options.rootId;
+        this.type = options.type;
 
         this.connect({
             id: options.tab.id,
@@ -53,9 +58,6 @@ export class Backlink extends Model {
             msgCallback: this.handleMsgCallback.bind(this),
         });
 
-        this.blockId = options.blockId;
-        this.rootId = options.rootId;
-        this.type = options.type;
         this.element = options.tab.panelElement;
         this.element.classList.add("fn__flex-column", "file-tree", "sy__backlink", "dockPanel");
         const backlinkSort = window.siyuan.config.editor.backlinkSort;
@@ -137,6 +139,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     action: [Constants.CB_GET_CONTEXT]
                 });
                 this.mTree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
@@ -145,6 +148,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     position: "right",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -154,6 +158,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     position: "bottom",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -177,6 +182,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     action: [Constants.CB_GET_CONTEXT]
                 });
                 this.tree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
@@ -185,6 +191,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     position: "right",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -194,6 +201,7 @@ export class Backlink extends Model {
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
+                    notebookId: element.getAttribute("data-notebook-id"),
                     position: "bottom",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -303,7 +311,11 @@ export class Backlink extends Model {
 
     private handelCallback() {
         if (this.type === "local") {
-            fetchPost("/api/block/checkBlockExist", {id: this.blockId}, existResponse => {
+            const blockExistParam: IObject = {id: this.blockId};
+            if (isEncryptedBox(this.notebookId)) {
+                blockExistParam.notebook = this.notebookId;
+            }
+            fetchPost("/api/block/checkBlockExist", blockExistParam, existResponse => {
                 if (!existResponse.data) {
                     this.parent.parent.removeTab(this.parent.id);
                 }
@@ -467,12 +479,17 @@ export class Backlink extends Model {
             svgElement.removeAttribute("disabled");
         } else {
             const keyword = isMention ? this.inputsElement[1].value : this.inputsElement[0].value;
-            fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", {
+            const notebookId = liElement.getAttribute("data-notebook-id");
+            const param: IObject = {
                 defID: this.blockId,
                 refTreeID: docId,
                 highlight: !isSupportCSSHL(),
                 keyword,
-            }, (response) => {
+            };
+            if (isEncryptedBox(notebookId)) {
+                param.notebook = notebookId;
+            }
+            fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", param, (response) => {
                 if (this.abortController.signal.aborted || !liElement.isConnected) {
                     return;
                 }
@@ -485,6 +502,7 @@ export class Backlink extends Model {
                 liElement.after(editorElement);
                 const editor = new Protyle(this.app, editorElement, {
                     blockId: docId,
+                    notebookId,
                     click: {
                         preventInsetEmptyBlock: true
                     },
@@ -496,7 +514,6 @@ export class Backlink extends Model {
                         breadcrumb: false,
                     }
                 });
-                editor.protyle.notebookId = liElement.getAttribute("data-notebook-id");
                 searchMarkRender(editor.protyle, response.data.keywords);
                 this.editors.push(editor);
             }, undefined, undefined, this.abortController.signal);
@@ -509,9 +526,11 @@ export class Backlink extends Model {
             return;
         }
         element.classList.add("fn__rotate");
-        fetchPost("/api/ref/refreshBacklink", {
-            id: this.blockId,
-        }, () => {
+        const refreshParam: IObject = {id: this.blockId};
+        if (isEncryptedBox(this.notebookId)) {
+            refreshParam.notebook = this.notebookId;
+        }
+        fetchPost("/api/ref/refreshBacklink", refreshParam, () => {
             element.classList.remove("fn__rotate");
             this.searchBacklinks();
         }, undefined, undefined, this.abortController.signal);
@@ -523,16 +542,6 @@ export class Backlink extends Model {
             return;
         }
         element.classList.add("fn__rotate");
-        // 解析当前反链面板所属 box：优先用已记录的 notebookId，首次为空时按 rootId 在已打开的编辑器里查找
-        let notebookId = this.notebookId;
-        if (!notebookId && this.rootId) {
-            getAllModels().editor.some(item => {
-                if (item.editor.protyle.block.rootID === this.rootId) {
-                    notebookId = item.editor.protyle.notebookId;
-                    return true;
-                }
-            });
-        }
         const param: IObject = {
             sort: parseInt(this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').getAttribute("data-sort")).toString(),
             mSort: parseInt(this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').getAttribute("data-sort")).toString(),
@@ -540,8 +549,8 @@ export class Backlink extends Model {
             mk: this.inputsElement[1].value,
             id: this.blockId,
         };
-        if (isEncryptedBox(notebookId)) {
-            param.notebook = notebookId;
+        if (isEncryptedBox(this.notebookId)) {
+            param.notebook = this.notebookId;
         }
         fetchPost("/api/ref/getBacklink2", param, response => {
             if (!init) {
@@ -551,7 +560,7 @@ export class Backlink extends Model {
         }, undefined, undefined, this.abortController.signal);
     }
 
-    public updateForCurrentEditor(blockId: string, isCurrent: () => boolean, notebookId?: string) {
+    public updateForCurrentEditor(blockId: string, isCurrent: () => boolean, notebookId: string) {
         const element = this.element.querySelector('.block__icon[data-type="refresh"] svg');
         element.classList.add("fn__rotate");
         const param: IObject = {
@@ -565,12 +574,13 @@ export class Backlink extends Model {
             param.notebook = notebookId;
         }
         fetchPost("/api/ref/getBacklink2", param, response => {
-            if (!isCurrent() || this.blockId === blockId) {
+            if (!isCurrent() || (this.blockId === blockId && this.notebookId === notebookId)) {
                 element.classList.remove("fn__rotate");
                 return;
             }
             this.saveStatus();
             this.blockId = blockId;
+            this.notebookId = notebookId;
             this.render(response.data);
         }, undefined, undefined, this.abortController.signal);
     }
@@ -616,7 +626,6 @@ export class Backlink extends Model {
     }
 
     public render(data: {
-        box: string,
         backlinks: IBlockTree[],
         backmentions: IBlockTree[],
         linkRefsCount: number,
@@ -626,7 +635,6 @@ export class Backlink extends Model {
     }) {
         if (!data) {
             data = {
-                box: "",
                 backlinks: [],
                 backmentions: [],
                 linkRefsCount: 0,
@@ -641,7 +649,6 @@ export class Backlink extends Model {
         });
         this.editors = [];
         this.element.querySelector('.block__icon[data-type="refresh"] svg').classList.remove("fn__rotate");
-        this.notebookId = data.box;
         this.inputsElement[0].value = data.k;
         this.inputsElement[1].value = data.mk;
         this.tree.updateData(data.backlinks);

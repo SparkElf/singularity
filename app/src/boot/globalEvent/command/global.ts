@@ -43,6 +43,7 @@ import {unsplitWnd} from "../../../menus/tab";
 import {openFile} from "../../../editor/util";
 import {fetchPost} from "../../../util/fetch";
 import {setStorageVal} from "../../../protyle/util/compatibility";
+import {isEncryptedBox} from "../../../util/pathName";
 
 export const globalCommand = (command: string, app: App) => {
     /// #if MOBILE
@@ -164,11 +165,19 @@ export const globalCommand = (command: string, app: App) => {
                     return true;
                 }
                 if (childData.instance === "Asset") {
-                    fetchPost("/api/asset/statAsset", {path: childData.path}, (response) => {
+                    let assetPath = childData.path;
+                    if (isEncryptedBox(childData.notebookId)) {
+                        const queryIndex = assetPath.indexOf("?");
+                        const searchParams = new URLSearchParams(queryIndex > -1 ? assetPath.substring(queryIndex + 1) : "");
+                        searchParams.set("box", childData.notebookId);
+                        assetPath = `${queryIndex > -1 ? assetPath.substring(0, queryIndex) : assetPath}?${searchParams.toString()}`;
+                    }
+                    fetchPost("/api/asset/statAsset", {path: assetPath}, (response) => {
                         if (response.code !== 1) {
                             openFile({
                                 app,
                                 assetPath: childData.path,
+                                notebookId: childData.notebookId,
                                 page: childData.page,
                             });
                         }
@@ -198,7 +207,11 @@ export const globalCommand = (command: string, app: App) => {
                     }
                     return true;
                 }
-                fetchPost("/api/block/getBlockInfo", {id: childData.rootId || childData.blockId}, (infoResponse) => {
+                const blockInfoParam: IObject = {id: childData.rootId || childData.blockId};
+                if (isEncryptedBox(childData.notebookId)) {
+                    blockInfoParam.notebook = childData.notebookId;
+                }
+                fetchPost("/api/block/getBlockInfo", blockInfoParam, (infoResponse) => {
                     if (infoResponse.data.rootID === (childData.rootId || childData.blockId)) {
                         if (childData.instance === "Editor") {
                             openFile({
@@ -206,6 +219,7 @@ export const globalCommand = (command: string, app: App) => {
                                 fileName: closeData.title,
                                 id: childData.blockId,
                                 rootID: childData.rootId,
+                                notebookId: childData.notebookId,
                                 mode: childData.mode,
                                 rootIcon: closeData.docIcon,
                                 action: [childData.action]
@@ -214,6 +228,7 @@ export const globalCommand = (command: string, app: App) => {
                             openBacklink({
                                 app,
                                 blockId: childData.blockId,
+                                notebookId: childData.notebookId,
                                 rootId: childData.rootId,
                                 title: closeData.title,
                             });
@@ -228,6 +243,7 @@ export const globalCommand = (command: string, app: App) => {
                             openOutline({
                                 app,
                                 rootId: childData.blockId,
+                                notebookId: childData.notebookId,
                                 title: closeData.title,
                                 isPreview: childData.isPreview
                             });

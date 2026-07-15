@@ -19,8 +19,9 @@ import {makeCard} from "../card/makeCard";
 import {openByMobile} from "../editor/openLink";
 import {Constants} from "../constants";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
-import {getDisplayName, getNotebookName, pathPosix} from "../util/pathName";
+import {getDisplayName, getNotebookName, isEncryptedBox, pathPosix} from "../util/pathName";
 import {showMessage} from "../dialog/message";
+import {resolveAgentBlockMentions} from "./agentMentions";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -74,8 +75,12 @@ const getLegacyDisposition = (disposition: ProtyleDocumentDisposition) => {
     return unhandledDisposition;
 };
 
-const openDocumentSearch = (app: App, documentId: string) => {
-    fetchPost("/api/block/getBlockInfo", {id: documentId}, (response) => {
+const openDocumentSearch = (app: App, notebookId: string, documentId: string) => {
+    const blockInfoParam: IObject = {id: documentId};
+    if (isEncryptedBox(notebookId)) {
+        blockInfoParam.notebook = notebookId;
+    }
+    fetchPost("/api/block/getBlockInfo", blockInfoParam, (response) => {
         if (handleHostRequestError(response)) {
             return;
         }
@@ -88,8 +93,12 @@ const openDocumentSearch = (app: App, documentId: string) => {
     });
 };
 
-const openDocumentHistory = (app: App, documentId: string) => {
-    fetchPost("/api/block/getBlockInfo", {id: documentId}, (blockResponse) => {
+const openDocumentHistory = (app: App, notebookId: string, documentId: string) => {
+    const blockInfoParam: IObject = {id: documentId};
+    if (isEncryptedBox(notebookId)) {
+        blockInfoParam.notebook = notebookId;
+    }
+    fetchPost("/api/block/getBlockInfo", blockInfoParam, (blockResponse) => {
         if (handleHostRequestError(blockResponse)) {
             return;
         }
@@ -121,6 +130,14 @@ const openCardBrowser = (app: App, documentId: string) => {
     });
 };
 
+const rejectUnsupportedEncryptedOperation = (notebookId: string) => {
+    if (!isEncryptedBox(notebookId)) {
+        return false;
+    }
+    showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+    return true;
+};
+
 interface AgentChatPort {
     insertBlockMentions: (mentions: Array<{ id: string; label: string }>) => void;
 }
@@ -141,14 +158,11 @@ const addBlocksToAgent = async (blockIds: readonly string[]) => {
     if (!isReady(agentChat)) {
         return;
     }
-    const mentions = await Promise.all(blockIds.map(async (id) => {
-        const response = await fetchSyncPost("/api/block/getRefText", {id});
-        if (handleHostRequestError(response) || typeof response.data !== "string" || response.data.length === 0) {
-            return;
-        }
-        return {id, label: response.data};
-    }));
-    if (mentions.some((mention) => mention === undefined)) {
+    const mentions = await resolveAgentBlockMentions(
+        blockIds,
+        (id) => fetchSyncPost("/api/block/getRefText", {id}, undefined, {processResponse: false}),
+    );
+    if (mentions.length === 0) {
         return;
     }
     agentChat.insertBlockMentions(mentions);
@@ -160,6 +174,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             void openFileById({
                 app,
                 id: event.documentId,
+                notebookId: event.notebookId,
                 action: getLegacyDocumentActions(event.scope, event.attention, event.restoreScroll),
                 scrollPosition: event.scroll === "start" ? "start" : undefined,
                 zoomIn: event.zoom,
@@ -175,25 +190,34 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             );
             return;
         case "open-document-search":
-            openDocumentSearch(app, event.documentId);
+            openDocumentSearch(app, event.notebookId, event.documentId);
             return;
         case "open-outline":
-            void openOutline({app, rootId: event.documentId, title: "", isPreview: event.preview});
+            void openOutline({
+                app,
+                rootId: event.documentId,
+                notebookId: event.notebookId,
+                title: "",
+                isPreview: event.preview,
+            });
             return;
         case "open-backlinks":
-            void openBacklink({app, blockId: event.documentId});
+            void openBacklink({app, blockId: event.documentId, notebookId: event.notebookId});
             return;
         case "open-graph":
             if (event.scope === "space") {
                 getDockByType("globalGraph").toggleModel("globalGraph");
-            } else {
+            } else if (!rejectUnsupportedEncryptedOperation(event.notebookId)) {
                 void openGraph({app, blockId: event.documentId});
             }
             return;
         case "open-document-history":
-            openDocumentHistory(app, event.documentId);
+            openDocumentHistory(app, event.notebookId, event.documentId);
             return;
         case "open-card-review":
+            if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
+                return;
+            }
             fetchPost("/api/riff/getTreeRiffDueCards", {rootID: event.documentId}, (response) => {
                 if (handleHostRequestError(response)) {
                     return;
@@ -202,16 +226,33 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             });
             return;
         case "open-card-browser":
+            if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
+                return;
+            }
             openCardBrowser(app, event.documentId);
             return;
         case "open-card-deck-picker":
+            if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
+                return;
+            }
             makeCard(app, event.blockIds);
             return;
         case "add-blocks-to-agent":
-            void addBlocksToAgent(event.blockIds);
+            void addBlocksToAgent(event.blockIds).catch((error: unknown) => {
+                console.error("[protyle-host:add-blocks-to-agent]", error);
+                const message = error instanceof Error && error.message ?
+                    error.message : window.siyuan.languages.unexpectedResponseError;
+                showMessage(message, 6000, "error");
+            });
             return;
         case "open-asset":
-            openAsset(app, event.assetPath, event.page, event.disposition === "split-right" ? "right" : undefined);
+            openAsset(
+                app,
+                event.assetPath,
+                event.page,
+                event.disposition === "split-right" ? "right" : undefined,
+                event.notebookId,
+            );
             return;
         case "open-external":
             openByMobile(event.url);
@@ -225,6 +266,17 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             return;
         case "notify":
             showMessage(event.message, 6000, event.level === "error" ? "error" : "info");
+            return;
+        case "refresh-outline":
+        case "refresh-backlinks":
+        case "set-document-title":
+        case "set-document-icon":
+        case "activate-document":
+        case "toggle-document-fullscreen":
+        case "persist-workspace-layout":
+        case "update-document-statistics":
+        case "runtime-error":
+            console.warn(`[protyle-host:unsupported-event] ${event.type}`);
             return;
     }
     const unhandledEvent: never = event;

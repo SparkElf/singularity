@@ -65,6 +65,7 @@ ${padHTML}
                     if (protyle.options.render.breadcrumbDocName && window.siyuan.ctrlIsPressed) {
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: id,
                             disposition: "current",
                             scope: id === protyle.block.rootID ? "target" : "subtree",

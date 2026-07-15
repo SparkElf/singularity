@@ -397,13 +397,13 @@
     {
       "goModule": {
         "path": "github.com/88250/go-sqlite3",
-        "version": "v1.14.13-0.20260612032504-d7314231d840"
+        "version": "v1.14.13-0.20260704101239-6ddb6e555a1e"
       },
       "kind": "go-module-file",
       "license": "MIT",
       "path": "LICENSE",
       "purls": [
-        "pkg:golang/github.com/88250/go-sqlite3@v1.14.13-0.20260612032504-d7314231d840"
+        "pkg:golang/github.com/88250/go-sqlite3@v1.14.13-0.20260704101239-6ddb6e555a1e"
       ],
       "reason": "The replacement module archive contains the reviewed MIT license",
       "sha256": "afa48e5e64dc610298d80b010ae7a3450f61a79500a9f1d1697ff6dcbbfa1f72"
@@ -425,13 +425,13 @@
     {
       "goModule": {
         "path": "github.com/88250/lute",
-        "version": "v1.7.7-0.20260702014339-ead82ece3dcf"
+        "version": "v1.7.7-0.20260713050253-52f9755b423c"
       },
       "kind": "go-module-file",
       "license": "MulanPSL-2.0",
       "path": "LICENSE",
       "purls": [
-        "pkg:golang/github.com/88250/lute@v1.7.7-0.20260702014339-ead82ece3dcf"
+        "pkg:golang/github.com/88250/lute@v1.7.7-0.20260713050253-52f9755b423c"
       ],
       "reason": "The exact module archive contains the reviewed Mulan PSL 2.0 license",
       "sha256": "5a36a4ef787bb02ae700b92030d98411736c5ec3879b75b03fa839b415d1b7d0"
@@ -715,13 +715,13 @@
     {
       "goModule": {
         "path": "github.com/siyuan-note/httpclient",
-        "version": "v0.0.0-20260702062154-364e4027842f"
+        "version": "v0.0.0-20260713023353-9c69b62d9749"
       },
       "kind": "go-module-file",
       "license": "MulanPSL-2.0",
       "path": "LICENSE",
       "purls": [
-        "pkg:golang/github.com/siyuan-note/httpclient@v0.0.0-20260702062154-364e4027842f"
+        "pkg:golang/github.com/siyuan-note/httpclient@v0.0.0-20260713023353-9c69b62d9749"
       ],
       "reason": "The exact module archive contains the reviewed Mulan PSL 2.0 license",
       "sha256": "d7136cebc1c0c2a50e02013928fc283b8d69cb805a994e21e6a8cc3983f45131"

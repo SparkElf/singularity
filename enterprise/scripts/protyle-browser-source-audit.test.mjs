@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { auditRegistryMigrationSource } from "./protyle-browser-source-audit.mjs";
+import {
+  auditNotebookScopedHostEventsSource,
+  auditRegistryMigrationSource,
+} from "./protyle-browser-source-audit.mjs";
 
 const coreMigrationFile = "app/src/protyle/util/editorCommonEvent.ts";
 const hostMigrationFile = "app/src/host/protyle.ts";
@@ -64,6 +67,39 @@ describe("Protyle Registry source boundary", () => {
     assert.deepEqual(
       ruleIds("app/src/protyle/ui/hideElements.ts", "window.siyuan.blockPanels;"),
       [],
+    );
+  });
+
+  for (const file of ["app/src/layout/dock/Backlink.ts", "app/src/layout/dock/Outline.ts"]) {
+    test(`rejects layout editor scans in ${file}`, () => {
+      assertRejected(file, 'import { getAllModels } from "../getAll";', "legacy-editor-module");
+    });
+  }
+});
+
+describe("Protyle notebook-scoped HostEvent boundary", () => {
+  const violationIds = (sourceText) => auditNotebookScopedHostEventsSource(sourceText)
+    .map((violation) => violation.ruleId);
+
+  test("rejects a document event without notebook identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-document", documentId: "doc"});'),
+      ["notebook-scope-missing"],
+    );
+  });
+
+  test("accepts a document event with notebook identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-document", notebookId: protyle.notebookId, documentId: "doc"});'),
+      [],
+    );
+  });
+
+  test("requires notebook identity only for document graph events", () => {
+    assert.deepEqual(violationIds('protyle.host.dispatch({type: "open-graph", scope: "space"});'), []);
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-graph", scope: "document", documentId: "doc"});'),
+      ["notebook-scope-missing"],
     );
   });
 });

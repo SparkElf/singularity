@@ -393,12 +393,14 @@ export const JSONToCenter = (
             tab: (layout as Tab),
             path: json.path,
             page: json.page,
+            notebookId: json.notebookId,
         }));
     } else if (json.instance === "Backlink") {
         (layout as Tab).addModel(new Backlink({
             app,
             tab: (layout as Tab),
             blockId: json.blockId,
+            notebookId: json.notebookId,
             rootId: json.rootId,
             type: json.type as "pin" | "local",
         }));
@@ -422,6 +424,7 @@ export const JSONToCenter = (
             app,
             tab: (layout as Tab),
             blockId: json.blockId,
+            notebookId: json.notebookId,
             type: json.type as "pin" | "local",
             isPreview: json.isPreview,
         }));
@@ -613,12 +616,14 @@ export const layoutToJSON = (layout: Layout | Wnd | Tab | Model, json: any, brea
         json.instance = "Editor";
     } else if (layout instanceof Asset) {
         json.path = layout.path;
+        json.notebookId = layout.notebookId;
         if (layout.pdfObject) {
             json.page = layout.pdfObject.page;
         }
         json.instance = "Asset";
     } else if (layout instanceof Backlink) {
         json.blockId = layout.blockId;
+        json.notebookId = layout.notebookId;
         json.rootId = layout.rootId;
         json.type = layout.type;
         json.instance = "Backlink";
@@ -633,6 +638,7 @@ export const layoutToJSON = (layout: Layout | Wnd | Tab | Model, json: any, brea
         json.instance = "Graph";
     } else if (layout instanceof Outline) {
         json.blockId = layout.blockId;
+        json.notebookId = layout.notebookId;
         json.type = layout.type;
         json.isPreview = layout.isPreview;
         json.instance = "Outline";

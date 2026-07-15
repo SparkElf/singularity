@@ -425,6 +425,7 @@ export class Gutter {
                     checkFold(id, (zoomIn) => {
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: id,
                             disposition: "current",
                             scope: zoomIn ? "subtree" : "context",
@@ -1127,6 +1128,7 @@ export class Gutter {
                     });
                     protyle.host.dispatch({
                         type: "open-card-deck-picker",
+                        notebookId: protyle.notebookId,
                         blockIds: ids,
                     });
                 }
@@ -2167,6 +2169,7 @@ export class Gutter {
                     checkFold(id, (zoomIn) => {
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: id,
                             disposition: "current",
                             scope: zoomIn ? "subtree" : "context",
@@ -2340,6 +2343,7 @@ export class Gutter {
                 click() {
                     protyle.host.dispatch({
                         type: "open-card-deck-picker",
+                        notebookId: protyle.notebookId,
                         blockIds: [id],
                     });
                 }

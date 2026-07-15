@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 interface ProtyleHostProps<TRuntime> {
   documentId: string;
   factory: ProtyleFactory<TRuntime>;
+  notebookId: string;
   onError?: (error: unknown) => void;
   readOnly: boolean;
   session: ProtyleSession<TRuntime>;
@@ -18,6 +19,7 @@ type ProtyleHostStatus = "error" | "loading" | "ready";
 export function ProtyleHost<TRuntime>({
   documentId,
   factory,
+  notebookId,
   onError,
   readOnly,
   session,
@@ -49,6 +51,7 @@ export function ProtyleHost<TRuntime>({
     void factory.create({
       documentId,
       host,
+      notebookId,
       readOnly: initialReadOnly,
       session,
       signal: abortController.signal,
@@ -79,7 +82,7 @@ export function ProtyleHost<TRuntime>({
         }
       }
     };
-  }, [documentId, factory, session]);
+  }, [documentId, factory, notebookId, session]);
 
   useEffect(() => {
     controllerRef.current?.setHostReadOnly(readOnly);
@@ -88,7 +91,7 @@ export function ProtyleHost<TRuntime>({
   return (
     <div className="relative h-full min-h-0" data-protyle-state={status}>
       <div
-        key={`${session.spaceId}:${documentId}`}
+        key={`${session.spaceId}:${notebookId}:${documentId}`}
         ref={hostRef}
         aria-busy={status === "loading"}
         className="h-full min-h-0"

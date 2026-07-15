@@ -351,6 +351,7 @@ export const editAssetItem = (options: {
                 label: window.siyuan.languages.insertRight,
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
+                    notebookId: options.protyle.notebookId,
                     assetPath,
                     page,
                     disposition: "split-right",
@@ -361,6 +362,7 @@ export const editAssetItem = (options: {
                 label: window.siyuan.languages.openBy,
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
+                    notebookId: options.protyle.notebookId,
                     assetPath,
                     page,
                     disposition: "current",

@@ -23,13 +23,12 @@ import {App} from "../../index";
 import {checkFold} from "../../util/noRelyPCFunction";
 import {transaction, turnsIntoTransaction} from "../../protyle/wysiwyg/transaction";
 import {goHome} from "../../protyle/wysiwyg/commonHotkey";
-import {isEncryptedBox} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
 import {Editor} from "../../editor";
 import {mathRender} from "../../protyle/render/mathRender";
 import {genEmptyElement} from "../../block/util";
 import {focusBlock, focusByWbr} from "../../protyle/util/selection";
 import {dragOverScroll, stopScrollAnimation} from "../../boot/globalEvent/dragover";
-import {getDocDisplayName} from "../../util/pathName";
 
 export class Outline extends Model {
     public tree: Tree;
@@ -37,6 +36,7 @@ export class Outline extends Model {
     public headerElement: HTMLElement;
     public type: "pin" | "local";
     public blockId: string;
+    public notebookId: string;
     public isPreview: boolean;
     public protyle: IProtyle;
     private preFilterExpandIds: string[] | null = null;
@@ -45,19 +45,21 @@ export class Outline extends Model {
         app: App,
         tab: Tab,
         blockId: string,
+        notebookId: string,
         type: "pin" | "local",
         isPreview: boolean
     }) {
         super({app: options.app});
+        this.isPreview = options.isPreview;
+        this.blockId = options.blockId;
+        this.notebookId = options.notebookId;
+        this.type = options.type;
         this.connect({
             id: options.tab.id,
             type: "outline",
             callback: this.handleCallback.bind(this),
             msgCallback: this.handleMsgCallback.bind(this)
         });
-        this.isPreview = options.isPreview;
-        this.blockId = options.blockId;
-        this.type = options.type;
         options.tab.panelElement.classList.add("fn__flex-column", "file-tree", "sy__outline", "dockPanel");
         options.tab.panelElement.innerHTML = `<div class="block__icons fn__hidescrollbar">
     <div class="block__logo fn__flex-1">${window.siyuan.languages.outline}</div>
@@ -138,6 +140,7 @@ export class Outline extends Model {
                         openFileById({
                             app: options.app,
                             id: this.blockId,
+                            notebookId: this.notebookId,
                             mode: "preview",
                         });
                     }
@@ -146,6 +149,7 @@ export class Outline extends Model {
                         openFileById({
                             app: options.app,
                             id,
+                            notebookId: this.notebookId,
                             scrollPosition: "start",
                             action: zoomIn ? [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL, Constants.CB_GET_HTML, Constants.CB_GET_OUTLINE] : [Constants.CB_GET_FOCUS, Constants.CB_GET_OUTLINE, Constants.CB_GET_SETID, Constants.CB_GET_CONTEXT, Constants.CB_GET_HTML],
                         });
@@ -162,6 +166,7 @@ export class Outline extends Model {
                 openFileById({
                     app: options.app,
                     id,
+                    notebookId: this.notebookId,
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL, Constants.CB_GET_HTML],
                     zoomIn: true,
                 });
@@ -274,6 +279,7 @@ export class Outline extends Model {
                     openFileById({
                         app: options.app,
                         id: this.blockId,
+                        notebookId: this.notebookId,
                         afterOpen: (model: Editor) => {
                             if (model) {
                                 if (this.isPreview) {
@@ -303,16 +309,8 @@ export class Outline extends Model {
             id: this.blockId,
             preview: this.isPreview
         };
-        // 解析当前大纲面板所属 box：按 blockId 在已打开的编辑器里查找
-        let notebookId: string;
-        getAllModels().editor.some(item => {
-            if (item.editor.protyle.block.rootID === this.blockId) {
-                notebookId = item.editor.protyle.notebookId;
-                return true;
-            }
-        });
-        if (isEncryptedBox(notebookId)) {
-            outlineParam.notebook = notebookId;
+        if (isEncryptedBox(this.notebookId)) {
+            outlineParam.notebook = this.notebookId;
         }
         fetchPost("/api/outline/getDocOutline", outlineParam, response => {
             this.update(response);
@@ -324,7 +322,11 @@ export class Outline extends Model {
 
     private handleCallback() {
         if (this.type === "local") {
-            fetchPost("/api/block/checkBlockExist", {id: this.blockId}, existResponse => {
+            const blockExistParam: IObject = {id: this.blockId};
+            if (isEncryptedBox(this.notebookId)) {
+                blockExistParam.notebook = this.notebookId;
+            }
+            fetchPost("/api/block/checkBlockExist", blockExistParam, existResponse => {
                 if (!existResponse.data) {
                     this.parent.parent.removeTab(this.parent.id);
                 }
@@ -351,12 +353,8 @@ export class Outline extends Model {
                     break;
                 case "closeBox":
                 case "removeBox":
-                    if (this.type === "local") {
-                        fetchPost("/api/block/checkBlockExist", {id: this.blockId}, existResponse => {
-                            if (!existResponse.data) {
-                                this.parent.parent.removeTab(this.parent.id);
-                            }
-                        });
+                    if (this.type === "local" && this.notebookId === data.data.box) {
+                        this.parent.parent.removeTab(this.parent.id);
                     }
                     break;
                 case "removeDoc":
@@ -576,16 +574,8 @@ export class Outline extends Model {
                 id: this.blockId,
                 preview: this.isPreview
             };
-            // 解析当前大纲面板所属 box：按 blockId 在已打开的编辑器里查找
-            let notebookId: string;
-            getAllModels().editor.some(item => {
-                if (item.editor.protyle.block.rootID === this.blockId) {
-                    notebookId = item.editor.protyle.notebookId;
-                    return true;
-                }
-            });
-            if (isEncryptedBox(notebookId)) {
-                outlineParam.notebook = notebookId;
+            if (isEncryptedBox(this.notebookId)) {
+                outlineParam.notebook = this.notebookId;
             }
             fetchPost("/api/outline/getDocOutline", outlineParam, response => {
                 // 文档切换后不再更新原有推送 https://github.com/siyuan-note/siyuan/issues/13409
@@ -631,16 +621,8 @@ export class Outline extends Model {
                     id: nodeElement.getAttribute("data-node-id"),
                     excludeTypes: []
                 };
-                // 解析当前大纲面板所属 box：按 blockId 在已打开的编辑器里查找
-                let notebookId: string;
-                getAllModels().editor.some(editorItem => {
-                    if (editorItem.editor.protyle.block.rootID === this.blockId) {
-                        notebookId = editorItem.editor.protyle.notebookId;
-                        return true;
-                    }
-                });
-                if (isEncryptedBox(notebookId)) {
-                    breadcrumbParam.notebook = notebookId;
+                if (isEncryptedBox(this.notebookId)) {
+                    breadcrumbParam.notebook = this.notebookId;
                 }
                 fetchPost("/api/block/getBlockBreadcrumb", breadcrumbParam, (response) => {
                     response.data.reverse().find((item: IBreadcrumb) => {
@@ -701,7 +683,9 @@ export class Outline extends Model {
         }
     }
 
-    public update(data: IWebSocketData, callbackId?: string) {
+    public update(data: IWebSocketData): void;
+    public update(data: IWebSocketData, callbackId: string, notebookId: string): void;
+    public update(data: IWebSocketData, callbackId?: string, notebookId?: string) {
         let currentElement = this.element.querySelector(".b3-list-item--focus");
         let currentId;
         if (currentElement) {
@@ -710,6 +694,7 @@ export class Outline extends Model {
         const scrollTop = this.element.scrollTop;
         if (typeof callbackId !== "undefined") {
             this.blockId = callbackId;
+            this.notebookId = notebookId;
         }
         this.tree.updateData(data.data);
 
@@ -997,6 +982,7 @@ export class Outline extends Model {
                 openFileById({
                     app: this.app,
                     id,
+                    notebookId: this.notebookId,
                     scrollPosition: "start",
                     action: zoomIn ? [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL, Constants.CB_GET_HTML, Constants.CB_GET_OUTLINE] : [Constants.CB_GET_FOCUS, Constants.CB_GET_OUTLINE, Constants.CB_GET_SETID, Constants.CB_GET_CONTEXT, Constants.CB_GET_HTML],
                 });

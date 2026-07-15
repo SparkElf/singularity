@@ -11,6 +11,21 @@ const legacyEditorRegistryModules = new Map([
   [join(protyleRoot, "undo/globalUndo"), new Set([join(repositoryRoot, "app/src/layout/tabUtil")])],
   [join(protyleRoot, "wysiwyg/transaction"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
   [join(repositoryRoot, "app/src/host/protyle"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
+  [join(repositoryRoot, "app/src/layout/dock/Backlink"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
+  [join(repositoryRoot, "app/src/layout/dock/Outline"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
+]);
+const notebookScopedHostEvents = new Set([
+  "open-document",
+  "open-document-search",
+  "open-outline",
+  "open-backlinks",
+  "open-document-history",
+  "open-card-review",
+  "open-card-browser",
+  "open-card-deck-picker",
+  "open-asset",
+  "refresh-outline",
+  "refresh-backlinks",
 ]);
 
 function withoutSourceExtension(file) {
@@ -41,6 +56,20 @@ function getAccessName(node) {
     return getStaticPropertyName(node.name);
   }
   return null;
+}
+
+function getObjectProperty(object, name) {
+  return object.properties.find((property) =>
+    (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+    getStaticPropertyName(property.name) === name);
+}
+
+function getStringProperty(object, name) {
+  const property = getObjectProperty(object, name);
+  if (!property || !ts.isPropertyAssignment(property) || !ts.isStringLiteralLike(property.initializer)) {
+    return null;
+  }
+  return property.initializer.text;
 }
 
 function collectLegacyEditorCollectionAccesses(sourceFile) {
@@ -157,4 +186,34 @@ export function auditRegistryMigrationSource({ file, sourceText }) {
   const scriptKind = extname(file) === ".tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, scriptKind);
   return auditRegistryMigrationAst(file, sourceFile);
+}
+
+export function auditNotebookScopedHostEventsAst(sourceFile) {
+  const violations = [];
+
+  function visit(node) {
+    if (ts.isCallExpression(node) && getAccessName(node.expression) === "dispatch") {
+      const event = node.arguments[0];
+      if (event && ts.isObjectLiteralExpression(event)) {
+        const type = getStringProperty(event, "type");
+        const isDocumentGraph = type === "open-graph" && getStringProperty(event, "scope") !== "space";
+        if ((notebookScopedHostEvents.has(type) || isDocumentGraph) && !getObjectProperty(event, "notebookId")) {
+          violations.push({
+            ruleId: "notebook-scope-missing",
+            line: sourceFile.getLineAndCharacterOfPosition(event.getStart(sourceFile)).line + 1,
+            message: `${type} must carry the source Protyle notebookId`,
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return violations;
+}
+
+export function auditNotebookScopedHostEventsSource(sourceText) {
+  const sourceFile = ts.createSourceFile("host-event.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  return auditNotebookScopedHostEventsAst(sourceFile);
 }

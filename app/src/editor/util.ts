@@ -36,6 +36,7 @@ import {hideElements} from "../protyle/ui/hideElements";
 export const openFileById = async (options: {
     app: App,
     id: string,
+    notebookId?: string,
     position?: string,
     mode?: TEditorMode,
     action?: TProtyleAction[]
@@ -46,7 +47,11 @@ export const openFileById = async (options: {
     afterOpen?: (model: Model) => void,
     scrollPosition?: ScrollLogicalPosition
 }) => {
-    const response = await fetchSyncPost("/api/block/getBlockInfo", {id: options.id});
+    const blockInfoParam: IObject = {id: options.id};
+    if (isEncryptedBox(options.notebookId)) {
+        blockInfoParam.notebook = options.notebookId;
+    }
+    const response = await fetchSyncPost("/api/block/getBlockInfo", blockInfoParam);
     if (response.code === -1) {
         return;
     }
@@ -61,6 +66,7 @@ export const openFileById = async (options: {
         rootTitleEmpty: response.data.rootTitleEmpty,
         rootIcon: response.data.rootIcon,
         rootID: response.data.rootID,
+        notebookId: response.data.box,
         id: options.id,
         position: options.position,
         mode: options.mode,
@@ -74,7 +80,7 @@ export const openFileById = async (options: {
     });
 };
 
-export const openAsset = (app: App, assetPath: string, page?: number | string, position?: string) => {
+export const openAsset = (app: App, assetPath: string, page?: number | string, position?: string, notebookId?: string) => {
     const suffix = pathPosix().extname(assetPath).split("?")[0];
     if (!Constants.SIYUAN_ASSETS_EXTS.includes(suffix)) {
         return;
@@ -84,6 +90,7 @@ export const openAsset = (app: App, assetPath: string, page?: number | string, p
         assetPath,
         page,
         position,
+        notebookId,
         removeCurrentTab: true
     });
 };
@@ -105,7 +112,7 @@ export const openFile = async (options: IOpenFileOptions) => {
     if (options.assetPath) {
         clearOBG();
         const asset = allModels.asset.find((item) => {
-            if (item.path == options.assetPath) {
+            if (item.path == options.assetPath && item.notebookId === options.notebookId) {
                 if (!pdfIsLoading(item.parent.parent.element)) {
                     item.parent.parent.switchTab(item.parent.headElement);
                     item.parent.parent.showHeading();
@@ -315,6 +322,7 @@ const getUnInitTab = (options: IOpenFileOptions) => {
                     initObj.action = options.action;
                 }
                 initObj.scrollPosition = options.scrollPosition;
+                initObj.notebookId = options.notebookId;
                 item.headElement.setAttribute("data-initdata", JSON.stringify(initObj));
                 item.parent.switchTab(item.headElement);
                 return true;
@@ -442,6 +450,7 @@ const newTab = (options: IOpenFileOptions) => {
                         tab,
                         path: options.assetPath,
                         page: options.page,
+                        notebookId: options.notebookId,
                     }));
                     setPanelFocus(tab.panelElement.parentElement.parentElement);
                 }
@@ -506,6 +515,7 @@ const newTab = (options: IOpenFileOptions) => {
                         tab,
                         blockId: options.id,
                         rootId: options.rootID,
+                        notebookId: options.notebookId,
                         action: [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS],
                         scrollPosition: options.scrollPosition,
                     });
@@ -515,6 +525,7 @@ const newTab = (options: IOpenFileOptions) => {
                         tab,
                         blockId: options.id,
                         rootId: options.rootID,
+                        notebookId: options.notebookId,
                         mode: options.mode,
                         action: options.action,
                         scrollPosition: options.scrollPosition,

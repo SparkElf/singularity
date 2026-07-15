@@ -1,8 +1,9 @@
 export type {
   CreateProtyleOptions,
   CreateProtyleSessionOptions,
+  ProtyleBoundContent,
   ProtyleController,
-  ProtyleCoreBaseOptions,
+  ProtyleCoreCommonOptions,
   ProtyleCoreCreateOptions,
   ProtyleCoreDocumentOptions,
   ProtyleCoreFactory,
@@ -16,6 +17,7 @@ export type {
   ProtyleFactory,
   ProtyleHostEvent,
   ProtyleHostPort,
+  ProtyleLocalOnlyContent,
   ProtyleMenuHandle,
   ProtyleMenuPort,
   ProtyleOverlayHandle,

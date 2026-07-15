@@ -11,17 +11,18 @@ import {fetchSyncPost} from "../../util/fetch";
 import {Files} from "./Files";
 import {Editor} from "../../editor";
 import {Constants} from "../../constants";
-import {getDocDisplayName} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
 
 export const openBacklink = async (options: {
     app: App,
     blockId: string,
+    notebookId: string,
     rootId?: string,
     title?: string,
     useBlockId?: boolean,
 }) => {
     const backlink = getAllModels().backlink.find(item => {
-        if (item.blockId === options.blockId && item.type === "local") {
+        if (item.blockId === options.blockId && item.notebookId === options.notebookId && item.type === "local") {
             item.parent.parent.removeTab(item.parent.id);
             return true;
         }
@@ -37,8 +38,12 @@ export const openBacklink = async (options: {
     if (!wnd) {
         wnd = getWndByLayout(window.siyuan.layout.centerLayout);
     }
+    const docInfoParam: IObject = {id: options.blockId};
+    if (isEncryptedBox(options.notebookId)) {
+        docInfoParam.notebook = options.notebookId;
+    }
     if (!options.rootId) {
-        const response = await fetchSyncPost("/api/block/getDocInfo", {id: options.blockId});
+        const response = await fetchSyncPost("/api/block/getDocInfo", docInfoParam);
         if (response.code === -1) {
             return;
         }
@@ -46,7 +51,7 @@ export const openBacklink = async (options: {
         options.useBlockId = response.data.rootID !== response.data.id;
         options.title = getDocDisplayName(response.data.name, response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true");
     } else if (!options.title) {
-        const response = await fetchSyncPost("/api/block/getDocInfo", {id: options.blockId});
+        const response = await fetchSyncPost("/api/block/getDocInfo", docInfoParam);
         if (response.code === -1) {
             return;
         }
@@ -63,6 +68,7 @@ export const openBacklink = async (options: {
                 tab,
                 // 通过搜索打开的包含上下文，但不是缩放，因此需要传 rootID https://ld246.com/article/1666786639708
                 blockId: options.useBlockId ? options.blockId : options.rootId,
+                notebookId: options.notebookId,
                 rootId: options.rootId,
             }));
         }
@@ -127,11 +133,12 @@ export const openGraph = async (options: {
 export const openOutline = async (options: {
     app: App,
     rootId: string,
+    notebookId: string,
     isPreview: boolean,
     title: string
 }) => {
     const outlinePanel = getAllModels().outline.find(item => {
-        if (item.blockId === options.rootId && item.type === "local") {
+        if (item.blockId === options.rootId && item.notebookId === options.notebookId && item.type === "local") {
             item.parent.parent.removeTab(item.parent.id);
             return true;
         }
@@ -150,7 +157,11 @@ export const openOutline = async (options: {
     const newWnd = wnd.split("lr", false);
 
     if (!options.title) {
-        const response = await fetchSyncPost("/api/block/getDocInfo", {id: options.rootId});
+        const docInfoParam: IObject = {id: options.rootId};
+        if (isEncryptedBox(options.notebookId)) {
+            docInfoParam.notebook = options.notebookId;
+        }
+        const response = await fetchSyncPost("/api/block/getDocInfo", docInfoParam);
         options.title = getDocDisplayName(response.data.name, response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true");
     }
     newWnd.element.style.width = "200px";
@@ -165,6 +176,7 @@ export const openOutline = async (options: {
                 type: "local",
                 tab,
                 blockId: options.rootId,
+                notebookId: options.notebookId,
                 isPreview: options.isPreview,
             }));
         }

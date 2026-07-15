@@ -478,6 +478,7 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
             openBacklink({
                 app: protyle.app,
                 blockId: refBlockId,
+                notebookId: protyle.notebookId,
             });
         }
     }).element);

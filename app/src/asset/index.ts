@@ -15,22 +15,24 @@ import {fetchPost} from "../util/fetch";
 import {setStorageVal, updateHotkeyTip} from "../protyle/util/compatibility";
 import {App} from "../index";
 import {clearOBG} from "../layout/dock/util";
-import {getDisplayName} from "../util/pathName";
+import {getDisplayName, isEncryptedBox} from "../util/pathName";
 
 export class Asset extends Model {
     public path: string;
+    public notebookId: string;
     public element: HTMLElement;
     private pdfId: number | string;
     private pdfPage: number;
     public pdfObject: any;
 
-    constructor(options: { app: App, tab: Tab, path: string, page?: number | string }) {
+    constructor(options: { app: App, tab: Tab, path: string, notebookId: string, page?: number | string }) {
         super({app: options.app});
         if (window.siyuan.config.fileTree.openFilesUseCurrentTab) {
             options.tab.headElement.classList.add("item--unupdate");
         }
         this.element = options.tab.panelElement;
         this.path = options.path;
+        this.notebookId = options.notebookId;
         this.pdfId = options.page;
         this.element.addEventListener("click", (event) => {
             clearOBG();
@@ -57,8 +59,15 @@ export class Asset extends Model {
     }
 
     private getPdfId(cb: () => void) {
+        let assetPath = this.path;
+        if (isEncryptedBox(this.notebookId)) {
+            const queryIndex = assetPath.indexOf("?");
+            const searchParams = new URLSearchParams(queryIndex > -1 ? assetPath.substring(queryIndex + 1) : "");
+            searchParams.set("box", this.notebookId);
+            assetPath = `${queryIndex > -1 ? assetPath.substring(0, queryIndex) : assetPath}?${searchParams.toString()}`;
+        }
         fetchPost("/api/asset/getFileAnnotation", {
-            path: this.path + ".sya",
+            path: assetPath + ".sya",
         }, (response) => {
             if (response.code !== 1) {
                 const config = JSON.parse(response.data.data);
@@ -94,8 +103,15 @@ export class Asset extends Model {
 
     private render(isInit = true) {
         const type = this.path.substr(this.path.lastIndexOf(".")).toLowerCase().split("?")[0];
+        let assetPath = this.path;
+        if (isEncryptedBox(this.notebookId)) {
+            const queryIndex = assetPath.indexOf("?");
+            const searchParams = new URLSearchParams(queryIndex > -1 ? assetPath.substring(queryIndex + 1) : "");
+            searchParams.set("box", this.notebookId);
+            assetPath = `${queryIndex > -1 ? assetPath.substring(0, queryIndex) : assetPath}?${searchParams.toString()}`;
+        }
         // 对资源路径进行 HTML 转义后再拼入 src 属性，避免路径中包含 " 等字符导致属性逃逸引发 XSS
-        const src = Lute.EscapeHTMLStr(this.path.startsWith("file") ? this.path : document.getElementById("baseURL").getAttribute("href") + "/" + this.path);
+        const src = Lute.EscapeHTMLStr(assetPath.startsWith("file") ? assetPath : document.getElementById("baseURL").getAttribute("href") + "/" + assetPath);
         if (Constants.SIYUAN_ASSETS_IMAGE.includes(type)) {
             this.element.innerHTML = `<div class="asset"><img src="${src}"></div>`;
         } else if (Constants.SIYUAN_ASSETS_AUDIO.includes(type)) {
@@ -520,14 +536,14 @@ export class Asset extends Model {
             setTimeout(() => {
                 if (this.element.clientWidth === 0) {
                     const observer = new MutationObserver(() => {
-                        this.pdfObject = webViewerLoad(this.path.startsWith("file") ? this.path : document.getElementById("baseURL").getAttribute("href") + "/" + this.path,
+                        this.pdfObject = webViewerLoad(assetPath.startsWith("file") ? assetPath : document.getElementById("baseURL").getAttribute("href") + "/" + assetPath,
                             this.element, this.pdfPage, this.pdfId);
                         this.element.setAttribute("data-loading", "true");
                         observer.disconnect();
                     });
                     observer.observe(this.element, {attributeFilter: ["class"]});
                 } else {
-                    this.pdfObject = webViewerLoad(this.path.startsWith("file") ? this.path : document.getElementById("baseURL").getAttribute("href") + "/" + this.path,
+                    this.pdfObject = webViewerLoad(assetPath.startsWith("file") ? assetPath : document.getElementById("baseURL").getAttribute("href") + "/" + assetPath,
                         this.element, this.pdfPage, this.pdfId);
                     this.element.setAttribute("data-loading", "true");
                 }

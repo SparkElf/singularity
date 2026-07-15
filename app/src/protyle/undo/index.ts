@@ -4,6 +4,7 @@ import {Constants} from "../../constants";
 import {hideElements} from "../ui/hideElements";
 import {markMirror, refreshUndoButtons, requestRedo, requestUndo} from "./globalUndo";
 import {scrollCenter} from "../../util/highlightById";
+import {ILocalUndoOperations, LocalUndoHistory} from "./history";
 
 // 撤销/重做统一契约：kernel 模式由 Undo 实现（转发 kernel），lite 模式由 LocalUndo 实现（前端操作日志）。
 export interface IUndo {
@@ -17,11 +18,6 @@ export interface IUndo {
 
     // kernel 模式独有：发起窗口本地乐观应用操作（lite 模式的 LocalUndo 不需要）。
     renderLocal?(protyle: IProtyle, operations: IOperation[]): void;
-}
-
-interface IOperations {
-    doOperations: IOperation[];
-    undoOperations: IOperation[];
 }
 
 // 撤销权威栈已下沉到 kernel（GlobalUndoLog），前端按 rootID 共享。
@@ -87,30 +83,19 @@ export class Undo implements IUndo {
 // lite 模式的前端撤销：不落盘、无 rootID，无法用 kernel 的 GlobalUndoLog，
 // 故在前端以 IOperation 操作日志维护撤销/重做。回放时用 onTransaction(ops, true) 本地应用 DOM。
 export class LocalUndo implements IUndo {
-    private hasUndo = false;
-    public redoStack: IOperations[];
-    public undoStack: IOperations[];
-
-    constructor() {
-        this.redoStack = [];
-        this.undoStack = [];
-    }
+    private readonly history = new LocalUndoHistory(Constants.SIZE_UNDO);
 
     public undo(protyle: IProtyle) {
         if (protyle.disabled) {
             return;
         }
-        if (this.undoStack.length === 0) {
+        if (!this.history.undo((state) => this.render(protyle, state, false))) {
             return;
         }
-        const state = this.undoStack.pop();
-        this.render(protyle, state, false);
-        this.hasUndo = true;
-        this.redoStack.push(state);
         if (protyle.breadcrumb) {
             const undoElement = protyle.breadcrumb.element.parentElement.querySelector('[data-type="undo"]');
             if (undoElement) {
-                if (this.undoStack.length === 0) {
+                if (!this.history.canUndo) {
                     undoElement.setAttribute("disabled", "true");
                 }
                 protyle.breadcrumb.element.parentElement.querySelector('[data-type="redo"]').removeAttribute("disabled");
@@ -122,24 +107,21 @@ export class LocalUndo implements IUndo {
         if (protyle.disabled) {
             return;
         }
-        if (this.redoStack.length === 0) {
+        if (!this.history.redo((state) => this.render(protyle, state, true))) {
             return;
         }
-        const state = this.redoStack.pop();
-        this.render(protyle, state, true);
-        this.undoStack.push(state);
         if (protyle.breadcrumb) {
             const redoElement = protyle.breadcrumb.element.parentElement.querySelector('[data-type="redo"]');
             if (redoElement) {
                 protyle.breadcrumb.element.parentElement.querySelector('[data-type="undo"]').removeAttribute("disabled");
-                if (this.redoStack.length === 0) {
+                if (!this.history.canRedo) {
                     redoElement.setAttribute("disabled", "true");
                 }
             }
         }
     }
 
-    private render(protyle: IProtyle, state: IOperations, redo: boolean) {
+    private render(protyle: IProtyle, state: ILocalUndoOperations, redo: boolean) {
         hideElements(["hint", "gutter"], protyle);
         protyle.wysiwyg.lastHTMLs = {};
         if (!redo) {
@@ -174,33 +156,8 @@ export class LocalUndo implements IUndo {
         scrollCenter(protyle);
     }
 
-    public replace(doOperations: IOperation[], protyle: IProtyle) {
-        // undo 引发 replace 导致 stack 错误 https://github.com/siyuan-note/siyuan/issues/9178
-        if (this.hasUndo && this.redoStack.length > 0) {
-            this.undoStack.push(this.redoStack.pop());
-            this.redoStack = [];
-            this.hasUndo = false;
-            if (protyle.breadcrumb) {
-                const redoElement = protyle.breadcrumb.element.parentElement.querySelector('[data-type="redo"]');
-                if (redoElement) {
-                    redoElement.setAttribute("disabled", "true");
-                }
-            }
-        }
-        if (this.undoStack.length > 0) {
-            this.undoStack[this.undoStack.length - 1].doOperations = doOperations;
-        }
-    }
-
     public add(doOperations: IOperation[], undoOperations: IOperation[], protyle: IProtyle) {
-        this.undoStack.push({undoOperations, doOperations});
-        if (this.undoStack.length > Constants.SIZE_UNDO) {
-            this.undoStack.shift();
-        }
-        if (this.hasUndo) {
-            this.redoStack = [];
-            this.hasUndo = false;
-        }
+        this.history.add(doOperations, undoOperations);
         if (protyle.breadcrumb) {
             const undoElement = protyle.breadcrumb.element.parentElement.querySelector('[data-type="undo"]');
             if (undoElement) {
@@ -210,7 +167,6 @@ export class LocalUndo implements IUndo {
     }
 
     public clear() {
-        this.undoStack = [];
-        this.redoStack = [];
+        this.history.clear();
     }
 }
