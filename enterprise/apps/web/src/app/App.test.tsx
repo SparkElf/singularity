@@ -1,5 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -121,6 +125,7 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup();
+  onlineManager.setOnline(true);
   vi.useRealTimers();
   useCsrfStore.setState({ csrfToken: null });
   vi.restoreAllMocks();
@@ -313,6 +318,53 @@ describe("S1 identity and space routes", () => {
 
     expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
     expect(queryClient.getQueryData(["current-identity"])).toEqual({
+      active: true,
+    });
+  });
+
+  it("invalid resubmission cancels an earlier login and rejects its late success", async () => {
+    const firstLogin = deferred<Response>();
+    let firstSignal: AbortSignal | null | undefined;
+    const fetchMock = mockFetch((input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/login") {
+        firstSignal = init?.signal;
+        return firstLogin.promise;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { queryClient } = renderApp("/login");
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    const password = screen.getByLabelText("密码");
+    fireEvent.change(password, {
+      target: { value: "correct horse battery staple" },
+    });
+    const submit = screen.getByRole("button", { name: "登录" });
+    fireEvent.click(submit);
+    await waitFor(() => expect(firstSignal).toBeDefined());
+
+    fireEvent.change(password, { target: { value: "short" } });
+    const form = submit.closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+
+    expect(await screen.findByText("请输入有效的账号和密码。")).toBeVisible();
+    expect(firstSignal?.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    queryClient.setQueryData(["current-page"], { active: true });
+
+    await act(async () => {
+      firstLogin.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
+      await firstLogin.promise;
+    });
+
+    expect(screen.getByRole("heading", { name: "登录奇点" })).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryData(["current-page"])).toEqual({
       active: true,
     });
   });
@@ -536,6 +588,27 @@ describe("S1 identity and space routes", () => {
     expect(requestedPaths).toEqual(["/api/v1/spaces"]);
   });
 
+  it("does not trust cached authorization when the spaces refetch is paused offline", () => {
+    const fetchMock = mockFetch(() => {
+      throw new Error("Offline queries must remain paused");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(authorizedSpacesQueryKey, {
+      spaces: [SPACE_A_SUMMARY],
+    });
+    onlineManager.setOnline(false);
+
+    renderApp("/spaces", queryClient);
+
+    expect(
+      screen.getByRole("heading", { name: "无法加载空间" }),
+    ).toBeVisible();
+    expect(screen.getByText("无法连接到服务，请检查网络后重试。")).toBeVisible();
+    expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("hides cached space identity and ready state until both revalidations succeed", async () => {
     const freshAuthorization = deferred<Response>();
     const freshRuntime = deferred<Response>();
@@ -597,6 +670,43 @@ describe("S1 identity and space routes", () => {
     ).toBeVisible();
     expect(screen.getByText("阅读者")).toBeVisible();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+  });
+
+  it("does not trust cached workspace authorization or runtime while offline", () => {
+    const fetchMock = mockFetch(() => {
+      throw new Error("Offline queries must remain paused");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(authorizedSpacesQueryKey, {
+      spaces: [SPACE_A_SUMMARY],
+    });
+    queryClient.setQueryData(
+      spaceRuntimeQueryKey({
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+      }),
+      {
+        organizationId: ORGANIZATION_A,
+        spaceId: SPACE_A,
+        role: "admin",
+        kernelState: "ready",
+      },
+    );
+    onlineManager.setOnline(false);
+
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A), queryClient);
+
+    expect(
+      screen.getByRole("heading", { name: "无法加载空间" }),
+    ).toBeVisible();
+    expect(screen.getByText("无法连接到服务，请检查网络后重试。")).toBeVisible();
+    expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
+    expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "空间已就绪" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("shows an explicitly requested list after returning from a single space", async () => {

@@ -8,7 +8,7 @@ WORKDIR /workspace/enterprise
 
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 
-COPY enterprise/package.json enterprise/pnpm-lock.yaml enterprise/pnpm-workspace.yaml enterprise/.npmrc ./
+COPY enterprise/package.json enterprise/pnpm-lock.yaml enterprise/pnpm-workspace.yaml enterprise/.npmrc enterprise/.pnpmfile.cjs ./
 COPY enterprise/tsconfig.base.json enterprise/tsconfig.node.json enterprise/eslint.config.mjs ./
 COPY enterprise/apps/api/package.json apps/api/package.json
 COPY enterprise/apps/web/package.json apps/web/package.json

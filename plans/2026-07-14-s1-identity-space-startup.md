@@ -3,7 +3,7 @@ title: "S1 Identity Space Startup Plan"
 description: "奇点S1身份、空间授权与启动切片之可恢复执行计划"
 author: "Codex"
 date: "2026-07-14"
-version: "1.6.0"
+version: "1.7.1"
 status: "active"
 tags: ["plan", "s1", "identity", "space", "authorization"]
 ---
@@ -23,10 +23,12 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 | 1.4.0 | 2026-07-14 | Codex | 架构、安全、Schema与测试治理复评通过；进入S1实现阶段 |
 | 1.5.0 | 2026-07-15 | Codex | S1首轮实现及本地Node 24门禁完成，进入代码复评 |
 | 1.6.0 | 2026-07-15 | Codex | 代码复评发现API/Web及L0阻断，补修复架构与供应链ADR并退回实现阶段 |
+| 1.7.0 | 2026-07-15 | Codex | API/Web与L0复评阻断清零，固定真实供应链证据并进入最终验证前文档收口 |
+| 1.7.1 | 2026-07-15 | Codex | 本地最终verification通过，拆分稳定提交、PostgreSQL CI和正式上游merge后续状态 |
 
 ## Objective
 
-成S1：首次初始化、本地会话、授权空间列表与启动合同、React组织/空间路由；越权拒绝；`verify:s0-s3`增非空HTTP与component证据；评审验证毕，提交推送。
+完成S1：首次初始化、本地会话、授权空间列表与启动合同、React组织/空间路由；越权拒绝；`verify:s0-s3`增非空HTTP与component证据；评审验证毕，提交推送。
 
 ## Background
 
@@ -67,20 +69,19 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - [x] 首轮Node 24本地static、unit、component、build与三视口browser integration门禁通过。
 - [x] 代码与测试价值复评完成；结论不通过，已记录API/Web/L0阻断。
 - [x] S1复评修复架构定稿；L0 Fork与供应链决策见ADR-014。
-- [ ] 实现并复评OpenAPI、撤权锁、运维边界、数据库约束与死代码收敛。
-- [ ] 实现并复评登录代次/冷却、授权缓存失效、显式单空间返回、移动侧栏与原始浏览器诊断。
-- [ ] 完成L0 Fork隔离、品牌法律、企业镜像、SBOM、漏洞、许可证和上游merge演练。
-- [ ] 最终验证、提交、推送及PostgreSQL CI收口。
+- [x] 实现并复评OpenAPI、撤权锁、运维边界、数据库约束与死代码收敛。
+- [x] 实现并复评登录代次/冷却、授权缓存失效、显式单空间返回、移动侧栏与原始浏览器诊断。
+- [x] 完成L0 Fork隔离、品牌法律、企业镜像、SBOM、漏洞、许可证和固定候选影响报告。
+- [x] API/Web、上游治理与供应链代码复评通过；Node 24 L0标准入口`82/82`。
+- [x] 完成本地最终verification，覆盖static、unit、component、build、browser integration、镜像、供应链与Git门禁。
+- [ ] 完成稳定S1提交推送及GitHub Actions PostgreSQL 17收口。
+- [ ] 以独立`--no-ff`提交合并固定上游候选，解决22个冲突路径并提升基线。
 
 ## Next Steps
 
-1. 合同/API批次：固定状态Problem OpenAPI、Cookie/header/503合同、相关空间锁、CSRF交叉会话、运维组合根、部署字段约束与死代码收敛。
-2. Web批次：取消和代次保护、`Retry-After`冷却、只消费本轮成功授权、404失效列表、显式单空间返回、移动触控与侧栏关闭。
-3. 测试治理批次：OpenAPI独立case、运维结果独立case、组件状态拆分、浏览器原始Request诊断及深色/键盘/触控证据。
-4. L0批次：删除上游workflow，完成奇点品牌法律入口、企业镜像与Trivy供应链门禁，生成上游候选影响报告。
-5. 启`code-review`与`test-governance`复评；全部阻断清零后方可进入`verification`。
-6. Node 24执行最终static/unit/build/browser门禁；本地不启动PostgreSQL，真实数据库证据由GitHub Actions PostgreSQL 17提供。
-7. 先提交推送稳定S1，再以独立`--no-ff`提交合并固定上游候选、解决冲突并重跑全门禁；更新总案、基线和本计划。
+1. 提交并推送已通过本地verification的稳定S1/L0修复，等待GitHub Actions PostgreSQL 17完成真实HTTP、operations和database integration收口。
+2. GitHub Actions全绿后，以独立`git merge --no-ff c8dcdd0860ef000a14552c619fe19c0dcb5175f5`提交解决22个冲突路径并重跑全门禁。
+3. 提升上游基线，更新本计划和总方案；只有正式merge、完整回归与CI重放完成后才标记L0完成。
 
 ## Risks
 
@@ -96,11 +97,13 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 
 - 产品：PRD逐项可判定；无实现型验收；两独立复评无阻断。
 - 架构：合同至层级矩阵、真实/模拟边界、runner、入口、清理齐。
-- 首轮实现证据：Node 24.18.0与pnpm 11.9.0下`lint:s0-s3`、`typecheck:s0-s3`和`build:s0-s3`通过；contracts `10/10`、API unit `40/40`、Web Vitest `20/20`，其中S1身份/空间目标`9/9`通过。该证据早于复评修复，不能替代最终验证。
+- 最终本地verification：Node 24.18.0与pnpm 11.9.0下`lint:s0-s3`、`typecheck:s0-s3`、`build:s0-s3`、contracts `10/10`、API unit `41/41`、真实Nest失败operations聚焦 `1/1`、Web component `22/22`及三视口Playwright browser integration `21/21`通过；完整integration标准入口仍由PostgreSQL 17 CI拥有。
 - PostgreSQL：本机服务按方案未启动；迁移回放、真实HTTP、运维与并发集成由GitHub `space-session` PostgreSQL 17 service运行，结果待推送后收口。
-- 首轮Web证据：Playwright browser integration在desktop、390x844 mobile与320x568三项目共`15/15`通过。复评发现原诊断对同URL并发和业务allowlist可能假绿，修复后必须重跑并替代该证据。
+- Web证据：修复后的Playwright browser integration在desktop、390x844 mobile与320x568三项目共`21/21`通过；诊断按原始Request保留并发请求、响应、失败和pending，不在共享support内预判业务结果。
+- L0证据：标准Node runner `82/82`；API raw SBOM与只读断网运行图均为115个唯一npm PURL且双向差集为零，Web运行镜像npm组件为零；源码许可证`2005 allowed / 0 denied / 0 unknown`，源码加API/Web为`2293 allowed / 0 denied / 0 unknown`；三份非空漏洞报告合计`0 fixable / 0 unfixed / 0 total`。
+- 上游证据：真实基线校验全项通过；固定候选影响报告覆盖451个变更路径并发现22个冲突路径。该报告不是成功merge，正式`--no-ff`合并仍待稳定S1提交与CI之后独立执行。
 - Git：`git diff --check`、工作树审计；提交后`origin/master`与HEAD同。
 
 ## Resume Guide
 
-先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构、ADR-013与ADR-014；再查`git status`、goal、agents。当前处于复评失败后的implementation，禁止直接进入verification。系统Node22；用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL。
+先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构、ADR-013与ADR-014；再查`git status`、goal、agents。本地最终verification已经通过，下一步是稳定提交推送并等待GitHub PostgreSQL 17 CI；系统Node22，复核时用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL；正式上游merge须在稳定S1提交与GitHub CI全绿后独立执行。

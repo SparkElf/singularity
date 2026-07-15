@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { collectBrowserDiagnostics } from "./support/diagnostics.ts";
+import {
+  collectBrowserDiagnostics,
+  expectBrowserHealthy,
+} from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
@@ -8,7 +11,7 @@ const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
 const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const CSRF_TOKEN = "A".repeat(43);
-const MAX_API_REQUEST_DURATION_MS = 5_000;
+const MAX_REQUEST_DURATION_MS = 5_000;
 
 const LONG_ORGANIZATION_NAME =
   "银河系企业知识与工程协作研究中心超长组织名称用于验证最窄布局";
@@ -205,34 +208,38 @@ test("keyboard login reaches only the authorized responsive space list", async (
     }
   }
 
-  expect(diagnostics.consoleMessages).toEqual([]);
-  expect(diagnostics.pageErrors).toEqual([]);
+  const apiRequests = diagnostics.requests.filter((request) =>
+    new URL(request.url()).pathname.startsWith("/api/v1/"),
+  );
   expect(
-    diagnostics.requests.map((request) => ({
-      failure: request.failure,
-      method: request.request.method(),
-      path: new URL(request.request.url()).pathname,
-      status: request.status,
+    apiRequests.map((request) => ({
+      method: request.method(),
+      path: new URL(request.url()).pathname,
     })),
   ).toEqual([
     {
-      failure: null,
       method: "POST",
       path: "/api/v1/auth/login",
-      status: 200,
     },
     {
-      failure: null,
       method: "GET",
       path: "/api/v1/spaces",
-      status: 200,
     },
   ]);
-  for (const request of diagnostics.requests) {
-    expect(request.finishedAt).not.toBeNull();
-    expect(request.durationMs).not.toBeNull();
-    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
-  }
+  expect(
+    diagnostics.responses
+      .filter((response) =>
+        new URL(response.url()).pathname.startsWith("/api/v1/"),
+      )
+      .map((response) => ({
+        path: new URL(response.url()).pathname,
+        status: response.status(),
+      })),
+  ).toEqual([
+    { path: "/api/v1/auth/login", status: 200 },
+    { path: "/api/v1/spaces", status: 200 },
+  ]);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });
 
 test("an account without space access sees an explicit empty state", async ({ page }) => {
@@ -248,20 +255,17 @@ test("an account without space access sees an explicit empty state", async ({ pa
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
-  expect(diagnostics.consoleMessages).toEqual([]);
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(diagnostics.requests).toHaveLength(1);
-  expect(diagnostics.requests[0]?.request.method()).toBe("GET");
-  expect(new URL(diagnostics.requests[0]!.request.url()).pathname).toBe(
-    "/api/v1/spaces",
+  const spaceRequests = diagnostics.requests.filter(
+    (request) => new URL(request.url()).pathname === "/api/v1/spaces",
   );
-  expect(diagnostics.requests[0]?.status).toBe(200);
-  expect(diagnostics.requests[0]?.failure).toBeNull();
-  expect(diagnostics.requests[0]?.finishedAt).not.toBeNull();
-  expect(diagnostics.requests[0]?.durationMs).not.toBeNull();
-  expect(diagnostics.requests[0]!.durationMs!).toBeLessThan(
-    MAX_API_REQUEST_DURATION_MS,
+  const spaceResponses = diagnostics.responses.filter(
+    (response) => new URL(response.url()).pathname === "/api/v1/spaces",
   );
+  expect(spaceRequests).toHaveLength(1);
+  expect(spaceRequests[0]?.method()).toBe("GET");
+  expect(spaceResponses).toHaveLength(1);
+  expect(spaceResponses[0]?.status()).toBe(200);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });
 
 test("dark design tokens keep the authorized space list readable", async ({
@@ -294,14 +298,14 @@ test("dark design tokens keep the authorized space list readable", async ({
     4.5,
   );
 
-  expect(diagnostics.consoleMessages).toEqual([]);
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(diagnostics.requests).toHaveLength(1);
-  expect(diagnostics.requests[0]?.status).toBe(200);
-  expect(diagnostics.requests[0]?.failure).toBeNull();
-  expect(diagnostics.requests[0]?.finishedAt).not.toBeNull();
-  expect(diagnostics.requests[0]?.durationMs).not.toBeNull();
-  expect(diagnostics.requests[0]!.durationMs!).toBeLessThan(
-    MAX_API_REQUEST_DURATION_MS,
+  const spaceRequests = diagnostics.requests.filter(
+    (request) => new URL(request.url()).pathname === "/api/v1/spaces",
   );
+  const spaceResponses = diagnostics.responses.filter(
+    (response) => new URL(response.url()).pathname === "/api/v1/spaces",
+  );
+  expect(spaceRequests).toHaveLength(1);
+  expect(spaceResponses).toHaveLength(1);
+  expect(spaceResponses[0]?.status()).toBe(200);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });

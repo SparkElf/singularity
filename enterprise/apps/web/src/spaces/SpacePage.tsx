@@ -291,10 +291,13 @@ export function SpacePage() {
     refetchOnMount: "always",
     staleTime: 0,
   });
+  const hasCurrentRuntime =
+    runtimeQuery.isSuccess &&
+    runtimeQuery.isFetchedAfterMount &&
+    !runtimeQuery.isFetching &&
+    !runtimeQuery.isPaused;
   const runtime =
-    runtimeQuery.isSuccess && !runtimeQuery.isFetching
-      ? runtimeQuery.data
-      : undefined;
+    hasCurrentRuntime ? runtimeQuery.data : undefined;
   const runtimeDataUpdatedAt = runtime ? runtimeQuery.dataUpdatedAt : 0;
   const runtimeError = runtimeQuery.error;
   const runtimeIsFetching = runtimeQuery.isFetching;
@@ -307,11 +310,17 @@ export function SpacePage() {
   const pollAttempts =
     pollState.routeKey === routeKey ? pollState.attempts : 0;
   const runtimeNotFound =
-    !runtimeQuery.isFetching && isApiProblem(runtimeQuery.error, "not-found");
+    runtimeQuery.isFetchedAfterMount &&
+    !runtimeQuery.isFetching &&
+    !runtimeQuery.isPaused &&
+    isApiProblem(runtimeQuery.error, "not-found");
+  const hasCurrentAuthorization =
+    spacesQuery.isSuccess &&
+    spacesQuery.isFetchedAfterMount &&
+    !spacesQuery.isFetching &&
+    !spacesQuery.isPaused;
   const authorizedSpaces =
-    spacesQuery.isSuccess && !spacesQuery.isFetching
-      ? spacesQuery.data.spaces
-      : [];
+    hasCurrentAuthorization ? spacesQuery.data.spaces : [];
   const spaces = runtimeNotFound
     ? authorizedSpaces.filter(
         (space) =>
@@ -340,7 +349,7 @@ export function SpacePage() {
       runtimeKernelState !== "starting" ||
       runtimeError ||
       runtimeIsFetching ||
-      !spacesQuery.isSuccess ||
+      !hasCurrentAuthorization ||
       !currentSpace ||
       !pageVisible ||
       pollAttempts >= MAX_STARTING_POLLS
@@ -367,7 +376,7 @@ export function SpacePage() {
     runtimeError,
     runtimeIsFetching,
     refetchRuntime,
-    spacesQuery.isSuccess,
+    hasCurrentAuthorization,
     currentSpace,
   ]);
 
@@ -403,7 +412,16 @@ export function SpacePage() {
   );
 
   let content: ReactNode;
-  if (runtimeNotFound) {
+  if (spacesQuery.isPaused || runtimeQuery.isPaused) {
+    content = (
+      <WorkspaceState
+        actions={actions}
+        description="无法连接到服务，请检查网络后重试。"
+        icon={WifiOffIcon}
+        title="无法加载空间"
+      />
+    );
+  } else if (runtimeNotFound) {
     content = (
       <WorkspaceState
         actions={
@@ -446,7 +464,7 @@ export function SpacePage() {
     );
   } else if (
     isApiProblem(runtimeQuery.error, "forbidden") ||
-    (spacesQuery.isSuccess && !spacesQuery.isFetching && !currentSpace)
+    (hasCurrentAuthorization && !currentSpace)
   ) {
     content = (
       <WorkspaceState

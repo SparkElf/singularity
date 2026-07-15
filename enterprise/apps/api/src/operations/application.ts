@@ -54,7 +54,10 @@ export async function runAccessOperationsApplication(
         databaseUrl: options.databaseUrl,
         initializeDummyPasswordHash: false,
       }),
-      { logger: createOperationsLogger(options.stderr) },
+      {
+        abortOnError: false,
+        logger: createOperationsLogger(options.stderr),
+      },
     );
   } catch {
     return writeFailedAccessOperation(options.stdout, options.stderr);

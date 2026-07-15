@@ -2,6 +2,9 @@ packages:
   - "apps/*"
   - "packages/*"
 engineStrict: true
+injectWorkspacePackages: true
+syncInjectedDepsAfterScripts:
+  - build
 overrides:
   '@types/node': 24.13.3
 allowBuilds:
