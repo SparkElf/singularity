@@ -3,7 +3,7 @@ title: "S1 Identity Space Startup Plan"
 description: "奇点S1身份、空间授权与启动切片之可恢复执行计划"
 author: "Codex"
 date: "2026-07-14"
-version: "1.7.1"
+version: "1.7.2"
 status: "active"
 tags: ["plan", "s1", "identity", "space", "authorization"]
 ---
@@ -25,6 +25,7 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 | 1.6.0 | 2026-07-15 | Codex | 代码复评发现API/Web及L0阻断，补修复架构与供应链ADR并退回实现阶段 |
 | 1.7.0 | 2026-07-15 | Codex | API/Web与L0复评阻断清零，固定真实供应链证据并进入最终验证前文档收口 |
 | 1.7.1 | 2026-07-15 | Codex | 本地最终verification通过，拆分稳定提交、PostgreSQL CI和正式上游merge后续状态 |
+| 1.7.2 | 2026-07-15 | Codex | 稳定提交与GitHub Actions全绿，收口PostgreSQL 17和CI供应链证据 |
 
 ## Objective
 
@@ -72,16 +73,16 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - [x] 实现并复评OpenAPI、撤权锁、运维边界、数据库约束与死代码收敛。
 - [x] 实现并复评登录代次/冷却、授权缓存失效、显式单空间返回、移动侧栏与原始浏览器诊断。
 - [x] 完成L0 Fork隔离、品牌法律、企业镜像、SBOM、漏洞、许可证和固定候选影响报告。
-- [x] API/Web、上游治理与供应链代码复评通过；Node 24 L0标准入口`82/82`。
+- [x] API/Web、上游治理与供应链代码复评通过；Node 24 L0标准入口`84/84`。
 - [x] 完成本地最终verification，覆盖static、unit、component、build、browser integration、镜像、供应链与Git门禁。
-- [ ] 完成稳定S1提交推送及GitHub Actions PostgreSQL 17收口。
+- [x] 稳定S1/L0提交`8f7ed852a`已推送；GitHub Actions run `29410946297`的PostgreSQL 17与供应链门禁全绿。
 - [ ] 以独立`--no-ff`提交合并固定上游候选，解决22个冲突路径并提升基线。
 
 ## Next Steps
 
-1. 提交并推送已通过本地verification的稳定S1/L0修复，等待GitHub Actions PostgreSQL 17完成真实HTTP、operations和database integration收口。
-2. GitHub Actions全绿后，以独立`git merge --no-ff c8dcdd0860ef000a14552c619fe19c0dcb5175f5`提交解决22个冲突路径并重跑全门禁。
-3. 提升上游基线，更新本计划和总方案；只有正式merge、完整回归与CI重放完成后才标记L0完成。
+1. 提交并推送本次证据收口文档，确认对应GitHub Actions保持全绿。
+2. 以独立`git merge --no-ff c8dcdd0860ef000a14552c619fe19c0dcb5175f5`提交解决22个冲突路径并重跑全门禁。
+3. merge结果GitHub Actions全绿后提升上游基线并再次更新本计划和总方案；只有正式merge、完整回归与CI重放完成后才标记L0完成。
 
 ## Risks
 
@@ -98,12 +99,12 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - 产品：PRD逐项可判定；无实现型验收；两独立复评无阻断。
 - 架构：合同至层级矩阵、真实/模拟边界、runner、入口、清理齐。
 - 最终本地verification：Node 24.18.0与pnpm 11.9.0下`lint:s0-s3`、`typecheck:s0-s3`、`build:s0-s3`、contracts `10/10`、API unit `41/41`、真实Nest失败operations聚焦 `1/1`、Web component `22/22`及三视口Playwright browser integration `21/21`通过；完整integration标准入口仍由PostgreSQL 17 CI拥有。
-- PostgreSQL：本机服务按方案未启动；迁移回放、真实HTTP、运维与并发集成由GitHub `space-session` PostgreSQL 17 service运行，结果待推送后收口。
+- PostgreSQL：本机服务按方案未启动；GitHub Actions run `29410946297`的`space-session`在PostgreSQL 17 service上完成迁移回放、真实HTTP、运维与并发集成并通过。
 - Web证据：修复后的Playwright browser integration在desktop、390x844 mobile与320x568三项目共`21/21`通过；诊断按原始Request保留并发请求、响应、失败和pending，不在共享support内预判业务结果。
-- L0证据：标准Node runner `82/82`；API raw SBOM与只读断网运行图均为115个唯一npm PURL且双向差集为零，Web运行镜像npm组件为零；源码许可证`2005 allowed / 0 denied / 0 unknown`，源码加API/Web为`2293 allowed / 0 denied / 0 unknown`；三份非空漏洞报告合计`0 fixable / 0 unfixed / 0 total`。
-- 上游证据：真实基线校验全项通过；固定候选影响报告覆盖451个变更路径并发现22个冲突路径。该报告不是成功merge，正式`--no-ff`合并仍待稳定S1提交与CI之后独立执行。
+- L0证据：标准Node runner `84/84`；API raw SBOM与只读断网运行图均为115个唯一npm PURL且双向差集为零，Web运行镜像npm组件为零；本地许可证为源码`2005 allowed / 0 denied / 0 unknown`、总计`2293 allowed / 0 denied / 0 unknown`，run `29410946297`为源码`2006 / 0 / 0`、总计`2294 / 0 / 0`；CI raw SBOM保留`exp-html`的scanner `BSD-2-Clause`，canonical SBOM以完整历史来源链证明`BSD-3-Clause`并记录原值；三份非空漏洞报告合计`0 fixable / 0 unfixed / 0 total`。
+- 上游证据：真实基线校验全项通过；固定候选影响报告覆盖451个变更路径并发现22个冲突路径。该报告不是成功merge；稳定提交与CI前置条件已经满足，正式`--no-ff`合并仍须独立执行。
 - Git：`git diff --check`、工作树审计；提交后`origin/master`与HEAD同。
 
 ## Resume Guide
 
-先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构、ADR-013与ADR-014；再查`git status`、goal、agents。本地最终verification已经通过，下一步是稳定提交推送并等待GitHub PostgreSQL 17 CI；系统Node22，复核时用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL；正式上游merge须在稳定S1提交与GitHub CI全绿后独立执行。
+先读`/root/projects/AGENTS.md`、仓库`AGENTS.md`、本计划、S1 PRD、空间架构、ADR-013与ADR-014；再查`git status`、goal、agents。稳定提交`8f7ed852a`与GitHub Actions run `29410946297`已经全绿；先提交推送本次证据更新并确认CI，再独立执行固定候选正式`--no-ff` merge。系统Node22，复核时用`/root/.cache/pnpm/dlx/cb39032a5e9268a038762c66ab60f208/pkg/node_modules/.bin`前置PATH，并以`/root/.cache/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs`执行。勿启本地PostgreSQL。
