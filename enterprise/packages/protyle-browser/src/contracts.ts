@@ -92,6 +92,10 @@ export type ProtyleHostEvent =
       blockIds: readonly string[];
     }
   | {
+      type: "add-blocks-to-agent";
+      blockIds: readonly string[];
+    }
+  | {
       type: "open-asset";
       assetPath: string;
       page?: number;

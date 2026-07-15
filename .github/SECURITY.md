@@ -3,7 +3,7 @@ title: "Singularity Security Policy"
 description: "Private reporting and assessment policy for suspected Singularity vulnerabilities."
 author: "Singularity Contributors"
 date: "2026-07-15"
-version: "1.0.0"
+version: "1.0.1"
 status: "approved"
 tags: ["security", "vulnerability-disclosure"]
 ---
@@ -16,6 +16,7 @@ tags: ["security", "vulnerability-disclosure"]
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.0.1 | 2026-07-15 | Singularity Contributors | Clarified assessment boundaries for authenticated outbound requests |
 | 1.0.0 | 2026-07-15 | Singularity Contributors | Established the Singularity vulnerability-reporting policy |
 
 ## Table of Contents
@@ -39,6 +40,8 @@ Include the affected revision, deployment context, prerequisites, reproduction s
 ## Assessment
 
 Reports are evaluated case by case using demonstrated impact, reachability, trust boundaries, and documented behavior. No vulnerability category is excluded in advance; reports involving injection, server-side request forgery, authorization bypass, unauthorized file access, or unsafe content handling are assessed under the same evidence-based process.
+
+Outbound requests initiated by authenticated users through user-configured proxies or to user-specified URLs are expected capabilities. Reports remain in scope when the request path is reachable without authentication, crosses authorization boundaries, or enables authentication or authorization bypass.
 
 Behavior inherited unchanged from SiYuan may also affect its upstream users. The Singularity maintainers will identify upstream relevance during triage and coordinate disclosure when appropriate.
 

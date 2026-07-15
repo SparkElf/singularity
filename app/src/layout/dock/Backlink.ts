@@ -11,7 +11,8 @@ import {Protyle} from "../../protyle";
 import {MenuItem} from "../../menus/Menu";
 import {App} from "../../index";
 import {isSupportCSSHL, searchMarkRender} from "../../protyle/render/searchMarkRender";
-import {getDocDisplayName} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
+import {getAllModels} from "../getAll";
 
 export class Backlink extends Model {
     public element: HTMLElement;
@@ -522,13 +523,27 @@ export class Backlink extends Model {
             return;
         }
         element.classList.add("fn__rotate");
-        fetchPost("/api/ref/getBacklink2", {
+        // 解析当前反链面板所属 box：优先用已记录的 notebookId，首次为空时按 rootId 在已打开的编辑器里查找
+        let notebookId = this.notebookId;
+        if (!notebookId && this.rootId) {
+            getAllModels().editor.some(item => {
+                if (item.editor.protyle.block.rootID === this.rootId) {
+                    notebookId = item.editor.protyle.notebookId;
+                    return true;
+                }
+            });
+        }
+        const param: IObject = {
             sort: parseInt(this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').getAttribute("data-sort")).toString(),
             mSort: parseInt(this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').getAttribute("data-sort")).toString(),
             k: this.inputsElement[0].value,
             mk: this.inputsElement[1].value,
             id: this.blockId,
-        }, response => {
+        };
+        if (isEncryptedBox(notebookId)) {
+            param.notebook = notebookId;
+        }
+        fetchPost("/api/ref/getBacklink2", param, response => {
             if (!init) {
                 this.saveStatus();
             }
@@ -536,16 +551,20 @@ export class Backlink extends Model {
         }, undefined, undefined, this.abortController.signal);
     }
 
-    public updateForCurrentEditor(blockId: string, isCurrent: () => boolean) {
+    public updateForCurrentEditor(blockId: string, isCurrent: () => boolean, notebookId?: string) {
         const element = this.element.querySelector('.block__icon[data-type="refresh"] svg');
         element.classList.add("fn__rotate");
-        fetchPost("/api/ref/getBacklink2", {
+        const param: IObject = {
             sort: this.status[blockId] ? this.status[blockId].sort.toString() : window.siyuan.config.editor.backlinkSort.toString(),
             mSort: this.status[blockId] ? this.status[blockId].mSort.toString() : window.siyuan.config.editor.backmentionSort.toString(),
             id: blockId,
             k: this.inputsElement[0].value,
             mk: this.inputsElement[1].value,
-        }, response => {
+        };
+        if (isEncryptedBox(notebookId)) {
+            param.notebook = notebookId;
+        }
+        fetchPost("/api/ref/getBacklink2", param, response => {
             if (!isCurrent() || this.blockId === blockId) {
                 element.classList.remove("fn__rotate");
                 return;

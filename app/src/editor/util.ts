@@ -5,15 +5,12 @@ import {getInstanceById, getWndByLayout, pdfIsLoading, setPanelFocus} from "../l
 import {getDockByType} from "../layout/tabUtil";
 import {getAllModels, getAllTabs} from "../layout/getAll";
 import {highlightById, scrollCenter} from "../util/highlightById";
-import {getDisplayName, getDocDisplayName, pathPosix, useShell} from "../util/pathName";
+import {getDisplayName, getDocDisplayName, isEncryptedBox, pathPosix} from "../util/pathName";
 import {Constants} from "../constants";
 import {Files} from "../layout/dock/Files";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {focusBlock, focusByOffset, focusByRange} from "../protyle/util/selection";
 import {onGet} from "../protyle/util/onGet";
-/// #if !BROWSER
-import {ipcRenderer} from "electron";
-/// #endif
 import {pushBack} from "../util/backForward";
 import {Asset} from "../asset";
 import {Layout} from "../layout";
@@ -200,30 +197,6 @@ export const openFile = async (options: IOpenFileOptions) => {
         }
     }
 
-    /// #if !BROWSER
-    // https://github.com/siyuan-note/siyuan/issues/7491
-    if (!options.position || (options.position === "right" && options.assetPath)) {
-        let hasMatch = false;
-        const optionsClone: IObject = {};
-        Object.keys(options).forEach((key: keyof IOpenFileOptions) => {
-            if (key !== "app" && options[key] && typeof options[key] !== "function") {
-                optionsClone[key] = JSON.parse(JSON.stringify(options[key]));
-            }
-        });
-        hasMatch = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
-            cmd: Constants.SIYUAN_OPEN_FILE,
-            options: JSON.stringify(optionsClone),
-            port: location.port,
-        });
-        if (hasMatch) {
-            if (options.afterOpen) {
-                options.afterOpen();
-            }
-            return;
-        }
-    }
-    /// #endif
-
     let wnd: Wnd = undefined;
     // 获取光标所在 tab
     const element = document.querySelector(".layout__wnd--active");
@@ -375,11 +348,15 @@ const switchEditor = (editor: Editor, options: IOpenFileOptions, allModels: IMod
         }
     });
     if ((!nodeElement || nodeElement?.clientHeight === 0) && options.id !== options.rootID) {
-        fetchPost("/api/filetree/getDoc", {
+        const getDocParam: IObject = {
             id: options.id,
             mode: (options.action && options.action.includes(Constants.CB_GET_CONTEXT)) ? 3 : 0,
             size: window.siyuan.config.editor.dynamicLoadBlocks,
-        }, getResponse => {
+        };
+        if (isEncryptedBox(editor.editor.protyle.notebookId)) {
+            getDocParam.notebook = editor.editor.protyle.notebookId;
+        }
+        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
             onGet({
                 data: getResponse,
                 protyle: editor.editor.protyle,
@@ -637,10 +614,14 @@ export const updateOutline = (models: IModels, protyle: IProtyle, reload = false
                 return;
             }
 
-            fetchPost("/api/outline/getDocOutline", {
+            const outlineParam: IObject = {
                 id: blockId,
                 preview: !protyle.preview.element.classList.contains("fn__none")
-            }, response => {
+            };
+            if (protyle && isEncryptedBox(protyle.notebookId)) {
+                outlineParam.notebook = protyle.notebookId;
+            }
+            fetchPost("/api/outline/getDocOutline", outlineParam, response => {
                 if (!reload && (!isCurrentEditor(blockId) || item.blockId === blockId) &&
                     item.isPreview !== protyle.preview.element.classList.contains("fn__none")) {
                     return;
@@ -701,42 +682,11 @@ export const updateBacklinkGraph = (models: IModels, protyle: IProtyle) => {
         if (blockId === item.blockId) {
             return;
         }
-        item.updateForCurrentEditor(blockId, () => isCurrentEditor(blockId));
+        item.updateForCurrentEditor(blockId, () => isCurrentEditor(blockId), protyle?.notebookId);
     });
 };
 
 export const openBy = (url: string, type: "folder" | "app") => {
-    /// #if !BROWSER
-    if (url.startsWith("assets/")) {
-        fetchPost("/api/asset/resolveAssetPath", {path: url.replace(/\.pdf\?page=\d{1,}$/, ".pdf")}, (response) => {
-            if (type === "app") {
-                useShell("openPath", response.data);
-            } else if (type === "folder") {
-                useShell("showItemInFolder", response.data);
-            }
-        });
-        return;
-    }
-    let address = "";
-    if ("windows" === window.siyuan.config.system.os) {
-        // `file://` 协议兼容 Window 平台使用 `/` 作为目录分割线 https://github.com/siyuan-note/siyuan/issues/5681
-        address = url.replace("file:///", "").replace("file://\\", "").replace("file://", "").replace(/\//g, "\\");
-    } else {
-        address = url.replace("file://", "");
-    }
-
-    // 拖入文件名包含 `)` 、`(` 的文件以 `file://` 插入后链接解析错误 https://github.com/siyuan-note/siyuan/issues/5786
-    address = address.replace(/\\\)/g, ")").replace(/\\\(/g, "(");
-    if (type === "app") {
-        useShell("openPath", address);
-    } else if (type === "folder") {
-        if ("windows" === window.siyuan.config.system.os) {
-            if (!address.startsWith("\\\\")) { // \\ 开头的路径是 Windows 网络共享路径 https://github.com/siyuan-note/siyuan/issues/5980
-                // Windows 端打开本地文件所在位置失效 https://github.com/siyuan-note/siyuan/issues/5808
-                address = address.replace(/\\\\/g, "\\");
-            }
-        }
-        useShell("showItemInFolder", address);
-    }
-    /// #endif
+    void url;
+    void type;
 };

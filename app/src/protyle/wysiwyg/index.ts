@@ -68,7 +68,8 @@ import {getBacklinkHeadingMore, loadBreadcrumb} from "./renderBacklink";
 import {removeSearchMark} from "../toolbar/util";
 import {commonClick} from "./commonClick";
 import {avClick, avContextmenu, updateAVName} from "../render/av/action";
-import {selectRow, stickyRow} from "../render/av/row";
+import {selectRow, stickyRow, updateHeader} from "../render/av/row";
+import {updateAVRowSelect} from "../render/av/virtualScroll";
 import {showColMenu} from "../render/av/col";
 import {openViewMenu} from "../render/av/view";
 import {checkFold} from "../../util/noRelyPCFunction";
@@ -96,6 +97,7 @@ import {updateCalloutType} from "./callout";
 import {nbsp2space, removeZWJ} from "../util/normalizeText";
 import {setFold} from "../util/blockFold";
 import {BlockPanel} from "../../block/Panel";
+import {isEncryptedBox} from "../../util/pathName";
 
 export class WYSIWYG {
     public lastHTMLs: { [key: string]: string } = {};
@@ -127,7 +129,7 @@ export class WYSIWYG {
         dropEvent(protyle, this.element);
     }
 
-    public renderCustom(ial: IObject) {
+    public renderCustom(ial: Record<string, string>) {
         let isFullWidth = ial[Constants.CUSTOM_SY_FULLWIDTH];
         if (!isFullWidth) {
             isFullWidth = window.siyuan.config.editor.fullWidth ? "true" : "false";
@@ -595,9 +597,17 @@ export class WYSIWYG {
                             break;
                         }
                     }
-                    previousList.concat(nextList).forEach(item => {
+                    // 锚点卡片及范围内卡片统一选中并同步虚拟滚动选中快照
+                    const shiftSelectItems = [galleryItemElement].concat(previousList as HTMLElement[]).concat(nextList as HTMLElement[]);
+                    shiftSelectItems.forEach(item => {
                         item.classList.add("av__gallery-item--select");
+                        const galleryBodyElement = hasClosestByClassName(item, "av__body") as HTMLElement;
+                        const galleryRowId = item.getAttribute("data-id");
+                        if (galleryBodyElement && galleryRowId) {
+                            updateAVRowSelect(galleryBodyElement, galleryRowId, true);
+                        }
                     });
+                    updateHeader(galleryItemElement);
                     event.preventDefault();
                 } else if (startElement && endElement && startElement !== endElement) {
                     let toDown = true;
@@ -703,7 +713,13 @@ export class WYSIWYG {
                 const rowElement = hasClosestByClassName(target, "av__row");
                 if (!hasSelectClassElement && (galleryItemElement || (rowElement && !rowElement.classList.contains("av__row--header")))) {
                     if (galleryItemElement) {
-                        galleryItemElement.classList.toggle("av__gallery-item--select");
+                        const galleryBodyElement = hasClosestByClassName(galleryItemElement, "av__body") as HTMLElement;
+                        const galleryRowId = galleryItemElement.getAttribute("data-id");
+                        if (galleryBodyElement && galleryRowId) {
+                            updateAVRowSelect(galleryBodyElement, galleryRowId,
+                                galleryItemElement.classList.toggle("av__gallery-item--select"));
+                        }
+                        updateHeader(galleryItemElement);
                     } else if (rowElement) {
                         selectRow(rowElement.querySelector(".av__firstcol"), "toggle");
                     }
@@ -818,18 +834,15 @@ export class WYSIWYG {
                     child.appendChild(tip);
                     tips.push({el: tip, child});
                 });
-                // 份额池：每个子块占 100 的整数份额，总和恒为 100
-                // 从子块 style.width 的 calc 百分比恢复，无 width 的用实测宽度估算
-                // 最大余数法取整确保总和精确 = 100，跨拖拽起始显示一致
-                const rawPcts = sbChildren.map(child => {
-                    const m = child.style.width.match(/^calc\(([\d.]+)%/);
-                    return m ? parseFloat(m[1]) : child.getBoundingClientRect().width / sbWidth * 100;
-                });
-                const totalRaw = rawPcts.reduce((s, p) => s + p, 0) || 1;
-                const normalized = rawPcts.map(p => p / totalRaw * 100);
-                const shares = normalized.map(p => Math.floor(p));
-                const deficit = 100 - shares.reduce((s, p) => s + p, 0);
-                const remainders = normalized
+                // 份额池：每个子块占 100 的份额（一位小数），总和恒为 100
+                // 从子块实测宽度按比例分配，与 calc 百分比无关（calc 含 gap 补偿，坐标系不同）
+                // 最大余数法取整确保总和精确 = 100，拖拽中实时更新两侧份额
+                const rawPcts = sbChildren.map(child => child.getBoundingClientRect().width);
+                const totalWidth = rawPcts.reduce((s, w) => s + w, 0) || 1;
+                const scaled = rawPcts.map(w => w / totalWidth * 1000);
+                const shares = scaled.map(p => Math.floor(p));
+                const deficit = 1000 - shares.reduce((s, p) => s + p, 0);
+                const remainders = scaled
                     .map((p, i) => ({i, frac: p - Math.floor(p)}))
                     .sort((a, b) => b.frac - a.frac);
                 for (let k = 0; k < deficit && k < remainders.length; k++) {
@@ -839,7 +852,7 @@ export class WYSIWYG {
                 const rightIdx = sbChildren.indexOf(nextElement);
                 const updateTips = () => {
                     tips.forEach(({el}, i) => {
-                        el.textContent = `${shares[i]}%`;
+                        el.textContent = `${(shares[i] / 10).toFixed(1)}%`;
                     });
                 };
                 // 记录最终拖拽宽度，供 mouseup 精确计算百分比，避免从 clientWidth（整数取整）
@@ -867,11 +880,12 @@ export class WYSIWYG {
                     previousElement.style.flex = "none";
                     nextElement.style.width = newRightWidth + "px";
                     nextElement.style.flex = "none";
-                    // 更新份额池：左块份额 = 当前宽度占比 × 100（整数），右块 = 100 - 左块 - 其他块份额
-                    const newLeftShare = Math.max(1, Math.round(newLeftWidth / sbWidth * 100));
+                    // 更新份额池：左块份额 = 当前宽度 / 子块总宽度 × 1000，右块 = 1000 - 左块 - 其他块份额
+                    // 分母用子块宽度之和（不含手柄），与 mousedown 初始化一致
+                    const newLeftShare = Math.max(1, Math.round(newLeftWidth / totalWidth * 1000));
                     const othersSum = shares.reduce((s, p, i) => i === leftIdx || i === rightIdx ? s : s + p, 0);
                     shares[leftIdx] = newLeftShare;
-                    shares[rightIdx] = Math.max(1, 100 - othersSum - newLeftShare);
+                    shares[rightIdx] = Math.max(1, 1000 - othersSum - newLeftShare);
                     updateTips();
                 };
                 documentSelf.onmouseup = (mouseupEvent) => {
@@ -1192,6 +1206,7 @@ export class WYSIWYG {
                     documentSelf.onselectstart = null;
                     documentSelf.onselect = null;
                     if (target.classList.contains("protyle-action__drag") && nodeElement) {
+                        focusBlock(nodeElement);
                         updateTransaction(protyle, nodeElement, html);
                     }
                     nodeElement.classList.remove("iframe--drag");
@@ -2056,7 +2071,7 @@ export class WYSIWYG {
             }
             // https://github.com/siyuan-note/siyuan/issues/17800 不能删除
             const embedElement = isInEmbedBlock(nodeElement);
-            if (embedElement) {
+            if (embedElement && !embedElement.classList.contains("protyle-wysiwyg--select")) {
                 event.stopPropagation();
                 event.preventDefault();
                 return;
@@ -2611,11 +2626,15 @@ export class WYSIWYG {
             if (!preventGetTopHTML && !protyle.scroll.element.classList.contains("fn__none")) {
                 if (event.deltaY < 0 && protyle.wysiwyg.element.firstElementChild.getAttribute("data-eof") !== "1" &&
                     (protyle.contentElement.clientHeight === protyle.contentElement.scrollHeight || protyle.contentElement.scrollTop === 0)) {
-                    fetchPost("/api/filetree/getDoc", {
+                    const getDocParam: IObject = {
                         id: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
                         mode: 1,
                         size: window.siyuan.config.editor.dynamicLoadBlocks,
-                    }, getResponse => {
+                    };
+                    if (isEncryptedBox(protyle.notebookId)) {
+                        getDocParam.notebook = protyle.notebookId;
+                    }
+                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
                         preventGetTopHTML = false;
                         onGet({
                             data: getResponse,
@@ -2627,11 +2646,15 @@ export class WYSIWYG {
                 } else if (event.deltaY > 0 && protyle.wysiwyg.element.lastElementChild.getAttribute("data-eof") !== "2" &&
                     (protyle.contentElement.clientHeight === protyle.contentElement.scrollHeight ||
                         protyle.contentElement.clientHeight + Math.ceil(protyle.contentElement.scrollTop) >= protyle.contentElement.scrollHeight)) {
-                    fetchPost("/api/filetree/getDoc", {
+                    const getDocParam: IObject = {
                         id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                         mode: 2,
                         size: window.siyuan.config.editor.dynamicLoadBlocks,
-                    }, getResponse => {
+                    };
+                    if (isEncryptedBox(protyle.notebookId)) {
+                        getDocParam.notebook = protyle.notebookId;
+                    }
+                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
                         preventGetTopHTML = false;
                         onGet({
                             data: getResponse,
@@ -2929,7 +2952,7 @@ export class WYSIWYG {
                 this.preventClick = false;
                 return;
             }
-            protyle.session.runtime.plugins.emit({
+            protyle.plugins.emit({
                 type: "click-editorcontent",
                 detail: {
                     protyle,
@@ -2943,7 +2966,7 @@ export class WYSIWYG {
                 if (breadcrumbId) {
                     if (ctrlIsPressed && !event.shiftKey && !event.altKey) {
                         checkFold(breadcrumbId, (zoomIn) => {
-                            protyle.session.runtime.host.dispatch({
+                            protyle.host.dispatch({
                                 type: "open-document",
                                 documentId: breadcrumbId,
                                 disposition: "current",
@@ -3027,7 +3050,7 @@ export class WYSIWYG {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : (ctrlIsPressed ? "background-tab" : "current"));
                         const opensInBackground = disposition === "background-tab";
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-document",
                             documentId: refBlockId,
                             disposition,
@@ -3099,7 +3122,7 @@ export class WYSIWYG {
 
             const tagElement = hasClosestByAttribute(event.target, "data-type", "tag");
             if (tagElement && !event.altKey && !event.shiftKey && range.toString() === "") {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-search",
                     query: `#${tagElement.textContent}#`,
                     queryMode: ctrlIsPressed ? "toggle-term" : "replace",
@@ -3122,10 +3145,14 @@ export class WYSIWYG {
                             reloadProtyle(protyle, true);
                             getAllModels().outline.forEach(item => {
                                 if (item.blockId === protyle.block.rootID) {
-                                    fetchPost("/api/outline/getDocOutline", {
+                                    const outlineParam: IObject = {
                                         id: item.blockId,
                                         preview: item.isPreview
-                                    }, response => {
+                                    };
+                                    if (isEncryptedBox(protyle.notebookId)) {
+                                        outlineParam.notebook = protyle.notebookId;
+                                    }
+                                    fetchPost("/api/outline/getDocOutline", outlineParam, response => {
                                         item.update(response);
                                     });
                                 }
@@ -3145,7 +3172,7 @@ export class WYSIWYG {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : "background-tab");
                         const opensInBackground = disposition === "background-tab";
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-document",
                             documentId: embedId,
                             disposition,

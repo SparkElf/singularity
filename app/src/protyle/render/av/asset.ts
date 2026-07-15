@@ -349,7 +349,7 @@ export const editAssetItem = (options: {
                 id: "insertRight",
                 icon: "iconLayoutRight",
                 label: window.siyuan.languages.insertRight,
-                click: () => options.protyle.session.runtime.host.dispatch({
+                click: () => options.protyle.host.dispatch({
                     type: "open-asset",
                     assetPath,
                     page,
@@ -359,7 +359,7 @@ export const editAssetItem = (options: {
                 id: "openBy",
                 icon: "iconOpen",
                 label: window.siyuan.languages.openBy,
-                click: () => options.protyle.session.runtime.host.dispatch({
+                click: () => options.protyle.host.dispatch({
                     type: "open-asset",
                     assetPath,
                     page,
@@ -371,7 +371,7 @@ export const editAssetItem = (options: {
             openSubMenu.push({
                 id: "useBrowserView",
                 label: window.siyuan.languages.useBrowserView,
-                click: () => options.protyle.session.runtime.host.dispatch({type: "open-external", url}),
+                click: () => options.protyle.host.dispatch({type: "open-external", url}),
             });
         }
     }

@@ -34,5 +34,5 @@ export const setEditMode = (protyle: IProtyle, type: TEditorMode) => {
         resize(protyle);
     }
     hideElements(["gutterOnly", "toolbar", "select", "hint", "util"], protyle);
-    protyle.session.runtime.plugins.emit({type: "switch-protyle-mode", detail: {protyle}});
+    protyle.plugins.emit({type: "switch-protyle-mode", detail: {protyle}});
 };

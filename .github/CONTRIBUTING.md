@@ -3,7 +3,7 @@ title: "Contributing to Singularity"
 description: "Repository workflow, quality expectations, and licensing requirements for Singularity contributions."
 author: "Singularity Contributors"
 date: "2026-07-15"
-version: "1.0.0"
+version: "1.0.1"
 status: "approved"
 tags: ["contributing", "development", "agpl"]
 ---
@@ -18,6 +18,7 @@ tags: ["contributing", "development", "agpl"]
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.0.1 | 2026-07-15 | Singularity Contributors | Documented required build tags for the SiYuan-derived Kernel |
 | 1.0.0 | 2026-07-15 | Singularity Contributors | Established the independent Singularity contribution workflow |
 
 ## Table of Contents
@@ -47,6 +48,8 @@ git switch -c your-branch-name
 ```
 
 Use the tool versions declared by the repository. The Go version is defined in `kernel/go.mod`; Node and pnpm requirements are defined by the relevant package manifests and continuous-integration configuration. Before installing dependencies, review the lockfiles, registry configuration, authentication sources, and CI setup that apply to the changed module.
+
+When building or testing the SiYuan-derived Kernel, enable CGO and pass `-tags "fts5 sqlcipher"` to both `go build` and `go test`. Continue to read tool versions and any module-specific requirements from the sources of truth above.
 
 ## Implementation and verification
 

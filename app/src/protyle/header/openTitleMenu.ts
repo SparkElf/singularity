@@ -4,6 +4,7 @@ import {copySubMenu, exportMd, movePathToMenu, openFileAttr, openFileWechatNotif
 import {deleteFile} from "../../editor/deleteFile";
 import {encodeBase64, updateHotkeyTip} from "../util/compatibility";
 import {Constants} from "../../constants";
+import {isEncryptedBox} from "../../util/pathName";
 import {quickMakeCard} from "../../card/makeCard";
 import {emitProtylePluginMenu} from "../util/plugin";
 import * as dayjs from "dayjs";
@@ -22,7 +23,8 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
         return;
     }
     fetchPost("/api/block/getDocInfo", {
-        id: protyle.block.rootID
+        id: protyle.block.rootID,
+        notebook: protyle.notebookId,
     }, (response) => {
         window.siyuan.menus.menu.remove();
         window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_TITLE);
@@ -92,7 +94,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.outline,
             accelerator: window.siyuan.config.keymap.editor.general.outline.custom,
             click: () => {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-outline",
                     documentId: protyle.block.rootID,
                     preview: !protyle.preview.element.classList.contains("fn__none"),
@@ -105,7 +107,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.backlinks,
             accelerator: window.siyuan.config.keymap.editor.general.backlinks.custom,
             click: () => {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-backlinks",
                     documentId: protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
                 });
@@ -117,7 +119,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             label: window.siyuan.languages.graphView,
             accelerator: window.siyuan.config.keymap.editor.general.graphView.custom,
             click: () => {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-graph",
                     scope: "document",
                     documentId: protyle.block.id,
@@ -146,62 +148,64 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 }).element);
             }
             const isCardMade = !!response.data.ial[Constants.CUSTOM_RIFF_DECKS];
-            const riffCardMenu: IMenu[] = [{
-                id: "spaceRepetition",
-                iconHTML: "",
-                label: window.siyuan.languages.spaceRepetition,
-                accelerator: window.siyuan.config.keymap.editor.general.spaceRepetition.custom,
-                click: () => {
-                    protyle.session.runtime.host.dispatch({
-                        type: "open-card-review",
-                        documentId: protyle.block.rootID,
-                    });
-                }
-            }, {
-                id: "manage",
-                iconHTML: "",
-                label: window.siyuan.languages.manage,
-                click: () => {
-                    protyle.session.runtime.host.dispatch({
-                        type: "open-card-browser",
-                        documentId: protyle.block.rootID,
-                    });
-                }
-            }, {
-                id: isCardMade ? "removeCard" : "quickMakeCard",
-                iconHTML: "",
-                label: isCardMade ? window.siyuan.languages.removeCard : window.siyuan.languages.quickMakeCard,
-                accelerator: window.siyuan.config.keymap.editor.general.quickMakeCard.custom,
-                click: () => {
-                    let titleElement = protyle.title?.element;
-                    if (!titleElement) {
-                        titleElement = document.createElement("div");
-                        titleElement.setAttribute("data-node-id", protyle.block.rootID);
-                        titleElement.setAttribute(Constants.CUSTOM_RIFF_DECKS, response.data.ial[Constants.CUSTOM_RIFF_DECKS]);
-                    }
-                    quickMakeCard(protyle, [titleElement]);
-                }
-            }];
-            if (window.siyuan.config.flashcard.deck) {
-                riffCardMenu.push({
-                    id: "addToDeck",
+            if (!isEncryptedBox(protyle.notebookId)) {
+                const riffCardMenu: IMenu[] = [{
+                    id: "spaceRepetition",
                     iconHTML: "",
-                    label: window.siyuan.languages.addToDeck,
+                    label: window.siyuan.languages.spaceRepetition,
+                    accelerator: window.siyuan.config.keymap.editor.general.spaceRepetition.custom,
                     click: () => {
-                        protyle.session.runtime.host.dispatch({
-                            type: "open-card-deck-picker",
-                            blockIds: [protyle.block.rootID],
+                        protyle.host.dispatch({
+                            type: "open-card-review",
+                            documentId: protyle.block.rootID,
                         });
                     }
-                });
+                }, {
+                    id: "manage",
+                    iconHTML: "",
+                    label: window.siyuan.languages.manage,
+                    click: () => {
+                        protyle.host.dispatch({
+                            type: "open-card-browser",
+                            documentId: protyle.block.rootID,
+                        });
+                    }
+                }, {
+                    id: isCardMade ? "removeCard" : "quickMakeCard",
+                    iconHTML: "",
+                    label: isCardMade ? window.siyuan.languages.removeCard : window.siyuan.languages.quickMakeCard,
+                    accelerator: window.siyuan.config.keymap.editor.general.quickMakeCard.custom,
+                    click: () => {
+                        let titleElement = protyle.title?.element;
+                        if (!titleElement) {
+                            titleElement = document.createElement("div");
+                            titleElement.setAttribute("data-node-id", protyle.block.rootID);
+                            titleElement.setAttribute(Constants.CUSTOM_RIFF_DECKS, response.data.ial[Constants.CUSTOM_RIFF_DECKS]);
+                        }
+                        quickMakeCard(protyle, [titleElement]);
+                    }
+                }];
+                if (window.siyuan.config.flashcard.deck) {
+                    riffCardMenu.push({
+                        id: "addToDeck",
+                        iconHTML: "",
+                        label: window.siyuan.languages.addToDeck,
+                        click: () => {
+                            protyle.host.dispatch({
+                                type: "open-card-deck-picker",
+                                blockIds: [protyle.block.rootID],
+                            });
+                        }
+                    });
+                }
+                window.siyuan.menus.menu.append(new MenuItem({
+                    id: "riffCard",
+                    label: window.siyuan.languages.riffCard,
+                    type: "submenu",
+                    icon: "iconRiffCard",
+                    submenu: riffCardMenu,
+                }).element);
             }
-            window.siyuan.menus.menu.append(new MenuItem({
-                id: "riffCard",
-                label: window.siyuan.languages.riffCard,
-                type: "submenu",
-                icon: "iconRiffCard",
-                submenu: riffCardMenu,
-            }).element);
         }
         window.siyuan.menus.menu.append(new MenuItem({
             id: "search",
@@ -209,7 +213,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             icon: "iconSearch",
             accelerator: window.siyuan.config.keymap.general.search.custom,
             click() {
-                protyle.session.runtime.host.dispatch({
+                protyle.host.dispatch({
                     type: "open-document-search",
                     documentId: protyle.block.rootID,
                 });
@@ -225,7 +229,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.openBy,
                 icon: "iconOpen",
                 click() {
-                    protyle.session.runtime.host.dispatch({
+                    protyle.host.dispatch({
                         type: "open-document",
                         documentId: protyle.block.id,
                         disposition: "current",
@@ -244,7 +248,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 label: window.siyuan.languages.fileHistory,
                 icon: "iconHistory",
                 click() {
-                    protyle.session.runtime.host.dispatch({
+                    protyle.host.dispatch({
                         type: "open-document-history",
                         documentId: protyle.block.rootID,
                     });
@@ -255,7 +259,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
 
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_4", type: "separator"}).element);
         emitProtylePluginMenu({
-            plugins: protyle.session.runtime.plugins,
+            plugins: protyle.plugins,
             type: "click-editortitleicon",
             detail: {
                 protyle,

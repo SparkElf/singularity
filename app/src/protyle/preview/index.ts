@@ -84,14 +84,14 @@ export class Preview {
                     const assetPath = linkAddress.split("?page")[0];
                     if (isLocalPath(linkAddress) && Constants.SIYUAN_ASSETS_EXTS.includes(pathPosix().extname(assetPath))) {
                         const page = getSearch("page", linkAddress);
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-asset",
                             assetPath,
                             page: page ? parseInt(page) : undefined,
                             disposition: "current",
                         });
                     } else {
-                        protyle.session.runtime.host.dispatch({type: "open-external", url: linkAddress});
+                        protyle.host.dispatch({type: "open-external", url: linkAddress});
                     }
                     break;
                 } else if (target.tagName === "IMG") {

@@ -18,7 +18,7 @@ import {viewCards} from "../card/viewCards";
 import {makeCard} from "../card/makeCard";
 import {openByMobile} from "../editor/openLink";
 import {Constants} from "../constants";
-import {fetchPost} from "../util/fetch";
+import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {getDisplayName, getNotebookName, pathPosix} from "../util/pathName";
 import {showMessage} from "../dialog/message";
 
@@ -121,6 +121,39 @@ const openCardBrowser = (app: App, documentId: string) => {
     });
 };
 
+interface AgentChatPort {
+    insertBlockMentions: (mentions: Array<{ id: string; label: string }>) => void;
+}
+
+const addBlocksToAgent = async (blockIds: readonly string[]) => {
+    const dock = getDockByType("agentChat");
+    if (!dock) {
+        return;
+    }
+    const isReady = (value: unknown): value is AgentChatPort =>
+        Boolean(value) && typeof (value as AgentChatPort).insertBlockMentions === "function";
+    let agentChat = dock.data.agentChat;
+    const dockItem = document.querySelector('.dock__item[data-type="agentChat"]');
+    if (!isReady(agentChat) || !dockItem?.classList.contains("dock__item--active")) {
+        dock.toggleModel("agentChat", true);
+        agentChat = dock.data.agentChat;
+    }
+    if (!isReady(agentChat)) {
+        return;
+    }
+    const mentions = await Promise.all(blockIds.map(async (id) => {
+        const response = await fetchSyncPost("/api/block/getRefText", {id});
+        if (handleHostRequestError(response) || typeof response.data !== "string" || response.data.length === 0) {
+            return;
+        }
+        return {id, label: response.data};
+    }));
+    if (mentions.some((mention) => mention === undefined)) {
+        return;
+    }
+    agentChat.insertBlockMentions(mentions);
+};
+
 const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
     switch (event.type) {
         case "open-document":
@@ -173,6 +206,9 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             return;
         case "open-card-deck-picker":
             makeCard(app, event.blockIds);
+            return;
+        case "add-blocks-to-agent":
+            void addBlocksToAgent(event.blockIds);
             return;
         case "open-asset":
             openAsset(app, event.assetPath, event.page, event.disposition === "split-right" ? "right" : undefined);

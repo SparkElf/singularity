@@ -119,7 +119,7 @@ export class Title {
                 if (matchHotKey(window.siyuan.config.keymap.general.enterBack.custom, event)) {
                     const ids = protyle.path.split("/");
                     if (ids.length > 2) {
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-document",
                             documentId: ids[ids.length - 2],
                             disposition: "current",
@@ -173,7 +173,8 @@ export class Title {
                     event.stopPropagation();
                 } else if (matchHotKey(window.siyuan.config.keymap.editor.general.attr.custom, event)) {
                     fetchPost("/api/block/getDocInfo", {
-                        id: protyle.block.rootID
+                        id: protyle.block.rootID,
+                        notebook: protyle.notebookId,
                     }, (response) => {
                         openFileAttr(response.data.ial, "bookmark", protyle);
                     });
@@ -190,7 +191,8 @@ export class Title {
                 // 不使用 window.siyuan.shiftIsPressed ，否则窗口未激活时按 Shift 点击块标无法打开属性面板 https://github.com/siyuan-note/siyuan/issues/15075
                 if (event.shiftKey) {
                     fetchPost("/api/block/getDocInfo", {
-                        id: protyle.block.rootID
+                        id: protyle.block.rootID,
+                        notebook: protyle.notebookId,
                     }, (response) => {
                         openFileAttr(response.data.ial, "bookmark", protyle);
                     });
@@ -304,7 +306,8 @@ export class Title {
             target: HTMLElement
         }) => {
             fetchPost("/api/block/getDocInfo", {
-                id: protyle.block.rootID
+                id: protyle.block.rootID,
+                notebook: protyle.notebookId,
             }, (response) => {
                 commonClick(event, protyle, response.data.ial);
             });

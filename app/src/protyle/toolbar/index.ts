@@ -17,7 +17,12 @@ import {Link} from "./Link";
 import {setPosition} from "../../util/setPosition";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
 import {Constants} from "../../constants";
-import {copyPlainText, readClipboard, saveExportFile, setStorageVal} from "../util/compatibility";
+import {
+    copyPlainText,
+    readClipboard,
+    saveExportFile,
+    setStorageVal
+} from "../util/compatibility";
 import {upDownHint} from "../../util/upDownHint";
 import {highlightRender} from "../render/highlightRender";
 import {getContenteditableElement, hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
@@ -59,7 +64,7 @@ export class Toolbar {
         this.subElement = document.createElement("div");
         this.subElement.className = "protyle-util fn__none";
         this.toolbarHeight = 29;
-        options.toolbar = protyle.session.runtime.plugins.extendToolbar(options.toolbar, toolbarKeyToMenu);
+        options.toolbar = protyle.plugins.extendToolbar(options.toolbar, toolbarKeyToMenu);
         options.toolbar.forEach((menuItem: IMenuItem) => {
             const itemElement = this.genItem(protyle, menuItem);
             this.element.appendChild(itemElement);
@@ -102,7 +107,7 @@ export class Toolbar {
             "inline-math",
             "inline-memo",
         ]);
-        protyle.options.toolbar = protyle.session.runtime.plugins.extendToolbar(protyle.options.toolbar, toolbarKeyToMenu);
+        protyle.options.toolbar = protyle.plugins.extendToolbar(protyle.options.toolbar, toolbarKeyToMenu);
         protyle.options.toolbar.forEach((menuItem: IMenuItem) => {
             const itemElement = this.genItem(protyle, menuItem);
             this.element.appendChild(itemElement);
@@ -907,22 +912,20 @@ export class Toolbar {
         } else if (isInlineMemo) {
             title = window.siyuan.languages.memo;
         }
-        const isPin = this.subElement.querySelector('[data-type="pin"]')?.getAttribute("aria-label") === window.siyuan.languages.unpin;
-        const pinData: IObject = {};
-        if (isPin) {
-            const textElement = this.subElement.querySelector(".b3-text-field") as HTMLTextAreaElement;
-            pinData.styleH = textElement.style.height;
-            pinData.styleW = textElement.style.width;
-        } else {
-            this.subElement.style.width = "";
-            this.subElement.style.padding = "0";
+        this.clearSubElement();
+        this.subElement.style.padding = "0";
+        this.subElement.style.display = "flex";
+        this.subElement.style.flexDirection = "column";
+        if (!isMobile()) {
+            // 初始宽度由面板决定，滚动区与文本域 width:100% 跟随，拖拽缩放后由 moveResize 改写面板宽度
+            this.subElement.style.width = Math.max(480, renderElement.clientWidth * 0.7) + "px";
         }
-        this.subElement.innerHTML = `<div ${(isPin && this.subElement.firstElementChild.getAttribute("data-drag") === "true") ? 'data-drag="true"' : ""}><div class="block__icons block__icons--menu fn__flex" style="border-radius: var(--b3-border-radius-b) var(--b3-border-radius-b) 0 0;">
+        this.subElement.innerHTML = `<div class="fn__flex-column"><div class="block__icons block__icons--menu fn__flex" style="border-radius: var(--b3-border-radius-b) var(--b3-border-radius-b) 0 0;">
     <span class="fn__flex-1 resize__move" style="line-height: 24px;">
         ${title}
     </span>
     <span class="fn__space"></span>
-    <button data-type="refresh" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw${(isPin && !this.subElement.querySelector('[data-type="refresh"]').classList.contains("block__icon--active")) ? "" : " block__icon--active"}${types.includes("NodeBlockQueryEmbed") ? " fn__none" : ""}" aria-label="${window.siyuan.languages.refresh}"><svg><use xlink:href="#iconRefresh"></use></svg></button>
+    <button data-type="refresh" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw block__icon--active${types.includes("NodeBlockQueryEmbed") ? " fn__none" : ""}" aria-label="${window.siyuan.languages.refresh}"><svg><use xlink:href="#iconRefresh"></use></svg></button>
     <span class="fn__space"></span>
     <button data-type="before" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw${protyle.disabled ? " fn__none" : ""}" aria-label="${window.siyuan.languages.insertBefore}"><svg><use xlink:href="#iconBefore"></use></svg></button>
     <span class="fn__space${protyle.disabled ? " fn__none" : ""}"></span>
@@ -930,13 +933,48 @@ export class Toolbar {
     <span class="fn__space${protyle.disabled ? " fn__none" : ""}"></span>
     <button data-type="export" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw" aria-label="${window.siyuan.languages.export} ${window.siyuan.languages.image}"><svg><use xlink:href="#iconImage"></use></svg></button>
     <span class="fn__space"></span>
-    <button data-type="pin" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw" aria-label="${isPin ? window.siyuan.languages.unpin : window.siyuan.languages.pin}"><svg><use xlink:href="#icon${isPin ? "Unpin" : "Pin"}"></use></svg></button>
+    <button data-type="pin" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw" aria-label="${window.siyuan.languages.pin}"><svg><use xlink:href="#iconPin"></use></svg></button>
     <span class="fn__space"></span>
     <button data-type="close" class="block__icon block__icon--show b3-tooltips b3-tooltips__nw" aria-label="${window.siyuan.languages.close}"><svg><use xlink:href="#iconClose"></use></svg></button>
 </div>
-<textarea ${protyle.disabled ? " readonly" : ""} spellcheck="false" class="b3-text-field b3-text-field--text fn__block" placeholder="${placeholder}" style="${isMobile() ? "" : "width:" + Math.max(480, renderElement.clientWidth * 0.7) + "px"};max-height:calc(80vh - 44px);min-height: 48px;min-width: 268px;border-radius: 0 0 var(--b3-border-radius-b) var(--b3-border-radius-b);font-family: var(--b3-font-family-code);"></textarea></div>`;
+<div class="protyle-util__scroll"><div class="fn__flex"><div class="protyle-linenumber__rows"></div><textarea ${protyle.disabled ? " readonly" : ""} spellcheck="false" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${placeholder}" style="resize:none;font-family: var(--b3-font-family-code);"></textarea></div></div></div>
+<div class="resize__rd"></div><div class="resize__ld"></div><div class="resize__lt"></div><div class="resize__rt"></div><div class="resize__r"></div><div class="resize__d"></div><div class="resize__t"></div><div class="resize__l"></div>`;
+        const gutter = this.subElement.querySelector(".protyle-linenumber__rows") as HTMLElement;
+        const renderTextareaLineNumber = () => {
+            // textarea 末尾的 \n 视觉上会占一行空行，行号需保留该空行，故不去除末尾空串
+            const lineList = textElement.value.split(/\r\n|\r|\n/);
+            // textarea 默认软换行，需用镜像元素测量每个源码行折行后的实际高度，行号才能与可视行对齐
+            const textCs = window.getComputedStyle(textElement);
+            const mirror = document.createElement("div");
+            mirror.style.position = "absolute";
+            mirror.style.visibility = "hidden";
+            mirror.style.whiteSpace = "pre-wrap";
+            // textarea 的软换行接近 overflow-wrap: break-word，而非 word-break，否则长标识符断点不一致
+            mirror.style.overflowWrap = "break-word";
+            mirror.style.wordBreak = "normal";
+            mirror.style.tabSize = textCs.tabSize;
+            mirror.style.fontFamily = textCs.fontFamily;
+            mirror.style.fontSize = textCs.fontSize;
+            mirror.style.lineHeight = textCs.lineHeight;
+            mirror.style.fontWeight = textCs.fontWeight;
+            mirror.style.fontVariantLigatures = textCs.fontVariantLigatures;
+            mirror.style.letterSpacing = textCs.letterSpacing;
+            // 宽度需与 textarea 文本区一致：clientWidth 减去左右内边距
+            mirror.style.width = textElement.clientWidth - parseInt(textCs.paddingLeft) - parseInt(textCs.paddingRight) + "px";
+            mirror.style.boxSizing = "border-box";
+            mirror.style.padding = "0";
+            mirror.innerHTML = lineList.map(line => `<div>${line.trim() ? escapeHtml(line) : "&nbsp;"}</div>`).join("");
+            // 挂到行号栏所在容器，保证字体上下文一致
+            (gutter.parentElement || document.body).appendChild(mirror);
+            let spansHTML = "";
+            for (let i = 0; i < lineList.length; i++) {
+                spansHTML += `<span style="height:${mirror.children[i].clientHeight}px"></span>`;
+            }
+            mirror.remove();
+            gutter.innerHTML = spansHTML;
+        };
         const autoHeight = () => {
-            textElement.style.height = textElement.scrollHeight + "px";
+            renderTextareaLineNumber();
             if (isMobile()) {
                 setPosition(this.subElement, 0, 0);
                 return;
@@ -1051,9 +1089,7 @@ export class Toolbar {
             if (!renderElement.parentElement) {
                 return;
             }
-            if (textElement.clientHeight !== textElement.scrollHeight) {
-                autoHeight();
-            }
+            autoHeight();
             if (!this.subElement.querySelector('[data-type="refresh"]').classList.contains("block__icon--active")) {
                 return;
             }
@@ -1099,7 +1135,12 @@ export class Toolbar {
                 event.preventDefault();
             }
         });
+        const resizeObserver = new ResizeObserver(() => {
+            renderTextareaLineNumber();
+        });
+        resizeObserver.observe(this.subElement);
         this.subElementCloseCB = () => {
+            resizeObserver.disconnect();
             const noChange = !renderElement.parentElement || protyle.disabled ||
                 (textElement.value && oldTextValue === textElement.value);
             let inlineLastNode: Element;
@@ -1210,16 +1251,11 @@ export class Toolbar {
         this.subElement.classList.remove("fn__none");
         const nodeRect = renderElement.getBoundingClientRect();
         this.element.classList.add("fn__none");
-        if (isPin) {
-            textElement.style.width = pinData.styleW;
-            textElement.style.height = pinData.styleH;
-        } else {
-            autoHeight();
-        }
+        autoHeight();
         if (!protyle.disabled) {
             textElement.select();
         }
-        protyle.session.runtime.plugins.emit({
+        protyle.plugins.emit({
             type: "open-noneditableblock",
             detail: {
                 protyle,
@@ -1238,9 +1274,7 @@ export class Toolbar {
         hideElements(["hint"], protyle);
         window.siyuan.menus.menu.remove();
         this.range = getEditorRange(nodeElement);
-
-        this.subElement.style.width = "";
-        this.subElement.style.padding = "";
+        this.clearSubElement();
         this.subElement.innerHTML = `<div data-id="codeLanguage" class="fn__flex-column" style="max-height:50vh">
     <input placeholder="${window.siyuan.languages.search}" style="margin: 0 8px 4px 8px" class="b3-text-field"/>
     <div class="b3-list fn__flex-1 b3-list--background" style="position: relative"></div>
@@ -1251,7 +1285,7 @@ export class Toolbar {
         let hljsLanguages = Constants.ALIAS_CODE_LANGUAGES.concat(window.hljs?.listLanguages() ?? []).sort();
 
         const eventDetail = {languages: hljsLanguages, type: "init", listElement};
-        protyle.session.runtime.plugins.emit({type: "code-language-update", detail: eventDetail});
+        protyle.plugins.emit({type: "code-language-update", detail: eventDetail});
 
         hljsLanguages = eventDetail.languages;
         hljsLanguages.forEach((item) => {
@@ -1321,7 +1355,7 @@ export class Toolbar {
             }
 
             const eventDetail = {languages: value ? matchLanguages : hljsLanguages, type: "match", value, listElement};
-            protyle.session.runtime.plugins.emit({type: "code-language-update", detail: eventDetail});
+            protyle.plugins.emit({type: "code-language-update", detail: eventDetail});
 
             matchLanguages = eventDetail.languages;
             if (value) {
@@ -1365,7 +1399,7 @@ export class Toolbar {
     public showMultiSelectMode(protyle: IProtyle, blockElement: HTMLElement) {
         blockElement.classList.add("protyle-wysiwyg--select");
         window.siyuan.menus.menu.remove();
-
+        this.clearSubElement();
         this.subElement.style.width = window.innerWidth - 16 + "px";
         this.subElement.style.padding = "0";
         this.subElement.innerHTML = `<div class="block__icons">
@@ -1406,16 +1440,11 @@ export class Toolbar {
         (document.activeElement as HTMLElement).blur();
     }
 
-    public isMultiSelectMode() {
-        return false;
-    }
-
     public showTpl(protyle: IProtyle, nodeElement: HTMLElement, range: Range) {
         this.range = range;
         hideElements(["hint"], protyle);
         window.siyuan.menus.menu.remove();
-        this.subElement.style.width = "";
-        this.subElement.style.padding = "";
+        this.clearSubElement();
         this.subElement.innerHTML = `<div style="max-height:50vh" class="fn__flex">
 <div class="fn__flex-column" style="${isMobile() ? "width: 100%" : "width: 256px"}">
     <div class="fn__flex" style="margin: 0 8px 4px 8px">
@@ -1582,8 +1611,7 @@ export class Toolbar {
         this.range = range;
         hideElements(["hint"], protyle);
         window.siyuan.menus.menu.remove();
-        this.subElement.style.width = "";
-        this.subElement.style.padding = "";
+        this.clearSubElement();
         this.subElement.innerHTML = `<div class="fn__flex-column" style="max-height:50vh">
     <input style="margin: 0 8px 4px 8px" class="b3-text-field"/>
     <div class="b3-list fn__flex-1 b3-list--background" style="position: relative"><img style="margin: 0 auto;display: block;width: 64px;height:64px" src="/stage/loading-pure.svg"></div>
@@ -1656,7 +1684,7 @@ export class Toolbar {
     public showContent(protyle: IProtyle, range: Range, nodeElement: Element) {
         this.range = range;
         hideElements(["hint"], protyle);
-
+        this.clearSubElement();
         this.subElement.style.width = "auto";
         this.subElement.style.padding = "0 8px";
         let html = "";
@@ -1748,6 +1776,10 @@ export class Toolbar {
         setPosition(this.subElement, rangePosition.left, rangePosition.top - 48, this.LINE_HEIGHT);
     }
 
+    public isMultiSelectMode() {
+        return false;
+    }
+
     private genItem(protyle: IProtyle, menuItem: IMenuItem) {
         let menuItemObj;
         switch (menuItem.name) {
@@ -1817,7 +1849,7 @@ export class Toolbar {
     private updateLanguage(languageElements: HTMLElement[], protyle: IProtyle, selectedLang: string) {
         const currentLang = selectedLang === window.siyuan.languages.clear ? "" : selectedLang;
 
-        protyle.session.runtime.plugins.emit({
+        protyle.plugins.emit({
             type: "code-language-change",
             detail: {
                 language: currentLang,
@@ -1866,5 +1898,9 @@ export class Toolbar {
         transaction(protyle, doOperations, undoOperations);
         this.subElement.classList.add("fn__none");
         focusByRange(this.range);
+    }
+
+    private clearSubElement() {
+        this.subElement.removeAttribute("style");
     }
 }

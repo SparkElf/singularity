@@ -9,7 +9,7 @@ export const destroy = (protyle: IProtyle) => {
         return;
     }
     protyle.destroyed = true;
-    protyle.session.runtime.editors.unregister(protyle);
+    protyle.editors.unregister(protyle);
     hideElements(["util"], protyle);
     if (isSupportCSSHL()) {
         protyle.highlight.markHL.clear();
@@ -28,7 +28,7 @@ export const destroy = (protyle: IProtyle) => {
         protyle.undo.clear();
     }
     protyle.ws?.disconnect();
-    protyle.session.runtime.plugins.emit({
+    protyle.plugins.emit({
         type: "destroy-protyle",
         detail: {
             protyle,

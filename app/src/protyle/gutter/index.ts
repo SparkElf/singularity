@@ -44,7 +44,7 @@ import {countBlockWord} from "../../layout/status";
 import {Constants} from "../../constants";
 import {mathRender} from "../render/mathRender";
 import {duplicateBlock} from "../wysiwyg/commonHotkey";
-import {movePathTo} from "../../util/pathName";
+import {isEncryptedBox, movePathTo} from "../../util/pathName";
 import {hintMoveBlock} from "../hint/extend";
 import {quickMakeCard} from "../../card/makeCard";
 import {transferBlockRef} from "../../menus/block";
@@ -423,7 +423,7 @@ export class Gutter {
             if (isOnlyMeta(event)) {
                 if (protyle.options.backlinkData) {
                     checkFold(id, (zoomIn) => {
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-document",
                             documentId: id,
                             disposition: "current",
@@ -494,7 +494,7 @@ export class Gutter {
                     }
                 }
                 foldElement.classList.remove("protyle-wysiwyg--hl");
-            } else if (event.shiftKey && !protyle.disabled) {
+            } else if (event.shiftKey && !protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
                 // 不使用 window.siyuan.shiftIsPressed ，否则窗口未激活时按 Shift 点击块标无法打开属性面板 https://github.com/siyuan-note/siyuan/issues/15075
                 openAttr(protyle.wysiwyg.element.querySelector(`[data-node-id="${id}"]`), "bookmark", protyle);
             } else if (!window.siyuan.ctrlIsPressed && !window.siyuan.altIsPressed && !window.siyuan.shiftIsPressed) {
@@ -629,33 +629,40 @@ export class Gutter {
             plusBefore.style.display = "none";
             plusAfter.style.display = "none";
             if (compressed) {
-                // 竖排：框线贴块标左右边缘，+号定位在外偏位置
+                // 竖排：压缩模式块标贴编辑区左缘，左侧紧邻 .layout__resize--lr 分栏拖拽条（z-index 4）
+                // 若 lineBefore/plusBefore 按横排逻辑外延到块标左侧，鼠标移入该区会被分栏拖拽条抢占悬浮，
+                // 导致加号无法触发。故竖排时上方/下方插入指示均置于块标右侧，上下以纵向位置区分：
+                // 上方插入指示贴图标右缘上半段，下方插入指示贴图标右缘下半段，完全避开左侧拖拽条命中区。
                 const iconRect = buttonElement.querySelector("svg").getBoundingClientRect();
                 const centerY = iconRect.top + iconRect.height / 2;
-                const lineH = 12;
-                const top = centerY - lineH / 2;
+                const lineH = Math.max(8, iconRect.height / 2 - 1);
                 const plusSize = 16;
+                // 线条/加号需落在 button rect（rect.right）外，否则 case A 会判定鼠标仍在块标内而不触发加号
+                const rightX = rect.right + 1;
+                // 上方插入：块标右侧上半段
                 lineBefore.style.display = "";
                 lineBefore.style.opacity = "1";
                 lineBefore.style.width = "2px";
                 lineBefore.style.height = `${lineH}px`;
-                lineBefore.style.left = `${rect.left - 4}px`;
-                lineBefore.style.top = `${top}px`;
+                lineBefore.style.left = `${rightX}px`;
+                lineBefore.style.top = `${iconRect.top - 1}px`;
+                // 下方插入：块标右侧下半段
                 lineAfter.style.display = "";
                 lineAfter.style.opacity = "1";
                 lineAfter.style.width = "2px";
                 lineAfter.style.height = `${lineH}px`;
-                lineAfter.style.left = `${rect.right + 2}px`;
-                lineAfter.style.top = `${top}px`;
+                lineAfter.style.left = `${rightX}px`;
+                lineAfter.style.top = `${centerY + 1}px`;
+                // +号位于右侧线条外偏，上下分开避免重叠
                 plusBefore.style.width = `${plusSize}px`;
                 plusBefore.style.height = `${plusSize}px`;
-                plusBefore.style.left = `${rect.left - 6 - plusSize / 2}px`;
-                plusBefore.style.top = `${centerY - plusSize / 2}px`;
+                plusBefore.style.left = `${rightX + 4}px`;
+                plusBefore.style.top = `${iconRect.top + lineH / 2 - plusSize / 2}px`;
                 plusAfter.style.width = `${plusSize}px`;
                 plusAfter.style.height = `${plusSize}px`;
-                plusAfter.style.left = `${rect.right + 4 - plusSize / 2}px`;
-                plusAfter.style.top = `${centerY - plusSize / 2}px`;
-                // 竖排时隐藏块标提示，避免其遮挡左侧框线
+                plusAfter.style.left = `${rightX + 4}px`;
+                plusAfter.style.top = `${centerY + 1 + lineH / 2 - plusSize / 2}px`;
+                // 竖排时隐藏块标提示，避免其遮挡右侧框线与+号
                 hideTooltip();
             } else {
                 // 横排：框线贴块标上下边缘，+号定位在外偏位置
@@ -948,7 +955,7 @@ export class Gutter {
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "ai",
                 icon: "iconSparkles",
-                label: window.siyuan.languages.ai,
+                label: window.siyuan.languages.aiEdit,
                 accelerator: window.siyuan.config.keymap.editor.general.ai.custom,
                 click() {
                     AIActions(selectsElement, protyle);
@@ -1038,6 +1045,20 @@ export class Gutter {
                     addEditorToDatabase(protyle, getEditorRange(selectsElement[0]));
                 }
             }).element);
+            // 加密笔记本中的块不暴露该菜单：避免把受保护内容引入智能体会话。
+            if (!isEncryptedBox(protyle.notebookId)) {
+                window.siyuan.menus.menu.append(new MenuItem({
+                    id: "addToAgent",
+                    icon: "iconSend",
+                    label: window.siyuan.languages.addToAgent,
+                    click: () => {
+                        protyle.host.dispatch({
+                            type: "add-blocks-to-agent",
+                            blockIds: Array.from(selectsElement).map(item => item.getAttribute("data-node-id")!),
+                        });
+                    }
+                }).element);
+            }
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "delete",
                 label: window.siyuan.languages.delete,
@@ -1074,8 +1095,9 @@ export class Gutter {
             }
             this.genAlign(selectsElement, protyle);
             this.genWidths(selectsElement, protyle);
+            // this.genHeights(selectsElement, protyle);
         }
-        if (!window.siyuan.config.readonly) {
+        if (!window.siyuan.config.readonly && !isEncryptedBox(protyle.notebookId)) {
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "separator_quickMakeCard",
                 type: "separator"
@@ -1103,7 +1125,7 @@ export class Gutter {
                         }
                         ids.push(item.getAttribute("data-node-id"));
                     });
-                    protyle.session.runtime.host.dispatch({
+                    protyle.host.dispatch({
                         type: "open-card-deck-picker",
                         blockIds: ids,
                     });
@@ -1112,7 +1134,7 @@ export class Gutter {
         }
 
         emitProtylePluginMenu({
-            plugins: protyle.session.runtime.plugins,
+            plugins: protyle.plugins,
             type: "click-blockicon",
             detail: {
                 protyle,
@@ -1518,7 +1540,7 @@ export class Gutter {
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "ai",
                 icon: "iconSparkles",
-                label: window.siyuan.languages.ai,
+                label: window.siyuan.languages.aiEdit,
                 accelerator: window.siyuan.config.keymap.editor.general.ai.custom,
                 click() {
                     AIActions([nodeElement], protyle);
@@ -1633,6 +1655,20 @@ export class Gutter {
                     addEditorToDatabase(protyle, getEditorRange(nodeElement));
                 }
             }).element);
+            // 加密笔记本中的块不暴露该菜单：避免把受保护内容引入智能体会话。
+            if (!isEncryptedBox(protyle.notebookId)) {
+                window.siyuan.menus.menu.append(new MenuItem({
+                    id: "addToAgent",
+                    icon: "iconSend",
+                    label: window.siyuan.languages.addToAgent,
+                    click: () => {
+                        protyle.host.dispatch({
+                            type: "add-blocks-to-agent",
+                            blockIds: [nodeElement.getAttribute("data-node-id")!],
+                        });
+                    }
+                }).element);
+            }
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "delete",
                 icon: "iconTrashcan",
@@ -2129,7 +2165,7 @@ export class Gutter {
                 label: window.siyuan.languages.openBy,
                 click: () => {
                     checkFold(id, (zoomIn) => {
-                        protyle.session.runtime.host.dispatch({
+                        protyle.host.dispatch({
                             type: "open-document",
                             documentId: id,
                             disposition: "current",
@@ -2231,7 +2267,7 @@ export class Gutter {
                     }
                 }).element);
             }
-            if (!protyle.disabled) {
+            if (!protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
                 window.siyuan.menus.menu.append(new MenuItem({
                     id: "attr",
                     label: window.siyuan.languages.attr,
@@ -2268,6 +2304,7 @@ export class Gutter {
             }
             this.genAlign([nodeElement], protyle);
             this.genWidths([nodeElement], protyle);
+            // this.genHeights([nodeElement], protyle);
         }
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_4", type: "separator"}).element);
         if (window.siyuan.config.cloudRegion === 0 &&
@@ -2284,7 +2321,7 @@ export class Gutter {
                 }
             }).element);
         }
-        if (type !== "NodeThematicBreak" && !window.siyuan.config.readonly) {
+        if (type !== "NodeThematicBreak" && !window.siyuan.config.readonly && !isEncryptedBox(protyle.notebookId)) {
             const isCardMade = nodeElement.hasAttribute(Constants.CUSTOM_RIFF_DECKS);
             window.siyuan.menus.menu.append(new MenuItem({
                 id: isCardMade ? "removeCard" : "quickMakeCard",
@@ -2301,7 +2338,7 @@ export class Gutter {
                 ignore: !window.siyuan.config.flashcard.deck,
                 icon: "iconRiffCard",
                 click() {
-                    protyle.session.runtime.host.dispatch({
+                    protyle.host.dispatch({
                         type: "open-card-deck-picker",
                         blockIds: [id],
                     });
@@ -2311,7 +2348,7 @@ export class Gutter {
         }
 
         emitProtylePluginMenu({
-            plugins: protyle.session.runtime.plugins,
+            plugins: protyle.plugins,
             type: "click-blockicon",
             detail: {
                 protyle,
@@ -2618,6 +2655,89 @@ export class Gutter {
                                     chartInstance.resize();
                                 }
                             }
+                        }
+                    });
+                }
+            }]),
+        }).element);
+    }
+
+    // TODO https://github.com/siyuan-note/siyuan/issues/11055
+    private genHeights(nodeElements: Element[], protyle: IProtyle) {
+        const matchHeight = nodeElements.find(item => {
+            if (!item.classList.contains("p") && !item.classList.contains("code-block") && !item.classList.contains("render-node")) {
+                return true;
+            }
+        });
+        if (matchHeight) {
+            return;
+        }
+        let rangeElement: HTMLInputElement;
+        const firstElement = nodeElements[0] as HTMLElement;
+        const styles: IMenu[] = [{
+            id: "heightInput",
+            iconHTML: "",
+            type: "readonly",
+            label: `<div class="fn__flex"><input class="b3-text-field fn__flex-1" value="${firstElement.style.height.endsWith("px") ? parseInt(firstElement.style.height) : ""}" type="number" style="margin: 4px 8px 4px 0" placeholder="${window.siyuan.languages.height}"><span class="fn__flex-center">px</span></div>`,
+            bind: (element) => {
+                const inputElement = element.querySelector("input");
+                inputElement.addEventListener("input", () => {
+                    nodeElements.forEach((item: HTMLElement) => {
+                        item.style.height = inputElement.value + "px";
+                        item.style.flex = "none";
+                    });
+                    rangeElement.value = "0";
+                    rangeElement.parentElement.setAttribute("aria-label", inputElement.value + "px");
+                });
+                this.updateNodeElements(nodeElements, protyle, inputElement);
+            }
+        }];
+        ["25%", "33%", "50%", "67%", "75%", "100%"].forEach((item) => {
+            styles.push({
+                id: "height_" + item,
+                iconHTML: "",
+                label: item,
+                click: () => {
+                    this.genClick(nodeElements, protyle, (e: HTMLElement) => {
+                        e.style.height = item;
+                        e.style.flex = "none";
+                    });
+                }
+            });
+        });
+        styles.push({
+            type: "separator"
+        });
+        const height = firstElement.style.height.endsWith("%") ? parseInt(firstElement.style.height) : 0;
+        window.siyuan.menus.menu.append(new MenuItem({
+            id: "heightDrag",
+            label: window.siyuan.languages.height,
+            submenu: styles.concat([{
+                iconHTML: "",
+                type: "readonly",
+                label: `<div style="margin: 4px 0;" aria-label="${firstElement.style.height.endsWith("px") ? firstElement.style.height : (firstElement.style.height || window.siyuan.languages.default)}" class="b3-tooltips b3-tooltips__n"><input style="box-sizing: border-box" value="${height}" class="b3-slider fn__block" max="100" min="1" step="1" type="range"></div>`,
+                bind: (element) => {
+                    rangeElement = element.querySelector("input");
+                    rangeElement.addEventListener("input", () => {
+                        nodeElements.forEach((e: HTMLElement) => {
+                            e.style.height = rangeElement.value + "%";
+                            e.style.flex = "none";
+                        });
+                        rangeElement.parentElement.setAttribute("aria-label", `${rangeElement.value}%`);
+                    });
+                    this.updateNodeElements(nodeElements, protyle, rangeElement);
+                }
+            }, {
+                type: "separator"
+            }, {
+                id: "default",
+                iconHTML: "",
+                label: window.siyuan.languages.default,
+                click: () => {
+                    this.genClick(nodeElements, protyle, (e: HTMLElement) => {
+                        if (e.style.height) {
+                            e.style.height = "";
+                            e.style.overflow = "";
                         }
                     });
                 }
