@@ -64,6 +64,7 @@ const focusStack = async (app: App, stack: IBackStack) => {
                         tab,
                         blockId: stack.zoomId || stack.id || stack.protyle.block.rootID,
                         rootId: stack.protyle.block.rootID,
+                        notebookId: stack.protyle.notebookId,
                         action: stack.zoomId ? [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL, Constants.CB_GET_ALL, Constants.CB_GET_UNUNDO] :
                             [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL, Constants.CB_GET_UNUNDO]
                     });

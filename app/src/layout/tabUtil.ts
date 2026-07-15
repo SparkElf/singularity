@@ -351,6 +351,7 @@ export const copyTab = (app: App, tab: Tab) => {
                     tab: newTab,
                     blockId: tab.model.editor.protyle.block.id,
                     rootId: tab.model.editor.protyle.block.rootID,
+                    notebookId: tab.model.editor.protyle.notebookId,
                     // https://github.com/siyuan-note/siyuan/issues/12150
                     action: newAction,
                     afterInitProtyle(editor) {
@@ -372,7 +373,8 @@ export const copyTab = (app: App, tab: Tab) => {
                 model = new Asset({
                     app,
                     tab: newTab,
-                    path: tab.model.path
+                    path: tab.model.path,
+                    notebookId: tab.model.notebookId,
                 });
             } else if (tab.model instanceof Graph) {
                 model = new Graph({
@@ -392,6 +394,7 @@ export const copyTab = (app: App, tab: Tab) => {
                     app,
                     tab: newTab,
                     blockId: tab.model.blockId,
+                    notebookId: tab.model.notebookId,
                     type: tab.model.type,
                     isPreview: tab.model.isPreview
                 });
@@ -400,6 +403,7 @@ export const copyTab = (app: App, tab: Tab) => {
                     app,
                     tab: newTab,
                     blockId: tab.model.blockId,
+                    notebookId: tab.model.notebookId,
                     rootId: tab.model.rootId,
                     type: tab.model.type
                 });

@@ -149,7 +149,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
                 hint: hintSkill,
             }],
         },
-    });
+    }, {participateInSession: false});
 
     // Protyle 实例的 protyle 属性才是 IProtyle（持有 wysiwyg/hint/lute 等）。
     // 类方法（focus/insert/destroy）在 Protyle 实例上，内部数据属性在 IProtyle 上。

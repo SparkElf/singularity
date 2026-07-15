@@ -39,6 +39,7 @@ export interface ProtyleDocumentStatistics {
 export type ProtyleHostEvent =
   | {
       type: "open-document";
+      notebookId: string;
       documentId: string;
       disposition: ProtyleDocumentDisposition;
       scope: ProtyleDocumentScope;
@@ -55,15 +56,18 @@ export type ProtyleHostEvent =
     }
   | {
       type: "open-document-search";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "open-outline";
+      notebookId: string;
       documentId: string;
       preview: boolean;
     }
   | {
       type: "open-backlinks";
+      notebookId: string;
       documentId: string;
     }
   | {
@@ -73,30 +77,37 @@ export type ProtyleHostEvent =
   | {
       type: "open-graph";
       scope: "document";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "open-document-history";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "open-card-review";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "open-card-browser";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "open-card-deck-picker";
+      notebookId: string;
       blockIds: readonly string[];
     }
   | {
       type: "add-blocks-to-agent";
+      notebookId: string;
       blockIds: readonly string[];
     }
   | {
       type: "open-asset";
+      notebookId: string;
       assetPath: string;
       page?: number;
       disposition: "current" | "split-right";
@@ -112,10 +123,12 @@ export type ProtyleHostEvent =
     }
   | {
       type: "refresh-outline";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "refresh-backlinks";
+      notebookId: string;
       documentId: string;
     }
   | {
@@ -324,6 +337,7 @@ export interface ProtyleController {
 export interface CreateProtyleOptions<TRuntime = ProtyleRuntime> {
   readonly documentId: string;
   readonly host: HTMLElement;
+  readonly notebookId: string;
   readonly readOnly: boolean;
   readonly session: ProtyleSession<TRuntime>;
   readonly signal: AbortSignal;
@@ -335,30 +349,47 @@ export interface ProtyleFactory<TRuntime = ProtyleRuntime> {
 
 export interface ProtyleCoreDocumentOptions {
   readonly blockId?: string;
+  readonly notebookId?: string;
 }
 
-export interface ProtyleCoreBaseOptions<TRuntime = ProtyleRuntime> {
+export interface ProtyleCoreCommonOptions {
   readonly host: HTMLElement;
-  readonly session: ProtyleSession<TRuntime>;
   readonly readOnly: boolean;
   readonly signal: AbortSignal;
   readonly surface: ProtyleSurface;
 }
 
+export interface ProtyleBoundContent {
+  readonly mode: "bound";
+  readonly notebookId: string;
+}
+
+export interface ProtyleLocalOnlyContent {
+  readonly mode: "local-only";
+}
+
 export type ProtyleCoreCreateOptions<
   TOptions extends ProtyleCoreDocumentOptions,
   TRuntime = ProtyleRuntime,
-> = ProtyleCoreBaseOptions<TRuntime> &
-  (
-    | {
-        readonly participation: "live";
-        readonly options: Omit<TOptions, "blockId"> & { readonly blockId: string };
-      }
-    | {
-        readonly participation: "detached";
-        readonly options: Omit<TOptions, "blockId"> & { readonly blockId?: string };
-      }
-  );
+> =
+  | (ProtyleCoreCommonOptions & {
+      readonly content: ProtyleBoundContent;
+      readonly participation: "live";
+      readonly session: ProtyleSession<TRuntime>;
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId: string };
+    })
+  | (ProtyleCoreCommonOptions & {
+      readonly content: ProtyleBoundContent;
+      readonly participation: "detached";
+      readonly session: ProtyleSession<TRuntime>;
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId?: string };
+    })
+  | (Omit<ProtyleCoreCommonOptions, "surface"> & {
+      readonly content: ProtyleLocalOnlyContent;
+      readonly participation: "detached";
+      readonly surface: "embedded";
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId?: never };
+    });
 
 export interface ProtyleCoreFactory<
   TOptions extends ProtyleCoreDocumentOptions,

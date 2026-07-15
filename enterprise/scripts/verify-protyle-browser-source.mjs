@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
+  auditNotebookScopedHostEventsAst,
   auditRegistryMigrationAst,
   collectModuleLoads,
 } from "./protyle-browser-source-audit.mjs";
@@ -17,6 +18,8 @@ const legacyPluginMenuFile = join(legacyPluginRoot, "Menu");
 const boundaryIntegrationFiles = [
   join(repositoryRoot, "app/src/host/plugin.ts"),
   join(repositoryRoot, "app/src/host/protyle.ts"),
+  join(repositoryRoot, "app/src/layout/dock/Backlink.ts"),
+  join(repositoryRoot, "app/src/layout/dock/Outline.ts"),
   join(repositoryRoot, "app/src/index.ts"),
   join(repositoryRoot, "app/src/types/protyle.d.ts"),
 ];
@@ -120,6 +123,10 @@ for (const file of files) {
   }
 
   for (const violation of auditRegistryMigrationAst(file, sourceFile)) {
+    violations.push(`${relativeFile}:${violation.line}: ${violation.message}`);
+  }
+
+  for (const violation of auditNotebookScopedHostEventsAst(sourceFile)) {
     violations.push(`${relativeFile}:${violation.line}: ${violation.message}`);
   }
 

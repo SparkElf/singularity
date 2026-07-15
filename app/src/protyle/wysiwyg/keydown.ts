@@ -1858,6 +1858,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             checkFold(id, (zoomIn) => {
                 protyle.host.dispatch({
                     type: "open-document",
+                    notebookId: protyle.notebookId,
                     documentId: id,
                     disposition: "duplicate-tab",
                     scope: zoomIn ? "subtree" : "context",
@@ -1905,6 +1906,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 checkFold(id, (zoomIn, _action, isRoot) => {
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: id,
                         disposition: "current",
                         scope: zoomIn ? "subtree" : "context",
@@ -1922,6 +1924,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 checkFold(id, (zoomIn) => {
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: id,
                         disposition: "background-tab",
                         scope: zoomIn ? "subtree" : "context",
@@ -1938,6 +1941,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 checkFold(id, (zoomIn, _action, isRoot) => {
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: id,
                         disposition: "split-right",
                         scope: zoomIn ? "subtree" : "context",
@@ -1954,6 +1958,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 checkFold(id, (zoomIn, _action, isRoot) => {
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: id,
                         disposition: "split-bottom",
                         scope: zoomIn ? "subtree" : "context",

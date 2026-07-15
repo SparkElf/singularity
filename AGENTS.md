@@ -11,7 +11,9 @@ SiYuan repository guide. Module path `github.com/siyuan-note/siyuan`, license AG
 | Tool | Version | Source of truth |
 |---|---|---|
 | Go | see `go` directive | `kernel/go.mod` |
-| Node (+ pnpm) | see CI matrix | `.github/workflows/cd.yml`, `app/package.json` (`packageManager` field) |
+| Node | 24 | `.github/workflows/singularity-l0.yml` |
+| pnpm (enterprise) | 11.9.0 | `enterprise/package.json` (`packageManager` field) |
+| pnpm (SiYuan app) | 11.12.0 | `app/package.json` (`packageManager` field) |
 
 ---
 
@@ -125,8 +127,8 @@ Four webpack configs each emit a separate bundle to `app/stage/build/{app,deskto
 6. **User guide:** When editing the user guide, follow `docs/SY-FORMAT.md`
 7. **Git:**
    - **NEVER** run `git commit` / `git push` unless explicitly asked — no exceptions
-   - When you do commit, follow the style of recent commits (gitmoji prefix + subject, in English)
-   - Append the full issue/PR URL (e.g. `https://github.com/siyuan-note/siyuan/issues/<NNN>`, not the `#NNN` short form — it is clickable) only when a related issue exists; do not fabricate one
+   - When you do commit, follow the style of recent Singularity commits: Conventional Commits (`type(scope): subject`), in English
+   - Append the full issue/PR URL (e.g. `https://github.com/SparkElf/singularity/issues/<NNN>`, not the `#NNN` short form — it is clickable) only when a related issue exists; do not fabricate one
 
 ---
 

@@ -392,6 +392,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             checkFold(blockId, (zoomIn) => {
                 protyle.host.dispatch({
                     type: "open-document",
+                    notebookId: protyle.notebookId,
                     documentId: blockId,
                     disposition,
                     scope: zoomIn ? "subtree" : "context",

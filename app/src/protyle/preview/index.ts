@@ -86,6 +86,7 @@ export class Preview {
                         const page = getSearch("page", linkAddress);
                         protyle.host.dispatch({
                             type: "open-asset",
+                            notebookId: protyle.notebookId,
                             assetPath,
                             page: page ? parseInt(page) : undefined,
                             disposition: "current",

@@ -121,6 +121,7 @@ export class Title {
                     if (ids.length > 2) {
                         protyle.host.dispatch({
                             type: "open-document",
+                            notebookId: protyle.notebookId,
                             documentId: ids[ids.length - 2],
                             disposition: "current",
                             scope: "target",

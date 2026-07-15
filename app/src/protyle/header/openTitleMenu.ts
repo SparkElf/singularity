@@ -96,6 +96,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             click: () => {
                 protyle.host.dispatch({
                     type: "open-outline",
+                    notebookId: protyle.notebookId,
                     documentId: protyle.block.rootID,
                     preview: !protyle.preview.element.classList.contains("fn__none"),
                 });
@@ -109,6 +110,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             click: () => {
                 protyle.host.dispatch({
                     type: "open-backlinks",
+                    notebookId: protyle.notebookId,
                     documentId: protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
                 });
             }
@@ -122,6 +124,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 protyle.host.dispatch({
                     type: "open-graph",
                     scope: "document",
+                    notebookId: protyle.notebookId,
                     documentId: protyle.block.id,
                 });
             }
@@ -157,6 +160,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                     click: () => {
                         protyle.host.dispatch({
                             type: "open-card-review",
+                            notebookId: protyle.notebookId,
                             documentId: protyle.block.rootID,
                         });
                     }
@@ -167,6 +171,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                     click: () => {
                         protyle.host.dispatch({
                             type: "open-card-browser",
+                            notebookId: protyle.notebookId,
                             documentId: protyle.block.rootID,
                         });
                     }
@@ -193,6 +198,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                         click: () => {
                             protyle.host.dispatch({
                                 type: "open-card-deck-picker",
+                                notebookId: protyle.notebookId,
                                 blockIds: [protyle.block.rootID],
                             });
                         }
@@ -215,6 +221,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
             click() {
                 protyle.host.dispatch({
                     type: "open-document-search",
+                    notebookId: protyle.notebookId,
                     documentId: protyle.block.rootID,
                 });
             }
@@ -231,6 +238,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 click() {
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: protyle.block.id,
                         disposition: "current",
                         scope: protyle.block.rootID !== protyle.block.id ? "subtree" : "context",
@@ -250,6 +258,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 click() {
                     protyle.host.dispatch({
                         type: "open-document-history",
+                        notebookId: protyle.notebookId,
                         documentId: protyle.block.rootID,
                     });
                 }

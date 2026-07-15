@@ -123,7 +123,9 @@ export const fetchPost = (
     });
 };
 
-export const fetchSyncPost = async (url: string, data?: any, headers?: Record<string, string>) => {
+export const fetchSyncPost = async (url: string, data?: any, headers?: Record<string, string>, options?: {
+    processResponse?: boolean,
+}) => {
     const init: RequestInit = {
         method: "POST",
     };
@@ -139,7 +141,9 @@ export const fetchSyncPost = async (url: string, data?: any, headers?: Record<st
     }
     const res = await fetch(url, init);
     const res2 = await res.json() as IWebSocketData;
-    processMessage(res2);
+    if (options?.processResponse !== false) {
+        processMessage(res2);
+    }
     return res2;
 };
 

@@ -563,7 +563,7 @@ interface IProtyle {
     disabled: boolean,
     lite?: boolean,
     selectElement?: HTMLElement,
-    notebookId?: string
+    notebookId: string
     path?: string
     model?: import("../../src/editor").Editor,
     updated: boolean;
@@ -572,7 +572,7 @@ interface IProtyle {
     gutter?: import("../protyle/gutter").Gutter,
     breadcrumb?: import("../protyle/breadcrumb").Breadcrumb,
     title?: import("../protyle/header/Title").Title,
-    background?: import("../protyle/header/background").Background,
+    background?: import("../protyle/header/Background").Background,
     contentElement?: HTMLElement,
     options: IProtyleOptions;
     lute?: Lute;

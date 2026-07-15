@@ -542,6 +542,7 @@ export class Dock {
                                     type: "pin",
                                     tab,
                                     blockId: editor?.protyle?.block?.rootID,
+                                    notebookId: editor?.protyle?.notebookId,
                                     isPreview: editor?.protyle?.preview ? !editor.protyle.preview.element.classList.contains("fn__none") : false
                                 });
                                 if (editor?.protyle?.block?.rootID) {
@@ -582,6 +583,7 @@ export class Dock {
                                     type: "pin",
                                     tab,
                                     blockId: editor?.protyle?.block?.rootID,
+                                    notebookId: editor?.protyle?.notebookId,
                                 }));
                             }
                         });

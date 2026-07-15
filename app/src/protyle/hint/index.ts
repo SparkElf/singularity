@@ -699,6 +699,7 @@ ${genHintItemHTML(item)}
                     insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
                     protyle.host.dispatch({
                         type: "open-document",
+                        notebookId: protyle.notebookId,
                         documentId: newSubDocId,
                         disposition: "current",
                         scope: "context",
