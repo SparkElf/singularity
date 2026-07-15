@@ -67,7 +67,10 @@ export function SpacesPage() {
   const explicitSpaceList = location.state === EXPLICIT_SPACE_LIST_STATE;
 
   const hasCurrentAuthorization =
-    spacesQuery.isSuccess && !spacesQuery.isFetching;
+    spacesQuery.isSuccess &&
+    spacesQuery.isFetchedAfterMount &&
+    !spacesQuery.isFetching &&
+    !spacesQuery.isPaused;
   const spaces = hasCurrentAuthorization
     ? spacesQuery.data.spaces
     : EMPTY_SPACES;
@@ -136,11 +139,12 @@ export function SpacesPage() {
           </Alert>
         ) : null}
 
-        {spacesQuery.isPending || spacesQuery.isFetching ? (
+        {!spacesQuery.isPaused &&
+        (spacesQuery.isPending || spacesQuery.isFetching) ? (
           <SpaceListLoading />
         ) : null}
 
-        {spacesQuery.isError ? (
+        {spacesQuery.isPaused || spacesQuery.isError ? (
           <Empty className="min-h-72 rounded-md border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -150,7 +154,8 @@ export function SpacesPage() {
                 <h2>无法加载空间</h2>
               </EmptyTitle>
               <EmptyDescription>
-                {spacesQuery.error instanceof NetworkFailureError
+                {spacesQuery.isPaused ||
+                spacesQuery.error instanceof NetworkFailureError
                   ? "无法连接到服务，请检查网络后重试。"
                   : "服务返回了无法处理的结果，请重试。"}
               </EmptyDescription>

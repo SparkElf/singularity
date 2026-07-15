@@ -109,6 +109,11 @@ export function LoginPage() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    activeController.current?.abort();
+    activeController.current = null;
+    const generation = attemptGeneration.current + 1;
+    attemptGeneration.current = generation;
+
     if (cooldownSeconds > 0) {
       return;
     }
@@ -125,10 +130,7 @@ export function LoginPage() {
       return;
     }
 
-    activeController.current?.abort();
     const controller = new AbortController();
-    const generation = attemptGeneration.current + 1;
-    attemptGeneration.current = generation;
     activeController.current = controller;
     setValidationError(false);
     setLoginState({ error: null, pending: true });

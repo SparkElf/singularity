@@ -4,11 +4,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const baseline = JSON.parse(readFileSync(resolve(repositoryRoot, "config/upstream-baseline.json"), "utf8"));
 
-function runGit(args, acceptedStatuses = [0]) {
+function runGit(root, args, acceptedStatuses = [0]) {
   const result = spawnSync("git", args, {
-    cwd: repositoryRoot,
+    cwd: root,
     encoding: "utf8",
   });
   if (!acceptedStatuses.includes(result.status ?? -1)) {
@@ -17,9 +16,9 @@ function runGit(args, acceptedStatuses = [0]) {
   return { status: result.status, stdout: result.stdout };
 }
 
-function parseArguments(args) {
+function parseArguments(args, candidate) {
   const options = {
-    candidate: baseline.upstreamCandidateCommit,
+    candidate,
     json: undefined,
     markdown: undefined,
   };
@@ -45,66 +44,70 @@ function moduleForPath(path) {
   return "repository";
 }
 
-function writeOutput(path, contents) {
-  const absolutePath = resolve(repositoryRoot, path);
+function writeOutput(root, path, contents) {
+  const absolutePath = resolve(root, path);
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, contents, "utf8");
 }
 
-const options = parseArguments(process.argv.slice(2));
-const commitPattern = /^[0-9a-f]{40}$/;
-if (!commitPattern.test(baseline.upstreamCommit) || !commitPattern.test(options.candidate)) {
-  throw new Error("Upstream baseline and candidate must be full commit SHAs");
-}
+export function createUpstreamImpact(root, baseline, candidate = baseline.upstreamCandidateCommit) {
+  const commitPattern = /^[0-9a-f]{40}$/;
+  if (!commitPattern.test(baseline.upstreamCommit) || !commitPattern.test(candidate)) {
+    throw new Error("Upstream baseline and candidate must be full commit SHAs");
+  }
 
-const baselineCommit = runGit(["rev-parse", `${baseline.upstreamCommit}^{commit}`]).stdout.trim();
-const candidateCommit = runGit(["rev-parse", `${options.candidate}^{commit}`]).stdout.trim();
-const headCommit = runGit(["rev-parse", "HEAD^{commit}"]).stdout.trim();
-runGit(["merge-base", "--is-ancestor", baselineCommit, candidateCommit]);
+  const baselineCommit = runGit(root, ["rev-parse", `${baseline.upstreamCommit}^{commit}`]).stdout.trim();
+  const candidateCommit = runGit(root, ["rev-parse", `${candidate}^{commit}`]).stdout.trim();
+  const headCommit = runGit(root, ["rev-parse", "HEAD^{commit}"]).stdout.trim();
+  const upstreamRef = `refs/remotes/upstream/${baseline.upstreamBranch}`;
+  runGit(root, ["show-ref", "--verify", upstreamRef]);
+  runGit(root, ["merge-base", "--is-ancestor", baselineCommit, upstreamRef]);
+  runGit(root, ["merge-base", "--is-ancestor", candidateCommit, upstreamRef]);
+  runGit(root, ["merge-base", "--is-ancestor", baselineCommit, candidateCommit]);
 
-const changedPaths = runGit(["diff", "--name-only", "-z", baselineCommit, candidateCommit])
-  .stdout.split("\u0000")
-  .filter(Boolean)
-  .sort();
-const moduleCounts = {};
-for (const path of changedPaths) {
-  const module = moduleForPath(path);
-  moduleCounts[module] = (moduleCounts[module] ?? 0) + 1;
-}
+  const changedPaths = runGit(root, ["diff", "--name-only", "-z", baselineCommit, candidateCommit])
+    .stdout.split("\u0000")
+    .filter(Boolean)
+    .sort();
+  const moduleCounts = {};
+  for (const path of changedPaths) {
+    const module = moduleForPath(path);
+    moduleCounts[module] = (moduleCounts[module] ?? 0) + 1;
+  }
 
-const mergeResult = runGit(
-  ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", headCommit, candidateCommit],
-  [0, 1],
-);
-const mergeFields = mergeResult.stdout.split("\u0000").filter(Boolean);
-const mergeTree = mergeFields.shift() ?? null;
-const conflictPaths = mergeFields.sort();
-const report = {
-  baselineCommit,
-  candidateCommit,
-  changedFileCount: changedPaths.length,
-  changedPaths,
-  forkHeadCommit: headCommit,
-  generatedAt: new Date().toISOString(),
-  merge: {
-    clean: mergeResult.status === 0,
-    conflictCount: conflictPaths.length,
-    conflictPaths,
-    tree: mergeTree,
-  },
-  moduleCounts,
-  upstreamBranch: baseline.upstreamBranch,
-  upstreamRepository: baseline.upstreamRepository,
-};
+  const mergeResult = runGit(
+    root,
+    ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", headCommit, candidateCommit],
+    [0, 1],
+  );
+  const mergeFields = mergeResult.stdout.split("\u0000").filter(Boolean);
+  const mergeTree = mergeFields.shift() ?? null;
+  const conflictPaths = mergeFields.sort();
+  const report = {
+    baselineCommit,
+    candidateCommit,
+    changedFileCount: changedPaths.length,
+    changedPaths,
+    forkHeadCommit: headCommit,
+    merge: {
+      clean: mergeResult.status === 0,
+      conflictCount: conflictPaths.length,
+      conflictPaths,
+      tree: mergeTree,
+    },
+    moduleCounts,
+    upstreamBranch: baseline.upstreamBranch,
+    upstreamRepository: baseline.upstreamRepository,
+  };
 
-const moduleRows = Object.entries(moduleCounts)
-  .sort(([left], [right]) => left.localeCompare(right))
-  .map(([module, count]) => `| ${module} | ${String(count)} |`)
-  .join("\n");
-const conflictRows = conflictPaths.length === 0
-  ? "- None"
-  : conflictPaths.map((path) => `- \`${path}\``).join("\n");
-const markdown = `# Singularity Upstream Impact Report
+  const moduleRows = Object.entries(moduleCounts)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([module, count]) => `| ${module} | ${String(count)} |`)
+    .join("\n");
+  const conflictRows = conflictPaths.length === 0
+    ? "- None"
+    : conflictPaths.map((path) => `- \`${path}\``).join("\n");
+  const markdown = `# Singularity Upstream Impact Report
 
 - Baseline: \`${baselineCommit}\`
 - Candidate: \`${candidateCommit}\`
@@ -123,12 +126,27 @@ ${moduleRows}
 ${conflictRows}
 `;
 
-if (options.json !== undefined) {
-  writeOutput(options.json, `${JSON.stringify(report, null, 2)}\n`);
+  return { markdown, report };
 }
-if (options.markdown !== undefined) {
-  writeOutput(options.markdown, markdown);
+
+function main() {
+  const baseline = JSON.parse(
+    readFileSync(resolve(repositoryRoot, "config/upstream-baseline.json"), "utf8"),
+  );
+  const options = parseArguments(process.argv.slice(2), baseline.upstreamCandidateCommit);
+  const { markdown, report } = createUpstreamImpact(repositoryRoot, baseline, options.candidate);
+
+  if (options.json !== undefined) {
+    writeOutput(repositoryRoot, options.json, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  if (options.markdown !== undefined) {
+    writeOutput(repositoryRoot, options.markdown, markdown);
+  }
+  if (options.json === undefined && options.markdown === undefined) {
+    process.stdout.write(markdown);
+  }
 }
-if (options.json === undefined && options.markdown === undefined) {
-  process.stdout.write(markdown);
+
+if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main();
 }

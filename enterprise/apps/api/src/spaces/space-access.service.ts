@@ -7,13 +7,6 @@ import type {
 } from "@singularity/contracts";
 import { DatabaseRuntime, type Prisma } from "@singularity/database";
 
-export type SpaceTransactionResult =
-  | "conflict"
-  | "created"
-  | "not-found"
-  | "revoked"
-  | "updated";
-
 function normalizedSortValue(value: string): string {
   return value.normalize("NFKC").toLowerCase();
 }

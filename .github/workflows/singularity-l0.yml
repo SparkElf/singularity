@@ -3,6 +3,7 @@ name: Singularity L0
 on:
   pull_request:
     paths:
+      - ".dockerignore"
       - ".github/**"
       - "README*.md"
       - "LICENSE"
@@ -20,6 +21,7 @@ on:
     branches:
       - master
     paths:
+      - ".dockerignore"
       - ".github/**"
       - "README*.md"
       - "LICENSE"
@@ -202,15 +204,54 @@ jobs:
     env:
       API_IMAGE: singularity-api:${{ github.sha }}
       WEB_IMAGE: singularity-web:${{ github.sha }}
-      UPSTREAM_COMMIT: 41f2861c87575ff5ac4b50a0520b1a4fe55b4a70
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: singularity_test
+          POSTGRES_PASSWORD: singularity_test
+          POSTGRES_DB: singularity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U singularity_test -d singularity_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
 
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            app/pnpm-lock.yaml
+            enterprise/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: kernel/go.mod
+          cache-dependency-path: kernel/go.sum
+
+      - name: Read upstream baseline
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const baseline = JSON.parse(readFileSync("config/upstream-baseline.json", "utf8"));
+            if (!/^[0-9a-f]{40}$/.test(baseline.upstreamCommit)) {
+              throw new Error("Invalid upstream baseline commit");
+            }
+            process.stdout.write(`UPSTREAM_COMMIT=${baseline.upstreamCommit}\n`);
+          ' >> "$GITHUB_ENV"
 
       - name: Build enterprise images
         run: |
@@ -231,11 +272,54 @@ jobs:
         run: |
           node scripts/singularity/verify-container-metadata.mjs \
             --revision "$GITHUB_SHA" \
-            --upstream "$UPSTREAM_COMMIT" \
             -- "$API_IMAGE" "$WEB_IMAGE"
+
+      - name: Smoke enterprise images
+        env:
+          DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:5432/singularity_test
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm --force singularity-api-smoke singularity-web-smoke >/dev/null 2>&1 || true
+          }
+          wait_for_url() {
+            local container="$1"
+            local url="$2"
+            for _ in {1..30}; do
+              if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            docker logs "$container"
+            return 1
+          }
+          trap cleanup EXIT
+          docker run --detach --name singularity-api-smoke --network host \
+            --env DATABASE_URL="$DATABASE_URL" \
+            --env SINGULARITY_PUBLIC_ORIGIN="https://singularity.invalid" \
+            "$API_IMAGE"
+          docker run --detach --name singularity-web-smoke --network host "$WEB_IMAGE"
+          wait_for_url singularity-api-smoke http://127.0.0.1:3001/api/v1/health/database
+          wait_for_url singularity-web-smoke http://127.0.0.1:8080/healthz
+          curl --fail --silent --show-error http://127.0.0.1:3001/api/v1/health/database \
+            | jq --exit-status '. == {"status":"ready"}' >/dev/null
+          test "$(curl --fail --silent --show-error http://127.0.0.1:8080/healthz)" = "ok"
 
       - name: Prepare supply-chain reports
         run: mkdir -p artifacts/supply-chain
+
+      - name: Materialize enterprise license metadata
+        run: pnpm install --frozen-lockfile --force --ignore-scripts
+        working-directory: enterprise
+
+      - name: Materialize SiYuan license metadata
+        run: pnpm install --frozen-lockfile --force --ignore-scripts
+        working-directory: app
+
+      - name: Materialize Go license metadata
+        run: go mod vendor
+        working-directory: kernel
 
       - name: Generate source SBOM
         id: source_sbom
@@ -245,8 +329,10 @@ jobs:
           version: v0.72.0
           scan-type: fs
           scan-ref: .
+          scanners: license
           format: cyclonedx
-          output: artifacts/supply-chain/source.cdx.json
+          output: artifacts/supply-chain/source.trivy.cdx.json
+          trivy-config: config/trivy.yaml
 
       - name: Generate API image SBOM
         id: api_sbom
@@ -256,8 +342,10 @@ jobs:
           version: v0.72.0
           scan-type: image
           image-ref: ${{ env.API_IMAGE }}
+          scanners: license
           format: cyclonedx
-          output: artifacts/supply-chain/api.cdx.json
+          output: artifacts/supply-chain/api.trivy.cdx.json
+          trivy-config: config/trivy.yaml
 
       - name: Generate Web image SBOM
         id: web_sbom
@@ -267,8 +355,49 @@ jobs:
           version: v0.72.0
           scan-type: image
           image-ref: ${{ env.WEB_IMAGE }}
+          scanners: license
           format: cyclonedx
-          output: artifacts/supply-chain/web.cdx.json
+          output: artifacts/supply-chain/web.trivy.cdx.json
+          trivy-config: config/trivy.yaml
+
+      - name: Enforce production dependency closure
+        id: production_sbom_policy
+        continue-on-error: true
+        run: |
+          node scripts/singularity/verify-production-sbom.mjs \
+            --api-image "$API_IMAGE" \
+            --api artifacts/supply-chain/api.trivy.cdx.json \
+            --web artifacts/supply-chain/web.trivy.cdx.json \
+            --output artifacts/supply-chain/production-sbom-policy.json
+
+      - name: Enrich source SBOM license evidence
+        id: source_sbom_evidence
+        continue-on-error: true
+        run: |
+          node scripts/singularity/enrich-license-sbom.mjs \
+            --policy config/license-policy.json \
+            --input artifacts/supply-chain/source.trivy.cdx.json \
+            --output artifacts/supply-chain/source.cdx.json
+
+      - name: Enrich API SBOM license evidence
+        id: api_sbom_evidence
+        continue-on-error: true
+        run: |
+          node scripts/singularity/enrich-license-sbom.mjs \
+            --policy config/license-policy.json \
+            --input artifacts/supply-chain/api.trivy.cdx.json \
+            --output artifacts/supply-chain/api.cdx.json \
+            --image "$API_IMAGE"
+
+      - name: Enrich Web SBOM license evidence
+        id: web_sbom_evidence
+        continue-on-error: true
+        run: |
+          node scripts/singularity/enrich-license-sbom.mjs \
+            --policy config/license-policy.json \
+            --input artifacts/supply-chain/web.trivy.cdx.json \
+            --output artifacts/supply-chain/web.cdx.json \
+            --image "$WEB_IMAGE"
 
       - name: Scan source licenses
         id: source_license
@@ -294,6 +423,7 @@ jobs:
           scanners: license
           format: json
           output: artifacts/supply-chain/api-licenses.json
+          trivy-config: config/trivy.yaml
 
       - name: Scan Web image licenses
         id: web_license
@@ -306,6 +436,7 @@ jobs:
           scanners: license
           format: json
           output: artifacts/supply-chain/web-licenses.json
+          trivy-config: config/trivy.yaml
 
       - name: Enforce license policy
         id: license_policy
@@ -314,11 +445,31 @@ jobs:
           node scripts/singularity/check-license-reports.mjs \
             --policy config/license-policy.json \
             --output artifacts/supply-chain/license-policy.json \
-            artifacts/supply-chain/source-licenses.json \
-            artifacts/supply-chain/api-licenses.json \
-            artifacts/supply-chain/web-licenses.json
+            --report artifacts/supply-chain/source-licenses.json \
+            --sbom artifacts/supply-chain/source.cdx.json \
+            --report artifacts/supply-chain/api-licenses.json \
+            --sbom artifacts/supply-chain/api.cdx.json \
+            --report artifacts/supply-chain/web-licenses.json \
+            --sbom artifacts/supply-chain/web.cdx.json
 
-      - name: Scan fixable API vulnerabilities
+      - name: Scan enterprise source vulnerabilities
+        id: enterprise_vulnerability
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: fs
+          scan-ref: enterprise
+          scanners: vuln
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 0
+          format: json
+          output: artifacts/supply-chain/enterprise-vulnerabilities.json
+          trivy-config: config/trivy.yaml
+
+      - name: Scan API High and Critical vulnerabilities
         id: api_vulnerability
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -329,12 +480,12 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: 1
+          ignore-unfixed: false
+          exit-code: 0
           format: json
           output: artifacts/supply-chain/api-vulnerabilities.json
 
-      - name: Scan fixable Web vulnerabilities
+      - name: Scan Web High and Critical vulnerabilities
         id: web_vulnerability
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -345,10 +496,20 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: 1
+          ignore-unfixed: false
+          exit-code: 0
           format: json
           output: artifacts/supply-chain/web-vulnerabilities.json
+
+      - name: Enforce vulnerability policy
+        id: vulnerability_policy
+        continue-on-error: true
+        run: |
+          node scripts/singularity/check-vulnerability-reports.mjs \
+            --output artifacts/supply-chain/vulnerability-policy.json \
+            --report artifacts/supply-chain/enterprise-vulnerabilities.json \
+            --report artifacts/supply-chain/api-vulnerabilities.json \
+            --report artifacts/supply-chain/web-vulnerabilities.json
 
       - name: Upload supply-chain reports
         if: ${{ always() }}
@@ -364,24 +525,36 @@ jobs:
         env:
           API_LICENSE: ${{ steps.api_license.outcome }}
           API_SBOM: ${{ steps.api_sbom.outcome }}
+          API_SBOM_EVIDENCE: ${{ steps.api_sbom_evidence.outcome }}
           API_VULNERABILITY: ${{ steps.api_vulnerability.outcome }}
+          ENTERPRISE_VULNERABILITY: ${{ steps.enterprise_vulnerability.outcome }}
           LICENSE_POLICY: ${{ steps.license_policy.outcome }}
+          PRODUCTION_SBOM_POLICY: ${{ steps.production_sbom_policy.outcome }}
           SOURCE_LICENSE: ${{ steps.source_license.outcome }}
           SOURCE_SBOM: ${{ steps.source_sbom.outcome }}
+          SOURCE_SBOM_EVIDENCE: ${{ steps.source_sbom_evidence.outcome }}
           WEB_LICENSE: ${{ steps.web_license.outcome }}
           WEB_SBOM: ${{ steps.web_sbom.outcome }}
+          WEB_SBOM_EVIDENCE: ${{ steps.web_sbom_evidence.outcome }}
           WEB_VULNERABILITY: ${{ steps.web_vulnerability.outcome }}
+          VULNERABILITY_POLICY: ${{ steps.vulnerability_policy.outcome }}
         run: |
           for outcome in \
             "$API_LICENSE" \
             "$API_SBOM" \
+            "$API_SBOM_EVIDENCE" \
             "$API_VULNERABILITY" \
+            "$ENTERPRISE_VULNERABILITY" \
             "$LICENSE_POLICY" \
+            "$PRODUCTION_SBOM_POLICY" \
             "$SOURCE_LICENSE" \
             "$SOURCE_SBOM" \
+            "$SOURCE_SBOM_EVIDENCE" \
             "$WEB_LICENSE" \
             "$WEB_SBOM" \
-            "$WEB_VULNERABILITY"; do
+            "$WEB_SBOM_EVIDENCE" \
+            "$WEB_VULNERABILITY" \
+            "$VULNERABILITY_POLICY"; do
             if [ "$outcome" != "success" ]; then
               exit 1
             fi

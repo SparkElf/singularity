@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { collectBrowserDiagnostics } from "./support/diagnostics.ts";
+import {
+  collectBrowserDiagnostics,
+  expectBrowserHealthy,
+} from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
@@ -9,7 +12,7 @@ const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const CSRF_TOKEN = "A".repeat(43);
-const MAX_API_REQUEST_DURATION_MS = 5_000;
+const MAX_REQUEST_DURATION_MS = 5_000;
 
 const spaces = [
   {
@@ -105,32 +108,25 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
   await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
   await expect(page).toHaveURL("/login");
   await expect(page.getByRole("heading", { name: "空间已就绪" })).toHaveCount(0);
-  const consoleMessages = diagnostics.consoleMessages.map((message) =>
-    message.text(),
+  const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
+    message.text().includes("401 (Unauthorized)"),
   );
-  expect(
-    consoleMessages.filter((message) => !message.includes("401 (Unauthorized)")),
-  ).toEqual([]);
-  expect(
-    consoleMessages.some((message) => message.includes("401 (Unauthorized)")),
-  ).toBe(true);
-  expect(diagnostics.pageErrors).toEqual([]);
-  const errorResponses = diagnostics.requests.filter(
-    (request) => request.status !== null && request.status >= 400,
+  expect(expectedConsoleMessages).toHaveLength(1);
+  const expectedErrorResponses = diagnostics.responses.filter(
+    (response) =>
+      response.status() === 401 &&
+      new URL(response.url()).pathname === "/api/v1/spaces",
   );
-  expect(errorResponses).toHaveLength(1);
-  expect(errorResponses[0]?.status).toBe(401);
-  expect(new URL(errorResponses[0]!.request.url()).pathname).toBe(
-    "/api/v1/spaces",
-  );
-  expect(
-    diagnostics.requests.filter((request) => request.failure !== null),
-  ).toEqual([]);
-  for (const request of diagnostics.requests) {
-    expect(request.finishedAt).not.toBeNull();
-    expect(request.durationMs).not.toBeNull();
-    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
-  }
+  expect(expectedErrorResponses).toHaveLength(1);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+      (message) => !expectedConsoleMessages.includes(message),
+    ),
+    unexpectedErrorResponses: diagnostics.responses.filter(
+      (response) =>
+        response.status() >= 400 && !expectedErrorResponses.includes(response),
+    ),
+  });
 });
 
 test("a visible starting page polls once and adopts the new ready state", async ({ page }) => {
@@ -161,27 +157,12 @@ test("a visible starting page polls once and adopts the new ready state", async 
     timeout: 5_000,
   });
   expect(runtimeRequests).toBe(2);
-  expect(diagnostics.consoleMessages).toEqual([]);
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(
-    diagnostics.requests.filter(
-      (request) =>
-        request.status !== null && request.status >= 400,
-    ),
-  ).toEqual([]);
-  expect(
-    diagnostics.requests.filter((request) => request.failure !== null),
-  ).toEqual([]);
   const runtimeDiagnostics = diagnostics.requests.filter(
-    (request) => new URL(request.request.url()).pathname === runtimePath(),
+    (request) => new URL(request.url()).pathname === runtimePath(),
   );
   expect(runtimeDiagnostics).toHaveLength(2);
-  expect(runtimeDiagnostics[0]?.request).not.toBe(runtimeDiagnostics[1]?.request);
-  for (const request of diagnostics.requests) {
-    expect(request.finishedAt).not.toBeNull();
-    expect(request.durationMs).not.toBeNull();
-    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
-  }
+  expect(runtimeDiagnostics[0]).not.toBe(runtimeDiagnostics[1]);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });
 
 test("a browser network failure remains distinct and explicit retry recovers", async ({ page }) => {
@@ -216,37 +197,24 @@ test("a browser network failure remains distinct and explicit retry recovers", a
   networkFailure = false;
   await page.getByRole("button", { name: "立即重试" }).click();
   await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
-  const consoleMessages = diagnostics.consoleMessages.map((message) =>
-    message.text(),
+  const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
+    message.text().includes("net::ERR_CONNECTION_FAILED"),
   );
-  expect(
-    consoleMessages.filter(
-      (message) => !message.includes("net::ERR_CONNECTION_FAILED"),
-    ),
-  ).toEqual([]);
-  expect(
-    consoleMessages.some((message) =>
-      message.includes("net::ERR_CONNECTION_FAILED"),
-    ),
-  ).toBe(true);
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(
-    diagnostics.requests.filter(
-      (request) =>
-        request.status !== null && request.status >= 400,
-    ),
-  ).toEqual([]);
-  const requestFailures = diagnostics.requests.filter(
-    (request) => request.failure !== null,
+  expect(expectedConsoleMessages).toHaveLength(1);
+  const expectedRequestFailures = diagnostics.requestFailures.filter(
+    (request) =>
+      new URL(request.url()).pathname === runtimePath() &&
+      request.failure()?.errorText.includes("net::ERR_CONNECTION_FAILED"),
   );
-  expect(requestFailures).toHaveLength(1);
-  expect(new URL(requestFailures[0]!.request.url()).pathname).toBe(runtimePath());
-  expect(requestFailures[0]?.failure).toContain("net::ERR_CONNECTION_FAILED");
-  for (const request of diagnostics.requests) {
-    expect(request.finishedAt).not.toBeNull();
-    expect(request.durationMs).not.toBeNull();
-    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
-  }
+  expect(expectedRequestFailures).toHaveLength(1);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+      (message) => !expectedConsoleMessages.includes(message),
+    ),
+    unexpectedRequestFailures: diagnostics.requestFailures.filter(
+      (request) => !expectedRequestFailures.includes(request),
+    ),
+  });
 });
 
 test("the sidebar collapses on desktop and closes after mobile space navigation", async ({
@@ -311,20 +279,5 @@ test("the sidebar collapses on desktop and closes after mobile space navigation"
     await expect(logout).toBeHidden();
   }
 
-  expect(diagnostics.consoleMessages).toEqual([]);
-  expect(diagnostics.pageErrors).toEqual([]);
-  expect(
-    diagnostics.requests.filter(
-      (request) =>
-        request.status !== null && request.status >= 400,
-    ),
-  ).toEqual([]);
-  expect(
-    diagnostics.requests.filter((request) => request.failure !== null),
-  ).toEqual([]);
-  for (const request of diagnostics.requests) {
-    expect(request.finishedAt).not.toBeNull();
-    expect(request.durationMs).not.toBeNull();
-    expect(request.durationMs!).toBeLessThan(MAX_API_REQUEST_DURATION_MS);
-  }
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });

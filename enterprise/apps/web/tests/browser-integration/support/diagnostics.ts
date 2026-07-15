@@ -1,27 +1,43 @@
-import type { ConsoleMessage, Page, Request } from "@playwright/test";
+import {
+  expect,
+  type ConsoleMessage,
+  type Page,
+  type Request,
+  type Response,
+} from "@playwright/test";
 
-export interface BrowserRequestDiagnostic {
+export interface BrowserRequestTiming {
   durationMs: number | null;
-  failure: string | null;
   finishedAt: number | null;
-  request: Request;
   startedAt: number;
-  status: number | null;
 }
 
 export interface BrowserDiagnostics {
   consoleMessages: ConsoleMessage[];
   pageErrors: Error[];
-  requests: BrowserRequestDiagnostic[];
+  pendingRequests: Set<Request>;
+  requestFailures: Request[];
+  requestTimings: Map<Request, BrowserRequestTiming>;
+  requests: Request[];
+  responses: Response[];
+}
+
+interface BrowserHealthEvidence {
+  unexpectedConsoleMessages?: readonly ConsoleMessage[];
+  unexpectedErrorResponses?: readonly Response[];
+  unexpectedRequestFailures?: readonly Request[];
 }
 
 export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   const diagnostics: BrowserDiagnostics = {
     consoleMessages: [],
     pageErrors: [],
+    pendingRequests: new Set(),
+    requestFailures: [],
+    requestTimings: new Map(),
     requests: [],
+    responses: [],
   };
-  const pendingRequests = new Map<Request, BrowserRequestDiagnostic>();
 
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
@@ -32,48 +48,67 @@ export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
     diagnostics.pageErrors.push(error);
   });
   page.on("request", (request) => {
-    if (!new URL(request.url()).pathname.startsWith("/api/v1/")) {
-      return;
-    }
-
-    const diagnostic: BrowserRequestDiagnostic = {
+    diagnostics.requests.push(request);
+    diagnostics.pendingRequests.add(request);
+    diagnostics.requestTimings.set(request, {
       durationMs: null,
-      failure: null,
       finishedAt: null,
-      request,
       startedAt: performance.now(),
-      status: null,
-    };
-    diagnostics.requests.push(diagnostic);
-    pendingRequests.set(request, diagnostic);
+    });
   });
   page.on("response", (response) => {
-    const diagnostic = pendingRequests.get(response.request());
-    if (diagnostic) {
-      diagnostic.status = response.status();
-    }
+    diagnostics.responses.push(response);
   });
   page.on("requestfinished", (request) => {
-    const diagnostic = pendingRequests.get(request);
-    if (!diagnostic) {
-      return;
-    }
-
-    diagnostic.finishedAt = performance.now();
-    diagnostic.durationMs = diagnostic.finishedAt - diagnostic.startedAt;
-    pendingRequests.delete(request);
+    finishRequest(diagnostics, request);
   });
   page.on("requestfailed", (request) => {
-    const diagnostic = pendingRequests.get(request);
-    if (!diagnostic) {
-      return;
-    }
-
-    diagnostic.finishedAt = performance.now();
-    diagnostic.durationMs = diagnostic.finishedAt - diagnostic.startedAt;
-    diagnostic.failure = request.failure()?.errorText ?? "unknown";
-    pendingRequests.delete(request);
+    diagnostics.requestFailures.push(request);
+    finishRequest(diagnostics, request);
   });
 
   return diagnostics;
+}
+
+function finishRequest(diagnostics: BrowserDiagnostics, request: Request): void {
+  const timing = diagnostics.requestTimings.get(request);
+  if (!timing) {
+    return;
+  }
+
+  timing.finishedAt = performance.now();
+  timing.durationMs = timing.finishedAt - timing.startedAt;
+  diagnostics.pendingRequests.delete(request);
+}
+
+export function expectBrowserHealthy(
+  diagnostics: BrowserDiagnostics,
+  maxRequestDurationMs: number,
+  evidence: BrowserHealthEvidence = {},
+): void {
+  expect(
+    evidence.unexpectedConsoleMessages ?? diagnostics.consoleMessages,
+  ).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(
+    evidence.unexpectedErrorResponses ??
+      diagnostics.responses.filter((response) => response.status() >= 400),
+  ).toEqual([]);
+  expect(
+    evidence.unexpectedRequestFailures ?? diagnostics.requestFailures,
+  ).toEqual([]);
+  expect([...diagnostics.pendingRequests]).toEqual([]);
+
+  const terminalRequests = new Set([
+    ...diagnostics.responses.map((response) => response.request()),
+    ...diagnostics.requestFailures,
+  ]);
+  for (const request of diagnostics.requests) {
+    const timing = diagnostics.requestTimings.get(request);
+    expect(timing).toBeDefined();
+    expect(timing?.finishedAt).not.toBeNull();
+    expect(timing?.durationMs).not.toBeNull();
+    expect(timing!.durationMs!).toBeLessThan(maxRequestDurationMs);
+    expect(terminalRequests.has(request)).toBe(true);
+  }
 }

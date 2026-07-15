@@ -12,7 +12,7 @@ RUN apt-get update && \
     corepack enable && \
     corepack prepare pnpm@11.9.0 --activate
 
-COPY enterprise/package.json enterprise/pnpm-lock.yaml enterprise/pnpm-workspace.yaml enterprise/.npmrc ./
+COPY enterprise/package.json enterprise/pnpm-lock.yaml enterprise/pnpm-workspace.yaml enterprise/.npmrc enterprise/.pnpmfile.cjs ./
 COPY enterprise/tsconfig.base.json enterprise/tsconfig.node.json enterprise/eslint.config.mjs ./
 COPY enterprise/apps/api/package.json apps/api/package.json
 COPY enterprise/apps/web/package.json apps/web/package.json
@@ -28,7 +28,18 @@ RUN --mount=type=cache,id=singularity-pnpm,target=/pnpm/store \
 COPY enterprise/ ./
 
 RUN pnpm --filter @singularity/api... build && \
-    pnpm --filter @singularity/api --prod deploy --legacy /opt/singularity-api
+    pnpm --filter @singularity/api --prod deploy /opt/singularity-api && \
+    pnpm --dir /opt/singularity-api pkg delete devDependencies && \
+    rm -f \
+      /opt/singularity-api/pnpm-lock.yaml \
+      /opt/singularity-api/pnpm-workspace.yaml \
+      /opt/singularity-api/node_modules/.pnpm-workspace-state-v1.json && \
+    find /opt/singularity-api/node_modules/.pnpm -type d \( \
+      -path "*/node_modules/@fastify/cors/benchmark" -o \
+      -path "*/node_modules/fast-uri/benchmark" -o \
+      -path "*/node_modules/pino/test" -o \
+      -path "*/node_modules/secure-json-parse/benchmarks" \
+    \) -prune -exec rm -rf {} +
 
 FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212 AS runtime
 
