@@ -1,5 +1,5 @@
 import {Tab} from "../Tab";
-import {getInstanceById, setPanelFocus} from "../util";
+import {setPanelFocus} from "../util";
 import {getDockByType} from "../tabUtil";
 import {Model} from "../Model";
 import {Constants} from "../../constants";
@@ -12,10 +12,30 @@ import {updateHotkeyAfterTip} from "../../protyle/util/compatibility";
 import {openGlobalSearch} from "../../search/util";
 import {App} from "../../index";
 import {checkFold} from "../../util/noRelyPCFunction";
-import {Editor} from "../../editor";
-import {getDocDisplayName} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox, isSameNotebookContentDomain} from "../../util/pathName";
+import {showMessage} from "../../dialog/message";
 
 declare const vis: any;
+
+type GraphOptions = {
+    app: App,
+    tab: Tab,
+} & ({
+    type: "global",
+    blockId?: never,
+    rootId?: never,
+    notebookId?: never,
+} | {
+    type: "pin",
+    blockId: string,
+    rootId?: never,
+    notebookId: string,
+} | {
+    type: "local",
+    blockId: string,
+    rootId: string,
+    notebookId: string,
+});
 
 export class Graph extends Model {
     public inputElement: HTMLInputElement;
@@ -25,6 +45,7 @@ export class Graph extends Model {
     private network: any;
     public blockId: string; // "local" / "pin" 必填
     public rootId: string; // "local" 必填
+    public notebookId: string; // "local" / "pin" 必填
     public graphData: {
         nodes: { box: string, id: string, path: string, type: string, color: IObject }[],
         links: Record<string, unknown>[],
@@ -32,24 +53,22 @@ export class Graph extends Model {
     };
     public type: "local" | "pin" | "global";
 
-    constructor(options: {
-        app: App
-        tab: Tab
-        blockId?: string
-        rootId?: string
-        type: "local" | "pin" | "global"
-    }) {
+    constructor(options: GraphOptions) {
         super({app: options.app});
-        this.connect({
-            id: options.tab.id,
-            type: "graph",
-            callback: this.handleCallback.bind(this),
-            msgCallback: this.handleMsgCallback.bind(this)
-        });
         this.element = options.tab.panelElement;
         this.blockId = options.blockId;
         this.rootId = options.rootId;
+        this.notebookId = options.notebookId;
         this.type = options.type;
+        const isUnsupportedEncryptedGraph = this.type !== "global" && isEncryptedBox(this.notebookId);
+        if (!isUnsupportedEncryptedGraph) {
+            this.connect({
+                id: options.tab.id,
+                type: "graph",
+                callback: this.handleCallback.bind(this),
+                msgCallback: this.handleMsgCallback.bind(this)
+            });
+        }
 
         this.element.classList.add("graph", "file-tree", this.type === "global" ? "sy__globalGraph" : "sy__graph", "dockPanel");
         let panelHTML;
@@ -259,6 +278,10 @@ export class Graph extends Model {
             let target = event.target as HTMLElement;
             while (target && !target.isEqualNode(this.element)) {
                 if (target.classList.contains("b3-button")) {
+                    if (this.type !== "global" && isEncryptedBox(this.notebookId)) {
+                        showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+                        break;
+                    }
                     if (this.type === "global") {
                         fetchPost("/api/graph/resetGraph", {}, (data) => {
                             this.reset(data.data.conf);
@@ -334,11 +357,15 @@ export class Graph extends Model {
                 this.searchGraph(false);
             });
         });
-        this.searchGraph(options.type !== "global");
+        if (isUnsupportedEncryptedGraph) {
+            showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+        } else {
+            this.searchGraph(options.type !== "global");
+        }
     }
 
     private handleCallback() {
-        if (this.type === "local") {
+        if (this.type === "local" && !isEncryptedBox(this.notebookId)) {
             fetchPost("/api/block/checkBlockExist", {id: this.blockId}, existResponse => {
                 if (!existResponse.data) {
                     this.parent.parent.removeTab(this.parent.id);
@@ -356,7 +383,7 @@ export class Graph extends Model {
                     }
                     break;
                 case "rename":
-                    if (this.graphData && data.data.box === this.graphData.box && this.rootId === data.data.id) {
+                    if (this.type !== "global" && data.data.box === this.notebookId && this.rootId === data.data.id) {
                         this.searchGraph(false);
                         if (this.type === "local") {
                             this.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
@@ -368,7 +395,7 @@ export class Graph extends Model {
                     break;
                 case "closeBox":
                 case "removeBox":
-                    if (this.type === "local" && this.graphData && this.graphData.box === data.data.box) {
+                    if (this.type === "local" && this.notebookId === data.data.box) {
                         this.parent.parent.removeTab(this.parent.id);
                     }
                     break;
@@ -421,9 +448,13 @@ export class Graph extends Model {
         this.searchGraph(false);
     }
 
-    public searchGraph(focus: boolean, id?: string, refresh = false) {
+    public searchGraph(focus: boolean, target?: { id: string, notebookId: string }, refresh = false) {
+        const targetNotebookId = target ? target.notebookId : this.notebookId;
+        if (this.type !== "global" && isEncryptedBox(targetNotebookId)) {
+            return;
+        }
         const element = this.element.querySelector('.block__icon[data-type="refresh"] svg');
-        if (element.classList.contains("fn__rotate") && !id) {
+        if (element.classList.contains("fn__rotate") && !target) {
             return;
         }
         element.classList.add("fn__rotate");
@@ -470,7 +501,7 @@ export class Graph extends Model {
             fetchPost("/api/graph/getLocalGraph", {
                 type: this.type, // 用于如下场景：当打开文档A的关系图、关系图、文档A后刷新，由于防止请求重复处理，文档A关系图无法渲染。
                 k: this.inputElement.value,
-                id: id || this.blockId,
+                id: target ? target.id : this.blockId,
                 conf: {
                     type,
                     d3,
@@ -478,20 +509,16 @@ export class Graph extends Model {
                 },
             }, response => {
                 element.classList.remove("fn__rotate");
-                if (id) {
-                    this.blockId = id;
+                if (target) {
+                    this.blockId = target.id;
+                    this.notebookId = target.notebookId;
                 }
                 if (!refresh && this.type === "pin" && this.blockId) {
-                    const isActive = Array.from(document.querySelectorAll(".fn__flex > .layout-tab-bar > .item--focus")).find(activeElement => {
-                        const tab = getInstanceById(activeElement.getAttribute("data-id"));
-                        if (tab instanceof Tab && tab.model instanceof Editor) {
-                            if (tab.model.editor.protyle.block.rootID === this.blockId ||
-                                tab.model.editor.protyle.block.parentID === this.blockId ||
-                                tab.model.editor.protyle.block.id === this.blockId) {
-                                return true;
-                            }
-                        }
-                    });
+                    const activeEditor = this.app.protyleEditors.getActive();
+                    const isActive = activeEditor &&
+                        (activeEditor.block.rootID === this.blockId || activeEditor.block.parentID === this.blockId ||
+                            activeEditor.block.id === this.blockId) &&
+                        isSameNotebookContentDomain(activeEditor.notebookId, targetNotebookId);
                     if (!isActive) {
                         return;
                     }
@@ -744,21 +771,24 @@ export class Graph extends Model {
                     openGlobalSearch(this.app, `#${node.id}#`, !window.siyuan.ctrlIsPressed, {method: 0});
                     return;
                 }
+                const notebookId = this.type === "global" ? node.box : this.notebookId;
                 if (window.siyuan.shiftIsPressed) {
-                    checkFold(node.id, (zoomIn, action: TProtyleAction[]) => {
+                    checkFold(node.id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                         openFileById({
                             app: this.app,
                             id: node.id,
+                            notebookId,
                             position: "bottom",
                             action,
                             zoomIn
                         });
                     });
                 } else if (window.siyuan.altIsPressed) {
-                    checkFold(node.id, (zoomIn, action: TProtyleAction[]) => {
+                    checkFold(node.id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                         openFileById({
                             app: this.app,
                             id: node.id,
+                            notebookId,
                             position: "right",
                             action,
                             zoomIn
@@ -768,15 +798,17 @@ export class Graph extends Model {
                     window.siyuan.blockPanels.push(new BlockPanel({
                         app: this.app,
                         isBacklink: false,
+                        notebookId,
                         x: params.event.center.x,
                         y: params.event.center.y,
                         refDefs: [{refID: node.id}]
                     }));
                 } else {
-                    checkFold(node.id, (zoomIn, action: TProtyleAction[]) => {
+                    checkFold(node.id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                         openFileById({
                             app: this.app,
                             id: node.id,
+                            notebookId,
                             action,
                             zoomIn
                         });

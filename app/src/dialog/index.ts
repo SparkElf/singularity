@@ -4,13 +4,15 @@ import {isMobile} from "../util/functions";
 import {isNotCtrl} from "../protyle/util/compatibility";
 import {Protyle} from "../protyle";
 import {Constants} from "../constants";
+import type {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 
 export class Dialog {
+    private beforeDestroyCallback: (options?: IObject) => void;
     private destroyCallback: (options?: IObject) => void;
     public element: HTMLElement;
     private id: string;
     private disableClose: boolean;
-    public editors: { [key: string]: Protyle };
+    public editors: { [key: string]: Protyle | EmbeddedProtyleOwner };
     public data: any;
     private resizeCallback: (type: string) => void;
 
@@ -21,6 +23,7 @@ export class Dialog {
         content: string,
         width?: string,
         height?: string,
+        beforeDestroyCallback?: (options?: IObject) => void,
         destroyCallback?: (options?: IObject) => void,
         disableClose?: boolean,
         hideCloseIcon?: boolean,
@@ -32,6 +35,7 @@ export class Dialog {
         this.disableClose = options.disableClose;
         this.id = genUUID();
         window.siyuan.dialogs.push(this);
+        this.beforeDestroyCallback = options.beforeDestroyCallback;
         this.destroyCallback = options.destroyCallback;
         this.element = document.createElement("div") as HTMLElement;
         let left;
@@ -93,6 +97,7 @@ left:${left || "auto"};top:${top || "auto"}">
     }
 
     public destroy(options?: IObject) {
+        this.beforeDestroyCallback?.(options);
         this.element.classList.remove("b3-dialog--open");
         setTimeout(() => {
             // av 修改列头emoji后点击关闭emoji图标

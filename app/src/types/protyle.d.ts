@@ -525,6 +525,29 @@ type TProtyleEditorRegistry = import("../../../enterprise/packages/protyle-brows
 
 type TProtyleHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort;
 
+type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSurface;
+
+type TProtyleParticipation = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleParticipation;
+
+type TProtyleBoundContent = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleBoundContent;
+
+type TProtyleLocalOnlyContent = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleLocalOnlyContent;
+
+type TProtyleBoundLifecycle = {
+    surface: TProtyleSurface,
+    participation: TProtyleParticipation,
+    content: TProtyleBoundContent,
+    initialLoad: "automatic" | "owner",
+    signal?: AbortSignal,
+    onBacklinkChange?: () => void,
+};
+
+type TProtyleLocalOnlyLifecycle = {
+    surface: "embedded",
+    participation: "detached",
+    content: TProtyleLocalOnlyContent,
+};
+
 interface IProtyle {
     highlight: {
         mark: Highlight
@@ -536,10 +559,15 @@ interface IProtyle {
     getInstance: () => import("../protyle").Protyle,
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
+    uiEventController?: AbortController,
+    ownerSignal?: AbortSignal,
     app: import("../index").App,
     editors: TProtyleEditorRegistry,
     host: TProtyleHostPort,
     plugins: TProtylePluginPort,
+    surface: TProtyleSurface,
+    participation: TProtyleParticipation,
+    content: TProtyleBoundContent | TProtyleLocalOnlyContent,
     ws?: import("../layout/Model").Model,
     id: string,
     destroyed?: boolean,
@@ -563,7 +591,7 @@ interface IProtyle {
     disabled: boolean,
     lite?: boolean,
     selectElement?: HTMLElement,
-    notebookId: string
+    readonly notebookId: string
     path?: string
     model?: import("../../src/editor").Editor,
     updated: boolean;

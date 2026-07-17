@@ -363,7 +363,7 @@ const renderKeyboardToolbar = () => {
         protyle.toolbar.range = range;
         if (!dynamicElements[0].classList.contains("fn__none")) {
             // 撤销权威栈在 kernel，本地按 rootID 读镜像设按钮态（零 fetch）
-            const undoState = protyle.block?.rootID ? getMirror(protyle.block.rootID) : {
+            const undoState = protyle.block?.rootID ? getMirror(protyle.notebookId, protyle.block.rootID) : {
                 canUndo: false,
                 canRedo: false
             };

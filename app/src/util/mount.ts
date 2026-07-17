@@ -16,9 +16,14 @@ export const fetchNewDailyNote = (app: App, notebook: string) => {
         app: Constants.SIYUAN_APPID,
     }, (response) => {
         /// #if MOBILE
-        openMobileFileById(app, response.data.id, [Constants.CB_GET_SCROLL, Constants.CB_GET_FOCUS]);
+        openMobileFileById(app, notebook, response.data.id, [Constants.CB_GET_SCROLL, Constants.CB_GET_FOCUS]);
         /// #else
-        openFileById({app, id: response.data.id, action: [Constants.CB_GET_SCROLL, Constants.CB_GET_FOCUS]});
+        openFileById({
+            app,
+            id: response.data.id,
+            notebookId: notebook,
+            action: [Constants.CB_GET_SCROLL, Constants.CB_GET_FOCUS]
+        });
         /// #endif
     });
 };

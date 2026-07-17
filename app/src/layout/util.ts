@@ -412,13 +412,30 @@ export const JSONToCenter = (
             tab: (layout as Tab),
         }));
     } else if (json.instance === "Graph") {
-        (layout as Tab).addModel(new Graph({
-            app,
-            tab: (layout as Tab),
-            blockId: json.blockId,
-            rootId: json.rootId,
-            type: json.type as "pin" | "local" | "global",
-        }));
+        if (json.type === "global") {
+            (layout as Tab).addModel(new Graph({app, tab: (layout as Tab), type: "global"}));
+        } else if (!json.notebookId || isEncryptedBox(json.notebookId)) {
+            (layout as Tab).headElement.removeAttribute("data-init-active");
+            removedTabs.push(layout as Tab);
+            return;
+        } else if (json.type === "local") {
+            (layout as Tab).addModel(new Graph({
+                app,
+                tab: (layout as Tab),
+                blockId: json.blockId,
+                rootId: json.rootId,
+                notebookId: json.notebookId,
+                type: "local",
+            }));
+        } else {
+            (layout as Tab).addModel(new Graph({
+                app,
+                tab: (layout as Tab),
+                blockId: json.blockId,
+                notebookId: json.notebookId,
+                type: "pin",
+            }));
+        }
     } else if (json.instance === "Outline") {
         (layout as Tab).addModel(new Outline({
             app,
@@ -504,14 +521,20 @@ export const JSONToLayout = (app: App, isStart: boolean) => {
     });
 
     const info = parseUriInfo();
-    if (info.id) {
+    if (info.id && info.notebookId) {
         openFileById({
             app,
             id: info.id,
+            notebookId: info.notebookId,
             action: info.focus ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
             zoomIn: info.focus,
         });
     } else {
+        if (info.id) {
+            console.error("[Singularity/ProtyleIdentity] startup document URI has no notebook", {
+                blockId: info.id,
+            });
+        }
         let latestTabHeaderElement: HTMLElement;
         document.querySelectorAll('li[data-type="tab-header"][data-init-active="true"]').forEach((item: HTMLElement) => {
             if (!latestTabHeaderElement) {
@@ -634,6 +657,7 @@ export const layoutToJSON = (layout: Layout | Wnd | Tab | Model, json: any, brea
     } else if (layout instanceof Graph) {
         json.blockId = layout.blockId;
         json.rootId = layout.rootId;
+        json.notebookId = layout.notebookId;
         json.type = layout.type;
         json.instance = "Graph";
     } else if (layout instanceof Outline) {

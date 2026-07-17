@@ -64,7 +64,9 @@ export const getDocByScroll = (options: {
     mergedOptions?: IProtyleOptions,
     cb?: (keys: string[]) => void
     focus?: boolean,
-    updateReadonly?: boolean
+    updateReadonly?: boolean,
+    signal?: AbortSignal,
+    isCurrent?: () => boolean,
 }) => {
     let actions: TProtyleAction[] = [];
     if (options.mergedOptions) {
@@ -90,6 +92,9 @@ export const getDocByScroll = (options: {
             getDocParam.notebook = options.protyle.notebookId;
         }
         fetchPost("/api/filetree/getDoc", getDocParam, response => {
+            if (options.isCurrent?.() === false) {
+                return;
+            }
             if (response.code === 1) {
                 const getDocParam: Record<string, any> = {
                     id: options.scrollAttr.rootId || options.mergedOptions?.blockId || options.protyle.block?.rootID || options.scrollAttr.startId,
@@ -103,6 +108,9 @@ export const getDocByScroll = (options: {
                     getDocParam.notebook = options.protyle.notebookId;
                 }
                 fetchPost("/api/filetree/getDoc", getDocParam, response => {
+                    if (options.isCurrent?.() === false) {
+                        return;
+                    }
                     onGet({
                         scrollPosition: options.mergedOptions?.scrollPosition,
                         data: response,
@@ -114,7 +122,7 @@ export const getDocByScroll = (options: {
                         } : undefined,
                         updateReadonly: options.updateReadonly
                     });
-                });
+                }, undefined, undefined, options.signal);
             } else {
                 actions.push(Constants.CB_GET_ALL);
                 onGet({
@@ -129,7 +137,7 @@ export const getDocByScroll = (options: {
                     updateReadonly: options.updateReadonly
                 });
             }
-        });
+        }, undefined, undefined, options.signal);
         return;
     }
     const getDocParam: Record<string, any> = {
@@ -146,6 +154,9 @@ export const getDocByScroll = (options: {
         getDocParam.notebook = options.protyle.notebookId;
     }
     fetchPost("/api/filetree/getDoc", getDocParam, response => {
+        if (options.isCurrent?.() === false) {
+            return;
+        }
         onGet({
             scrollPosition: options.mergedOptions?.scrollPosition,
             data: response,
@@ -157,5 +168,5 @@ export const getDocByScroll = (options: {
             } : undefined,
             updateReadonly: options.updateReadonly
         });
-    });
+    }, undefined, undefined, options.signal);
 };

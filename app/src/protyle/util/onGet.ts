@@ -47,7 +47,6 @@ export const onGet = (options: {
         // block not found
         return;
     }
-    options.protyle.notebookId = options.data.data.box;
     options.protyle.path = options.data.data.path;
 
     if (options.data.data.eof && !options.scrollAttr) {

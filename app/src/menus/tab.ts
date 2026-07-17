@@ -191,14 +191,17 @@ export const initTabMenu = (app: App, tab: Tab) => {
     }).element);
     const model = tab.model;
     let rootId: string;
+    let notebookId: string;
     if ((model && model instanceof Editor)) {
         rootId = model.editor.protyle.block.rootID;
+        notebookId = model.editor.protyle.notebookId;
     } else {
         const initData = tab.headElement.getAttribute("data-initdata");
         if (initData) {
             const initDataObj = JSON.parse(initData);
             if (initDataObj && initDataObj.instance === "Editor") {
                 rootId = initDataObj.rootId || initDataObj.blockId;
+                notebookId = initDataObj.notebookId;
             }
         }
     }
@@ -208,7 +211,7 @@ export const initTabMenu = (app: App, tab: Tab) => {
             label: window.siyuan.languages.copy,
             icon: "iconCopy",
             type: "submenu",
-            submenu: copySubMenu([rootId], false)
+            submenu: copySubMenu([rootId], false, undefined, undefined, notebookId)
         }).element);
     } else if (model && model instanceof Asset) {
         window.siyuan.menus.menu.append(new MenuItem({

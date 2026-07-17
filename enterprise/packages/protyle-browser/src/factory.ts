@@ -9,13 +9,17 @@ export function createProtyleFactory<
   TRuntime,
 >(
   coreFactory: ProtyleCoreFactory<TOptions, TRuntime>,
-  options: Omit<TOptions, "blockId" | "notebookId">,
+  options: Omit<TOptions, "blockId" | "notebookId"> & {
+    readonly blockId?: never;
+    readonly notebookId?: never;
+  },
 ): ProtyleFactory<TRuntime> {
   return {
     create: ({ documentId, host, notebookId, readOnly, session, signal }) =>
       coreFactory.create({
         content: { mode: "bound", notebookId },
         host,
+        initialLoad: "automatic",
         options: { ...options, blockId: documentId },
         participation: "live",
         readOnly,

@@ -7,7 +7,6 @@ import {getDiagramBlock, previewDiagram} from "./diagram";
 import {needSubscribe} from "../../util/needSubscribe";
 import {Constants} from "../../constants";
 import {getSearch} from "../../util/functions";
-import {getAllModels} from "../../layout/getAll";
 import {fetchPost} from "../../util/fetch";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
@@ -96,7 +95,7 @@ export class Preview {
                     }
                     break;
                 } else if (target.tagName === "IMG") {
-                    previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID);
+                    previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID, protyle.notebookId);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
@@ -135,13 +134,6 @@ export class Preview {
                     item.classList.remove("selected");
                 });
                 nodeElement.classList.add("selected");
-                if (protyle.model) {
-                    getAllModels().outline.forEach(item => {
-                        if (item.blockId === protyle.block.rootID) {
-                            item.setCurrentByPreview(nodeElement);
-                        }
-                    });
-                }
                 const diagramElement = getDiagramBlock(nodeElement);
                 if (diagramElement) {
                     previewDiagram(diagramElement);
@@ -174,6 +166,7 @@ export class Preview {
         window.setTimeout(() => {
             fetchPost("/api/export/preview", {
                 id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
+                notebook: protyle.notebookId,
             }, response => {
                 const oldScrollTop = protyle.preview.previewElement.scrollTop;
                 protyle.preview.previewElement.innerHTML = response.data.html;
@@ -271,6 +264,7 @@ export class Preview {
         } else if (type === "yuque") {
             fetchPost("/api/lute/copyStdMarkdown", {
                 id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
+                notebook: protyle.notebookId,
                 assetsDestSpace2Underscore: true,
                 fillCSSVar: true,
                 adjustHeadingLevel: true,

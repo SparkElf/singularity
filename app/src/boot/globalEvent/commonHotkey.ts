@@ -6,7 +6,7 @@ import {ipcRenderer} from "electron";
 /// #endif
 import {App} from "../../index";
 import {isMac, isNotCtrl, isOnlyMeta} from "../../protyle/util/compatibility";
-import {showPopover} from "../../block/popover";
+import {showCapturedPopover} from "../../block/popover";
 
 const matchKeymap = (keymap: Config.IKeys, key1: "general" | "editor", key2?: "general" | "insert" | "heading" | "list" | "table") => {
     if (key1 === "general") {
@@ -177,7 +177,7 @@ export const filterHotkey = (event: KeyboardEvent, app: App) => {
             window.siyuan.ctrlIsPressed = true;
             if ((event.key === "Meta" || event.key === "Control") &&
                 window.siyuan.config.editor.floatWindowMode === 1 && !event.repeat) {
-                showPopover(app);
+                showCapturedPopover(app);
             }
         } else {
             window.siyuan.ctrlIsPressed = false;
@@ -190,7 +190,7 @@ export const filterHotkey = (event: KeyboardEvent, app: App) => {
             // 按下 Shift 时隐藏表格列宽调整手柄，以便 Shift+滚轮可以横向滚动表格 https://github.com/siyuan-note/siyuan/issues/13828
             document.body.classList.add("body--shift-pressed");
             if (!event.repeat) {
-                showPopover(app, true);
+                showCapturedPopover(app, true);
             }
         } else {
             window.siyuan.shiftIsPressed = false;

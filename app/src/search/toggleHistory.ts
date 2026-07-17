@@ -3,7 +3,7 @@ import {Menu} from "../plugin/Menu";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {escapeHtml} from "../util/escape";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
-import {Protyle} from "../protyle";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {assetInputEvent} from "./assets";
 /// #if MOBILE
 import {updateSearchResult} from "../mobile/menu/search";
@@ -78,7 +78,8 @@ export const toggleReplaceHistory = (replaceInputElement: HTMLInputElement) => {
     });
 };
 
-export const toggleSearchHistory = (searchElement: Element, config: Config.IUILayoutTabSearchConfig, edit: Protyle) => {
+export const toggleSearchHistory = (searchElement: Element, config: Config.IUILayoutTabSearchConfig,
+                                    edit?: EmbeddedProtyleOwner) => {
     const searchInputElement = searchElement.querySelector("#searchInput, #toolbarSearch") as HTMLInputElement;
     const list = window.siyuan.storage[Constants.LOCAL_SEARCHKEYS];
     if (!list.keys || list.keys.length === 0 || (list.length === 1 && list[0] === searchInputElement.value)) {

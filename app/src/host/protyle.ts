@@ -7,10 +7,16 @@ import type {
     ProtyleHostPort,
 } from "../../../enterprise/packages/protyle-browser/src/contracts";
 import type {App} from "../index";
-import {openAsset, openFileById} from "../editor/util";
+import {openAsset, openFileById, updatePanelByEditor} from "../editor/util";
 import {openGlobalSearch} from "../search/util";
 import {openSearch} from "../search/spread";
-import {openBacklink, openGraph, openOutline} from "../layout/dock/util";
+import {
+    openBacklink,
+    openGraph,
+    openOutline,
+    refreshBacklinkPanels,
+    refreshOutlinePanels,
+} from "../layout/dock/util";
 import {getDockByType} from "../layout/tabUtil";
 import {openDocHistory} from "../history/doc";
 import {openCardByData} from "../card/openCard";
@@ -19,7 +25,13 @@ import {makeCard} from "../card/makeCard";
 import {openByMobile} from "../editor/openLink";
 import {Constants} from "../constants";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
-import {getDisplayName, getNotebookName, isEncryptedBox, pathPosix} from "../util/pathName";
+import {
+    getDisplayName,
+    getNotebookName,
+    isEncryptedBox,
+    isSameNotebookContentDomain,
+    pathPosix,
+} from "../util/pathName";
 import {showMessage} from "../dialog/message";
 import {resolveAgentBlockMentions} from "./agentMentions";
 
@@ -87,7 +99,7 @@ const openDocumentSearch = (app: App, notebookId: string, documentId: string) =>
         void openSearch({
             app,
             hotkey: Constants.DIALOG_SEARCH,
-            notebookId: response.data.box,
+            notebookId,
             searchPath: getDisplayName(response.data.path, false, true),
         });
     });
@@ -105,18 +117,18 @@ const openDocumentHistory = (app: App, notebookId: string, documentId: string) =
         openDocHistory({
             app,
             id: blockResponse.data.rootID,
-            notebookId: blockResponse.data.box,
+            notebookId,
             pathString: blockResponse.data.rootTitle,
         });
     });
 };
 
-const openCardBrowser = (app: App, documentId: string) => {
+const openCardBrowser = (app: App, notebookId: string, documentId: string) => {
     fetchPost("/api/block/getBlockInfo", {id: documentId}, (blockResponse) => {
         if (handleHostRequestError(blockResponse)) {
             return;
         }
-        fetchPost("/api/filetree/getHPathByID", {id: documentId}, (pathResponse) => {
+        fetchPost("/api/filetree/getHPathByID", {id: documentId, notebook: notebookId}, (pathResponse) => {
             if (handleHostRequestError(pathResponse)) {
                 return;
             }
@@ -138,11 +150,18 @@ const rejectUnsupportedEncryptedOperation = (notebookId: string) => {
     return true;
 };
 
+const isCurrentWorkspaceDocument = (app: App, notebookId: string, documentId: string) => {
+    const activeEditor = app.protyleEditors.getActive();
+    return activeEditor?.surface === "workspace" &&
+        activeEditor.block.rootID === documentId &&
+        isSameNotebookContentDomain(activeEditor.notebookId, notebookId);
+};
+
 interface AgentChatPort {
     insertBlockMentions: (mentions: Array<{ id: string; label: string }>) => void;
 }
 
-const addBlocksToAgent = async (blockIds: readonly string[]) => {
+const addBlocksToAgent = async (notebookId: string, blockIds: readonly string[]) => {
     const dock = getDockByType("agentChat");
     if (!dock) {
         return;
@@ -160,7 +179,18 @@ const addBlocksToAgent = async (blockIds: readonly string[]) => {
     }
     const mentions = await resolveAgentBlockMentions(
         blockIds,
-        (id) => fetchSyncPost("/api/block/getRefText", {id}, undefined, {processResponse: false}),
+        (id) => {
+            const refTextParam: IObject = {id};
+            if (isEncryptedBox(notebookId)) {
+                refTextParam.notebook = notebookId;
+            }
+            return fetchSyncPost(
+                "/api/block/getRefText",
+                refTextParam,
+                undefined,
+                {processResponse: false}
+            );
+        },
     );
     if (mentions.length === 0) {
         return;
@@ -208,7 +238,11 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             if (event.scope === "space") {
                 getDockByType("globalGraph").toggleModel("globalGraph");
             } else if (!rejectUnsupportedEncryptedOperation(event.notebookId)) {
-                void openGraph({app, blockId: event.documentId});
+                void openGraph({
+                    app,
+                    blockId: event.documentId,
+                    notebookId: event.notebookId,
+                });
             }
             return;
         case "open-document-history":
@@ -229,7 +263,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
                 return;
             }
-            openCardBrowser(app, event.documentId);
+            openCardBrowser(app, event.notebookId, event.documentId);
             return;
         case "open-card-deck-picker":
             if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
@@ -238,7 +272,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             makeCard(app, event.blockIds);
             return;
         case "add-blocks-to-agent":
-            void addBlocksToAgent(event.blockIds).catch((error: unknown) => {
+            void addBlocksToAgent(event.notebookId, event.blockIds).catch((error: unknown) => {
                 console.error("[protyle-host:add-blocks-to-agent]", error);
                 const message = error instanceof Error && error.message ?
                     error.message : window.siyuan.languages.unexpectedResponseError;
@@ -268,10 +302,35 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             showMessage(event.message, 6000, event.level === "error" ? "error" : "info");
             return;
         case "refresh-outline":
+            refreshOutlinePanels(
+                event.notebookId,
+                event.documentId,
+                () => isCurrentWorkspaceDocument(app, event.notebookId, event.documentId),
+            );
+            return;
         case "refresh-backlinks":
+            refreshBacklinkPanels(
+                event.notebookId,
+                event.documentId,
+                () => isCurrentWorkspaceDocument(app, event.notebookId, event.documentId),
+            );
+            return;
+        case "activate-document": {
+            const activeEditor = app.protyleEditors.getActive();
+            if (activeEditor?.surface === "workspace" &&
+                activeEditor.block.rootID === event.documentId) {
+                updatePanelByEditor({
+                    protyle: activeEditor,
+                    focus: false,
+                    pushBackStack: false,
+                    reload: false,
+                    resize: false,
+                });
+            }
+            return;
+        }
         case "set-document-title":
         case "set-document-icon":
-        case "activate-document":
         case "toggle-document-fullscreen":
         case "persist-workspace-layout":
         case "update-document-statistics":

@@ -4,7 +4,6 @@ import {Tree} from "../../util/Tree";
 import {getInstanceById, setPanelFocus} from "../util";
 import {getDockByType} from "../tabUtil";
 import {fetchPost} from "../../util/fetch";
-import {getAllModels} from "../getAll";
 import {hasClosestBlock, hasClosestByClassName, hasTopClosestByClassName} from "../../protyle/util/hasClosest";
 import {
     isInAndroid,
@@ -23,7 +22,7 @@ import {App} from "../../index";
 import {checkFold} from "../../util/noRelyPCFunction";
 import {transaction, turnsIntoTransaction} from "../../protyle/wysiwyg/transaction";
 import {goHome} from "../../protyle/wysiwyg/commonHotkey";
-import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox, isSameNotebookContentDomain} from "../../util/pathName";
 import {Editor} from "../../editor";
 import {mathRender} from "../../protyle/render/mathRender";
 import {genEmptyElement} from "../../block/util";
@@ -145,7 +144,7 @@ export class Outline extends Model {
                         });
                     }
                 } else {
-                    checkFold(id, (zoomIn) => {
+                    checkFold(id, this.notebookId, (zoomIn) => {
                         openFileById({
                             app: options.app,
                             id,
@@ -231,8 +230,9 @@ export class Outline extends Model {
                 iconElement.classList.add("block__icon--active");
                 window.siyuan.storage[Constants.LOCAL_OUTLINE].keepCurrentExpand = true;
                 let focusElement;
-                getAllModels().editor.find(editItem => {
-                    if (editItem.editor.protyle.block.rootID === this.blockId) {
+                this.app.protyleEditors.find(protyle => {
+                    if (protyle.block.rootID === this.blockId &&
+                        isSameNotebookContentDomain(protyle.notebookId, this.notebookId)) {
                         const selection = getSelection();
                         if (selection.rangeCount > 0) {
                             const blockElement = hasClosestBlock(selection.getRangeAt(0).startContainer);
@@ -377,9 +377,10 @@ export class Outline extends Model {
             let ghostElement: HTMLElement;
             let selectItem: HTMLElement;
             let editor: IProtyle;
-            getAllModels().editor.find(editItem => {
-                if (editItem.editor.protyle.block.rootID === this.blockId) {
-                    editor = editItem.editor.protyle;
+            this.app.protyleEditors.find(protyle => {
+                if (protyle.block.rootID === this.blockId &&
+                    isSameNotebookContentDomain(protyle.notebookId, this.notebookId)) {
+                    editor = protyle;
                     return true;
                 }
             });
@@ -978,7 +979,7 @@ export class Outline extends Model {
             }
 
             // 带子标题转换
-            checkFold(id, (zoomIn) => {
+            checkFold(id, this.notebookId, (zoomIn) => {
                 openFileById({
                     app: this.app,
                     id,
@@ -1053,6 +1054,7 @@ export class Outline extends Model {
                 click: () => {
                     fetchPost("/api/block/getHeadingDeleteTransaction", {
                         id,
+                        notebook: this.notebookId,
                     }, (deleteResponse) => {
                         const data = this.getProtyleAndBlockElement(element);
                         const previousID = deleteResponse.data.doOperations[deleteResponse.data.doOperations.length - 1].id;
@@ -1087,6 +1089,7 @@ export class Outline extends Model {
                     click: () => {
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
+                            notebook: this.notebookId,
                         }, (deleteResponse) => {
                             let previousID = deleteResponse.data.doOperations[deleteResponse.data.doOperations.length - 1].id;
                             deleteResponse.data.undoOperations.find((operationsItem: IOperation, index: number) => {
@@ -1133,6 +1136,7 @@ export class Outline extends Model {
                 const data = this.getProtyleAndBlockElement(element);
                 fetchPost("/api/block/getHeadingChildrenDOM", {
                     id,
+                    notebook: this.notebookId,
                     removeFoldAttr: data.blockElement.getAttribute("fold") !== "1"
                 }, (response) => {
                     if (isInAndroid()) {
@@ -1156,6 +1160,7 @@ export class Outline extends Model {
                     const data = this.getProtyleAndBlockElement(element);
                     fetchPost("/api/block/getHeadingChildrenDOM", {
                         id,
+                        notebook: this.notebookId,
                         removeFoldAttr: data.blockElement.getAttribute("fold") !== "1"
                     }, (response) => {
                         if (isInAndroid()) {
@@ -1167,6 +1172,7 @@ export class Outline extends Model {
                         }
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
+                            notebook: this.notebookId,
                         }, (deleteResponse) => {
                             deleteResponse.data.doOperations.forEach((operation: IOperation) => {
                                 data.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -1204,6 +1210,7 @@ export class Outline extends Model {
                     const data = this.getProtyleAndBlockElement(element);
                     fetchPost("/api/block/getHeadingDeleteTransaction", {
                         id,
+                        notebook: this.notebookId,
                     }, (response) => {
                         response.data.doOperations.forEach((operation: IOperation) => {
                             data.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -1301,9 +1308,10 @@ export class Outline extends Model {
         const id = element.getAttribute("data-node-id");
         let protyle: IProtyle;
         let blockElement: HTMLElement;
-        getAllModels().editor.find(editItem => {
-            if (editItem.editor.protyle.block.rootID === this.blockId) {
-                protyle = editItem.editor.protyle;
+        this.app.protyleEditors.find(editorProtyle => {
+            if (editorProtyle.block.rootID === this.blockId &&
+                isSameNotebookContentDomain(editorProtyle.notebookId, this.notebookId)) {
+                protyle = editorProtyle;
                 blockElement = protyle.wysiwyg.element.querySelector(`[data-node-id="${id}"]`);
                 return true;
             }
@@ -1328,9 +1336,10 @@ export class Outline extends Model {
             label: window.siyuan.languages["heading" + level],
             click: () => {
                 let protyle: IProtyle;
-                getAllModels().editor.find(editItem => {
-                    if (editItem.editor.protyle.block.rootID === this.blockId) {
-                        protyle = editItem.editor.protyle;
+                this.app.protyleEditors.find(editorProtyle => {
+                    if (editorProtyle.block.rootID === this.blockId &&
+                        isSameNotebookContentDomain(editorProtyle.notebookId, this.notebookId)) {
+                        protyle = editorProtyle;
                         return true;
                     }
                 });
@@ -1341,6 +1350,7 @@ export class Outline extends Model {
 
                 fetchPost("/api/block/getHeadingLevelTransaction", {
                     id,
+                    notebook: this.notebookId,
                     level
                 }, (response) => {
                     response.data.doOperations.forEach((operation: any, index: number) => {

@@ -83,8 +83,11 @@ export class Menus {
                     break;
                 } else if (dataType === "search-item") {
                     const nodeId = target.getAttribute("data-node-id");
-                    if (nodeId) {
-                        initSearchMenu(nodeId).popup({x: event.clientX, y: event.clientY});
+                    const notebookId = target.getAttribute("data-notebook-id");
+                    if (nodeId && notebookId) {
+                        initSearchMenu(nodeId, notebookId).popup({x: event.clientX, y: event.clientY});
+                    } else if (nodeId) {
+                        console.error("[Singularity/ProtyleIdentity] search result has no notebook", {blockId: nodeId});
                     }
                     event.stopPropagation();
                     break;

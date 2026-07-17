@@ -109,7 +109,7 @@ export type ProtyleHostEvent =
       type: "open-asset";
       notebookId: string;
       assetPath: string;
-      page?: number;
+      page?: number | string;
       disposition: "current" | "split-right";
     }
   | {
@@ -180,6 +180,7 @@ export interface ProtyleEditorRegistry<TEditor> {
   find: (predicate: (editor: TEditor) => boolean) => TEditor | undefined;
   activate: (editor: TEditor) => boolean;
   getActive: () => TEditor | undefined;
+  seal: () => void;
   dispose: () => void;
 }
 
@@ -256,7 +257,7 @@ export interface ProtyleSession<TRuntime = ProtyleRuntime> {
 }
 
 export type ProtyleSessionRuntime = {
-  readonly editors: Pick<ProtyleEditorRegistry<never>, "dispose">;
+  readonly editors: Pick<ProtyleEditorRegistry<ProtyleController>, "forEach" | "seal" | "dispose">;
   readonly menu: Pick<ProtyleMenuPort<never>, "dispose">;
   readonly overlays: Pick<ProtyleOverlayPort<never>, "dispose">;
   readonly plugins: Pick<ProtylePluginPort<never, never, never>, "dispose">;
@@ -366,6 +367,7 @@ export interface ProtyleBoundContent {
 
 export interface ProtyleLocalOnlyContent {
   readonly mode: "local-only";
+  readonly notebookId?: never;
 }
 
 export type ProtyleCoreCreateOptions<
@@ -376,19 +378,31 @@ export type ProtyleCoreCreateOptions<
       readonly content: ProtyleBoundContent;
       readonly participation: "live";
       readonly session: ProtyleSession<TRuntime>;
-      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId: string };
+      readonly initialLoad: "automatic" | "owner";
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & {
+        readonly blockId: string;
+        readonly notebookId?: never;
+      };
     })
   | (ProtyleCoreCommonOptions & {
       readonly content: ProtyleBoundContent;
       readonly participation: "detached";
       readonly session: ProtyleSession<TRuntime>;
-      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId?: string };
+      readonly initialLoad: "automatic" | "owner";
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & {
+        readonly blockId: string;
+        readonly notebookId?: never;
+      };
     })
   | (Omit<ProtyleCoreCommonOptions, "surface"> & {
       readonly content: ProtyleLocalOnlyContent;
       readonly participation: "detached";
+      readonly session?: never;
       readonly surface: "embedded";
-      readonly options: Omit<TOptions, "blockId" | "notebookId"> & { readonly blockId?: never };
+      readonly options: Omit<TOptions, "blockId" | "notebookId"> & {
+        readonly blockId?: never;
+        readonly notebookId?: never;
+      };
     });
 
 export interface ProtyleCoreFactory<

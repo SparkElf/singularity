@@ -10,7 +10,6 @@ import {openNewWindowById} from "../window/openNewWindow";
 import {MenuItem} from "./Menu";
 import {App} from "../index";
 import {isInAndroid, saveExportFile, updateHotkeyTip} from "../protyle/util/compatibility";
-import {checkFold} from "../util/noRelyPCFunction";
 import {showMessage} from "../dialog/message";
 import {Editor} from "../editor";
 import {setEditMode} from "../protyle/util/setEditMode";
@@ -63,7 +62,7 @@ export const writeAssetToClipboard = (src: string) => {
     /// #endif
 };
 
-export const openEditorTab = (app: App, ids: string[], notebookId?: string, pathString?: string, onlyGetMenus = false) => {
+export const openEditorTab = (app: App, ids: string[], notebookId: string, pathString?: string, onlyGetMenus = false) => {
     /// #if !MOBILE
     const openSubmenus: IMenu[] = [{
         id: "insertRight",
@@ -71,26 +70,13 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
         label: window.siyuan.languages.insertRight,
         accelerator: ids.length === 1 ? `${updateHotkeyTip(window.siyuan.config.keymap.editor.general.insertRight.custom)}/${updateHotkeyTip("⌥" + window.siyuan.languages.click)}` : undefined,
         click: () => {
-            if (notebookId) {
-                openFileById({
-                    app,
-                    id: ids[0],
-                    position: "right",
-                    action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
-                });
-            } else {
-                ids.forEach((id) => {
-                    checkFold(id, (zoomIn, action) => {
-                        openFileById({
-                            app,
-                            id,
-                            position: "right",
-                            action,
-                            zoomIn
-                        });
-                    });
-                });
-            }
+            openFileById({
+                app,
+                id: ids[0],
+                notebookId,
+                position: "right",
+                action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
+            });
         }
     }, {
         id: "insertBottom",
@@ -98,26 +84,13 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
         label: window.siyuan.languages.insertBottom,
         accelerator: ids.length === 1 ? "⇧⌘" + window.siyuan.languages.click : "",
         click: () => {
-            if (notebookId) {
-                openFileById({
-                    app,
-                    id: ids[0],
-                    position: "bottom",
-                    action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
-                });
-            } else {
-                ids.forEach((id) => {
-                    checkFold(id, (zoomIn, action) => {
-                        openFileById({
-                            app,
-                            id,
-                            position: "bottom",
-                            action,
-                            zoomIn
-                        });
-                    });
-                });
-            }
+            openFileById({
+                app,
+                id: ids[0],
+                notebookId,
+                position: "bottom",
+                action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
+            });
         }
     }];
     if (window.siyuan.config.fileTree.openFilesUseCurrentTab) {
@@ -126,26 +99,13 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
             label: window.siyuan.languages.openInNewTab,
             accelerator: ids.length === 1 ? "⌥⌘" + window.siyuan.languages.click : undefined,
             click: () => {
-                if (notebookId) {
-                    openFileById({
-                        app,
-                        id: ids[0],
-                        action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
-                        removeCurrentTab: false
-                    });
-                } else {
-                    ids.forEach((id) => {
-                        checkFold(id, (zoomIn, action) => {
-                            openFileById({
-                                app,
-                                id,
-                                action,
-                                zoomIn,
-                                removeCurrentTab: false
-                            });
-                        });
-                    });
-                }
+                openFileById({
+                    app,
+                    id: ids[0],
+                    notebookId,
+                    action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
+                    removeCurrentTab: false
+                });
             }
         });
     }
@@ -155,7 +115,7 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
         label: window.siyuan.languages.openByNewWindow,
         icon: "iconOpenWindow",
         click() {
-            openNewWindowById(ids);
+            openNewWindowById(ids, {notebookId});
         }
     });
     /// #endif
@@ -167,7 +127,7 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
         click: () => {
             ids.forEach((id) => {
                 openFileById({
-                    app, id, mode: "preview", afterOpen(editor: Editor) {
+                    app, id, notebookId, mode: "preview", afterOpen(editor: Editor) {
                         setEditMode(editor.editor.protyle, "preview");
                     }
                 });
@@ -181,15 +141,7 @@ export const openEditorTab = (app: App, ids: string[], notebookId?: string, path
         icon: "iconFolder",
         label: window.siyuan.languages.showInFolder,
         click: () => {
-            if (notebookId) {
-                useShell("showItemInFolder", path.join(window.siyuan.config.system.dataDir, notebookId, pathString));
-            } else {
-                ids.forEach((id) => {
-                    fetchPost("/api/block/getBlockInfo", {id}, (response) => {
-                        useShell("showItemInFolder", path.join(window.siyuan.config.system.dataDir, response.data.box, response.data.path));
-                    });
-                });
-            }
+            useShell("showItemInFolder", path.join(window.siyuan.config.system.dataDir, notebookId, pathString));
         }
     });
     /// #endif
@@ -275,4 +227,3 @@ export const copyPNGByLink = (link: string) => {
         tempElement.src = link;
     });
 };
-

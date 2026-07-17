@@ -176,11 +176,20 @@ export class Files extends Model {
             let target = event.target as HTMLElement;
             while (target && !target.isEqualNode(this.element)) {
                 if (target.tagName === "LI" && !target.getAttribute("data-opening")) {
+                    const topULElement = hasTopClosestByTag(target, "UL");
+                    const notebookId = topULElement ? topULElement.getAttribute("data-url") : undefined;
+                    if (!notebookId) {
+                        console.error("[Singularity/ProtyleIdentity] file tree target has no notebook", {
+                            blockId: target.getAttribute("data-node-id"),
+                        });
+                        break;
+                    }
                     target.setAttribute("data-opening", "true");
                     openFileById({
                         app: options.app,
                         removeCurrentTab: false,
                         id: target.getAttribute("data-node-id"),
+                        notebookId,
                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                         afterOpen() {
                             target.removeAttribute("data-opening");
@@ -316,6 +325,7 @@ export class Files extends Model {
                                     openFileById({
                                         app: options.app,
                                         id: target.getAttribute("data-node-id"),
+                                        notebookId,
                                         position: "right",
                                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                                         afterOpen() {
@@ -326,6 +336,7 @@ export class Files extends Model {
                                     openFileById({
                                         app: options.app,
                                         id: target.getAttribute("data-node-id"),
+                                        notebookId,
                                         position: "bottom",
                                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                                         afterOpen() {
@@ -338,6 +349,7 @@ export class Files extends Model {
                                         app: options.app,
                                         removeCurrentTab: false,
                                         id: target.getAttribute("data-node-id"),
+                                        notebookId,
                                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                                         afterOpen() {
                                             target.removeAttribute("data-opening");
@@ -347,6 +359,7 @@ export class Files extends Model {
                                     openFileById({
                                         app: options.app,
                                         id: target.getAttribute("data-node-id"),
+                                        notebookId,
                                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL],
                                         afterOpen() {
                                             target.removeAttribute("data-opening");
@@ -387,6 +400,7 @@ export class Files extends Model {
                     selectElements = [liElement];
                 }
                 let ids = "";
+                const documentTargets: Array<{id: string, notebookId: string}> = [];
                 const ghostElement = document.createElement("ul");
                 selectElements.forEach((item: HTMLElement, index) => {
                     ghostElement.append(item.cloneNode(true));
@@ -397,6 +411,17 @@ export class Files extends Model {
                         ids += itemNodeId;
                         if (index < selectElements.length - 1) {
                             ids += ",";
+                        }
+                    }
+                    if (item.dataset.nodeId) {
+                        const topULElement = hasTopClosestByTag(item, "UL");
+                        const notebookId = topULElement ? topULElement.getAttribute("data-url") : undefined;
+                        if (notebookId) {
+                            documentTargets.push({id: item.dataset.nodeId, notebookId});
+                        } else {
+                            console.error("[Singularity/ProtyleIdentity] dragged document has no notebook", {
+                                documentId: item.dataset.nodeId,
+                            });
                         }
                     }
                 });
@@ -417,6 +442,7 @@ export class Files extends Model {
                     });
                 }
                 event.dataTransfer.setData(Constants.SIYUAN_DROP_FILE, ids);
+                event.dataTransfer.setData(Constants.SIYUAN_DROP_NOTEBOOK, JSON.stringify(documentTargets));
                 event.dataTransfer.dropEffect = "move";
                 window.siyuan.dragTitle = (selectElements[0] as HTMLElement)?.querySelector(".b3-list-item__text")?.textContent?.trim() || "";
                 window.siyuan.dragElement = document.createElement("div");

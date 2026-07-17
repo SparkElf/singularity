@@ -2086,6 +2086,10 @@ declare namespace Config {
          */
         instance: "Asset";
         /**
+         * (Asset) Notebook ID
+         */
+        notebookId?: string;
+        /**
          * (Asset) PDF file page number
          */
         page?: number;
@@ -2104,6 +2108,10 @@ declare namespace Config {
          * (Backlink) Block ID
          */
         blockId: string;
+        /**
+         * (Backlink) Notebook ID
+         */
+        notebookId: string;
         /**
          * Object name
          */
@@ -2207,6 +2215,10 @@ declare namespace Config {
          */
         blockId: string;
         /**
+         * (Graph) Notebook ID. Required for pinned and local graphs.
+         */
+        notebookId?: string;
+        /**
          * Object name
          */
         instance: "Graph";
@@ -2240,6 +2252,10 @@ declare namespace Config {
          * (Outline) Block ID
          */
         blockId: string;
+        /**
+         * (Outline) Notebook ID
+         */
+        notebookId: string;
         /**
          * Object name
          */
@@ -2304,6 +2320,10 @@ declare namespace Config {
          * Readable path list
          */
         hPath?: string;
+        /**
+         * Explicit encrypted notebook content domain for this search.
+         */
+        notebookId?: string;
         /**
          * Search in the specified paths
          */

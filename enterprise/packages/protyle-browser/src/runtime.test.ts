@@ -7,17 +7,27 @@ import {
   createProtyleOverlayPort,
   createProtyleSession,
 } from "./index.ts";
+import type { ProtyleController, ProtyleCoreFactory } from "./contracts.ts";
+
+interface TestProtyleOptions {
+  readonly blockId?: string;
+  readonly notebookId?: string;
+  readonly render: { readonly title: boolean };
+}
 
 describe("createProtyleFactory", () => {
-  it("maps the public document identity once and fixes workspace participation", async () => {
+  it("maps the public notebook and document identity once and fixes the workspace contract", async () => {
     const controller = {
       destroy: vi.fn(),
       focus: vi.fn(),
       setHostReadOnly: vi.fn(),
     };
     const coreCreate = vi.fn().mockResolvedValue(controller);
+    const coreFactory: ProtyleCoreFactory<TestProtyleOptions, unknown> = {
+      create: coreCreate,
+    };
     const factory = createProtyleFactory(
-      { create: coreCreate },
+      coreFactory,
       { render: { title: true } },
     );
     const host = new EventTarget() as HTMLElement;
@@ -32,12 +42,15 @@ describe("createProtyleFactory", () => {
     await expect(factory.create({
       documentId: "document-a",
       host,
+      notebookId: "notebook-a",
       readOnly: true,
       session,
       signal,
     })).resolves.toBe(controller);
     expect(coreCreate).toHaveBeenCalledWith({
+      content: { mode: "bound", notebookId: "notebook-a" },
       host,
+      initialLoad: "automatic",
       options: { blockId: "document-a", render: { title: true } },
       participation: "live",
       readOnly: true,
@@ -99,10 +112,30 @@ describe("createProtyleOverlayPort", () => {
 });
 
 describe("createProtyleSession", () => {
-  it("owns one runtime and disposes its capabilities in the approved space-switch order", async () => {
+  it("seals editor registration before disposing capabilities in the approved space-switch order", async () => {
     const order: string[] = [];
-    const editors = createProtyleEditorRegistry<object>();
-    editors.register({});
+    const editors = createProtyleEditorRegistry<ProtyleController>();
+    const firstEditor = {
+      destroy: vi.fn(() => {
+        order.push("editor-1");
+        unregisterFirst();
+      }),
+      focus: vi.fn(),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
+    const secondEditor = {
+      destroy: vi.fn(() => order.push("editor-2")),
+      focus: vi.fn(),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
+    const reentrantEditor = {
+      destroy: vi.fn(),
+      focus: vi.fn(),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
+    let unregisterFirst: () => void = () => undefined;
+    unregisterFirst = editors.register(firstEditor);
+    editors.register(secondEditor);
     const overlays = createProtyleOverlayPort<{ id: string }>(() => {
       order.push("overlays");
     });
@@ -119,7 +152,10 @@ describe("createProtyleSession", () => {
     menu.open();
     const runtime = {
       transport: {
-        dispose: () => order.push("transport"),
+        dispose: () => {
+          expect(() => editors.register(reentrantEditor)).toThrowError(/after sealing/);
+          order.push("transport");
+        },
       },
       overlays,
       menu,
@@ -144,8 +180,60 @@ describe("createProtyleSession", () => {
     await Promise.all([session.dispose(), session.dispose()]);
 
     expect(retrySubmission).toHaveBeenCalledOnce();
-    expect(order).toEqual(["transport", "overlays", "menu", "plugins"]);
-    expect(() => editors.register({})).toThrowError(/\[protyle\.registry]/);
+    expect(order).toEqual(["transport", "overlays", "menu", "editor-1", "editor-2", "plugins"]);
+    expect(firstEditor.destroy).toHaveBeenCalledOnce();
+    expect(secondEditor.destroy).toHaveBeenCalledOnce();
+    expect(reentrantEditor.destroy).not.toHaveBeenCalled();
+    expect(() => editors.register(firstEditor)).toThrowError(/\[protyle\.registry]/);
     await expect(session.retrySubmission()).rejects.toThrowError(/\[protyle\.session]/);
+  });
+
+  it("attempts every editor and capability cleanup before reporting disposal failures", async () => {
+    const order: string[] = [];
+    const editorFailure = new Error("editor disposal failed");
+    const pluginFailure = new Error("plugin disposal failed");
+    const editors = createProtyleEditorRegistry<ProtyleController>();
+    const firstEditor = {
+      destroy: vi.fn(() => {
+        order.push("editor-1");
+        throw editorFailure;
+      }),
+      focus: vi.fn(),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
+    const secondEditor = {
+      destroy: vi.fn(() => order.push("editor-2")),
+      focus: vi.fn(),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
+    editors.register(firstEditor);
+    editors.register(secondEditor);
+    const session = createProtyleSession({
+      spaceId: "space-a",
+      runtime: {
+        transport: { dispose: () => order.push("transport") },
+        overlays: { dispose: () => order.push("overlays") },
+        menu: { dispose: () => order.push("menu") },
+        editors,
+        plugins: {
+          dispose: () => {
+            expect(editors.find(() => true)).toBeUndefined();
+            order.push("plugins");
+            throw pluginFailure;
+          },
+        },
+      },
+      retrySubmission: () => Promise.resolve(),
+    });
+
+    const disposal = session.dispose();
+
+    await expect(disposal).rejects.toBeInstanceOf(AggregateError);
+    await expect(disposal).rejects.toMatchObject({ errors: [editorFailure, pluginFailure] });
+    await expect(session.dispose()).rejects.toBeInstanceOf(AggregateError);
+    expect(order).toEqual(["transport", "overlays", "menu", "editor-1", "editor-2", "plugins"]);
+    expect(firstEditor.destroy).toHaveBeenCalledOnce();
+    expect(secondEditor.destroy).toHaveBeenCalledOnce();
+    expect(() => editors.register(firstEditor)).toThrowError(/\[protyle\.registry]/);
   });
 });

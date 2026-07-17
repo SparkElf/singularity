@@ -113,7 +113,6 @@ const assets = {
         const assetsListElement = assets.element.querySelector('.config-assets[data-type="remove"] .config-assets__list');
         const avListElement = assets.element.querySelector('.config-assets[data-type="removeAV"] .config-assets__list');
         const editor = new Protyle(app, avListElement.nextElementSibling as HTMLElement, {
-            blockId: "",
             action: [Constants.CB_GET_HISTORY],
             render: {
                 background: false,
@@ -122,6 +121,10 @@ const assets = {
                 breadcrumbDocName: false,
             },
             typewriterMode: false,
+        }, {
+            surface: "embedded",
+            participation: "detached",
+            content: {mode: "local-only"},
         });
         disabledProtyle(editor.protyle);
         removeLoading(editor.protyle);

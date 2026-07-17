@@ -1,10 +1,10 @@
 import * as dayjs from "dayjs";
-import {Protyle} from "../protyle";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {fetchPost} from "../util/fetch";
 import {Dialog} from "../dialog";
 import {isMobile} from "../util/functions";
 import {escapeAttr, escapeHtml} from "../util/escape";
-import {getDisplayName, getNotebookName} from "../util/pathName";
+import {getDisplayName, getNotebookName, isEncryptedBox} from "../util/pathName";
 import {getIconByType} from "../editor/getIcon";
 import {unicode2Emoji} from "../emoji";
 import {addLoading} from "../protyle/ui/initUI";
@@ -12,14 +12,20 @@ import {Constants} from "../constants";
 import {onGet} from "../protyle/util/onGet";
 import {App} from "../index";
 import {confirmDialog} from "../dialog/confirmDialog";
+import {OwnerLifecycle} from "../protyle/runtime/ownerLifecycle";
 
 export const viewCards = (app: App, deckID: string, title: string, deckType: "Tree" | "" | "Notebook", cb?: (response: IWebSocketData) => void) => {
     let pageIndex = 1;
-    let edit: Protyle;
+    let edit: EmbeddedProtyleOwner;
+    const lifecycle = new OwnerLifecycle();
+    const ownerGeneration = lifecycle.begin();
     fetchPost(`/api/riff/get${deckType}RiffCards`, {
         id: deckID,
         page: pageIndex
     }, (response) => {
+        if (!lifecycle.isCurrent(ownerGeneration, true)) {
+            return;
+        }
         const dialog = new Dialog({
             positionId: Constants.DIALOG_VIEWCARDS,
             content: `<div class="fn__flex-column" style="height: 100%">
@@ -50,6 +56,9 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
 </div>`,
             width: isMobile() ? "100vw" : "80vw",
             height: isMobile() ? "100dvh" : "70vh",
+            beforeDestroyCallback() {
+                lifecycle.destroy();
+            },
             destroyCallback() {
                 if (edit) {
                     edit.destroy();
@@ -64,27 +73,22 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                 }
             }
         });
-        if (response.data.blocks.length > 0) {
-            edit = new Protyle(app, dialog.element.querySelector("#cardPreview") as HTMLElement, {
-                blockId: "",
-                action: [Constants.CB_GET_ALL],
-                render: {
-                    gutter: true,
-                    breadcrumbDocName: true,
-                    title: true,
-                    hideTitleOnZoom: true,
-                },
-                typewriterMode: false
-            });
-            if (window.siyuan.mobile) {
-                window.siyuan.mobile.popEditor = edit;
-            }
-            dialog.editors = {
-                card: edit
-            };
-            edit.resize();
-            getArticle(edit, dialog.element.querySelector(".b3-list-item--focus")?.getAttribute("data-id"));
-        }
+        edit = new EmbeddedProtyleOwner(app, dialog.element.querySelector("#cardPreview") as HTMLElement, {
+            action: [Constants.CB_GET_ALL],
+            render: {
+                gutter: true,
+                breadcrumbDocName: true,
+                title: true,
+                hideTitleOnZoom: true,
+            },
+            typewriterMode: false
+        });
+        dialog.editors = {
+            card: edit
+        };
+        edit.resize();
+        const currentElement = dialog.element.querySelector(".b3-list-item--focus");
+        getArticle(edit, currentElement?.getAttribute("data-id"), currentElement?.getAttribute("data-notebook-id"), lifecycle);
         const previousElement = dialog.element.querySelector('[data-type="previous"]');
         const nextElement = dialog.element.querySelector('[data-type="next"]');
         const listElement = dialog.element.querySelector(".b3-list--background");
@@ -93,6 +97,9 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
         }
         dialog.element.setAttribute("data-key", Constants.DIALOG_VIEWCARDS);
         dialog.element.addEventListener("click", (event) => {
+            if (lifecycle.ended || !dialog.element.isConnected) {
+                return;
+            }
             if (typeof event.detail === "string") {
                 let currentElement = listElement.querySelector(".b3-list-item--focus");
                 if (currentElement) {
@@ -111,7 +118,7 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                     if (currentRect.top < parentRect.top || currentRect.bottom > parentRect.bottom) {
                         currentElement.scrollIntoView(currentRect.top < parentRect.top);
                     }
-                    getArticle(edit, currentElement.getAttribute("data-id"));
+                    getArticle(edit, currentElement.getAttribute("data-id"), currentElement.getAttribute("data-notebook-id"), lifecycle);
                     currentElement.classList.add("b3-list-item--focus");
                 }
                 event.stopPropagation();
@@ -134,7 +141,11 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                     if (pageIndex <= 1) {
                         previousElement.setAttribute("disabled", "disabled");
                     }
+                    const pageGeneration = lifecycle.begin();
                     fetchPost(`/api/riff/get${deckType}RiffCards`, {id: deckID, page: pageIndex}, (cardsResponse) => {
+                        if (!lifecycle.isCurrent(pageGeneration, dialog.element.isConnected)) {
+                            return;
+                        }
                         if (pageIndex === cardsResponse.data.pageCount) {
                             nextElement.setAttribute("disabled", "disabled");
                         } else if (cardsResponse.data.pageCount > 1) {
@@ -143,8 +154,9 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                         nextElement.nextElementSibling.nextElementSibling.textContent = `${pageIndex}/${cardsResponse.data.pageCount || 1}`;
                         listElement.innerHTML = renderViewItem(cardsResponse.data.blocks, title, deckType);
                         listElement.scrollTop = 0;
-                        getArticle(edit, dialog.element.querySelector(".b3-list-item--focus")?.getAttribute("data-id"));
-                    });
+                        const currentElement = dialog.element.querySelector(".b3-list-item--focus");
+                        getArticle(edit, currentElement?.getAttribute("data-id"), currentElement?.getAttribute("data-notebook-id"), lifecycle);
+                    }, undefined, undefined, pageGeneration.signal);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
@@ -154,7 +166,11 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                     }
                     pageIndex++;
                     previousElement.removeAttribute("disabled");
+                    const pageGeneration = lifecycle.begin();
                     fetchPost(`/api/riff/get${deckType}RiffCards`, {id: deckID, page: pageIndex}, (cardsResponse) => {
+                        if (!lifecycle.isCurrent(pageGeneration, dialog.element.isConnected)) {
+                            return;
+                        }
                         if (pageIndex === cardsResponse.data.pageCount) {
                             nextElement.setAttribute("disabled", "disabled");
                         } else if (cardsResponse.data.pageCount > 1) {
@@ -163,51 +179,67 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                         nextElement.nextElementSibling.nextElementSibling.textContent = `${pageIndex}/${cardsResponse.data.pageCount || 1}`;
                         listElement.innerHTML = renderViewItem(cardsResponse.data.blocks, title, deckType);
                         listElement.scrollTop = 0;
-                        getArticle(edit, dialog.element.querySelector(".b3-list-item--focus")?.getAttribute("data-id"));
-                    });
+                        const currentElement = dialog.element.querySelector(".b3-list-item--focus");
+                        getArticle(edit, currentElement?.getAttribute("data-id"), currentElement?.getAttribute("data-notebook-id"), lifecycle);
+                    }, undefined, undefined, pageGeneration.signal);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
                 } else if (type === "reset") {
+                    const resetGeneration = lifecycle.begin();
                     fetchPost("/api/riff/resetRiffCards", {
                         type: deckType === "" ? "deck" : deckType.toLowerCase(),
                         deckID: deckType === "" ? deckID : Constants.QUICK_DECK_ID,
                         id: deckID,
                         blockIDs: [target.getAttribute("data-id")],
                     }, () => {
+                        if (!lifecycle.isCurrent(resetGeneration, dialog.element.isConnected)) {
+                            return;
+                        }
                         target.parentElement.querySelector(".ariaLabel.b3-list-item__meta").textContent = dayjs().format("YYYY-MM-DD");
-                    });
+                    }, undefined, undefined, resetGeneration.signal);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
                 } else if (type === "resetAll") {
                     confirmDialog(window.siyuan.languages.reset,
                         window.siyuan.languages.resetCardTip.replace("${x}", dialog.element.querySelector(".counter").textContent), () => {
+                            if (lifecycle.ended || !dialog.element.isConnected) {
+                                return;
+                            }
+                            const resetGeneration = lifecycle.begin();
                             fetchPost("/api/riff/resetRiffCards", {
                                 type: deckType === "" ? "deck" : deckType.toLowerCase(),
                                 deckID: deckType === "" ? deckID : Constants.QUICK_DECK_ID,
                                 id: deckID,
                             }, () => {
+                                if (!lifecycle.isCurrent(resetGeneration, dialog.element.isConnected)) {
+                                    return;
+                                }
                                 dialog.element.querySelectorAll(".ariaLabel.b3-list-item__meta").forEach(item => {
                                     item.textContent = dayjs().format("YYYY-MM-DD");
                                 });
-                            });
+                            }, undefined, undefined, resetGeneration.signal);
                         });
                     event.stopPropagation();
                     event.preventDefault();
                     break;
                 } else if (type === "card-item") {
-                    getArticle(edit, target.getAttribute("data-id"));
+                    getArticle(edit, target.getAttribute("data-id"), target.getAttribute("data-notebook-id"), lifecycle);
                     listElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
                     target.classList.add("b3-list-item--focus");
                     event.stopPropagation();
                     event.preventDefault();
                     break;
                 } else if (type === "remove") {
+                    const removeGeneration = lifecycle.begin();
                     fetchPost("/api/riff/removeRiffCards", {
                         deckID: deckType === "" ? deckID : Constants.QUICK_DECK_ID,
                         blockIDs: [target.getAttribute("data-id")]
                     }, (removeResponse) => {
+                        if (!lifecycle.isCurrent(removeGeneration, dialog.element.isConnected)) {
+                            return;
+                        }
                         let nextElment = target.parentElement.nextElementSibling;
                         if (!nextElment) {
                             nextElment = target.parentElement.previousElementSibling;
@@ -217,10 +249,8 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                         }
 
                         if (!nextElment) {
-                            getArticle(edit, "");
                             listElement.innerHTML = `<div class="b3-list--empty">${window.siyuan.languages.emptyContent}</div>`;
                         } else {
-                            getArticle(edit, nextElment.getAttribute("data-id"));
                             listElement.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
                             nextElment.classList.add("b3-list-item--focus");
                             target.parentElement.remove();
@@ -230,7 +260,9 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                         if (cb) {
                             cb(removeResponse);
                         }
-                    });
+                        getArticle(edit, nextElment?.getAttribute("data-id") || "",
+                            nextElment?.getAttribute("data-notebook-id"), lifecycle);
+                    }, undefined, undefined, removeGeneration.signal);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
@@ -238,7 +270,7 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                 target = target.parentElement;
             }
         });
-    });
+    }, undefined, undefined, ownerGeneration.signal);
 };
 
 
@@ -249,6 +281,9 @@ const renderViewItem = (blocks: IBlock[], title: string, deckType: string) => {
     pathArray.splice(0, 1);
     blocks.forEach((item: IBlock) => {
         if (item.type) {
+            if (!item.box) {
+                throw new Error("[protyle.content] card browser result requires a notebookId");
+            }
             let hPath;
             if (deckType === "") {
                 hPath = getNotebookName(item.box) + getDisplayName(Lute.UnEscapeHTMLStr(item.hPath), false);
@@ -258,7 +293,7 @@ const renderViewItem = (blocks: IBlock[], title: string, deckType: string) => {
                     hPath = hPath.substring(1);
                 }
             }
-            listHTML += `<div data-type="card-item" class="b3-list-item${isFirst ? " b3-list-item--focus" : ""}${isMobile() ? "" : " b3-list-item--hide-action"}" data-id="${item.id}">
+            listHTML += `<div data-type="card-item" class="b3-list-item${isFirst ? " b3-list-item--focus" : ""}${isMobile() ? "" : " b3-list-item--hide-action"}" data-id="${item.id}" data-notebook-id="${item.box}">
 <svg class="b3-list-item__graphic"><use xlink:href="#${getIconByType(item.type)}"></use></svg>
 ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
 <span class="b3-list-item__text">${item.content || Constants.ZWSP}</span>
@@ -290,31 +325,62 @@ ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
 };
 
 
-const getArticle = (edit: Protyle, id: string) => {
-    if (!id) {
-        edit.protyle.element.classList.add("fn__none");
-        edit.protyle.element.nextElementSibling.classList.remove("fn__none");
+const getArticle = (edit: EmbeddedProtyleOwner, id: string, notebookId: string | undefined,
+                    lifecycle: OwnerLifecycle) => {
+    if (lifecycle.ended || edit.signal.aborted || !edit.element.isConnected) {
         return;
     }
-    edit.protyle.element.classList.remove("fn__none");
-    edit.protyle.element.nextElementSibling.classList.add("fn__none");
-    edit.protyle.scroll.lastScrollTop = 0;
-    addLoading(edit.protyle);
-    fetchPost("/api/block/getDocInfo", {
-        id,
-    }, (response) => {
-        edit.protyle.wysiwyg.renderCustom(response.data.ial);
-        fetchPost("/api/filetree/getDoc", {
+    if (!id) {
+        lifecycle.begin();
+        edit.clear();
+        edit.element.classList.add("fn__none");
+        edit.element.nextElementSibling.classList.remove("fn__none");
+        if (window.siyuan.mobile) {
+            window.siyuan.mobile.popEditor = null;
+        }
+        return;
+    }
+    if (!notebookId) {
+        throw new Error("[protyle.content] card browser target requires a notebookId");
+    }
+    const ownerGeneration = lifecycle.begin();
+    const binding = edit.bind(notebookId, id);
+    const protyle = binding.protyle;
+    const isCurrent = () => lifecycle.isCurrent(ownerGeneration, edit.element.isConnected) && edit.isCurrent(binding);
+    edit.element.classList.remove("fn__none");
+    edit.element.nextElementSibling.classList.add("fn__none");
+    if (window.siyuan.mobile) {
+        window.siyuan.mobile.popEditor = edit.getCurrent();
+    }
+    protyle.scroll.lastScrollTop = 0;
+    addLoading(protyle);
+    const docInfoParam: IObject = {id};
+    if (isEncryptedBox(notebookId)) {
+        docInfoParam.notebook = notebookId;
+    }
+    fetchPost("/api/block/getDocInfo", docInfoParam, (response) => {
+        if (!isCurrent()) {
+            return;
+        }
+        protyle.wysiwyg.renderCustom(response.data.ial);
+        const getDocParam: IObject = {
             id,
             mode: 0,
             size: Constants.SIZE_GET_MAX,
-        }, getResponse => {
+        };
+        if (isEncryptedBox(notebookId)) {
+            getDocParam.notebook = notebookId;
+        }
+        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+            if (!isCurrent()) {
+                return;
+            }
             onGet({
                 updateReadonly: true,
                 data: getResponse,
-                protyle: edit.protyle,
+                protyle,
                 action: getResponse.data.rootID === getResponse.data.id ? [] : [Constants.CB_GET_ALL],
             });
-        });
-    });
+        }, undefined, undefined, ownerGeneration.signal);
+    }, undefined, undefined, ownerGeneration.signal);
 };

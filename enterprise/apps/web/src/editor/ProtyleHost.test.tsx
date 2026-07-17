@@ -26,7 +26,7 @@ function createSession(spaceId: string) {
   return createProtyleSession({
     spaceId,
     runtime: {
-      editors: createProtyleEditorRegistry(),
+      editors: createProtyleEditorRegistry<ProtyleController>(),
       menu: createProtyleMenuPort(() => ({}), () => undefined),
       overlays: createProtyleOverlayPort(() => undefined),
       plugins: { dispose: () => undefined },
@@ -55,7 +55,13 @@ describe("ProtyleHost", () => {
     const session = createSession("space-a");
 
     const { getByTestId, rerender, unmount } = render(
-      <ProtyleHost documentId="doc-a" factory={factory} readOnly={false} session={session} />,
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-a"
+        readOnly={false}
+        session={session}
+      />,
     );
 
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
@@ -63,16 +69,26 @@ describe("ProtyleHost", () => {
     expect(createOptions).toMatchObject({
       documentId: "doc-a",
       host: getByTestId("protyle-host"),
+      notebookId: "notebook-a",
       readOnly: false,
       session,
     });
-    expect(Object.keys(createOptions ?? {}).sort()).toEqual(["documentId", "host", "readOnly", "session", "signal"]);
+    expect(Object.keys(createOptions ?? {}).sort()).toEqual([
+      "documentId",
+      "host",
+      "notebookId",
+      "readOnly",
+      "session",
+      "signal",
+    ]);
     expect(createOptions?.signal).toBeInstanceOf(AbortSignal);
     expect(createOptions?.signal.aborted).toBe(false);
     await waitFor(() => expect(getByTestId("protyle-host")).toHaveAttribute("aria-busy", "false"));
     expect(controller.setHostReadOnly).not.toHaveBeenCalled();
 
-    rerender(<ProtyleHost documentId="doc-a" factory={factory} readOnly session={session} />);
+    rerender(
+      <ProtyleHost documentId="doc-a" factory={factory} notebookId="notebook-a" readOnly session={session} />,
+    );
     await waitFor(() => expect(controller.setHostReadOnly).toHaveBeenCalledOnce());
     expect(controller.setHostReadOnly).toHaveBeenLastCalledWith(true);
     expect(create).toHaveBeenCalledOnce();
@@ -82,34 +98,60 @@ describe("ProtyleHost", () => {
     expect(controller.destroy).toHaveBeenCalledOnce();
   });
 
-  it("destroys the current editor before recreating it for document and session changes", async () => {
+  it("destroys the current editor before recreating it for notebook, document, and session changes", async () => {
     const firstController = createController();
     const secondController = createController();
     const thirdController = createController();
+    const fourthController = createController();
     const create = vi.fn<TestFactory["create"]>()
       .mockResolvedValueOnce(firstController)
       .mockResolvedValueOnce(secondController)
-      .mockResolvedValueOnce(thirdController);
+      .mockResolvedValueOnce(thirdController)
+      .mockResolvedValueOnce(fourthController);
     const factory: TestFactory = { create };
     const firstSession = createSession("space-a");
     const replacementSession = createSession("space-a");
 
     const { rerender, unmount } = render(
-      <ProtyleHost documentId="doc-a" factory={factory} readOnly={false} session={firstSession} />,
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-a"
+        readOnly={false}
+        session={firstSession}
+      />,
     );
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
 
-    rerender(<ProtyleHost documentId="doc-b" factory={factory} readOnly={false} session={firstSession} />);
+    rerender(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-b"
+        readOnly={false}
+        session={firstSession}
+      />,
+    );
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(create.mock.calls[0]?.[0].signal.aborted).toBe(true);
     expect(firstController.destroy).toHaveBeenCalledOnce();
     expect(firstController.destroy.mock.invocationCallOrder[0]).toBeLessThan(
       create.mock.invocationCallOrder[1] ?? 0,
     );
-    expect(create.mock.calls[1]?.[0]).toMatchObject({ documentId: "doc-b", session: firstSession });
+    expect(create.mock.calls[1]?.[0]).toMatchObject({
+      documentId: "doc-a",
+      notebookId: "notebook-b",
+      session: firstSession,
+    });
 
     rerender(
-      <ProtyleHost documentId="doc-b" factory={factory} readOnly={false} session={replacementSession} />,
+      <ProtyleHost
+        documentId="doc-b"
+        factory={factory}
+        notebookId="notebook-b"
+        readOnly={false}
+        session={firstSession}
+      />,
     );
     await waitFor(() => expect(create).toHaveBeenCalledTimes(3));
     expect(create.mock.calls[1]?.[0].signal.aborted).toBe(true);
@@ -117,11 +159,36 @@ describe("ProtyleHost", () => {
     expect(secondController.destroy.mock.invocationCallOrder[0]).toBeLessThan(
       create.mock.invocationCallOrder[2] ?? 0,
     );
-    expect(create.mock.calls[2]?.[0]).toMatchObject({ documentId: "doc-b", session: replacementSession });
+    expect(create.mock.calls[2]?.[0]).toMatchObject({
+      documentId: "doc-b",
+      notebookId: "notebook-b",
+      session: firstSession,
+    });
 
-    unmount();
+    rerender(
+      <ProtyleHost
+        documentId="doc-b"
+        factory={factory}
+        notebookId="notebook-b"
+        readOnly={false}
+        session={replacementSession}
+      />,
+    );
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(4));
     expect(create.mock.calls[2]?.[0].signal.aborted).toBe(true);
     expect(thirdController.destroy).toHaveBeenCalledOnce();
+    expect(thirdController.destroy.mock.invocationCallOrder[0]).toBeLessThan(
+      create.mock.invocationCallOrder[3] ?? 0,
+    );
+    expect(create.mock.calls[3]?.[0]).toMatchObject({
+      documentId: "doc-b",
+      notebookId: "notebook-b",
+      session: replacementSession,
+    });
+
+    unmount();
+    expect(create.mock.calls[3]?.[0].signal.aborted).toBe(true);
+    expect(fourthController.destroy).toHaveBeenCalledOnce();
   });
 
   it("destroys a controller that resolves after its document lifecycle was aborted", async () => {
@@ -135,11 +202,25 @@ describe("ProtyleHost", () => {
     const session = createSession("space-a");
 
     const { getByTestId, rerender, unmount } = render(
-      <ProtyleHost documentId="doc-a" factory={factory} readOnly={false} session={session} />,
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-a"
+        readOnly={false}
+        session={session}
+      />,
     );
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
 
-    rerender(<ProtyleHost documentId="doc-b" factory={factory} readOnly={false} session={session} />);
+    rerender(
+      <ProtyleHost
+        documentId="doc-b"
+        factory={factory}
+        notebookId="notebook-a"
+        readOnly={false}
+        session={session}
+      />,
+    );
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     expect(create.mock.calls[0]?.[0].signal.aborted).toBe(true);
     await waitFor(() => expect(getByTestId("protyle-host")).toHaveAttribute("aria-busy", "false"));
@@ -167,6 +248,7 @@ describe("ProtyleHost", () => {
       <ProtyleHost
         documentId="doc-a"
         factory={factory}
+        notebookId="notebook-a"
         onError={onError}
         readOnly={false}
         session={session}
@@ -180,11 +262,29 @@ describe("ProtyleHost", () => {
     expect(onError).toHaveBeenCalledWith(creationError);
     expect(getByTestId("protyle-host")).toHaveAttribute("aria-busy", "false");
 
-    rerender(<ProtyleHost documentId="doc-a" factory={factory} onError={onError} readOnly session={session} />);
+    rerender(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-a"
+        onError={onError}
+        readOnly
+        session={session}
+      />,
+    );
     expect(queryByRole("alert")).toBeVisible();
     expect(create).toHaveBeenCalledOnce();
 
-    rerender(<ProtyleHost documentId="doc-b" factory={factory} onError={onError} readOnly session={session} />);
+    rerender(
+      <ProtyleHost
+        documentId="doc-b"
+        factory={factory}
+        notebookId="notebook-a"
+        onError={onError}
+        readOnly
+        session={session}
+      />,
+    );
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(queryByRole("alert")).not.toBeInTheDocument());
     expect(getByTestId("protyle-host")).toHaveAttribute("aria-busy", "false");

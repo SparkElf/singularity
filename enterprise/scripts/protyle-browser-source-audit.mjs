@@ -24,6 +24,7 @@ const notebookScopedHostEvents = new Set([
   "open-card-browser",
   "open-card-deck-picker",
   "open-asset",
+  "add-blocks-to-agent",
   "refresh-outline",
   "refresh-backlinks",
 ]);

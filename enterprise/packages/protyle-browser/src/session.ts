@@ -26,11 +26,35 @@ export function createProtyleSession<TRuntime extends ProtyleSessionRuntime>(
 
       disposed = true;
       disposePromise = (async () => {
-        options.runtime.transport.dispose();
-        options.runtime.overlays.dispose();
-        options.runtime.menu.dispose();
-        options.runtime.editors.dispose();
-        await options.runtime.plugins.dispose();
+        const errors: unknown[] = [];
+        const disposeCapability = (dispose: () => void) => {
+          try {
+            dispose();
+          } catch (error) {
+            errors.push(error);
+          }
+        };
+
+        disposeCapability(() => options.runtime.editors.seal());
+        disposeCapability(() => options.runtime.transport.dispose());
+        disposeCapability(() => options.runtime.overlays.dispose());
+        disposeCapability(() => options.runtime.menu.dispose());
+        disposeCapability(() => options.runtime.editors.forEach((editor) => {
+          disposeCapability(() => editor.destroy());
+        }));
+        disposeCapability(() => options.runtime.editors.dispose());
+        try {
+          await options.runtime.plugins.dispose();
+        } catch (error) {
+          errors.push(error);
+        }
+
+        if (errors.length === 1) {
+          throw errors[0];
+        }
+        if (errors.length > 1) {
+          throw new AggregateError(errors, "[protyle.session] capability disposal failed");
+        }
       })();
       return disposePromise;
     },

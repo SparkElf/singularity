@@ -7,11 +7,63 @@ import {getDockByType, resizeTabs, setTabPosition} from "../tabUtil";
 import {Backlink} from "./Backlink";
 import {App} from "../../index";
 import {Wnd} from "../Wnd";
-import {fetchSyncPost} from "../../util/fetch";
+import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {Files} from "./Files";
 import {Editor} from "../../editor";
 import {Constants} from "../../constants";
-import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox, isSameNotebookContentDomain} from "../../util/pathName";
+import {showMessage} from "../../dialog/message";
+
+export const refreshOutlinePanels = (
+    notebookId: string,
+    documentId: string,
+    isCurrentDocument: () => boolean,
+) => {
+    getAllModels().outline.forEach((item) => {
+        const isPinnedCurrentDocument = item.type === "pin" && isCurrentDocument();
+        const isLocalDocument = item.type === "local" && item.blockId === documentId &&
+            isSameNotebookContentDomain(item.notebookId, notebookId);
+        if (!isPinnedCurrentDocument && !isLocalDocument) {
+            return;
+        }
+        const outlineParam: IObject = {
+            id: documentId,
+            preview: item.isPreview,
+        };
+        if (isEncryptedBox(notebookId)) {
+            outlineParam.notebook = notebookId;
+        }
+        fetchPost("/api/outline/getDocOutline", outlineParam, (response) => {
+            if ((item.type === "pin" && !isCurrentDocument()) ||
+                (item.type === "local" && (item.blockId !== documentId ||
+                    !isSameNotebookContentDomain(item.notebookId, notebookId)))) {
+                return;
+            }
+            item.update(response, documentId, notebookId);
+            item.updateDocTitle(undefined, response.data?.length || 0);
+        });
+    });
+};
+
+export const refreshBacklinkPanels = (
+    notebookId: string,
+    documentId: string,
+    isCurrentDocument: () => boolean,
+) => {
+    getAllModels().backlink.forEach((item) => {
+        if (item.type === "pin" && isCurrentDocument()) {
+            if (item.blockId === documentId &&
+                isSameNotebookContentDomain(item.notebookId, notebookId)) {
+                item.refresh();
+            } else {
+                item.updateForCurrentEditor(documentId, isCurrentDocument, notebookId);
+            }
+        } else if (item.type === "local" && item.blockId === documentId &&
+            isSameNotebookContentDomain(item.notebookId, notebookId)) {
+            item.refresh();
+        }
+    });
+};
 
 export const openBacklink = async (options: {
     app: App,
@@ -78,12 +130,18 @@ export const openBacklink = async (options: {
 export const openGraph = async (options: {
     app: App,
     blockId: string,
+    notebookId: string,
     rootId?: string,
     title?: string,
     useBlockId?: boolean,
 }) => {
+    if (isEncryptedBox(options.notebookId)) {
+        showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+        return;
+    }
     const graph = getAllModels().graph.find(item => {
-        if (item.blockId === options.blockId && item.type === "local") {
+        if (item.blockId === options.blockId && item.type === "local" &&
+            isSameNotebookContentDomain(item.notebookId, options.notebookId)) {
             item.parent.parent.removeTab(item.parent.id);
             return true;
         }
@@ -125,6 +183,7 @@ export const openGraph = async (options: {
                 tab,
                 blockId: options.blockId,
                 rootId: options.rootId,
+                notebookId: options.notebookId,
             }));
         }
     }));
@@ -224,7 +283,7 @@ export const clearOBG = () => {
                 return;
             }
             item.isPreview = false;
-            item.update({data: [], msg: "", code: 0}, "");
+            item.update({data: [], msg: "", code: 0}, "", item.notebookId);
             item.updateDocTitle();
         }
     });

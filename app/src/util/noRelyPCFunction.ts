@@ -10,6 +10,7 @@ import {upDownHint} from "./upDownHint";
 import {escapeHtml} from "./escape";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {isNotCtrl} from "../protyle/util/compatibility";
+import {isEncryptedBox} from "./pathName";
 
 export const genTagList = (listElement: Element, k: string) => {
     listElement.classList.remove("fn__none");
@@ -114,11 +115,16 @@ export const renameTag = (labelName: string) => {
     });
 };
 
-export const checkFold = (id: string, cb: (zoomIn: boolean, action: TProtyleAction[], isRoot: boolean) => void) => {
+export const checkFold = (id: string, notebookId: string | undefined,
+                          cb: (zoomIn: boolean, action: TProtyleAction[], isRoot: boolean) => void) => {
     if (!id) {
         return;
     }
-    fetchPost("/api/block/checkBlockFold", {id}, (foldResponse) => {
+    const foldParam: IObject = {id};
+    if (isEncryptedBox(notebookId)) {
+        foldParam.notebook = notebookId;
+    }
+    fetchPost("/api/block/checkBlockFold", foldParam, (foldResponse) => {
         cb(foldResponse.data.isFolded,
             foldResponse.data.isFolded ? [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL] : [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
             foldResponse.data.isRoot);

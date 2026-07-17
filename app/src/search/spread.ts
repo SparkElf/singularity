@@ -1,10 +1,11 @@
 import {getNotebookName, pathPosix} from "../util/pathName";
 import {Constants} from "../constants";
 import {Dialog} from "../dialog";
-import {fetchPost, fetchSyncPost} from "../util/fetch";
+import {fetchSyncPost} from "../util/fetch";
 import {focusByRange} from "../protyle/util/selection";
 import {genSearch, updateConfig} from "./util";
 import {App} from "../index";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 
 export const openSearch = async (options: {
     app: App,
@@ -16,6 +17,7 @@ export const openSearch = async (options: {
     const localData = window.siyuan.storage[Constants.LOCAL_SEARCHDATA];
     let hPath = "";
     let idPath: string[] = [];
+    let notebookId = options.notebookId;
     if (options.notebookId) {
         hPath = getNotebookName(options.notebookId);
         idPath.push(options.notebookId);
@@ -31,9 +33,11 @@ export const openSearch = async (options: {
         if (localData.removed) {
             hPath = "";
             idPath = [];
+            notebookId = undefined;
         } else {
             hPath = localData.hPath;
             idPath = [...localData.idPath];
+            notebookId = localData.notebookId;
         }
     }
     const config = {
@@ -41,6 +45,7 @@ export const openSearch = async (options: {
         k: options.key || localData.k,
         r: localData.r,
         hasReplace: options.hotkey === Constants.DIALOG_REPLACE,
+        notebookId,
         method: localData.method === 4 && !window.siyuan.config.ai.embedding.enabled ? 0 : localData.method,
         hPath,
         idPath,
@@ -64,22 +69,25 @@ export const openSearch = async (options: {
             item.element.setAttribute("data-key", options.hotkey);
             if (options.hotkey === Constants.DIALOG_REPLACE) {
                 cloneData.hasReplace = true;
-                item.data = updateConfig(searchElement, cloneData, item.data, item.editors.edit);
+                item.data = updateConfig(searchElement, cloneData, item.data,
+                    item.editors.edit as EmbeddedProtyleOwner);
             } else if (options.hotkey === Constants.DIALOG_GLOBALSEARCH) {
                 cloneData.hasReplace = false;
+                cloneData.notebookId = undefined;
                 cloneData.hPath = "";
                 cloneData.idPath = [];
-                item.data = updateConfig(searchElement, cloneData, item.data, item.editors.edit);
+                item.data = updateConfig(searchElement, cloneData, item.data,
+                    item.editors.edit as EmbeddedProtyleOwner);
             } else if (options.hotkey === Constants.DIALOG_SEARCH) {
                 cloneData.hasReplace = false;
-                const toPath = item.editors.edit.protyle.path;
-                fetchPost("/api/filetree/getHPathsByPaths", {paths: [toPath]}, (response) => {
-                    cloneData.idPath = [pathPosix().join(item.editors.edit.protyle.notebookId, toPath)];
-                    cloneData.hPath = response.data[0];
-                    item.data.idPath = cloneData.idPath;
-                    item.data.hPath = cloneData.hPath;
-                    item.data = updateConfig(searchElement, cloneData, item.data, item.editors.edit);
-                });
+                cloneData.notebookId = options.notebookId;
+                cloneData.idPath = [...idPath];
+                cloneData.hPath = hPath;
+                item.data.notebookId = cloneData.notebookId;
+                item.data.idPath = cloneData.idPath;
+                item.data.hPath = cloneData.hPath;
+                item.data = updateConfig(searchElement, cloneData, item.data,
+                    item.editors.edit as EmbeddedProtyleOwner);
             }
             return true;
         }

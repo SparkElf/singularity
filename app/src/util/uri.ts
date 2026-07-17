@@ -1,4 +1,4 @@
-import {isSiYuanUriProtocol, parseSiYuanUriInfo} from "./pathName";
+import {isEncryptedBox, isSiYuanUriProtocol, parseSiYuanUriInfo} from "./pathName";
 /// #if !BROWSER
 import {ipcRenderer} from "electron";
 /// #endif
@@ -15,21 +15,32 @@ import type {App} from "../index";
 const processSiYuanUriBlocks = (app: App, uriObj: URL): boolean => {
     const blockInfo = parseSiYuanUriInfo(uriObj);
     if (blockInfo != null) {
-        const {id, focus} = blockInfo;
+        const {id, focus, notebookId} = blockInfo;
         window.siyuan.editorIsFullscreen = blockInfo.fullscreen;
-        fetchPost("/api/block/checkBlockExist", { id }, existResponse => {
+        if (!notebookId) {
+            console.error("[Singularity/ProtyleIdentity] SiYuan URI has no notebook", {blockId: id});
+            return true;
+        }
+        /// #if MOBILE
+        checkFold(id, notebookId, (zoomIn) => {
+            openMobileFileById(app, notebookId, id,
+                (zoomIn || focus) ? [Constants.CB_GET_FOCUS, Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+        });
+        /// #else
+        const blockExistParam: IObject = {id};
+        if (isEncryptedBox(notebookId)) {
+            blockExistParam.notebook = notebookId;
+        }
+        fetchPost("/api/block/checkBlockExist", blockExistParam, existResponse => {
             if (existResponse.data) {
-                checkFold(id, (zoomIn) => {
-                    /// #if !MOBILE
+                checkFold(id, notebookId, (zoomIn) => {
                     openFileById({
                         app,
                         id,
+                        notebookId,
                         action: (zoomIn || focus) ? [Constants.CB_GET_FOCUS, Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
                         zoomIn: zoomIn || focus
                     });
-                    /// #else
-                    openMobileFileById(app, id, (zoomIn || focus) ? [Constants.CB_GET_FOCUS, Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
-                    /// #endif
                 });
                 /// #if !BROWSER
                 ipcRenderer.send(Constants.SIYUAN_CMD, "show");
@@ -44,6 +55,7 @@ const processSiYuanUriBlocks = (app: App, uriObj: URL): boolean => {
                 });
             });
         });
+        /// #endif
         return true;
     }
     return false;

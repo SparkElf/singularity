@@ -8,6 +8,7 @@ export function createProtyleEditorRegistry<TEditor>(): ProtyleEditorRegistry<TE
 
   const editors = new Map<TEditor, Registration>();
   let active: TEditor | undefined;
+  let sealed = false;
   let disposed = false;
   let initialActiveAssigned = false;
 
@@ -27,6 +28,9 @@ export function createProtyleEditorRegistry<TEditor>(): ProtyleEditorRegistry<TE
     register: (editor) => {
       if (disposed) {
         throw new Error("[protyle.registry] cannot register an editor after disposal");
+      }
+      if (sealed) {
+        throw new Error("[protyle.registry] cannot register an editor after sealing");
       }
       const existingRegistration = editors.get(editor);
       if (existingRegistration) {
@@ -61,10 +65,14 @@ export function createProtyleEditorRegistry<TEditor>(): ProtyleEditorRegistry<TE
       return true;
     },
     getActive: () => active,
+    seal: () => {
+      sealed = true;
+    },
     dispose: () => {
       if (disposed) {
         return;
       }
+      sealed = true;
       disposed = true;
       editors.clear();
       active = undefined;

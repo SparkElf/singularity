@@ -16,7 +16,7 @@ export const fetchPost = (
         method: "POST",
     };
     if (data) {
-        if (["/api/search/searchRefBlock", "/api/graph/getGraph", "/api/graph/getLocalGraph",
+        if (!signal && ["/api/search/searchRefBlock", "/api/graph/getGraph", "/api/graph/getLocalGraph",
             "/api/block/getRecentUpdatedBlocks", "/api/search/fullTextSearchBlock"].includes(url)) {
             window.siyuan.reqIds[url] = Date.now();
             if (data.type === "local" && url === "/api/graph/getLocalGraph") {
@@ -83,17 +83,18 @@ export const fetchPost = (
             }
             return;
         }
-        if (["/api/search/searchRefBlock", "/api/graph/getGraph", "/api/graph/getLocalGraph",
-            "/api/block/getRecentUpdatedBlocks", "/api/search/fullTextSearchBlock"].includes(url)) {
-            if (response.data.reqId && window.siyuan.reqIds[url] && window.siyuan.reqIds[url] > response.data.reqId) {
+        if (response && typeof response === "object" && typeof response.msg === "string" && typeof response.code === "number") {
+            if (!processMessage(response)) {
                 return;
             }
         }
-        if (typeof response === "object" && typeof response.msg === "string" && typeof response.code === "number") {
-            if (processMessage(response) && cb) {
-                cb(response);
+        if (!signal && ["/api/search/searchRefBlock", "/api/graph/getGraph", "/api/graph/getLocalGraph",
+            "/api/block/getRecentUpdatedBlocks", "/api/search/fullTextSearchBlock"].includes(url)) {
+            if (response.data?.reqId && window.siyuan.reqIds[url] && window.siyuan.reqIds[url] > response.data.reqId) {
+                return;
             }
-        } else if (cb) {
+        }
+        if (cb) {
             cb(response);
         }
     }).catch((e) => {
@@ -125,9 +126,11 @@ export const fetchPost = (
 
 export const fetchSyncPost = async (url: string, data?: any, headers?: Record<string, string>, options?: {
     processResponse?: boolean,
+    signal?: AbortSignal,
 }) => {
     const init: RequestInit = {
         method: "POST",
+        signal: options?.signal,
     };
     if (headers) {
         init.headers = headers;

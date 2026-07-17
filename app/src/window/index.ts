@@ -164,7 +164,12 @@ class App {
                                 }
                                 break;
                             case "openFileById":
-                                openFileById({app: this, id: data.data.id, action: [Constants.CB_GET_FOCUS]});
+                                openFileById({
+                                    app: this,
+                                    id: data.data.id,
+                                    notebookId: data.data.notebookId,
+                                    action: [Constants.CB_GET_FOCUS]
+                                });
                                 break;
                         }
                     }

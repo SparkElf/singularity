@@ -52,12 +52,16 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number) =
                 if (includeIDs instanceof Promise) {
                     includeIDs.then((promiseIds) => {
                         if (Array.isArray(promiseIds)) {
-                            fetchPost("/api/search/getEmbedBlock", {
+                            const params: Record<string, unknown> = {
                                 embedBlockID: item.getAttribute("data-node-id"),
                                 includeIDs: promiseIds,
                                 headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
                                 breadcrumb
-                            }, (response) => {
+                            };
+                            if (isEncryptedBox(protyle.notebookId)) {
+                                params.notebook = protyle.notebookId;
+                            }
+                            fetchPost("/api/search/getEmbedBlock", params, (response) => {
                                 renderEmbed(response.data.blocks || [], protyle, item, top);
                             });
                         } else {
@@ -67,12 +71,16 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number) =
                         renderEmbed([], protyle, item, top, e);
                     });
                 } else if (Array.isArray(includeIDs)) {
-                    fetchPost("/api/search/getEmbedBlock", {
+                    const params: Record<string, unknown> = {
                         embedBlockID: item.getAttribute("data-node-id"),
                         includeIDs,
                         headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
                         breadcrumb
-                    }, (response) => {
+                    };
+                    if (isEncryptedBox(protyle.notebookId)) {
+                        params.notebook = protyle.notebookId;
+                    }
+                    fetchPost("/api/search/getEmbedBlock", params, (response) => {
                         renderEmbed(response.data.blocks || [], protyle, item, top);
                     });
                 } else {
@@ -82,14 +90,17 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number) =
                 renderEmbed([], protyle, item, top, e);
             }
         } else {
-            fetchPost("/api/search/searchEmbedBlock", {
+            const params: Record<string, unknown> = {
                 embedBlockID: item.getAttribute("data-node-id"),
                 stmt: content,
                 headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
                 excludeIDs: [item.getAttribute("data-node-id"), protyle.block.rootID],
-                breadcrumb,
-                notebook: isEncryptedBox(protyle.notebookId) ? protyle.notebookId : ""
-            }, (response) => {
+                breadcrumb
+            };
+            if (isEncryptedBox(protyle.notebookId)) {
+                params.notebook = protyle.notebookId;
+            }
+            fetchPost("/api/search/searchEmbedBlock", params, (response) => {
                 renderEmbed(response.data.blocks, protyle, item, top);
             });
         }

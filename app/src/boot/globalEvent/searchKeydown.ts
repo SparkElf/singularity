@@ -16,7 +16,8 @@ import {initSearchMenu} from "../../menus/search";
 import {writeText} from "../../protyle/util/compatibility";
 import {getUnRefList} from "../../search/unRef";
 import {toggleAssetHistory, toggleReplaceHistory, toggleSearchHistory} from "../../search/toggleHistory";
-import {Protyle} from "../../protyle";
+import {EmbeddedProtyleOwner} from "../../protyle/EmbeddedProtyleOwner";
+import {buildSiYuanBlockUri} from "../../util/siyuanUri";
 
 export const searchKeydown = (app: App, event: KeyboardEvent) => {
     if (getSelection().rangeCount === 0) {
@@ -28,16 +29,16 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
     }
     let element: HTMLElement;
     let dialog: Dialog;
-    let edit: Protyle;
-    let unRefEdit;
+    let edit: EmbeddedProtyleOwner;
+    let unRefEdit: EmbeddedProtyleOwner;
     let config: Config.IUILayoutTabSearchConfig;
     window.siyuan.dialogs.find((item) => {
         if (item.element.contains(range.startContainer) && item.element.querySelector("#searchList")) {
             element = item.element.querySelector(".b3-dialog__body");
             dialog = item;
             config = dialog.data;
-            edit = dialog.editors.edit;
-            unRefEdit = dialog.editors.unRefEdit;
+            edit = dialog.editors.edit as EmbeddedProtyleOwner;
+            unRefEdit = dialog.editors.unRefEdit as EmbeddedProtyleOwner;
             return true;
         }
     });
@@ -97,9 +98,14 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
     }
     if (searchType !== "asset") {
         if (matchHotKey(window.siyuan.config.keymap.editor.general.insertRight.custom, event)) {
+            const protyle = (searchType === "doc" ? edit : unRefEdit).protyle;
+            if (!protyle) {
+                return false;
+            }
             openSearchEditor({
-                protyle: edit.protyle,
+                protyle,
                 rootId: currentList.getAttribute("data-root-id"),
+                notebookId: currentList.getAttribute("data-notebook-id"),
                 id: currentList.getAttribute("data-node-id"),
                 cb: () => {
                     if (dialog) {
@@ -111,9 +117,14 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
             return true;
         }
         const id = currentList.getAttribute("data-node-id");
+        const notebookId = currentList.getAttribute("data-notebook-id");
         if (matchHotKey("⌘/", event)) {
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] search result has no notebook", {blockId: id});
+                return true;
+            }
             const currentRect = currentList.getBoundingClientRect();
-            initSearchMenu(id).popup({
+            initSearchMenu(id, notebookId).popup({
                 x: currentRect.left + 30,
                 y: currentRect.bottom
             });
@@ -130,18 +141,31 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
             return true;
         }
         if (matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocol.custom, event)) {
-            writeText(`siyuan://blocks/${id}`);
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] search result has no notebook", {blockId: id});
+                return true;
+            }
+            writeText(buildSiYuanBlockUri(id, notebookId));
             return true;
         }
         if (matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom, event)) {
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] search result has no notebook", {blockId: id});
+                return true;
+            }
             fetchPost("/api/block/getRefText", {id}, (response) => {
-                writeText(`[${response.data}](siyuan://blocks/${id})`);
+                writeText(`[${response.data}](${buildSiYuanBlockUri(id, notebookId)})`);
             });
             return true;
         }
         if (matchHotKey(window.siyuan.config.keymap.editor.general.copyHPath.custom, event)) {
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] search result has no notebook", {blockId: id});
+                return true;
+            }
             fetchPost("/api/filetree/getHPathByID", {
-                id
+                id,
+                notebook: notebookId,
             }, (response) => {
                 writeText(response.data);
             });
@@ -217,9 +241,14 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
             if (targetId === "replaceInput") {
                 replace(element, config, edit, false);
             } else {
+                const protyle = (searchType === "doc" ? edit : unRefEdit).protyle;
+                if (!protyle) {
+                    return false;
+                }
                 openSearchEditor({
                     rootId: currentList.getAttribute("data-root-id"),
-                    protyle: edit.protyle,
+                    notebookId: currentList.getAttribute("data-notebook-id"),
+                    protyle,
                     id: currentList.getAttribute("data-node-id"),
                     cb: () => {
                         if (dialog) {
@@ -262,6 +291,7 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
         } else if (searchType === "doc") {
             getArticle({
                 id: currentList.getAttribute("data-node-id"),
+                notebookId: currentList.getAttribute("data-notebook-id"),
                 config,
                 value: searchInputElement.value,
                 edit,
@@ -269,6 +299,7 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
         } else {
             getArticle({
                 id: currentList.getAttribute("data-node-id"),
+                notebookId: currentList.getAttribute("data-notebook-id"),
                 edit: unRefEdit,
             });
         }
@@ -299,6 +330,7 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
         } else if (searchType === "doc") {
             getArticle({
                 id: currentList.getAttribute("data-node-id"),
+                notebookId: currentList.getAttribute("data-notebook-id"),
                 config,
                 value: searchInputElement.value,
                 edit,
@@ -306,6 +338,7 @@ export const searchKeydown = (app: App, event: KeyboardEvent) => {
         } else if (searchType === "unRef") {
             getArticle({
                 id: currentList.getAttribute("data-node-id"),
+                notebookId: currentList.getAttribute("data-notebook-id"),
                 edit: unRefEdit,
             });
         }

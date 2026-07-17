@@ -21,7 +21,7 @@ import {initMessage, showMessage} from "../dialog/message";
 import {goBack} from "./util/MobileBackFoward";
 import {activeBlur, hideKeyboardToolbar, showKeyboardToolbar} from "./util/keyboardToolbar";
 import {getLocalStorage, isChromeBrowser, isInMobileApp, writeText} from "../protyle/util/compatibility";
-import {getCurrentEditor, openMobileFileById} from "./editor";
+import {getCurrentEditor} from "./editor";
 import {checkPublishServiceClosed} from "../util/processMessage";
 import {initRightMenu} from "./menu";
 import {openChangelog} from "../boot/openChangelog";
@@ -257,8 +257,7 @@ window.hideKeyboardToolbar = hideKeyboardToolbar;
 window.openFileByURL = (openURL) => {
     const blockInfo = parseSiYuanUriInfo(openURL);
     if (blockInfo != null) {
-        openMobileFileById(siyuanApp, blockInfo.id,
-            blockInfo.focus ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+        console.error("[Singularity/ProtyleIdentity] native mobile URL has no notebook", {blockId: blockInfo.id});
         return true;
     }
     return false;

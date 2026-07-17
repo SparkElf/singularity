@@ -2,12 +2,15 @@ import {BlockPanel} from "./Panel";
 import {hasClosestByAttribute, hasClosestByClassName,} from "../protyle/util/hasClosest";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {hideTooltip, showTooltip, tooltipTargetElement} from "../dialog/tooltip";
-import {isLocalPath, parseSiYuanUriInfo} from "../util/pathName";
+import {isEncryptedBox, isLocalPath, parseSiYuanUriInfo} from "../util/pathName";
 import {App} from "../index";
 import {Constants} from "../constants";
 import {getCellText} from "../protyle/render/av/cell";
 import {isTouchDevice} from "../util/functions";
 import {escapeAriaLabel, escapeHtml, escapeLessThans} from "../util/escape";
+import {isMac} from "../protyle/util/compatibility";
+import {PopoverCaptureState} from "./popoverCapture";
+import type {PopoverCapture} from "./popoverCapture";
 /// #if !MOBILE
 import {getInstanceById} from "../layout/util";
 import {Editor} from "../editor";
@@ -15,16 +18,30 @@ import {Tab} from "../layout/Tab";
 /// #endif
 
 let popoverTargetElement: HTMLElement;
+const popoverCapture = new PopoverCaptureState();
 // 异步获取信息后再显示 tooltip，鼠标已移走时需中断请求 https://github.com/siyuan-note/siyuan/issues/14823
 let tooltipAbortController: AbortController | null = null;
+
+const clearPopoverCapture = () => {
+    popoverTargetElement = undefined;
+    popoverCapture.clear();
+};
+
+const isControlModifier = (event: MouseEvent | KeyboardEvent) => isMac() ? event.metaKey : event.ctrlKey;
+
 export const initBlockPopover = (app: App) => {
     let timeout: number;
     let timeoutHide: number;
     // 编辑器内容块引用/backlinks/tag/bookmark/套娃中使用
-    document.addEventListener("mouseover", (event: MouseEvent & { target: HTMLElement, path: HTMLElement[] }) => {
+    document.addEventListener("mouseover", (event: MouseEvent & {
+        target: HTMLElement,
+        path: HTMLElement[],
+        contentNotebookId?: string,
+    }) => {
         if (!window.siyuan.config || !window.siyuan.menus ||
             // 拖拽时禁止
             window.siyuan.dragElement || document.onmousemove) {
+            clearPopoverCapture();
             hideTooltip();
             return;
         }
@@ -219,23 +236,24 @@ export const initBlockPopover = (app: App) => {
                 hideTooltip();
             }
         }
-        if (window.siyuan.config.editor.floatWindowMode === 1 || window.siyuan.shiftIsPressed) {
+        const capture = captureTarget(event, aElement);
+        if (window.siyuan.config.editor.floatWindowMode === 1 || event.shiftKey) {
             clearTimeout(timeoutHide);
             timeoutHide = window.setTimeout(() => {
                 hidePopover(event);
             }, Constants.TIMEOUT_INPUT);
 
-            if (!getTarget(event, aElement)) {
+            if (!capture) {
                 return;
             }
             // https://github.com/siyuan-note/siyuan/issues/9007
             if (event.relatedTarget && !document.contains(event.relatedTarget as Node)) {
                 return;
             }
-            if (window.siyuan.ctrlIsPressed) {
+            if (isControlModifier(event)) {
                 clearTimeout(timeoutHide);
                 showPopover(app);
-            } else if (window.siyuan.shiftIsPressed) {
+            } else if (event.shiftKey) {
                 clearTimeout(timeoutHide);
                 showPopover(app, true);
             }
@@ -253,12 +271,26 @@ export const initBlockPopover = (app: App) => {
             }
         }, Constants.TIMEOUT_INPUT);
         timeout = window.setTimeout(() => {
-            if (!getTarget(event, aElement) || isTouchDevice()) {
+            if (!capture) {
+                return;
+            }
+            const currentCapture = popoverCapture.get(capture.target);
+            if (!currentCapture || currentCapture.notebookId !== capture.notebookId || isTouchDevice()) {
                 return;
             }
             clearTimeout(timeoutHide);
             showPopover(app);
         }, window.siyuan.config.editor.floatWindowDelay);
+    });
+    document.addEventListener("mouseout", (event: MouseEvent) => {
+        const capture = popoverCapture.get();
+        if (!capture) {
+            return;
+        }
+        const relatedTarget = event.relatedTarget as Node | null;
+        if (!relatedTarget || !capture.target.contains(relatedTarget)) {
+            clearPopoverCapture();
+        }
     });
 };
 
@@ -390,9 +422,11 @@ const hidePopover = (event: MouseEvent & { path: HTMLElement[] }) => {
     }
 };
 
-const getTarget = (event: MouseEvent & { target: HTMLElement }, aElement: false | HTMLElement) => {
+const captureTarget = (event: MouseEvent & { target: HTMLElement, contentNotebookId?: string },
+                       aElement: false | HTMLElement): PopoverCapture | undefined => {
+    clearPopoverCapture();
     if (window.siyuan.config.editor.floatWindowMode === 2 || hasClosestByClassName(event.target, "history__repo", true)) {
-        return false;
+        return;
     }
     popoverTargetElement = hasClosestByAttribute(event.target, "data-type", "block-ref") as HTMLElement ||
         hasClosestByAttribute(event.target, "data-type", "virtual-block-ref") as HTMLElement;
@@ -412,32 +446,55 @@ const getTarget = (event: MouseEvent & { target: HTMLElement }, aElement: false 
             }
         }
     }
-    if (!popoverTargetElement || window.siyuan.altIsPressed ||
-        (window.siyuan.config.editor.floatWindowMode === 0 && window.siyuan.ctrlIsPressed) ||
+    if (!popoverTargetElement ||
         (popoverTargetElement && popoverTargetElement.getAttribute("prevent-popover") === "true")) {
-        return false;
+        return;
     }
     // https://github.com/siyuan-note/siyuan/issues/4314
     if (popoverTargetElement && getSelection().rangeCount > 0) {
         const range = getSelection().getRangeAt(0);
         if (range.toString() !== "" && popoverTargetElement.contains(range.startContainer)) {
-            return false;
+            return;
         }
     }
-    return true;
+    const capture = popoverCapture.capture(popoverTargetElement, event.contentNotebookId);
+    if (!capture) {
+        popoverTargetElement = undefined;
+        return;
+    }
+    if (event.altKey || (window.siyuan.config.editor.floatWindowMode === 0 && isControlModifier(event))) {
+        return;
+    }
+    return capture;
+};
+
+export const showCapturedPopover = (app: App, showRef = false) => {
+    const capture = popoverCapture.get(popoverTargetElement);
+    if (capture) {
+        return showPopover(app, showRef);
+    }
 };
 
 export const showPopover = async (app: App, showRef = false) => {
-    if (!popoverTargetElement || (window.siyuan.menus.menu.data && window.siyuan.menus.menu.data === popoverTargetElement)) {
+    const initialCapture = popoverCapture.get(popoverTargetElement);
+    if (!initialCapture ||
+        (window.siyuan.menus.menu.data && window.siyuan.menus.menu.data === initialCapture.target)) {
         return;
     }
+    const targetElement = initialCapture.target;
+    const notebookId = initialCapture.notebookId;
     let refDefs: IRefDefs[] = [];
     let originalRefBlockIDs: IObject;
-    const dataId = popoverTargetElement.getAttribute("data-id");
+    let targetNotebookId = notebookId;
+    const dataId = targetElement.getAttribute("data-id");
     if (dataId) {
         // backlink/util/hint 上的弹层
         if (showRef) {
-            const postResponse = await fetchSyncPost("/api/block/getRefIDs", {id: dataId});
+            const refIDsParam: IObject = {id: dataId};
+            if (isEncryptedBox(notebookId)) {
+                refIDsParam.notebook = notebookId;
+            }
+            const postResponse = await fetchSyncPost("/api/block/getRefIDs", refIDsParam);
             refDefs = postResponse.data.refDefs;
             originalRefBlockIDs = postResponse.data.originalRefBlockIDs;
         } else {
@@ -449,51 +506,72 @@ export const showPopover = async (app: App, showRef = false) => {
                 refDefs = [{refID: dataId}];
             }
         }
-    } else if (popoverTargetElement.getAttribute("data-type")?.indexOf("virtual-block-ref") > -1) {
-        const postResponse = await fetchSyncPost("/api/block/getBlockDefIDsByRefText", {
-            anchor: popoverTargetElement.textContent,
-        });
+    } else if (targetElement.getAttribute("data-type")?.indexOf("virtual-block-ref") > -1) {
+        const defIDsParam: IObject = {anchor: targetElement.textContent};
+        if (isEncryptedBox(notebookId)) {
+            defIDsParam.notebook = notebookId;
+        }
+        const postResponse = await fetchSyncPost("/api/block/getBlockDefIDsByRefText", defIDsParam);
         refDefs = postResponse.data.refDefs;
-    } else if (popoverTargetElement.getAttribute("data-type")?.split(" ").includes("a")) {
+    } else if (targetElement.getAttribute("data-type")?.split(" ").includes("a")) {
         // 以思源协议开头的链接
-        refDefs = [{refID: parseSiYuanUriInfo(popoverTargetElement.getAttribute("data-href"))?.id ?? ""}];
-    } else if (popoverTargetElement.dataset.type === "url") {
+        const uriInfo = parseSiYuanUriInfo(targetElement.getAttribute("data-href"));
+        if (!uriInfo?.notebookId) {
+            return;
+        }
+        targetNotebookId = uriInfo.notebookId;
+        refDefs = [{refID: uriInfo.id}];
+    } else if (targetElement.dataset.type === "url") {
         // 在 database 的 url 列中以思源协议开头的链接
-        refDefs = [{refID: parseSiYuanUriInfo(popoverTargetElement.textContent.trim())?.id ?? ""}];
-    } else if (popoverTargetElement.dataset.popoverUrl) {
+        const uriInfo = parseSiYuanUriInfo(targetElement.textContent.trim());
+        if (!uriInfo?.notebookId) {
+            return;
+        }
+        targetNotebookId = uriInfo.notebookId;
+        refDefs = [{refID: uriInfo.id}];
+    } else if (targetElement.dataset.popoverUrl) {
         // 镜像数据库
-        const postResponse = await fetchSyncPost(popoverTargetElement.dataset.popoverUrl, {avID: popoverTargetElement.dataset.avId});
+        const mirrorParam: IObject = {avID: targetElement.dataset.avId};
+        if (isEncryptedBox(notebookId)) {
+            mirrorParam.notebook = notebookId;
+        }
+        const postResponse = await fetchSyncPost(targetElement.dataset.popoverUrl, mirrorParam);
         refDefs = postResponse.data.refDefs;
     } else {
         // pdf
         let targetId;
         let url = "/api/block/getRefIDs";
-        if (popoverTargetElement.classList.contains("protyle-attr--refcount")) {
+        if (targetElement.classList.contains("protyle-attr--refcount")) {
             // 编辑器中的引用数
-            targetId = popoverTargetElement.parentElement.parentElement.getAttribute("data-node-id");
-        } else if (popoverTargetElement.classList.contains("pdf__rect")) {
-            const relationIds = popoverTargetElement.getAttribute("data-relations");
+            targetId = targetElement.parentElement.parentElement.getAttribute("data-node-id");
+        } else if (targetElement.classList.contains("pdf__rect")) {
+            const relationIds = targetElement.getAttribute("data-relations");
             if (relationIds) {
                 relationIds.split(",").forEach((item: string) => {
                     refDefs.push({refID: item});
                 });
                 url = "";
             } else {
-                targetId = popoverTargetElement.getAttribute("data-node-id");
+                targetId = targetElement.getAttribute("data-node-id");
                 url = "/api/block/getRefIDsByFileAnnotationID";
             }
         } else if (!targetId) {
             // 文件树中的引用数
-            targetId = popoverTargetElement.parentElement.getAttribute("data-node-id");
+            targetId = targetElement.parentElement.getAttribute("data-node-id");
         }
         if (url) {
-            const postResponse = await fetchSyncPost(url, {id: targetId});
+            const refIDsParam: IObject = {id: targetId};
+            if (isEncryptedBox(notebookId)) {
+                refIDsParam.notebook = notebookId;
+            }
+            const postResponse = await fetchSyncPost(url, refIDsParam);
             refDefs = postResponse.data.refDefs;
             originalRefBlockIDs = postResponse.data.originalRefBlockIDs;
         }
     }
 
-    if (refDefs.length === 0) {
+    const currentCapture = popoverCapture.get(targetElement);
+    if (refDefs.length === 0 || !currentCapture || currentCapture.notebookId !== notebookId) {
         return;
     }
 
@@ -505,13 +583,14 @@ export const showPopover = async (app: App, showRef = false) => {
             return true;
         }
     });
-    if (!hasPin && popoverTargetElement.parentElement &&
-        popoverTargetElement.parentElement.style.opacity !== "0.38" // 反向面板图标拖拽时不应该弹层
+    if (!hasPin && targetElement.parentElement &&
+        targetElement.parentElement.style.opacity !== "0.38" // 反向面板图标拖拽时不应该弹层
     ) {
         window.siyuan.blockPanels.push(new BlockPanel({
             app,
-            targetElement: popoverTargetElement,
-            isBacklink: showRef || popoverTargetElement.classList.contains("protyle-attr--refcount") || popoverTargetElement.classList.contains("counter"),
+            targetElement,
+            notebookId: targetNotebookId,
+            isBacklink: showRef || targetElement.classList.contains("protyle-attr--refcount") || targetElement.classList.contains("counter"),
             refDefs,
             originalRefBlockIDs,
         }));

@@ -22,6 +22,8 @@ export class MobileOutline extends Model {
     public element: HTMLElement;
     public blockId: string;
     public isPreview: boolean;
+    private notebookId: string;
+    private requestGeneration = 0;
     private preFilterExpandIds: string[] | null = null;
     private touchDragState: {
         selectedElement: HTMLElement;
@@ -35,6 +37,7 @@ export class MobileOutline extends Model {
 
     constructor(options: {
         app: App,
+        notebookId: string,
         blockId: string,
         isPreview: boolean
     }) {
@@ -46,6 +49,7 @@ export class MobileOutline extends Model {
         });
 
         this.isPreview = options.isPreview;
+        this.notebookId = options.notebookId;
         this.blockId = options.blockId;
         this.element = document.querySelector('#sidebar [data-type="sidebar-outline"]');
         this.element.innerHTML = `<div class="toolbar toolbar--border toolbar--dark">
@@ -99,11 +103,11 @@ export class MobileOutline extends Model {
                     if (headElement) {
                         headElement.scrollIntoView();
                     } else {
-                        openMobileFileById(options.app, this.blockId);
+                        openMobileFileById(options.app, this.notebookId, this.blockId);
                     }
                 } else {
-                    checkFold(id, (zoomIn) => {
-                        openMobileFileById(options.app, id, zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL, Constants.CB_GET_HTML, Constants.CB_GET_OUTLINE] :
+                    checkFold(id, this.notebookId, (zoomIn) => {
+                        openMobileFileById(options.app, this.notebookId, id, zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL, Constants.CB_GET_HTML, Constants.CB_GET_OUTLINE] :
                                 [Constants.CB_GET_HL, Constants.CB_GET_OUTLINE, Constants.CB_GET_SETID, Constants.CB_GET_CONTEXT, Constants.CB_GET_HTML],
                             "start");
                     });
@@ -196,16 +200,10 @@ export class MobileOutline extends Model {
 
         this.bindSort();
 
-        const outlineParam: IObject = {
-            id: this.blockId,
-            preview: this.isPreview
-        };
-        const mobileProtyle = window.siyuan.mobile.editor?.protyle;
-        if (mobileProtyle && mobileProtyle.block.rootID === this.blockId && isEncryptedBox(mobileProtyle.notebookId)) {
-            outlineParam.notebook = mobileProtyle.notebookId;
-        }
-        fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-            this.update(response);
+        this.reload({
+            notebookId: this.notebookId,
+            blockId: this.blockId,
+            preview: this.isPreview,
         });
     }
 
@@ -478,16 +476,34 @@ export class MobileOutline extends Model {
         }
     }
 
-    public update(data: IWebSocketData, callbackId?: string) {
+    public reload(owner: { notebookId: string, blockId: string, preview: boolean }, afterLoad?: () => void) {
+        const generation = ++this.requestGeneration;
+        const outlineParam: IObject = {
+            id: owner.blockId,
+            preview: owner.preview,
+        };
+        if (isEncryptedBox(owner.notebookId)) {
+            outlineParam.notebook = owner.notebookId;
+        }
+        fetchPost("/api/outline/getDocOutline", outlineParam, response => {
+            if (generation !== this.requestGeneration) {
+                return;
+            }
+            this.update(response, owner);
+            afterLoad?.();
+        });
+    }
+
+    private update(data: IWebSocketData, owner: { notebookId: string, blockId: string, preview: boolean }) {
         let currentElement = this.element.querySelector(".b3-list-item--focus");
         let currentId;
         if (currentElement) {
             currentId = currentElement.getAttribute("data-node-id");
         }
         const scrollTop = this.element.scrollTop;
-        if (typeof callbackId !== "undefined") {
-            this.blockId = callbackId;
-        }
+        this.notebookId = owner.notebookId;
+        this.blockId = owner.blockId;
+        this.isPreview = owner.preview;
         this.tree.updateData(data.data);
 
         if (this.isPreview) {
@@ -740,20 +756,16 @@ export class MobileOutline extends Model {
             });
         }
         if (needReload) {
-            const outlineParam: IObject = {
-                id: this.blockId,
-                preview: this.isPreview
+            const owner = {
+                notebookId: this.notebookId,
+                blockId: this.blockId,
+                preview: this.isPreview,
             };
-            const mobileProtyle = window.siyuan.mobile.editor?.protyle;
-            if (mobileProtyle && mobileProtyle.block.rootID === this.blockId && isEncryptedBox(mobileProtyle.notebookId)) {
-                outlineParam.notebook = mobileProtyle.notebookId;
-            }
-            fetchPost("/api/outline/getDocOutline", outlineParam, response => {
+            this.reload(owner, () => {
                 // 文档切换后不再更新原有推送 https://github.com/siyuan-note/siyuan/issues/13409
                 if (data.data.rootID !== this.blockId) {
                     return;
                 }
-                this.update(response);
                 // https://github.com/siyuan-note/siyuan/issues/8372
                 if (getSelection().rangeCount > 0) {
                     const blockElement = hasClosestBlock(getSelection().getRangeAt(0).startContainer);
@@ -882,6 +894,7 @@ export class MobileOutline extends Model {
                 click: () => {
                     fetchPost("/api/block/getHeadingDeleteTransaction", {
                         id,
+                        notebook: this.notebookId,
                     }, (deleteResponse) => {
                         const data = this.getProtyleAndBlockElement(element);
                         const previousID = deleteResponse.data.doOperations[deleteResponse.data.doOperations.length - 1].id;
@@ -916,6 +929,7 @@ export class MobileOutline extends Model {
                     click: () => {
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
+                            notebook: this.notebookId,
                         }, (deleteResponse) => {
                             let previousID = deleteResponse.data.doOperations[deleteResponse.data.doOperations.length - 1].id;
                             deleteResponse.data.undoOperations.find((operationsItem: IOperation, index: number) => {
@@ -962,6 +976,7 @@ export class MobileOutline extends Model {
                 const data = this.getProtyleAndBlockElement(element);
                 fetchPost("/api/block/getHeadingChildrenDOM", {
                     id,
+                    notebook: this.notebookId,
                     removeFoldAttr: data.blockElement.getAttribute("fold") !== "1"
                 }, (response) => {
                     if (isInAndroid()) {
@@ -985,6 +1000,7 @@ export class MobileOutline extends Model {
                     const data = this.getProtyleAndBlockElement(element);
                     fetchPost("/api/block/getHeadingChildrenDOM", {
                         id,
+                        notebook: this.notebookId,
                         removeFoldAttr: data.blockElement.getAttribute("fold") !== "1"
                     }, (response) => {
                         if (isInAndroid()) {
@@ -996,6 +1012,7 @@ export class MobileOutline extends Model {
                         }
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
+                            notebook: this.notebookId,
                         }, (deleteResponse) => {
                             deleteResponse.data.doOperations.forEach((operation: IOperation) => {
                                 data.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -1033,6 +1050,7 @@ export class MobileOutline extends Model {
                     const data = this.getProtyleAndBlockElement(element);
                     fetchPost("/api/block/getHeadingDeleteTransaction", {
                         id,
+                        notebook: this.notebookId,
                     }, (response) => {
                         response.data.doOperations.forEach((operation: IOperation) => {
                             data.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -1153,6 +1171,7 @@ export class MobileOutline extends Model {
                 }
                 fetchPost("/api/block/getHeadingLevelTransaction", {
                     id,
+                    notebook: this.notebookId,
                     level
                 }, (response) => {
                     response.data.doOperations.forEach((operation: any, index: number) => {

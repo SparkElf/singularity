@@ -2,6 +2,7 @@ import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {Constants} from "../../constants";
 import {focusByRange, focusByWbr} from "../util/selection";
 import {writeText} from "../util/compatibility";
+import {buildSiYuanBlockUri} from "../../util/siyuanUri";
 
 export const previewTemplate = (pathString: string, element: Element, parentId: string) => {
     if (!pathString) {
@@ -243,7 +244,12 @@ export const genLinkText = (href: string, stripScheme: boolean = true, decodeURI
 };
 
 export const copyTextByType = async (ids: string[],
-                                     type: "ref" | "blockEmbed" | "protocol" | "protocolMd" | "hPath" | "id" | "webURL") => {
+                                     type: "ref" | "blockEmbed" | "protocol" | "protocolMd" | "hPath" | "id" | "webURL",
+                                     notebookId?: string) => {
+    if ((type === "protocol" || type === "protocolMd" || type === "hPath" || type === "webURL") && !notebookId) {
+        console.error("[Singularity/ProtyleIdentity] document link copy requires notebookId", {blockIds: ids});
+        return;
+    }
     let text = "";
     for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
@@ -256,15 +262,15 @@ export const copyTextByType = async (ids: string[],
         } else if (type === "blockEmbed") {
             text += `{{select * from blocks where id='${id}'}}`;
         } else if (type === "protocol") {
-            text += `siyuan://blocks/${id}`;
+            text += buildSiYuanBlockUri(id, notebookId);
         } else if (type === "protocolMd") {
             const response = await fetchSyncPost("/api/block/getRefText", {id});
-            text += `[${response.data.replace("[", "\\[").replace("]", "\\]")}](siyuan://blocks/${id})`;
+            text += `[${response.data.replace("[", "\\[").replace("]", "\\]")}](${buildSiYuanBlockUri(id, notebookId)})`;
         } else if (type === "hPath") {
-            const response = await fetchSyncPost("/api/filetree/getHPathByID", {id});
+            const response = await fetchSyncPost("/api/filetree/getHPathByID", {id, notebook: notebookId});
             text += response.data;
         } else if (type === "webURL") {
-            text += `${window.location.origin}?id=${id}`;
+            text += `${window.location.origin}?id=${id}&notebook=${encodeURIComponent(notebookId)}`;
         } else if (type === "id") {
             text += id;
         }

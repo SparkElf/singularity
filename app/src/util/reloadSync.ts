@@ -49,15 +49,11 @@ export const reloadSync = (
             // 同步刷新移动端大纲，避免大纲与重载后的编辑器数据不一致
             const outline = window.siyuan.mobile.docks.outline;
             if (outline) {
-                const outlineParam: IObject = {
-                    id: window.siyuan.mobile.editor.protyle.block.rootID,
-                    preview: window.siyuan.mobile.editor.protyle.preview.element.classList.contains("fn__none")
-                };
-                if (isEncryptedBox(window.siyuan.mobile.editor.protyle.notebookId)) {
-                    outlineParam.notebook = window.siyuan.mobile.editor.protyle.notebookId;
-                }
-                fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                    outline.update(response);
+                const protyle = window.siyuan.mobile.editor.protyle;
+                outline.reload({
+                    notebookId: protyle.notebookId,
+                    blockId: protyle.block.rootID,
+                    preview: !protyle.preview.element.classList.contains("fn__none"),
                 });
             }
         }

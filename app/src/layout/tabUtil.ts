@@ -377,13 +377,26 @@ export const copyTab = (app: App, tab: Tab) => {
                     notebookId: tab.model.notebookId,
                 });
             } else if (tab.model instanceof Graph) {
-                model = new Graph({
-                    app,
-                    tab: newTab,
-                    blockId: tab.model.blockId,
-                    rootId: tab.model.rootId,
-                    type: tab.model.type,
-                });
+                if (tab.model.type === "global") {
+                    model = new Graph({app, tab: newTab, type: "global"});
+                } else if (tab.model.type === "local") {
+                    model = new Graph({
+                        app,
+                        tab: newTab,
+                        blockId: tab.model.blockId,
+                        rootId: tab.model.rootId,
+                        notebookId: tab.model.notebookId,
+                        type: "local",
+                    });
+                } else {
+                    model = new Graph({
+                        app,
+                        tab: newTab,
+                        blockId: tab.model.blockId,
+                        notebookId: tab.model.notebookId,
+                        type: "pin",
+                    });
+                }
             } else if (tab.model instanceof Files) {
                 model = new Files({
                     app,
@@ -447,35 +460,40 @@ export const copyTab = (app: App, tab: Tab) => {
     });
 };
 
-const pushRootID = (rootIDs: string[], item: Tab) => {
-    let id;
+const pushRecentDoc = (docs: Array<{rootID: string, notebookId: string}>, item: Tab) => {
+    let rootID: string;
+    let notebookId: string;
     if (item.model instanceof Editor) {
-        id = item.model.editor.protyle.block.rootID;
+        rootID = item.model.editor.protyle.block.rootID;
+        notebookId = item.model.editor.protyle.notebookId;
     } else if (!item.model) {
         const initTab = item.headElement.getAttribute("data-initdata");
         if (initTab) {
             try {
                 const initTabData = JSON.parse(initTab);
-                if (initTabData && initTabData.instance === "Editor" && initTabData.rootId) {
-                    id = initTabData.rootId;
+                if (initTabData && initTabData.instance === "Editor") {
+                    rootID = initTabData.rootId;
+                    notebookId = initTabData.notebookId;
                 }
             } catch (e) {
                 console.warn("Failed to parse tab init data:", e);
             }
         }
     }
-    if (id) {
-        rootIDs.push(id);
+    if (rootID && notebookId) {
+        docs.push({rootID, notebookId});
+    } else if (rootID) {
+        console.error("[Singularity/ProtyleIdentity] recent document close has no notebook", {rootID});
     }
 };
 
 export const closeTabByType = (tab: Tab, type: "closeOthers" | "closeAll" | "other", tabs?: Tab[]) => {
-    const rootIDs: string[] = [];
+    const docs: Array<{rootID: string, notebookId: string}> = [];
     if (type === "closeOthers") {
         for (let index = 0; index < tab.parent.children.length; index++) {
             const item = tab.parent.children[index];
             if (item.id !== tab.id && !item.headElement.classList.contains("item--pin")) {
-                pushRootID(rootIDs, item);
+                pushRecentDoc(docs, item);
                 item.parent.removeTab(item.id, true, false);
                 index--;
             }
@@ -484,7 +502,7 @@ export const closeTabByType = (tab: Tab, type: "closeOthers" | "closeAll" | "oth
         for (let index = 0; index < tab.parent.children.length; index++) {
             const item = tab.parent.children[index];
             if (!item.headElement.classList.contains("item--pin")) {
-                pushRootID(rootIDs, item);
+                pushRecentDoc(docs, item);
                 item.parent.removeTab(item.id, true);
                 index--;
             }
@@ -497,8 +515,8 @@ export const closeTabByType = (tab: Tab, type: "closeOthers" | "closeAll" | "oth
         }
     }
     // 批量更新文档关闭时间
-    if (rootIDs.length > 0) {
-        fetchPost("/api/storage/batchUpdateRecentDocCloseTime", {rootIDs});
+    if (docs.length > 0) {
+        fetchPost("/api/storage/batchUpdateRecentDocCloseTime", {docs});
     }
     if (tab.headElement.parentElement && !tab.headElement.parentElement.querySelector(".item--focus")) {
         tab.parent.switchTab(tab.headElement, true);

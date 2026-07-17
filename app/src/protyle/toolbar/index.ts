@@ -1055,6 +1055,7 @@ export class Toolbar {
                     const formData = new FormData();
                     formData.append("file", blob);
                     formData.append("type", "image/svg+xml");
+                    formData.append("notebook", protyle.notebookId);
                     fetchPost("/api/export/exportAsFile", formData, (response) => {
                         saveExportFile(response.data.file, msgId);
                     });
@@ -1069,6 +1070,7 @@ export class Toolbar {
                         const formData = new FormData();
                         formData.append("file", blob);
                         formData.append("type", "image/png");
+                        formData.append("notebook", protyle.notebookId);
                         fetchPost("/api/export/exportAsFile", formData, (response) => {
                             saveExportFile(response.data.file, msgId);
                         });

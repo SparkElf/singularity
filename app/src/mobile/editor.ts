@@ -16,19 +16,32 @@ import {App} from "../index";
 import {initMirror} from "../protyle/undo/globalUndo";
 import {getDocByScroll, saveScroll} from "../protyle/scroll/saveScroll";
 import {isEncryptedBox} from "../util/pathName";
+import {mobileEditorOwner} from "./util/mobileEditorOwner";
+
+const persistMobileDocument = (notebookId: string, id: string) => {
+    window.siyuan.storage[Constants.LOCAL_DOCINFO] = {id, notebookId};
+    setStorageVal(Constants.LOCAL_DOCINFO, window.siyuan.storage[Constants.LOCAL_DOCINFO]);
+};
 
 export const getCurrentEditor = () => {
     return window.siyuan.mobile.popEditor || window.siyuan.mobile.editor;
 };
 
-export const openMobileFileById = (app: App, id: string, action: TProtyleAction[] = [Constants.CB_GET_HL], scrollPosition?: ScrollLogicalPosition) => {
-    window.siyuan.storage[Constants.LOCAL_DOCINFO] = {id};
-    setStorageVal(Constants.LOCAL_DOCINFO, window.siyuan.storage[Constants.LOCAL_DOCINFO]);
+export const openMobileFileById = (app: App, notebookId: string, id: string,
+                                   action: TProtyleAction[] = [Constants.CB_GET_HL],
+                                   scrollPosition?: ScrollLogicalPosition,
+                                   afterLoad?: () => void) => {
+    const ownerGeneration = mobileEditorOwner.begin();
+    const signal = ownerGeneration.signal;
+    if (window.siyuan.mobile.editor) {
+        window.siyuan.mobile.editor.protyle.ownerSignal = signal;
+    }
+    const isCurrent = () => mobileEditorOwner.isCurrent(ownerGeneration, true);
     const avPanelElement = document.querySelector(".av__panel");
     if (avPanelElement && !avPanelElement.classList.contains("fn__none")) {
         avPanelElement.dispatchEvent(new CustomEvent("click", {detail: "close"}));
     }
-    if (window.siyuan.mobile.editor) {
+    if (window.siyuan.mobile.editor && window.siyuan.mobile.editor.protyle.notebookId === notebookId) {
         saveScroll(window.siyuan.mobile.editor.protyle);
         hideElements(["toolbar", "hint", "util"], window.siyuan.mobile.editor.protyle);
         if (window.siyuan.mobile.editor.protyle.contentElement.classList.contains("fn__none")) {
@@ -50,21 +63,37 @@ export const openMobileFileById = (app: App, id: string, action: TProtyleAction[
             }
             closePanel();
             // 更新文档浏览时间
-            fetchPost("/api/storage/updateRecentDocViewTime", {rootID: window.siyuan.mobile.editor.protyle.block.rootID});
+            fetchPost("/api/storage/updateRecentDocViewTime", {
+                rootID: window.siyuan.mobile.editor.protyle.block.rootID,
+                notebookId,
+            });
+            persistMobileDocument(notebookId, id);
+            afterLoad?.();
             return;
         }
     }
 
     const blockInfoParam: IObject = {id};
-    if (isEncryptedBox(window.siyuan.mobile.editor?.protyle?.notebookId)) {
-        blockInfoParam.notebook = window.siyuan.mobile.editor.protyle.notebookId;
+    if (isEncryptedBox(notebookId)) {
+        blockInfoParam.notebook = notebookId;
     }
     fetchPost("/api/block/getBlockInfo", blockInfoParam, (data) => {
+        if (!isCurrent()) {
+            return;
+        }
         if (data.code === 3) {
             showMessage(data.msg);
             return;
         }
-        const protyleOptions: IProtyleOptions = {
+        if (data.data?.box !== notebookId) {
+            console.error("[Singularity/ProtyleIdentity] mobile block resolved to a different notebook", {
+                blockId: id,
+                expectedNotebookId: notebookId,
+                actualNotebookId: data.data?.box,
+            });
+            return;
+        }
+        const protyleOptions: Omit<IProtyleOptions, "notebookId"> & { blockId: string } = {
             blockId: id,
             rootId: data.data.rootID,
             scrollPosition,
@@ -79,24 +108,43 @@ export const openMobileFileById = (app: App, id: string, action: TProtyleAction[
             typewriterMode: true,
             preview: {
                 actions: ["mp-wechat", "zhihu", "yuque"]
-            }
+            },
+            after: () => {
+                if (isCurrent()) {
+                    persistMobileDocument(notebookId, id);
+                    afterLoad?.();
+                }
+            },
         };
+        if (window.siyuan.mobile.editor && window.siyuan.mobile.editor.protyle.notebookId !== notebookId) {
+            pushBack();
+            window.siyuan.mobile.editor.destroy();
+            window.siyuan.mobile.editor = undefined;
+        }
         if (window.siyuan.mobile.editor) {
             window.siyuan.mobile.editor.protyle.title.element.removeAttribute("data-render");
             pushBack();
             addLoading(window.siyuan.mobile.editor.protyle);
             if (window.siyuan.mobile.editor.protyle.block.rootID !== data.data.rootID) {
                 window.siyuan.mobile.editor.protyle.wysiwyg.element.innerHTML = "";
-                fetchPost("/api/storage/updateRecentDocOpenTime", {rootID: data.data.rootID});
+                fetchPost("/api/storage/updateRecentDocOpenTime", {rootID: data.data.rootID, notebookId});
             } else {
-                fetchPost("/api/storage/updateRecentDocViewTime", {rootID: data.data.rootID});
+                fetchPost("/api/storage/updateRecentDocViewTime", {rootID: data.data.rootID, notebookId});
             }
             if (action.includes(Constants.CB_GET_SCROLL) && window.siyuan.storage[Constants.LOCAL_FILEPOSITION][data.data.rootID]) {
                 getDocByScroll({
                     protyle: window.siyuan.mobile.editor.protyle,
                     scrollAttr: window.siyuan.storage[Constants.LOCAL_FILEPOSITION][data.data.rootID],
                     mergedOptions: protyleOptions,
+                    signal,
+                    isCurrent,
                     cb() {
+                        if (!isCurrent()) {
+                            return;
+                        }
+                        persistMobileDocument(notebookId, id);
+                        initMirror(window.siyuan.mobile.editor.protyle);
+                        afterLoad?.();
                         app.plugins.forEach(item => {
                             item.eventBus.emit("switch-protyle", {protyle: window.siyuan.mobile.editor.protyle});
                         });
@@ -108,33 +156,44 @@ export const openMobileFileById = (app: App, id: string, action: TProtyleAction[
                     size: action.includes(Constants.CB_GET_ALL) ? Constants.SIZE_GET_MAX : window.siyuan.config.editor.dynamicLoadBlocks,
                     mode: action.includes(Constants.CB_GET_CONTEXT) ? 3 : 0,
                 };
-                if (isEncryptedBox(window.siyuan.mobile.editor?.protyle?.notebookId)) {
-                    getDocParam.notebook = window.siyuan.mobile.editor.protyle.notebookId;
+                if (isEncryptedBox(notebookId)) {
+                    getDocParam.notebook = notebookId;
                 }
                 fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+                    if (!isCurrent() || window.siyuan.mobile.editor?.protyle.notebookId !== notebookId) {
+                        return;
+                    }
                     onGet({
                         data: getResponse,
                         protyle: window.siyuan.mobile.editor.protyle,
                         action,
                         scrollPosition,
                         afterCB() {
+                            if (!isCurrent()) {
+                                return;
+                            }
+                            persistMobileDocument(notebookId, id);
+                            initMirror(window.siyuan.mobile.editor.protyle);
+                            afterLoad?.();
                             app.plugins.forEach(item => {
                                 item.eventBus.emit("switch-protyle", {protyle: window.siyuan.mobile.editor.protyle});
                             });
                         }
                     });
-                });
+                }, undefined, undefined, signal);
             }
             window.siyuan.mobile.editor.protyle.undo.clear();
-            // 切换文档后校准新文档的撤销镜像（语义 B：各文档栈隔离）
-            if (window.siyuan.mobile.editor.protyle.block?.rootID) {
-                initMirror(window.siyuan.mobile.editor.protyle.block.rootID);
-            }
         } else {
-            fetchPost("/api/storage/updateRecentDocOpenTime", {rootID: data.data.rootID});
-            window.siyuan.mobile.editor = new Protyle(app, document.getElementById("editor"), protyleOptions);
+            fetchPost("/api/storage/updateRecentDocOpenTime", {rootID: data.data.rootID, notebookId});
+            window.siyuan.mobile.editor = new Protyle(app, document.getElementById("editor"), protyleOptions, {
+                surface: "workspace",
+                participation: "live",
+                content: {mode: "bound", notebookId},
+                initialLoad: "automatic",
+                signal,
+            });
         }
         setEditor();
         closePanel();
-    });
+    }, undefined, undefined, signal);
 };

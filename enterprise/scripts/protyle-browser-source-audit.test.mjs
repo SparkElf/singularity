@@ -95,6 +95,20 @@ describe("Protyle notebook-scoped HostEvent boundary", () => {
     );
   });
 
+  test("rejects an agent handoff without source notebook identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", blockIds: ["block"]});'),
+      ["notebook-scope-missing"],
+    );
+  });
+
+  test("accepts an agent handoff with source notebook identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", notebookId: protyle.notebookId, blockIds: ["block"]});'),
+      [],
+    );
+  });
+
   test("requires notebook identity only for document graph events", () => {
     assert.deepEqual(violationIds('protyle.host.dispatch({type: "open-graph", scope: "space"});'), []);
     assert.deepEqual(

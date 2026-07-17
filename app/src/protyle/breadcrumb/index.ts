@@ -374,7 +374,10 @@ ${padHTML}
                         click() {
                             confirmDialog("🤩 " + window.siyuan.languages.share2Liandi,
                                 window.siyuan.languages.share2LiandiConfirmTip.replace("${accountServer}", getCloudURL("")), () => {
-                                    fetchPost("/api/export/export2Liandi", {id: protyle.block.parentID});
+                                    fetchPost("/api/export/export2Liandi", {
+                                        id: protyle.block.parentID,
+                                        notebook: protyle.notebookId,
+                                    });
                                 });
                         }
                     }).element);

@@ -1,7 +1,7 @@
 import {Dialog} from "../dialog";
 import {fetchPost} from "../util/fetch";
 import {isMobile} from "../util/functions";
-import {Protyle} from "../protyle";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {Constants} from "../constants";
 import {onGet} from "../protyle/util/onGet";
 import {hasClosestByAttribute, hasClosestByClassName} from "../protyle/util/hasClosest";
@@ -17,15 +17,15 @@ import {openFile} from "../editor/util";
 import {ipcRenderer} from "electron";
 /// #endif
 import * as dayjs from "dayjs";
-import {getDisplayName, movePathTo} from "../util/pathName";
+import {getDisplayName, isEncryptedBox, movePathTo} from "../util/pathName";
 import {App} from "../index";
-import {resize} from "../protyle/util/resize";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {focusByRange} from "../protyle/util/selection";
 import {updateCardHV} from "./util";
 import {showMessage} from "../dialog/message";
 import {Menu} from "../plugin/Menu";
 import {transaction} from "../protyle/wysiwyg/transaction";
+import {OwnerGeneration, OwnerLifecycle} from "../protyle/runtime/ownerLifecycle";
 
 const genCardCount = (cardsData: ICardData, allIndex = 0) => {
     let newIndex = 0;
@@ -155,23 +155,48 @@ export const genCardHTML = (options: {
 </div>`;
 };
 
-const getEditor = (id: string, protyle: IProtyle, element: Element, currentCard: ICard) => {
-    fetchPost("/api/block/getDocInfo", {
-        id,
-    }, (docResponse) => {
+const getEditor = (currentCard: ICard, editor: EmbeddedProtyleOwner, element: Element,
+                   lifecycle: OwnerLifecycle) => {
+    if (lifecycle.ended || !element.isConnected) {
+        return;
+    }
+    const ownerGeneration = lifecycle.begin();
+    const id = currentCard.blockID;
+    const notebookId = currentCard.notebookId;
+    const binding = editor.bind(notebookId, id);
+    const protyle = binding.protyle;
+    const isCurrent = () => lifecycle.isCurrent(ownerGeneration, element.isConnected) && editor.isCurrent(binding);
+    if (window.siyuan.mobile) {
+        window.siyuan.mobile.popEditor = editor.getCurrent();
+    }
+    const docInfoParam: IObject = {id};
+    if (isEncryptedBox(notebookId)) {
+        docInfoParam.notebook = notebookId;
+    }
+    fetchPost("/api/block/getDocInfo", docInfoParam, (docResponse) => {
+        if (!isCurrent()) {
+            return;
+        }
         protyle.wysiwyg.renderCustom(docResponse.data.ial);
-        fetchPost("/api/filetree/getDoc", {
+        const getDocParam: IObject = {
             id,
             mode: 0,
             size: Constants.SIZE_GET_MAX
-        }, (response) => {
+        };
+        if (isEncryptedBox(notebookId)) {
+            getDocParam.notebook = notebookId;
+        }
+        fetchPost("/api/filetree/getDoc", getDocParam, (response) => {
+            if (!isCurrent()) {
+                return;
+            }
             onGet({
                 updateReadonly: true,
                 data: response,
                 protyle,
                 action: response.data.rootID === response.data.id ? [] : [Constants.CB_GET_ALL],
                 afterCB: () => {
-                    if (protyle.element.classList.contains("fn__none")) {
+                    if (!isCurrent() || protyle.element.classList.contains("fn__none")) {
                         return;
                     }
                     let hasHide = false;
@@ -231,12 +256,12 @@ const getEditor = (id: string, protyle: IProtyle, element: Element, currentCard:
                     }
                 }
             });
-        });
-    });
+        }, undefined, undefined, ownerGeneration.signal);
+    }, undefined, undefined, ownerGeneration.signal);
 
 };
 
-export const bindCardEvent = async (options: {
+export const bindCardEvent = (options: {
     app: App,
     element: Element,
     title?: string,
@@ -245,7 +270,11 @@ export const bindCardEvent = async (options: {
     id?: string,
     dialog?: Dialog,
     index?: number,
+    lifecycle: OwnerLifecycle,
 }) => {
+    if (options.lifecycle.ended || !options.element.isConnected) {
+        throw new Error("[protyle.lifecycle] card owner cannot bind after termination or unmount");
+    }
     if (window.siyuan.storage[Constants.LOCAL_FLASHCARD].fullscreen) {
         fullscreen(options.element.querySelector(".card__main"),
             options.element.querySelector('[data-type="fullscreen"]'));
@@ -254,8 +283,7 @@ export const bindCardEvent = async (options: {
     if (typeof options.index === "number") {
         index = options.index;
     }
-    const editor = new Protyle(options.app, options.element.querySelector("[data-type='render']") as HTMLElement, {
-        blockId: "",
+    const editor = new EmbeddedProtyleOwner(options.app, options.element.querySelector("[data-type='render']") as HTMLElement, {
         action: [Constants.CB_GET_ALL],
         render: {
             background: false,
@@ -266,11 +294,9 @@ export const bindCardEvent = async (options: {
         },
         typewriterMode: false
     });
-    if (window.siyuan.mobile) {
-        window.siyuan.mobile.popEditor = editor;
-    }
     if (options.cardsData.cards.length > 0) {
-        getEditor(options.cardsData.cards[index].blockID, editor.protyle, options.element, options.cardsData.cards[index]);
+        const currentCard = options.cardsData.cards[index];
+        getEditor(currentCard, editor, options.element, options.lifecycle);
     }
     options.element.setAttribute("data-key", Constants.DIALOG_OPENCARD);
     const actionElements = options.element.querySelectorAll(".card__action");
@@ -284,6 +310,10 @@ export const bindCardEvent = async (options: {
     const countElement = options.element.querySelector('[data-type="count"]');
     const filterElement = options.element.querySelector('[data-type="filter"]');
     const fetchNewRound = () => {
+        if (options.lifecycle.ended || !options.element.isConnected) {
+            return;
+        }
+        const ownerGeneration = options.lifecycle.begin();
         const currentCardType = filterElement.getAttribute("data-cardtype");
         const docId = filterElement.getAttribute("data-id");
         fetchPost(currentCardType === "all" ? "/api/riff/getRiffDueCards" :
@@ -292,27 +322,41 @@ export const bindCardEvent = async (options: {
             deckID: docId,
             notebook: docId,
         }, async (treeCards) => {
-            index = 0;
-            options.cardsData = treeCards.data;
-            for (let i = 0; i < options.app.plugins.length; i++) {
-                options.cardsData = await options.app.plugins[i].updateCards(options.cardsData);
+            if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                return;
             }
-            if (options.cardsData.cards.length > 0) {
+            let cardsData = treeCards.data;
+            for (let i = 0; i < options.app.plugins.length; i++) {
+                cardsData = await options.app.plugins[i].updateCards(cardsData);
+                if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                    return;
+                }
+            }
+            if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                return;
+            }
+            index = 0;
+            options.cardsData = cardsData;
+            if (cardsData.cards.length > 0) {
                 nextCard({
                     countElement,
                     editor,
                     actionElements,
                     index,
-                    cardsData: options.cardsData
+                    cardsData,
+                    lifecycle: options.lifecycle,
                 });
             } else {
-                allDone(countElement, editor, actionElements);
+                allDone(countElement, editor, actionElements, options.lifecycle);
             }
-        });
+        }, undefined, undefined, ownerGeneration.signal);
     };
 
     countElement.innerHTML = genCardCount(options.cardsData, index);
     options.element.firstChild.addEventListener("click", (event: MouseEvent) => {
+        if (options.lifecycle.ended || !options.element.isConnected) {
+            return;
+        }
         const target = event.target as HTMLElement;
         let type = "";
         const currentCard = options.cardsData.cards[index];
@@ -338,7 +382,7 @@ export const bindCardEvent = async (options: {
             if (fullscreenElement) {
                 fullscreen(options.element.querySelector(".card__main"),
                     options.element.querySelector('[data-type="fullscreen"]'));
-                resize(editor.protyle);
+                editor.resize();
                 window.siyuan.storage[Constants.LOCAL_FLASHCARD].fullscreen = !window.siyuan.storage[Constants.LOCAL_FLASHCARD].fullscreen;
                 setStorageVal(Constants.LOCAL_FLASHCARD, window.siyuan.storage[Constants.LOCAL_FLASHCARD]);
                 event.stopPropagation();
@@ -383,12 +427,20 @@ export const bindCardEvent = async (options: {
                             timedialog.destroy();
                         });
                         btnsElement[1].addEventListener("click", () => {
+                            if (options.lifecycle.ended || !options.element.isConnected) {
+                                timedialog.destroy();
+                                return;
+                            }
+                            const ownerGeneration = options.lifecycle.begin();
                             fetchPost("/api/riff/batchSetRiffCardsDueTime", {
                                 cardDues: [{
                                     id: currentCard.cardID,
                                     due: dayjs().add(parseInt(inputElement.value), "day").format("YYYYMMDDHHmmss")
                                 }]
                             }, () => {
+                                if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                                    return;
+                                }
                                 actionElements[0].classList.add("fn__none");
                                 actionElements[1].classList.remove("fn__none");
                                 if (currentCard.state === 0) {
@@ -400,7 +452,7 @@ export const bindCardEvent = async (options: {
                                 options.cardsData.cards.splice(index, 1);
                                 index--;
                                 timedialog.destroy();
-                            });
+                            }, undefined, undefined, ownerGeneration.signal);
                         });
                     }
                 });
@@ -410,12 +462,19 @@ export const bindCardEvent = async (options: {
                         icon: "iconRefresh",
                         label: window.siyuan.languages.reset,
                         click() {
+                            if (options.lifecycle.ended || !options.element.isConnected) {
+                                return;
+                            }
+                            const ownerGeneration = options.lifecycle.begin();
                             fetchPost("/api/riff/resetRiffCards", {
                                 type: filterElement.getAttribute("data-cardtype"),
                                 id: docId,
                                 deckID: Constants.QUICK_DECK_ID,
                                 blockIDs: [currentCard.blockID],
                             }, () => {
+                                if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                                    return;
+                                }
                                 const minLang = window.siyuan.languages._time["1m"].replace("%s", "");
                                 currentCard.lapses = 0;
                                 currentCard.lastReview = -62135596800000;
@@ -436,7 +495,7 @@ export const bindCardEvent = async (options: {
                                 options.cardsData.unreviewedOldCardCount--;
                                 options.cardsData.unreviewedNewCardCount++;
                                 countElement.innerHTML = genCardCount(options.cardsData, index);
-                            });
+                            }, undefined, undefined, ownerGeneration.signal);
                         }
                     });
                 }
@@ -598,7 +657,11 @@ export const bindCardEvent = async (options: {
             }
             const filterTempElement = hasClosestByAttribute(target, "data-type", "filter");
             if (filterTempElement) {
+                const ownerGeneration = options.lifecycle.begin();
                 fetchPost("/api/riff/getRiffDecks", {}, (response) => {
+                    if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                        return;
+                    }
                     window.siyuan.menus.menu.remove();
                     window.siyuan.menus.menu.append(new MenuItem({
                         id: "all",
@@ -656,7 +719,7 @@ export const bindCardEvent = async (options: {
                     });
                     const filterRect = filterTempElement.getBoundingClientRect();
                     window.siyuan.menus.menu.popup({x: filterRect.left, y: filterRect.bottom});
-                });
+                }, undefined, undefined, ownerGeneration.signal);
                 event.stopPropagation();
                 event.preventDefault();
                 return;
@@ -681,12 +744,16 @@ export const bindCardEvent = async (options: {
         }
         event.preventDefault();
         event.stopPropagation();
-        hideElements(["toolbar", "hint", "util", "gutter"], editor.protyle);
+        const protyle = editor.protyle;
+        if (!protyle) {
+            return;
+        }
+        hideElements(["toolbar", "hint", "util", "gutter"], protyle);
         if (type === "-1") {    // 显示答案
             if (actionElements[0].classList.contains("fn__none")) {
                 type = "3";
             } else {
-                editor.protyle.element.classList.remove("card__block--hidemark", "card__block--hideli", "card__block--hidesb", "card__block--hideh");
+                protyle.element.classList.remove("card__block--hidemark", "card__block--hideli", "card__block--hidesb", "card__block--hideh");
                 actionElements[0].classList.add("fn__none");
                 actionElements[1].querySelectorAll("button.b3-button").forEach((element, btnIndex) => {
                     if (btnIndex < 2) {
@@ -706,19 +773,24 @@ export const bindCardEvent = async (options: {
                     editor,
                     actionElements,
                     index,
-                    cardsData: options.cardsData
+                    cardsData: options.cardsData,
+                    lifecycle: options.lifecycle,
                 });
                 emitEvent(options.app, options.cardsData.cards[index + 1], type);
             }
             return;
         }
         if ("-3" === type || (["1", "2", "3", "4"].includes(type) && actionElements[0].classList.contains("fn__none"))) {
+            const ownerGeneration = options.lifecycle.begin();
             fetchPost(type === "-3" ? "/api/riff/skipReviewRiffCard" : "/api/riff/reviewRiffCard", {
                 deckID: currentCard.deckID,
                 cardID: currentCard.cardID,
                 rating: parseInt(type),
                 reviewedCards: options.cardsData.cards
             }, () => {
+                if (!options.lifecycle.isCurrent(ownerGeneration, options.element.isConnected)) {
+                    return;
+                }
                 /// #if MOBILE
                 if (type !== "-3" &&
                     ((0 !== window.siyuan.config.sync.provider && isPaidUser()) ||
@@ -729,6 +801,7 @@ export const bindCardEvent = async (options: {
                 /// #endif
                 index++;
                 if (index > options.cardsData.cards.length - 1) {
+                    const listGeneration = options.lifecycle.begin();
                     const currentCardType = filterElement.getAttribute("data-cardtype");
                     fetchPost(currentCardType === "all" ? "/api/riff/getRiffDueCards" :
                         (currentCardType === "doc" ? "/api/riff/getTreeRiffDueCards" : "/api/riff/getNotebookRiffDueCards"), {
@@ -737,17 +810,27 @@ export const bindCardEvent = async (options: {
                         notebook: docId,
                         reviewedCards: options.cardsData.cards
                     }, async (result) => {
-                        emitEvent(options.app, options.cardsData.cards[index - 1], type);
-                        index = 0;
-                        options.cardsData = result.data;
-                        for (let i = 0; i < options.app.plugins.length; i++) {
-                            options.cardsData = await options.app.plugins[i].updateCards(options.cardsData);
+                        if (!options.lifecycle.isCurrent(listGeneration, options.element.isConnected)) {
+                            return;
                         }
-                        if (options.cardsData.cards.length === 0) {
-                            if (options.cardsData.unreviewedCount > 0) {
-                                newRound(countElement, editor, actionElements, result.data.unreviewedCount);
+                        emitEvent(options.app, options.cardsData.cards[index - 1], type);
+                        let cardsData = result.data;
+                        for (let i = 0; i < options.app.plugins.length; i++) {
+                            cardsData = await options.app.plugins[i].updateCards(cardsData);
+                            if (!options.lifecycle.isCurrent(listGeneration, options.element.isConnected)) {
+                                return;
+                            }
+                        }
+                        if (!options.lifecycle.isCurrent(listGeneration, options.element.isConnected)) {
+                            return;
+                        }
+                        index = 0;
+                        options.cardsData = cardsData;
+                        if (cardsData.cards.length === 0) {
+                            if (cardsData.unreviewedCount > 0) {
+                                newRound(countElement, editor, actionElements, cardsData.unreviewedCount, options.lifecycle);
                             } else {
-                                allDone(countElement, editor, actionElements);
+                                allDone(countElement, editor, actionElements, options.lifecycle);
                             }
                         } else {
                             nextCard({
@@ -755,21 +838,23 @@ export const bindCardEvent = async (options: {
                                 editor,
                                 actionElements,
                                 index,
-                                cardsData: options.cardsData
+                                cardsData,
+                                lifecycle: options.lifecycle,
                             });
                         }
-                    });
+                    }, undefined, undefined, listGeneration.signal);
                     return;
                 }
+                emitEvent(options.app, options.cardsData.cards[index - 1], type);
                 nextCard({
                     countElement,
                     editor,
                     actionElements,
                     index,
-                    cardsData: options.cardsData
+                    cardsData: options.cardsData,
+                    lifecycle: options.lifecycle,
                 });
-                emitEvent(options.app, options.cardsData.cards[index - 1], type);
-            });
+            }, undefined, undefined, ownerGeneration.signal);
         }
     });
     return editor;
@@ -784,37 +869,74 @@ const emitEvent = (app: App, card: ICard, type: string) => {
     });
 };
 
-export const openCard = (app: App) => {
-    if (window.siyuan.config.readonly) {
-        return;
-    }
-    fetchPost("/api/riff/getRiffDueCards", {deckID: ""}, (cardsResponse) => {
-        openCardByData(app, cardsResponse.data, "all");
-    });
-};
+let activeCardLifecycle: OwnerLifecycle | undefined;
 
-export const openCardByData = async (app: App, cardsData: ICardData, cardType: TCardType, id?: string, title?: string) => {
-    const exit = window.siyuan.dialogs.find(item => {
+const closeOpenCardDialog = () => {
+    return window.siyuan.dialogs.find(item => {
         if (item.element.getAttribute("data-key") === Constants.DIALOG_OPENCARD) {
             item.destroy();
             return true;
         }
-    });
-    if (exit) {
+    }) !== undefined;
+};
+
+export const openCard = (app: App) => {
+    if (window.siyuan.config.readonly) {
         return;
     }
+    if (closeOpenCardDialog()) {
+        return;
+    }
+    activeCardLifecycle?.destroy();
+    const lifecycle = new OwnerLifecycle();
+    activeCardLifecycle = lifecycle;
+    const ownerGeneration = lifecycle.begin();
+    fetchPost("/api/riff/getRiffDueCards", {deckID: ""}, (cardsResponse) => {
+        if (lifecycle.isCurrent(ownerGeneration, true)) {
+            void mountCardDialog(app, cardsResponse.data, "all", undefined, undefined, lifecycle, ownerGeneration);
+        }
+    }, undefined, undefined, ownerGeneration.signal);
+};
+
+export const openCardByData = (app: App, cardsData: ICardData, cardType: TCardType, id?: string, title?: string) => {
+    if (closeOpenCardDialog()) {
+        return;
+    }
+    activeCardLifecycle?.destroy();
+    const lifecycle = new OwnerLifecycle();
+    activeCardLifecycle = lifecycle;
+    const ownerGeneration = lifecycle.begin();
+    return mountCardDialog(app, cardsData, cardType, id, title, lifecycle, ownerGeneration);
+};
+
+const mountCardDialog = async (app: App, sourceCardsData: ICardData, cardType: TCardType,
+                               id: string | undefined, title: string | undefined,
+                               lifecycle: OwnerLifecycle, ownerGeneration: OwnerGeneration) => {
     let lastRange: Range;
     if (getSelection().rangeCount > 0) {
         lastRange = getSelection().getRangeAt(0);
     }
+    let cardsData = sourceCardsData;
     for (let i = 0; i < app.plugins.length; i++) {
         cardsData = await app.plugins[i].updateCards(cardsData);
+        if (!lifecycle.isCurrent(ownerGeneration, true)) {
+            return;
+        }
+    }
+    if (!lifecycle.isCurrent(ownerGeneration, true)) {
+        return;
     }
     const dialog = new Dialog({
         positionId: Constants.DIALOG_OPENCARD,
         content: genCardHTML({id, cardType, cardsData, isTab: false}),
         width: isMobile() ? "100vw" : "80vw",
         height: isMobile() ? "100dvh" : "70vh",
+        beforeDestroyCallback() {
+            lifecycle.destroy();
+            if (activeCardLifecycle === lifecycle) {
+                activeCardLifecycle = undefined;
+            }
+        },
         destroyCallback() {
             if (editor) {
                 editor.destroy();
@@ -834,14 +956,15 @@ export const openCardByData = async (app: App, cardsData: ICardData, cardType: T
     });
     (dialog.element.querySelector(".b3-dialog__scrim") as HTMLElement).style.backgroundColor = "var(--b3-theme-surface)";
     (dialog.element.querySelector(".b3-dialog__container") as HTMLElement).style.maxWidth = "1024px";
-    const editor = await bindCardEvent({
+    const editor = bindCardEvent({
         app,
         element: dialog.element,
         cardsData,
         title,
         id,
         cardType,
-        dialog
+        dialog,
+        lifecycle,
     });
     editor.resize();
     dialog.editors = {
@@ -860,13 +983,17 @@ export const openCardByData = async (app: App, cardsData: ICardData, cardType: T
 
 const nextCard = (options: {
     countElement: Element,
-    editor: Protyle,
+    editor: EmbeddedProtyleOwner,
     actionElements: NodeListOf<Element>,
     index: number,
-    cardsData: ICardData
+    cardsData: ICardData,
+    lifecycle: OwnerLifecycle,
 }) => {
-    options.editor.protyle.element.classList.remove("fn__none");
-    options.editor.protyle.element.nextElementSibling.classList.add("fn__none");
+    if (options.lifecycle.ended || !options.countElement.isConnected || !options.editor.element.isConnected) {
+        return;
+    }
+    options.editor.element.classList.remove("fn__none");
+    options.editor.element.nextElementSibling.classList.add("fn__none");
     options.countElement.innerHTML = genCardCount(options.cardsData, options.index);
     options.countElement.classList.remove("fn__none");
     if (options.index === 0) {
@@ -876,15 +1003,24 @@ const nextCard = (options: {
         options.actionElements[0].firstElementChild.removeAttribute("disabled");
         options.actionElements[1].querySelector(".b3-button").removeAttribute("disabled");
     }
-    getEditor(options.cardsData.cards[options.index].blockID, options.editor.protyle,
+    const currentCard = options.cardsData.cards[options.index];
+    getEditor(currentCard, options.editor,
         hasClosestByAttribute(options.countElement, "data-key", Constants.DIALOG_OPENCARD) as HTMLElement,
-        options.cardsData.cards[options.index]);
+        options.lifecycle);
 };
 
-const allDone = (countElement: Element, editor: Protyle, actionElements: NodeListOf<Element>) => {
+const allDone = (countElement: Element, editor: EmbeddedProtyleOwner, actionElements: NodeListOf<Element>,
+                 lifecycle: OwnerLifecycle) => {
+    if (lifecycle.ended || !countElement.isConnected || !editor.element.isConnected) {
+        return;
+    }
     countElement.classList.add("fn__none");
-    editor.protyle.element.classList.add("fn__none");
-    const emptyElement = editor.protyle.element.nextElementSibling;
+    editor.clear();
+    editor.element.classList.add("fn__none");
+    const emptyElement = editor.element.nextElementSibling;
+    if (window.siyuan.mobile) {
+        window.siyuan.mobile.popEditor = null;
+    }
     emptyElement.innerHTML = `<div>🔮</div>${window.siyuan.languages.noDueCard}`;
     emptyElement.classList.remove("fn__none");
     actionElements[0].classList.add("fn__none");
@@ -894,10 +1030,18 @@ const allDone = (countElement: Element, editor: Protyle, actionElements: NodeLis
     moreElement.previousElementSibling.classList.add("fn__none");
 };
 
-const newRound = (countElement: Element, editor: Protyle, actionElements: NodeListOf<Element>, unreviewedCount: number) => {
+const newRound = (countElement: Element, editor: EmbeddedProtyleOwner, actionElements: NodeListOf<Element>,
+                  unreviewedCount: number, lifecycle: OwnerLifecycle) => {
+    if (lifecycle.ended || !countElement.isConnected || !editor.element.isConnected) {
+        return;
+    }
     countElement.classList.add("fn__none");
-    editor.protyle.element.classList.add("fn__none");
-    const emptyElement = editor.protyle.element.nextElementSibling;
+    editor.clear();
+    editor.element.classList.add("fn__none");
+    const emptyElement = editor.element.nextElementSibling;
+    if (window.siyuan.mobile) {
+        window.siyuan.mobile.popEditor = null;
+    }
     emptyElement.innerHTML = `<div>♻️ </div>
 <span>${window.siyuan.languages.continueReview2.replace("${count}", unreviewedCount)}</span>
 <div class="fn__hr"></div>

@@ -2,7 +2,7 @@ import {Constants} from "../../constants";
 import {closeModel, closePanel} from "./closePanel";
 import {getCurrentEditor, openMobileFileById} from "../editor";
 import {validateName} from "../../editor/rename";
-import {getEventName} from "../../protyle/util/compatibility";
+import {getEventName, parseStoredDocumentIdentity} from "../../protyle/util/compatibility";
 import {fetchPost} from "../../util/fetch";
 import {setInlineStyle} from "../../util/assets";
 import {renderSnippet} from "../../config/util/snippets";
@@ -98,19 +98,16 @@ export const initFramework = (app: App, isStart: boolean) => {
                     if (!window.siyuan.mobile.docks.outline) {
                         window.siyuan.mobile.docks.outline = new MobileOutline({
                             app,
-                            blockId: window.siyuan.mobile.editor?.protyle.block.rootID,
-                            isPreview: window.siyuan.mobile.editor ? !window.siyuan.mobile.editor.protyle.preview.element.classList.contains("fn__none") : false
+                            notebookId: window.siyuan.mobile.editor.protyle.notebookId,
+                            blockId: window.siyuan.mobile.editor.protyle.block.rootID,
+                            isPreview: !window.siyuan.mobile.editor.protyle.preview.element.classList.contains("fn__none")
                         });
                     } else {
-                        const outlineParam: IObject = {
-                            id: window.siyuan.mobile.editor.protyle.block.rootID,
-                            preview: window.siyuan.mobile.editor.protyle.preview.element.classList.contains("fn__none")
-                        };
-                        if (isEncryptedBox(window.siyuan.mobile.editor.protyle.notebookId)) {
-                            outlineParam.notebook = window.siyuan.mobile.editor.protyle.notebookId;
-                        }
-                        fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                            window.siyuan.mobile.docks.outline.update(response);
+                        const protyle = window.siyuan.mobile.editor.protyle;
+                        window.siyuan.mobile.docks.outline.reload({
+                            notebookId: protyle.notebookId,
+                            blockId: protyle.block.rootID,
+                            preview: !protyle.preview.element.classList.contains("fn__none"),
                         });
                     }
                 } else if (type === "sidebar-backlink-tab") {
@@ -158,15 +155,11 @@ export const initFramework = (app: App, isStart: boolean) => {
         sidebarElement.style.transform = "translateX(0px)";
         const type = sidebarElement.querySelector(".toolbar--border .toolbar__icon--active").getAttribute("data-type");
         if (type === "sidebar-outline-tab") {
-            const outlineParam: IObject = {
-                id: window.siyuan.mobile.editor.protyle.block.rootID,
-                preview: window.siyuan.mobile.editor.protyle.preview.element.classList.contains("fn__none")
-            };
-            if (isEncryptedBox(window.siyuan.mobile.editor.protyle.notebookId)) {
-                outlineParam.notebook = window.siyuan.mobile.editor.protyle.notebookId;
-            }
-            fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                window.siyuan.mobile.docks.outline.update(response);
+            const protyle = window.siyuan.mobile.editor.protyle;
+            window.siyuan.mobile.docks.outline.reload({
+                notebookId: protyle.notebookId,
+                blockId: protyle.block.rootID,
+                preview: !protyle.preview.element.classList.contains("fn__none"),
             });
         } else if (type === "sidebar-backlink-tab") {
             window.siyuan.mobile.docks.backlink.update();
@@ -193,28 +186,49 @@ export const initFramework = (app: App, isStart: boolean) => {
         }
         const info = parseUriInfo();
         if (info.id) {
-            openMobileFileById(app, info.id,
-                info.focus ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+            console.error("[Singularity/ProtyleIdentity] mobile startup URI has no notebook", {blockId: info.id});
+            setEmpty(app);
             return;
         }
         if (window.siyuan.config.fileTree.closeTabsOnStart && isStart) {
             setEmpty(app);
             return;
         }
-        const localDoc = window.siyuan.storage[Constants.LOCAL_DOCINFO];
+        const storedLocalDoc = window.siyuan.storage[Constants.LOCAL_DOCINFO];
+        const localDoc = parseStoredDocumentIdentity(storedLocalDoc);
+        const openRecentUpdated = () => {
+            fetchPost("/api/block/getRecentUpdatedBlocks", {}, (response) => {
+                const recentBlock = response.data[0] as IBlock | undefined;
+                if (!recentBlock?.id || !recentBlock.box) {
+                    if (recentBlock?.id) {
+                        console.error("[Singularity/ProtyleIdentity] mobile recent block has no notebook", {blockId: recentBlock.id});
+                    }
+                    setEmpty(app);
+                    return;
+                }
+                checkFold(recentBlock.id, recentBlock.box, (zoomIn) => {
+                    openMobileFileById(app, recentBlock.box, recentBlock.id,
+                        zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+                });
+            });
+        };
+        if (!localDoc?.id) {
+            const storedBlockId = storedLocalDoc && typeof storedLocalDoc === "object" ? storedLocalDoc.id : undefined;
+            if (storedBlockId) {
+                console.error("[Singularity/ProtyleIdentity] stored mobile document has no valid notebook", {blockId: storedBlockId});
+            }
+            openRecentUpdated();
+            return;
+        }
+        if (isEncryptedBox(localDoc.notebookId)) {
+            openMobileFileById(app, localDoc.notebookId, localDoc.id, [Constants.CB_GET_SCROLL]);
+            return;
+        }
         fetchPost("/api/block/checkBlockExist", {id: localDoc.id}, existResponse => {
             if (existResponse.data) {
-                openMobileFileById(app, localDoc.id, [Constants.CB_GET_SCROLL]);
+                openMobileFileById(app, localDoc.notebookId, localDoc.id, [Constants.CB_GET_SCROLL]);
             } else {
-                fetchPost("/api/block/getRecentUpdatedBlocks", {}, (response) => {
-                    if (response.data.length !== 0) {
-                        checkFold(response.data[0].id, (zoomIn) => {
-                            openMobileFileById(app, response.data[0].id, zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
-                        });
-                    } else {
-                        setEmpty(app);
-                    }
-                });
+                openRecentUpdated();
             }
         });
         return;

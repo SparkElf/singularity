@@ -20,14 +20,26 @@ import {App} from "../index";
 import {saveScroll} from "../protyle/scroll/saveScroll";
 import {isInAndroid, isInHarmony, isInIOS, setStorageVal} from "../protyle/util/compatibility";
 import {Plugin} from "../plugin";
+import {isEncryptedBox} from "../util/pathName";
+
+const ownsContentStore = (protyle: IProtyle, boxID: string) => {
+    if (protyle.content.mode !== "bound") {
+        return false;
+    }
+    return boxID ? protyle.content.notebookId === boxID : !isEncryptedBox(protyle.content.notebookId);
+};
 
 export const setRefDynamicText = (data: {
     "blockID": string,
+    "boxID": string,
     "defBlockID": string,
     "refText": string,
     "rootID": string
 }) => {
     getAllEditor().forEach(editor => {
+        if (!ownsContentStore(editor.protyle, data.boxID)) {
+            return;
+        }
         // 不能对比 rootId，否则嵌入块中的锚文本无法更新
         editor.protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${data.blockID}"] span[data-type~="block-ref"][data-subtype="d"][data-id="${data.defBlockID}"]`).forEach(item => {
             item.innerHTML = data.refText;
@@ -37,11 +49,15 @@ export const setRefDynamicText = (data: {
 
 export const setDefRefCount = (data: {
     "blockID": string,
+    "boxID": string,
     "refCount": number,
     "rootRefCount": number,
     "rootID": string
 }) => {
     getAllEditor().forEach(editor => {
+        if (!ownsContentStore(editor.protyle, data.boxID)) {
+            return;
+        }
         if (editor.protyle.block.rootID === data.rootID && editor.protyle.title) {
             const attrElement = editor.protyle.title.element.querySelector(".protyle-attr");
             const countElement = attrElement.querySelector(".protyle-attr--refcount");
