@@ -123,7 +123,14 @@ func rollbackRepoSnapshotFile(c *gin.Context) {
 		return
 	}
 
-	err := model.RollbackRepoSnapshotFile(id)
+	notebook, err := historicalNotebookForResponse(c, arg, true)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+
+	err = model.RollbackRepoSnapshotFile(id, notebook)
 	if nil != err {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -145,7 +152,9 @@ func openRepoSnapshotFile(c *gin.Context) {
 		return
 	}
 
-	title, content, displayInText, updated, err := model.OpenRepoSnapshotFile(id)
+	title, content, displayInText, updated, err := model.OpenRepoSnapshotFileForResponse(id, func(boxIDs []string) error {
+		return RegisterEncryptedResponses(c, boxIDs)
+	})
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -176,7 +185,9 @@ func diffRepoSnapshots(c *gin.Context) {
 	) {
 		return
 	}
-	diff, err := model.DiffRepoSnapshots(left, right)
+	diff, err := model.DiffRepoSnapshotsForResponse(left, right, func(boxIDs []string) error {
+		return RegisterEncryptedResponses(c, boxIDs)
+	})
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -343,7 +354,9 @@ func searchRepoFile(c *gin.Context) {
 		return
 	}
 
-	files, pageCount, totalCount, err := model.SearchRepoFile(keyword, int(page))
+	files, pageCount, totalCount, err := model.SearchRepoFileForResponse(keyword, int(page), func(boxIDs []string) error {
+		return RegisterEncryptedResponses(c, boxIDs)
+	})
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -373,7 +386,9 @@ func exportRepoFile(c *gin.Context) {
 		return
 	}
 
-	exportPath, err := model.ExportRepoFile(id)
+	exportPath, err := model.ExportRepoFileForResponse(id, func(boxIDs []string) error {
+		return RegisterEncryptedResponses(c, boxIDs)
+	})
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()

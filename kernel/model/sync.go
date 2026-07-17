@@ -30,15 +30,17 @@ import (
 
 	"github.com/88250/go-humanize"
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
 	"github.com/88250/lute/html"
+	"github.com/88250/lute/parse"
 	"github.com/gorilla/websocket"
 	"github.com/siyuan-note/dejavu"
 	"github.com/siyuan-note/dejavu/cloud"
+	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/conf"
 	"github.com/siyuan-note/siyuan/kernel/filesys"
-	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
@@ -283,13 +285,25 @@ func checkSync(boot, exit, byHand bool) bool {
 }
 
 // incReindex 增量重建索引。
-func incReindex(upserts, removes []string) (upsertRootIDs, removeRootIDs []string) {
+func incReindex(upserts, removes []string) (upsertRootIDs, removeRootIDs []string, err error) {
+	databaseIndexOpMu.Lock()
+	defer databaseIndexOpMu.Unlock()
+	return incReindexLocked(upserts, removes)
+}
+
+func incReindexLocked(upserts, removes []string) (upsertRootIDs, removeRootIDs []string, err error) {
 	upsertRootIDs = []string{}
 	removeRootIDs = []string{}
 
 	util.IncBootProgress(3, Conf.Language(308))
-	removeRootIDs = removeIndexes(removes) // 先执行 remove，否则移动文档时 upsert 会被忽略，导致未被索引
-	upsertRootIDs = upsertIndexes(upserts)
+	removeRootIDs, err = removeIndexesLocked(removes) // 先执行 remove，否则移动文档时 upsert 会被忽略，导致未被索引
+	if err != nil {
+		return
+	}
+	upsertRootIDs, err = upsertIndexesLocked(upserts)
+	if err != nil {
+		return
+	}
 
 	if 1 > len(removeRootIDs) {
 		removeRootIDs = []string{}
@@ -300,33 +314,56 @@ func incReindex(upserts, removes []string) (upsertRootIDs, removeRootIDs []strin
 	return
 }
 
-func removeIndexes(removeFilePaths []string) (removeRootIDs []string) {
-	bootProgressPart := int32(10 / float64(len(removeFilePaths)))
+func removeIndexesLocked(removeFilePaths []string) (removeRootIDs []string, err error) {
+	var bootProgressPart int32
+	if len(removeFilePaths) > 0 {
+		bootProgressPart = int32(10 / float64(len(removeFilePaths)))
+	}
 	for _, removeFile := range removeFilePaths {
 		if !strings.HasSuffix(removeFile, ".sy") {
 			continue
 		}
 
-		rootID := util.GetTreeID(removeFile)
-		removeRootIDs = append(removeRootIDs, rootID)
+		removeFile = filepath.ToSlash(strings.TrimPrefix(removeFile, "/"))
+		boxID, treePath, found := strings.Cut(removeFile, "/")
+		if !found {
+			return removeRootIDs, fmt.Errorf("synced tree removal path [%s] has no notebook identity", removeFile)
+		}
+		treePath = "/" + treePath
+		rootID := util.GetTreeID(treePath)
+		if !ast.IsNodeIDPattern(boxID) || !ast.IsNodeIDPattern(rootID) {
+			return removeRootIDs, fmt.Errorf("synced tree removal path [%s] has an invalid notebook or root identity", removeFile)
+		}
 
 		msg := fmt.Sprintf(Conf.Language(39), rootID)
 		util.IncBootProgress(bootProgressPart, msg)
 		util.PushStatusBar(msg)
 
-		cache.RemoveTreeData(rootID)
-		block := treenode.GetBlockTree(rootID)
-		boxID := ""
-		if nil != block {
-			boxID = block.BoxID
-			cache.RemoveDocIAL(block.Path)
-		}
-		sql.RemoveTreeQueue(boxID, rootID)
+		token := acquireContentCommitToken(boxID)
+		block := treenode.GetBlockTreeInBox(rootID, boxID)
 		bts := treenode.GetBlockTreesByRootIDInBox(rootID, boxID)
-		for _, b := range bts {
-			cache.RemoveBlockIAL(b.ID)
+		blocktreeSnapshot, treeErr := treenode.RemoveBlockTreeRoots(boxID, []string{rootID})
+		if treeErr != nil {
+			token.release()
+			return removeRootIDs, fmt.Errorf("remove synced tree blocktree [%s/%s]: %w", boxID, rootID, treeErr)
 		}
-		treenode.RemoveBlockTreesByRootID(boxID, rootID)
+		if queueErr := token.queueAdmission.RemoveTreeQueue(boxID, rootID); queueErr != nil {
+			restoreErr := blocktreeSnapshot.Restore()
+			token.release()
+			err = errors.Join(fmt.Errorf("persist synced tree removal queue [%s/%s]: %w", boxID, rootID, queueErr), restoreErr)
+			logging.LogErrorf("%s", err)
+			return
+		}
+		cache.RemoveTreeDataInBox(rootID, boxID)
+		if block != nil {
+			treePath = block.Path
+		}
+		cache.RemoveDocIALInBox(treePath, boxID)
+		removeRootIDs = append(removeRootIDs, rootID)
+		for _, b := range bts {
+			cache.RemoveBlockIALInBox(b.ID, boxID)
+		}
+		token.release()
 	}
 
 	if 1 > len(removeRootIDs) {
@@ -335,9 +372,12 @@ func removeIndexes(removeFilePaths []string) (removeRootIDs []string) {
 	return
 }
 
-func upsertIndexes(upsertFilePaths []string) (upsertRootIDs []string) {
+func upsertIndexesLocked(upsertFilePaths []string) (upsertRootIDs []string, err error) {
 	luteEngine := util.NewLute()
-	bootProgressPart := int32(10 / float64(len(upsertFilePaths)))
+	var bootProgressPart int32
+	if len(upsertFilePaths) > 0 {
+		bootProgressPart = int32(10 / float64(len(upsertFilePaths)))
+	}
 	for _, upsertFile := range upsertFilePaths {
 		if !strings.HasSuffix(upsertFile, ".sy") {
 			continue
@@ -346,39 +386,78 @@ func upsertIndexes(upsertFilePaths []string) (upsertRootIDs []string) {
 		upsertFile = filepath.ToSlash(upsertFile)
 		upsertFile = strings.TrimPrefix(upsertFile, "/")
 
-		box, _, found := strings.Cut(upsertFile, "/")
+		box, treePath, found := strings.Cut(upsertFile, "/")
 		if !found {
-			// .sy 直接出现在 data 文件夹下，没有出现在笔记本文件夹下的情况
-			continue
+			return upsertRootIDs, fmt.Errorf("synced tree upsert path [%s] has no notebook identity", upsertFile)
 		}
 
-		p := strings.TrimPrefix(upsertFile, box)
+		p := "/" + treePath
+		rootID := util.GetTreeID(p)
+		if !ast.IsNodeIDPattern(box) || !ast.IsNodeIDPattern(rootID) {
+			return upsertRootIDs, fmt.Errorf("synced tree upsert path [%s] has an invalid notebook or root identity", upsertFile)
+		}
+		if validateErr := validateSyncedNotebookIdentity(box); validateErr != nil {
+			return upsertRootIDs, fmt.Errorf("synced tree upsert path [%s] names an invalid notebook [%s]: %w", upsertFile, box, validateErr)
+		}
 		msg := fmt.Sprintf(Conf.Language(40), util.GetTreeID(p))
 		util.IncBootProgress(bootProgressPart, msg)
 		util.PushStatusBar(msg)
 
-		rootID := util.GetTreeID(p)
-		cache.RemoveTreeData(rootID)
-		tree, err0 := filesys.LoadTree(box, p, luteEngine)
-		if nil != err0 {
-			continue
+		token := acquireContentCommitToken(box)
+		tree, loadErr := filesys.LoadTreeInBoxLocked(box, p, luteEngine)
+		if nil != loadErr {
+			token.release()
+			return upsertRootIDs, fmt.Errorf("load synced tree upsert [%s/%s]: %w", box, p, loadErr)
 		}
-		treenode.UpsertBlockTree(tree)
-		sql.UpsertTreeQueue(tree)
+		if tree == nil || tree.Root == nil || tree.Box != box || tree.ID != rootID || tree.Root.ID != rootID {
+			token.release()
+			return upsertRootIDs, fmt.Errorf("synced tree upsert [%s/%s] does not own the declared notebook and root identity", box, p)
+		}
+		blocktreeSnapshot, treeErr := treenode.ReplaceBlockTrees([]*parse.Tree{tree})
+		if treeErr != nil {
+			token.release()
+			return upsertRootIDs, fmt.Errorf("persist synced tree blocktree [%s/%s]: %w", tree.Box, tree.Path, treeErr)
+		}
+		runContentCommitBeforeEnqueueHook(tree)
+		if queueErr := token.queueAdmission.UpsertTreeQueue(tree); queueErr != nil {
+			restoreErr := blocktreeSnapshot.Restore()
+			token.release()
+			err = errors.Join(fmt.Errorf("persist synced tree upsert queue [%s/%s]: %w", tree.Box, tree.Path, queueErr), restoreErr)
+			logging.LogErrorf("%s", err)
+			return
+		}
+		if contentCommitAfterEnqueueHook != nil {
+			contentCommitAfterEnqueueHook(tree)
+		}
+		cache.RemoveTreeDataInBox(rootID, box)
 
 		bts := treenode.GetBlockTreesByRootIDInBox(rootID, tree.Box)
 		for _, b := range bts {
-			cache.RemoveBlockIAL(b.ID)
+			cache.RemoveBlockIALInBox(b.ID, tree.Box)
 		}
-		cache.RemoveDocIAL(tree.Path)
+		cache.RemoveDocIALInBox(tree.Path, tree.Box)
 
 		upsertRootIDs = append(upsertRootIDs, rootID)
+		token.release()
 	}
 
 	if 1 > len(upsertRootIDs) {
 		upsertRootIDs = []string{}
 	}
 	return
+}
+
+func validateSyncedNotebookIdentity(boxID string) error {
+	confPath := filepath.Join(util.DataDir, boxID, ".siyuan", "conf.json")
+	data, err := filelock.ReadFile(confPath)
+	if err != nil {
+		return err
+	}
+	boxConf := conf.NewBoxConf()
+	if err = gulu.JSON.UnmarshalJSON(data, boxConf); err != nil {
+		return err
+	}
+	return nil
 }
 
 func SetCloudSyncDir(name string) {

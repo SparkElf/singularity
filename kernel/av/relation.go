@@ -1,6 +1,7 @@
 package av
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +17,57 @@ var (
 	attributeViewRelationsLock = sync.Mutex{}
 )
 
+type RelationsSnapshot struct {
+	boxID   string
+	path    string
+	data    []byte
+	existed bool
+}
+
+func CaptureRelations(boxID string) (*RelationsSnapshot, error) {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
+	attributeViewRelationsLock.Lock()
+	defer attributeViewRelationsLock.Unlock()
+
+	path := relationsPath(boxID)
+	data, err := filelock.ReadFile(path)
+	if os.IsNotExist(err) {
+		return &RelationsSnapshot{boxID: boxID, path: path}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("capture attribute view relations for box %q: %w", boxID, err)
+	}
+	if _, err = decodeRelations(boxID, data); err != nil {
+		return nil, fmt.Errorf("capture attribute view relations for box %q: %w", boxID, err)
+	}
+	return &RelationsSnapshot{boxID: boxID, path: path, data: data, existed: true}, nil
+}
+
+func (snapshot *RelationsSnapshot) Restore() error {
+	if snapshot == nil {
+		return nil
+	}
+	release := holdAVStoreReadLock(snapshot.boxID)
+	defer release()
+	attributeViewRelationsLock.Lock()
+	defer attributeViewRelationsLock.Unlock()
+
+	if !snapshot.existed {
+		if err := filelock.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove replacement attribute view relations for box %q: %w", snapshot.boxID, err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(snapshot.path), 0755); err != nil {
+		return fmt.Errorf("restore attribute view relations directory for box %q: %w", snapshot.boxID, err)
+	}
+	if err := filelock.WriteFile(snapshot.path, snapshot.data); err != nil {
+		return fmt.Errorf("restore attribute view relations for box %q: %w", snapshot.boxID, err)
+	}
+	return nil
+}
+
 // relationsPath 返回 relations 索引文件路径，按 AV 归属 box 分箱。
 // 加密 box：<DataDir>/<boxID>/storage/av/relations.msgpack（DEK 加密）
 // 普通 box：<DataDir>/storage/av/relations.msgpack（明文）
@@ -27,71 +79,77 @@ func relationsPath(boxID string) string {
 }
 
 // readRelations 读取 relations 索引（boxID 非空时自动解密）。
-func readRelations(boxID string) (avRels map[string][]string) {
-	avRels = map[string][]string{}
+func readRelations(boxID string) (avRels map[string][]string, err error) {
 	p := relationsPath(boxID)
 	if !filelock.IsExist(p) {
-		return
+		return map[string][]string{}, nil
 	}
 	data, err := filelock.ReadFile(p)
 	if err != nil {
-		logging.LogErrorf("read attribute view relations failed: %s", err)
-		return
+		return nil, fmt.Errorf("read attribute view relations for box %q: %w", boxID, err)
 	}
+	avRels, err = decodeRelations(boxID, data)
+	if err != nil {
+		return nil, fmt.Errorf("decode attribute view relations for box %q: %w", boxID, err)
+	}
+	return avRels, nil
+}
+
+func decodeRelations(boxID string, data []byte) (avRels map[string][]string, err error) {
 	if boxID != "" {
-		dec, decErr := decryptAVData(boxID, "relation", data)
+		dec, decErr := decryptAVDataLocked(boxID, "relation", data)
 		if decErr != nil {
-			logging.LogErrorf("decrypt attribute view relations failed: %s", decErr)
-			return
+			return nil, fmt.Errorf("decrypt attribute view relations: %w", decErr)
 		}
 		data = dec
 	}
 	if err = msgpack.Unmarshal(data, &avRels); err != nil {
-		logging.LogErrorf("unmarshal attribute view relations failed: %s", err)
-		return
+		return nil, fmt.Errorf("unmarshal attribute view relations: %w", err)
 	}
-	return
+	if avRels == nil {
+		avRels = map[string][]string{}
+	}
+	return avRels, nil
 }
 
 // writeRelations 写入 relations 索引（boxID 非空时加密）。
-func writeRelations(boxID string, avRels map[string][]string) {
+func writeRelations(boxID string, avRels map[string][]string) error {
 	p := relationsPath(boxID)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		logging.LogErrorf("create attribute view dir failed: %s", err)
-		return
+		return fmt.Errorf("create attribute view relations directory for box %q: %w", boxID, err)
 	}
 	data, err := msgpack.Marshal(avRels)
 	if err != nil {
-		logging.LogErrorf("marshal attribute view relations failed: %s", err)
-		return
+		return fmt.Errorf("marshal attribute view relations for box %q: %w", boxID, err)
 	}
 	if boxID != "" {
-		enc, encErr := encryptAVData(boxID, "relation", data)
+		enc, encErr := encryptAVDataLocked(boxID, "relation", data)
 		if encErr != nil {
-			logging.LogErrorf("encrypt attribute view relations failed: %s", encErr)
-			return
+			return fmt.Errorf("encrypt attribute view relations for box %q: %w", boxID, encErr)
 		}
 		data = enc
 	}
 	if err = filelock.WriteFile(p, data); err != nil {
-		logging.LogErrorf("write attribute view relations failed: %s", err)
-		return
+		return fmt.Errorf("write attribute view relations for box %q: %w", boxID, err)
 	}
-}
-
-// relationsBoxIDByAvID 由 destAvID 反查归属 boxID，决定 relations 索引的存储位置。
-// 加密笔记本的 AV 返回其 boxID；普通 box 的 AV 返回空串（全局路径）。
-func relationsBoxIDByAvID(avID string) string {
-	_, boxID := FindAttributeViewPath(avID)
-	return boxID
+	return nil
 }
 
 func GetSrcAvIDs(destAvID string) []string {
+	return GetSrcAvIDsInBox(destAvID, "")
+}
+
+func GetSrcAvIDsInBox(destAvID, boxID string) []string {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
 	attributeViewRelationsLock.Lock()
 	defer attributeViewRelationsLock.Unlock()
 
-	boxID := relationsBoxIDByAvID(destAvID)
-	avRels := readRelations(boxID)
+	avRels, err := readRelations(boxID)
+	if err != nil {
+		logging.LogErrorf("read attribute view relations failed: %s", err)
+		return nil
+	}
 	srcAvIDs := avRels[destAvID]
 	if nil == srcAvIDs {
 		return nil
@@ -99,16 +157,24 @@ func GetSrcAvIDs(destAvID string) []string {
 	return srcAvIDs
 }
 
-func RemoveAvRel(srcAvID, destAvID string) {
+func RemoveAvRel(srcAvID, destAvID string) error {
+	return RemoveAvRelInBox(srcAvID, destAvID, "")
+}
+
+func RemoveAvRelInBox(srcAvID, destAvID, boxID string) error {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
 	attributeViewRelationsLock.Lock()
 	defer attributeViewRelationsLock.Unlock()
 
-	boxID := relationsBoxIDByAvID(destAvID)
-	avRels := readRelations(boxID)
+	avRels, err := readRelations(boxID)
+	if err != nil {
+		return err
+	}
 
 	srcAvIDs := avRels[destAvID]
 	if nil == srcAvIDs {
-		return
+		return nil
 	}
 
 	var newAvIDs []string
@@ -118,32 +184,32 @@ func RemoveAvRel(srcAvID, destAvID string) {
 		}
 	}
 	avRels[destAvID] = newAvIDs
-	writeRelations(boxID, avRels)
+	return writeRelations(boxID, avRels)
 }
 
-func UpsertAvBackRel(srcAvID, destAvID string) {
+func UpsertAvBackRel(srcAvID, destAvID string) error {
+	return UpsertAvBackRelInBox(srcAvID, destAvID, "")
+}
+
+func UpsertAvBackRelInBox(srcAvID, destAvID, boxID string) error {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
 	attributeViewRelationsLock.Lock()
 	defer attributeViewRelationsLock.Unlock()
 
-	// 跨加密边界拒绝：src 和 dest 必须处于同一加密边界（都普通或同一加密 box），
-	// 否则关联会把加密 AV 的存在/结构泄漏到普通库或另一个加密 box
-	_, srcBox := FindAttributeViewPath(srcAvID)
-	_, destBox := FindAttributeViewPath(destAvID)
-	if AVIsEncryptedBox != nil {
-		srcEnc := srcBox != "" && AVIsEncryptedBox(srcBox)
-		destEnc := destBox != "" && AVIsEncryptedBox(destBox)
-		if srcEnc != destEnc || (srcEnc && destEnc && srcBox != destBox) {
-			logging.LogWarnf("skip cross-boundary AV relation: src=%s(box=%s) dest=%s(box=%s)", srcAvID, srcBox, destAvID, destBox)
-			return
-		}
+	if !IsAttributeViewExistInBox(srcAvID, boxID) || !IsAttributeViewExistInBox(destAvID, boxID) {
+		logging.LogWarnf("skip AV relation without both definitions in target store: src=%s dest=%s box=%s", srcAvID, destAvID, boxID)
+		return nil
 	}
 
-	boxID := destBox
-	avRels := readRelations(boxID)
+	avRels, err := readRelations(boxID)
+	if err != nil {
+		return err
+	}
 
 	srcAvIDs := avRels[destAvID]
 	srcAvIDs = append(srcAvIDs, srcAvID)
 	srcAvIDs = gulu.Str.RemoveDuplicatedElem(srcAvIDs)
 	avRels[destAvID] = srcAvIDs
-	writeRelations(boxID, avRels)
+	return writeRelations(boxID, avRels)
 }

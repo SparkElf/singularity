@@ -324,6 +324,11 @@ func getRecentDocs(c *gin.Context) {
 			return
 		}
 	}
+	if err := RegisterAllEncryptedResponses(c); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	data, err := model.GetRecentDocs(sortBy)
 	if err != nil {
@@ -351,15 +356,15 @@ func updateRecentDocOpenTime(c *gin.Context) {
 		return
 	}
 
-	var rootID string
-	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("rootID", &rootID, false, false)) {
-		return
-	}
-	if "" == rootID {
+	var rootID, notebookID string
+	if !util.ParseJsonArgs(arg, ret,
+		util.BindJsonArg("rootID", &rootID, true, true),
+		util.BindJsonArg("notebookId", &notebookID, true, true),
+	) {
 		return
 	}
 
-	err := model.UpdateRecentDocOpenTime(rootID)
+	err := model.UpdateRecentDocOpenTime(rootID, notebookID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -380,15 +385,15 @@ func updateRecentDocViewTime(c *gin.Context) {
 		return
 	}
 
-	var rootID string
-	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("rootID", &rootID, false, false)) {
-		return
-	}
-	if "" == rootID {
+	var rootID, notebookID string
+	if !util.ParseJsonArgs(arg, ret,
+		util.BindJsonArg("rootID", &rootID, true, true),
+		util.BindJsonArg("notebookId", &notebookID, true, true),
+	) {
 		return
 	}
 
-	err := model.UpdateRecentDocViewTime(rootID)
+	err := model.UpdateRecentDocViewTime(rootID, notebookID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -409,15 +414,15 @@ func updateRecentDocCloseTime(c *gin.Context) {
 		return
 	}
 
-	var rootID string
-	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("rootID", &rootID, false, false)) {
-		return
-	}
-	if "" == rootID {
+	var rootID, notebookID string
+	if !util.ParseJsonArgs(arg, ret,
+		util.BindJsonArg("rootID", &rootID, true, true),
+		util.BindJsonArg("notebookId", &notebookID, true, true),
+	) {
 		return
 	}
 
-	err := model.UpdateRecentDocCloseTime(rootID)
+	err := model.UpdateRecentDocCloseTime(rootID, notebookID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -438,27 +443,33 @@ func batchUpdateRecentDocCloseTime(c *gin.Context) {
 		return
 	}
 
-	var rootIDsArg []any
-	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("rootIDs", &rootIDsArg, false, false)) {
+	var docsArg []any
+	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("docs", &docsArg, true, false)) {
 		return
 	}
 
-	var rootIDs []string
-	for _, id := range rootIDsArg {
-		str, elemOk := id.(string)
-		if !elemOk {
-			continue
+	docs := make([]model.RecentDocIdentity, 0, len(docsArg))
+	for _, value := range docsArg {
+		docArg, elemOK := value.(map[string]any)
+		if !elemOK {
+			ret.Code = -1
+			ret.Msg = "docs entries must be objects"
+			return
 		}
-		if "" == str {
-			continue
+		var doc model.RecentDocIdentity
+		if !util.ParseJsonArgs(docArg, ret,
+			util.BindJsonArg("rootID", &doc.RootID, true, true),
+			util.BindJsonArg("notebookId", &doc.NotebookID, true, true),
+		) {
+			return
 		}
-		rootIDs = append(rootIDs, str)
+		docs = append(docs, doc)
 	}
-	if 0 == len(rootIDs) {
+	if len(docs) == 0 {
 		return
 	}
 
-	err := model.BatchUpdateRecentDocCloseTime(rootIDs)
+	err := model.BatchUpdateRecentDocCloseTime(docs)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()

@@ -32,24 +32,22 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-func buildUpdatedTaskListItemBlockDOM(id, marker string, luteEngine *lute.Lute) (data string, err error) {
-	block, err := model.GetBlock(id, nil)
+func buildUpdatedTaskListItemBlockDOM(id, marker, storeBoxID string, luteEngine *lute.Lute) (data string, err error) {
+	blockTree := treenode.GetBlockTreeInBox(id, storeBoxID)
+	if blockTree == nil {
+		return "", errors.New("get block failed: " + model.ErrTreeNotFound.Error())
+	}
+	tree, err := filesys.LoadTree(blockTree.BoxID, blockTree.Path, luteEngine)
 	if err != nil {
 		return "", errors.New("get block failed: " + err.Error())
-	}
-
-	if "NodeListItem" != block.Type {
-		return "", errors.New("block is not a list item")
-	}
-
-	tree, err := filesys.LoadTree(block.Box, block.Path, luteEngine)
-	if err != nil {
-		return "", errors.New("load tree failed: " + err.Error())
 	}
 
 	li := treenode.GetNodeInTree(tree, id)
 	if li == nil {
 		return "", errors.New("block not found")
+	}
+	if ast.NodeListItem != li.Type {
+		return "", errors.New("block is not a list item")
 	}
 
 	if 3 != li.ListData.Typ {
@@ -86,6 +84,13 @@ func updateTaskListItemMarker(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	var id, marker string
 	if !util.ParseJsonArgs(arg, ret,
@@ -99,7 +104,7 @@ func updateTaskListItemMarker(c *gin.Context) {
 	}
 
 	luteEngine := util.NewLute()
-	data, err := buildUpdatedTaskListItemBlockDOM(id, marker, luteEngine)
+	data, err := buildUpdatedTaskListItemBlockDOM(id, marker, storeBoxID, luteEngine)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -108,6 +113,7 @@ func updateTaskListItemMarker(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{Action: "update", ID: id, Data: data},
 			},
@@ -129,6 +135,13 @@ func batchUpdateTaskListItemMarker(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	var itemsArg []any
 	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("items", &itemsArg, true, true)) {
@@ -163,7 +176,7 @@ func batchUpdateTaskListItemMarker(c *gin.Context) {
 	ids := gulu.Str.RemoveDuplicatedElem(idsInOrder)
 	ops := make([]*model.Operation, 0, len(ids))
 	for _, id := range ids {
-		data, err := buildUpdatedTaskListItemBlockDOM(id, idToMarker[id], luteEngine)
+		data, err := buildUpdatedTaskListItemBlockDOM(id, idToMarker[id], storeBoxID, luteEngine)
 		if err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
@@ -173,7 +186,7 @@ func batchUpdateTaskListItemMarker(c *gin.Context) {
 		ops = append(ops, &model.Operation{Action: "update", ID: id, Data: data})
 	}
 
-	tx := &model.Transaction{DoOperations: ops}
+	tx := &model.Transaction{Notebook: storeBoxID, DoOperations: ops}
 	transactions := []*model.Transaction{tx}
 
 	model.PerformTransactions(&transactions)
@@ -191,6 +204,13 @@ func moveOutlineHeading(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	id := arg["id"].(string)
 	if util.InvalidIDPattern(id, ret) {
@@ -213,6 +233,7 @@ func moveOutlineHeading(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:     "moveOutlineHeading",
@@ -267,6 +288,7 @@ func appendDailyNoteBlock(c *gin.Context) {
 	parentID := util.GetTreeID(p)
 	transactions := []*model.Transaction{
 		{
+			Notebook: model.TransactionNotebookForBox(boxID),
 			DoOperations: []*model.Operation{
 				{
 					Action:   "appendInsert",
@@ -320,6 +342,7 @@ func prependDailyNoteBlock(c *gin.Context) {
 	parentID := util.GetTreeID(p)
 	transactions := []*model.Transaction{
 		{
+			Notebook: model.TransactionNotebookForBox(boxID),
 			DoOperations: []*model.Operation{
 				{
 					Action:   "prependInsert",
@@ -345,13 +368,20 @@ func unfoldBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	id := arg["id"].(string)
 	if util.InvalidIDPattern(id, ret) {
 		return
 	}
 
-	bt := treenode.GetBlockTree(id)
+	bt := treenode.GetBlockTreeInBox(id, storeBoxID)
 	if nil == bt {
 		ret.Code = -1
 		ret.Msg = "block tree not found [id=" + id + "]"
@@ -368,6 +398,7 @@ func unfoldBlock(c *gin.Context) {
 	if "h" == bt.Type {
 		transactions = []*model.Transaction{
 			{
+				Notebook: storeBoxID,
 				DoOperations: []*model.Operation{
 					{
 						Action: "unfoldHeading",
@@ -380,6 +411,7 @@ func unfoldBlock(c *gin.Context) {
 		data, _ := gulu.JSON.MarshalJSON(map[string]any{"fold": ""})
 		transactions = []*model.Transaction{
 			{
+				Notebook: storeBoxID,
 				DoOperations: []*model.Operation{
 					{
 						Action: "setAttrs",
@@ -405,13 +437,20 @@ func foldBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	id := arg["id"].(string)
 	if util.InvalidIDPattern(id, ret) {
 		return
 	}
 
-	bt := treenode.GetBlockTree(id)
+	bt := treenode.GetBlockTreeInBox(id, storeBoxID)
 	if nil == bt {
 		ret.Code = -1
 		ret.Msg = "block tree not found [id=" + id + "]"
@@ -428,6 +467,7 @@ func foldBlock(c *gin.Context) {
 	if "h" == bt.Type {
 		transactions = []*model.Transaction{
 			{
+				Notebook: storeBoxID,
 				DoOperations: []*model.Operation{
 					{
 						Action: "foldHeading",
@@ -440,6 +480,7 @@ func foldBlock(c *gin.Context) {
 		data, _ := gulu.JSON.MarshalJSON(map[string]any{"fold": "1"})
 		transactions = []*model.Transaction{
 			{
+				Notebook: storeBoxID,
 				DoOperations: []*model.Operation{
 					{
 						Action: "setAttrs",
@@ -465,13 +506,20 @@ func moveBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	id := arg["id"].(string)
 	if util.InvalidIDPattern(id, ret) {
 		return
 	}
 
-	currentBt := treenode.GetBlockTree(id)
+	currentBt := treenode.GetBlockTreeInBox(id, storeBoxID)
 	if nil == currentBt {
 		ret.Code = -1
 		ret.Msg = "block not found [id=" + id + "]"
@@ -492,7 +540,7 @@ func moveBlock(c *gin.Context) {
 		}
 
 		// Check the validity of the API `moveBlock` parameter `previousID` https://github.com/siyuan-note/siyuan/issues/8007
-		if bt := treenode.GetBlockTree(previousID); nil == bt || "d" == bt.Type {
+		if bt := treenode.GetBlockTreeInBox(previousID, storeBoxID); nil == bt || "d" == bt.Type {
 			ret.Code = -1
 			ret.Msg = "`previousID` can not be the ID of a document"
 			return
@@ -501,9 +549,9 @@ func moveBlock(c *gin.Context) {
 
 	var targetBt *treenode.BlockTree
 	if "" != previousID {
-		targetBt = treenode.GetBlockTree(previousID)
+		targetBt = treenode.GetBlockTreeInBox(previousID, storeBoxID)
 	} else if "" != parentID {
-		targetBt = treenode.GetBlockTree(parentID)
+		targetBt = treenode.GetBlockTreeInBox(parentID, storeBoxID)
 	}
 
 	if nil == targetBt {
@@ -514,12 +562,12 @@ func moveBlock(c *gin.Context) {
 
 	// 仅靠 parentID 定位目标时（无 previousID），目标必须是容器块，否则非法嵌套
 	if "" == previousID && "" != parentID {
-		if err := treenode.CheckListItemNesting(parentID, id); err != nil {
+		if err := treenode.CheckListItemNestingInBox(parentID, id, storeBoxID); err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
 			return
 		}
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
 			return
@@ -528,6 +576,7 @@ func moveBlock(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:     "move",
@@ -542,10 +591,8 @@ func moveBlock(c *gin.Context) {
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
 
-	model.ReloadProtyle(currentBt.RootID)
-	if currentBt.RootID != targetBt.RootID {
-		model.ReloadProtyle(targetBt.RootID)
-	}
+	ret.Data = transactions
+	broadcastTransactions(transactions)
 }
 
 func appendBlock(c *gin.Context) {
@@ -556,6 +603,13 @@ func appendBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	data := arg["data"].(string)
 	dataType := arg["dataType"].(string)
@@ -564,7 +618,7 @@ func appendBlock(c *gin.Context) {
 		return
 	}
 	// append 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-	if err := treenode.CheckContainerParent(parentID); err != nil {
+	if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
@@ -582,6 +636,7 @@ func appendBlock(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:   "appendInsert",
@@ -607,6 +662,13 @@ func batchAppendBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	blocksArg := arg["blocks"].([]any)
 	var transactions []*model.Transaction
@@ -620,7 +682,7 @@ func batchAppendBlock(c *gin.Context) {
 			return
 		}
 		// append 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
 			return
@@ -636,6 +698,7 @@ func batchAppendBlock(c *gin.Context) {
 		}
 
 		transactions = append(transactions, &model.Transaction{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:   "appendInsert",
@@ -661,6 +724,13 @@ func prependBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	data := arg["data"].(string)
 	dataType := arg["dataType"].(string)
@@ -669,7 +739,7 @@ func prependBlock(c *gin.Context) {
 		return
 	}
 	// prepend 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-	if err := treenode.CheckContainerParent(parentID); err != nil {
+	if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
@@ -687,6 +757,7 @@ func prependBlock(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:   "prependInsert",
@@ -712,6 +783,13 @@ func batchPrependBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	blocksArg := arg["blocks"].([]any)
 	var transactions []*model.Transaction
@@ -725,7 +803,7 @@ func batchPrependBlock(c *gin.Context) {
 			return
 		}
 		// prepend 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
 			return
@@ -741,6 +819,7 @@ func batchPrependBlock(c *gin.Context) {
 		}
 
 		transactions = append(transactions, &model.Transaction{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:   "prependInsert",
@@ -766,6 +845,13 @@ func insertBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	data := arg["data"].(string)
 	dataType := arg["dataType"].(string)
@@ -791,7 +877,7 @@ func insertBlock(c *gin.Context) {
 
 	// 仅靠 parentID 定位目标时（无 previousID/nextID），目标必须是容器块，否则非法嵌套
 	if "" != parentID && "" == previousID && "" == nextID {
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 			ret.Code = -1
 			ret.Msg = err.Error()
 			return
@@ -811,6 +897,7 @@ func insertBlock(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:     "insert",
@@ -838,6 +925,13 @@ func updateBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	data := arg["data"].(string)
 	dataType := arg["dataType"].(string)
@@ -863,21 +957,27 @@ func updateBlock(c *gin.Context) {
 		return
 	}
 
-	block, err := model.GetBlock(id, nil)
+	blockTree := treenode.GetBlockTreeInBox(id, storeBoxID)
+	if blockTree == nil {
+		ret.Code = -1
+		ret.Msg = "get block failed: " + model.ErrTreeNotFound.Error()
+		return
+	}
+	oldTree, err := filesys.LoadTree(blockTree.BoxID, blockTree.Path, luteEngine)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = "get block failed: " + err.Error()
 		return
 	}
+	blockNode := treenode.GetNodeInTree(oldTree, id)
+	if blockNode == nil {
+		ret.Code = -1
+		ret.Msg = model.ErrBlockNotFound.Error()
+		return
+	}
 
 	var transactions []*model.Transaction
-	if "NodeDocument" == block.Type {
-		oldTree, err := filesys.LoadTree(block.Box, block.Path, luteEngine)
-		if err != nil {
-			ret.Code = -1
-			ret.Msg = "load tree failed: " + err.Error()
-			return
-		}
+	if ast.NodeDocument == blockNode.Type {
 		var toRemoves []*ast.Node
 		var ops []*model.Operation
 		for n := oldTree.Root.FirstChild; nil != n; n = n.Next {
@@ -891,10 +991,11 @@ func updateBlock(c *gin.Context) {
 		}
 		ops = append(ops, &model.Operation{Action: "appendInsert", Data: data, ParentID: id})
 		transactions = append(transactions, &model.Transaction{
+			Notebook:     storeBoxID,
 			DoOperations: ops,
 		})
 	} else {
-		if "NodeListItem" == block.Type && ast.NodeList == tree.Root.FirstChild.Type {
+		if ast.NodeListItem == blockNode.Type && ast.NodeList == tree.Root.FirstChild.Type {
 			// 使用 API `api/block/updateBlock` 更新列表项时渲染错误 https://github.com/siyuan-note/siyuan/issues/4658
 			tree.Root.AppendChild(tree.Root.FirstChild.FirstChild) // 将列表下的第一个列表项移到文档结尾，移动以后根下面直接挂列表项，渲染器可以正常工作
 			tree.Root.FirstChild.Unlink()                          // 删除列表
@@ -913,6 +1014,7 @@ func updateBlock(c *gin.Context) {
 		data = luteEngine.Tree2BlockDOM(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 		transactions = []*model.Transaction{
 			{
+				Notebook: storeBoxID,
 				DoOperations: []*model.Operation{
 					{
 						Action: "update",
@@ -939,6 +1041,13 @@ func batchInsertBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	blocksArg := arg["blocks"].([]any)
 	var transactions []*model.Transaction
@@ -969,7 +1078,7 @@ func batchInsertBlock(c *gin.Context) {
 
 		// 仅靠 parentID 定位目标时（无 previousID/nextID），目标必须是容器块，否则非法嵌套
 		if "" != parentID && "" == previousID && "" == nextID {
-			if err := treenode.CheckContainerParent(parentID); err != nil {
+			if err := treenode.CheckContainerParentInBox(parentID, storeBoxID); err != nil {
 				ret.Code = -1
 				ret.Msg = err.Error()
 				return
@@ -987,6 +1096,7 @@ func batchInsertBlock(c *gin.Context) {
 		}
 
 		transactions = append(transactions, &model.Transaction{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action:     "insert",
@@ -1014,6 +1124,13 @@ func batchUpdateBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	var blocksArg []any
 	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("blocks", &blocksArg, true, true)) {
@@ -1021,11 +1138,12 @@ func batchUpdateBlock(c *gin.Context) {
 	}
 
 	type updateBlockArg struct {
-		ID       string
-		Data     string
-		DataType string
-		Block    *model.Block
-		Tree     *parse.Tree
+		ID           string
+		Data         string
+		IsDocument   bool
+		IsListItem   bool
+		ExistingTree *parse.Tree
+		Tree         *parse.Tree
 	}
 
 	var blocks []*updateBlockArg
@@ -1055,37 +1173,44 @@ func batchUpdateBlock(c *gin.Context) {
 			return
 		}
 
-		block, err := model.GetBlock(id, nil)
+		blockTree := treenode.GetBlockTreeInBox(id, storeBoxID)
+		if blockTree == nil {
+			ret.Code = -1
+			ret.Msg = "get block failed: " + model.ErrTreeNotFound.Error()
+			return
+		}
+		existingTree, err := filesys.LoadTree(blockTree.BoxID, blockTree.Path, luteEngine)
 		if err != nil {
 			ret.Code = -1
 			ret.Msg = "get block failed: " + err.Error()
 			return
 		}
+		blockNode := treenode.GetNodeInTree(existingTree, id)
+		if blockNode == nil {
+			ret.Code = -1
+			ret.Msg = model.ErrBlockNotFound.Error()
+			return
+		}
 
 		blocks = append(blocks, &updateBlockArg{
-			ID:       id,
-			Data:     data,
-			DataType: dataType,
-			Block:    block,
-			Tree:     tree,
+			ID:           id,
+			Data:         data,
+			IsDocument:   ast.NodeDocument == blockNode.Type,
+			IsListItem:   ast.NodeListItem == blockNode.Type,
+			ExistingTree: existingTree,
+			Tree:         tree,
 		})
 	}
 
 	var ops []*model.Operation
-	tx := &model.Transaction{}
+	tx := &model.Transaction{Notebook: storeBoxID}
 	transactions := []*model.Transaction{tx}
 	for _, upBlock := range blocks {
-		block := upBlock.Block
 		data := upBlock.Data
 		tree := upBlock.Tree
 		id := upBlock.ID
-		if "NodeDocument" == block.Type {
-			oldTree, err := filesys.LoadTree(block.Box, block.Path, luteEngine)
-			if err != nil {
-				ret.Code = -1
-				ret.Msg = "load tree failed: " + err.Error()
-				return
-			}
+		if upBlock.IsDocument {
+			oldTree := upBlock.ExistingTree
 			var toRemoves []*ast.Node
 
 			for n := oldTree.Root.FirstChild; nil != n; n = n.Next {
@@ -1099,7 +1224,7 @@ func batchUpdateBlock(c *gin.Context) {
 			}
 			ops = append(ops, &model.Operation{Action: "appendInsert", Data: data, ParentID: id})
 		} else {
-			if "NodeListItem" == block.Type && ast.NodeList == tree.Root.FirstChild.Type {
+			if upBlock.IsListItem && ast.NodeList == tree.Root.FirstChild.Type {
 				// 使用 API `api/block/updateBlock` 更新列表项时渲染错误 https://github.com/siyuan-note/siyuan/issues/4658
 				tree.Root.AppendChild(tree.Root.FirstChild.FirstChild) // 将列表下的第一个列表项移到文档结尾，移动以后根下面直接挂列表项，渲染器可以正常工作
 				tree.Root.FirstChild.Unlink()                          // 删除列表
@@ -1132,6 +1257,13 @@ func deleteBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := model.TransactionNotebookForBox(notebook)
 
 	id := arg["id"].(string)
 	if util.InvalidIDPattern(id, ret) {
@@ -1140,6 +1272,7 @@ func deleteBlock(c *gin.Context) {
 
 	transactions := []*model.Transaction{
 		{
+			Notebook: storeBoxID,
 			DoOperations: []*model.Operation{
 				{
 					Action: "delete",

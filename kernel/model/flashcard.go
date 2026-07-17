@@ -17,6 +17,7 @@
 package model
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -345,7 +346,7 @@ func getTreeSubTreeFlashcards(rootID string) (ret []riff.Card) {
 	return
 }
 
-func getTreeFlashcards(rootID string) (ret []riff.Card) {
+func getTreeFlashcardsInBox(rootID, boxID string) (ret []riff.Card) {
 	deck := Decks[builtinDeckID]
 	if nil == deck {
 		return
@@ -353,7 +354,7 @@ func getTreeFlashcards(rootID string) (ret []riff.Card) {
 
 	var allBlockIDs []string
 	deckBlockIDs := deck.GetBlockIDs()
-	treeBlockIDsMap, _ := getTreeBlocks(rootID)
+	treeBlockIDsMap, _ := getTreeBlocksInBox(rootID, boxID)
 	for _, blockID := range deckBlockIDs {
 		if treeBlockIDsMap[blockID] {
 			allBlockIDs = append(allBlockIDs, blockID)
@@ -503,7 +504,10 @@ func ReviewFlashcard(deckID, cardID string, rating riff.Rating, reviewedCardIDs 
 		return
 	}
 
-	_, unreviewedCount, _, _ := getDueFlashcards(deckID, reviewedCardIDs)
+	_, unreviewedCount, _, _, dueErr := getDueFlashcards(deckID, reviewedCardIDs)
+	if nil != dueErr {
+		return dueErr
+	}
 	if 1 > unreviewedCount {
 		// 该卡包中没有待复习的卡片了，说明最后一张卡片已经复习完了，清空撤销缓存和跳过缓存
 		reviewCardCache = map[string]riff.Card{}
@@ -532,6 +536,7 @@ type Flashcard struct {
 	DeckID     string                 `json:"deckID"`
 	CardID     string                 `json:"cardID"`
 	BlockID    string                 `json:"blockID"`
+	NotebookID string                 `json:"notebookId"`
 	Lapses     int                    `json:"lapses"`
 	Reps       int                    `json:"reps"`
 	State      riff.State             `json:"state"`
@@ -539,7 +544,12 @@ type Flashcard struct {
 	NextDues   map[riff.Rating]string `json:"nextDues"`
 }
 
-func newFlashcard(card riff.Card, deckID string, now time.Time) *Flashcard {
+func newFlashcard(card riff.Card, deckID string, now time.Time) (*Flashcard, error) {
+	blockTree := getBlockTreeInContentStore(card.BlockID(), "")
+	if nil == blockTree {
+		return nil, fmt.Errorf("%w: %s", ErrBlockNotFound, card.BlockID())
+	}
+
 	nextDues := map[riff.Rating]string{}
 	for rating, due := range card.NextDues() {
 		nextDues[rating] = strings.TrimSpace(util.HumanizeDiffTime(due, now, Conf.Lang))
@@ -549,12 +559,13 @@ func newFlashcard(card riff.Card, deckID string, now time.Time) *Flashcard {
 		DeckID:     deckID,
 		CardID:     card.ID(),
 		BlockID:    card.BlockID(),
+		NotebookID: blockTree.BoxID,
 		Lapses:     card.GetLapses(),
 		Reps:       card.GetReps(),
 		State:      card.GetState(),
 		LastReview: card.GetLastReview().UnixMilli(),
 		NextDues:   nextDues,
-	}
+	}, nil
 }
 
 func GetNotebookDueFlashcards(boxID string, reviewedCardIDs []string) (ret []*Flashcard, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount int, err error) {
@@ -598,7 +609,12 @@ func GetNotebookDueFlashcards(boxID string, reviewedCardIDs []string) (ret []*Fl
 	cards, unreviewedCnt, unreviewedNewCardCnt, unreviewedOldCardCnt := getDeckDueCards(deck, reviewedCardIDs, treeBlockIDs, Conf.Flashcard.NewCardLimit, Conf.Flashcard.ReviewCardLimit, Conf.Flashcard.ReviewMode)
 	now := time.Now()
 	for _, card := range cards {
-		ret = append(ret, newFlashcard(card, builtinDeckID, now))
+		var flashcard *Flashcard
+		flashcard, err = newFlashcard(card, builtinDeckID, now)
+		if nil != err {
+			return
+		}
+		ret = append(ret, flashcard)
 	}
 	if 1 > len(ret) {
 		ret = []*Flashcard{}
@@ -643,7 +659,12 @@ func GetTreeDueFlashcards(rootID string, reviewedCardIDs []string) (ret []*Flash
 	cards, unreviewedCnt, unreviewedNewCardCnt, unreviewedOldCardCnt := getDeckDueCards(deck, reviewedCardIDs, treeBlockIDs, newCardLimit, reviewCardLimit, Conf.Flashcard.ReviewMode)
 	now := time.Now()
 	for _, card := range cards {
-		ret = append(ret, newFlashcard(card, builtinDeckID, now))
+		var flashcard *Flashcard
+		flashcard, err = newFlashcard(card, builtinDeckID, now)
+		if nil != err {
+			return
+		}
+		ret = append(ret, flashcard)
 	}
 	if 1 > len(ret) {
 		ret = []*Flashcard{}
@@ -669,9 +690,14 @@ func getTreeSubTreeChildBlocks(rootID string) (treeBlockIDsMap map[string]bool, 
 	return
 }
 
-func getTreeBlocks(rootID string) (treeBlockIDsMap map[string]bool, treeBlockIDs []string) {
+func getTreeBlocksInBox(rootID, boxID string) (treeBlockIDsMap map[string]bool, treeBlockIDs []string) {
 	treeBlockIDsMap = map[string]bool{}
-	bts := treenode.GetBlockTreesByRootID(rootID)
+	var bts []*treenode.BlockTree
+	if boxID == "" {
+		bts = treenode.GetBlockTreesByRootID(rootID)
+	} else {
+		bts = treenode.GetBlockTreesByRootIDInBox(rootID, boxID)
+	}
 	for _, bt := range bts {
 		treeBlockIDsMap[bt.ID] = true
 		treeBlockIDs = append(treeBlockIDs, bt.ID)
@@ -696,15 +722,15 @@ func GetDueFlashcards(deckID string, reviewedCardIDs []string) (ret []*Flashcard
 	waitForSyncingStorages()
 
 	if "" == deckID {
-		ret, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount = getAllDueFlashcards(reviewedCardIDs)
+		ret, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount, err = getAllDueFlashcards(reviewedCardIDs)
 		return
 	}
 
-	ret, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount = getDueFlashcards(deckID, reviewedCardIDs)
+	ret, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount, err = getDueFlashcards(deckID, reviewedCardIDs)
 	return
 }
 
-func getDueFlashcards(deckID string, reviewedCardIDs []string) (ret []*Flashcard, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount int) {
+func getDueFlashcards(deckID string, reviewedCardIDs []string) (ret []*Flashcard, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount int, err error) {
 	deck := Decks[deckID]
 	if nil == deck {
 		logging.LogWarnf("deck not found [%s]", deckID)
@@ -714,7 +740,12 @@ func getDueFlashcards(deckID string, reviewedCardIDs []string) (ret []*Flashcard
 	cards, unreviewedCnt, unreviewedNewCardCnt, unreviewedOldCardCnt := getDeckDueCards(deck, reviewedCardIDs, nil, Conf.Flashcard.NewCardLimit, Conf.Flashcard.ReviewCardLimit, Conf.Flashcard.ReviewMode)
 	now := time.Now()
 	for _, card := range cards {
-		ret = append(ret, newFlashcard(card, deckID, now))
+		var flashcard *Flashcard
+		flashcard, err = newFlashcard(card, deckID, now)
+		if nil != err {
+			return
+		}
+		ret = append(ret, flashcard)
 	}
 	if 1 > len(ret) {
 		ret = []*Flashcard{}
@@ -725,7 +756,7 @@ func getDueFlashcards(deckID string, reviewedCardIDs []string) (ret []*Flashcard
 	return
 }
 
-func getAllDueFlashcards(reviewedCardIDs []string) (ret []*Flashcard, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount int) {
+func getAllDueFlashcards(reviewedCardIDs []string) (ret []*Flashcard, unreviewedCount, unreviewedNewCardCount, unreviewedOldCardCount int, err error) {
 	now := time.Now()
 	for _, deck := range Decks {
 		if deck.ID != builtinDeckID {
@@ -739,7 +770,12 @@ func getAllDueFlashcards(reviewedCardIDs []string) (ret []*Flashcard, unreviewed
 		unreviewedNewCardCount += unreviewedNewCardCnt
 		unreviewedOldCardCount += unreviewedOldCardCnt
 		for _, card := range cards {
-			ret = append(ret, newFlashcard(card, deck.ID, now))
+			var flashcard *Flashcard
+			flashcard, err = newFlashcard(card, deck.ID, now)
+			if nil != err {
+				return
+			}
+			ret = append(ret, flashcard)
 		}
 	}
 	if 1 > len(ret) {
@@ -836,7 +872,7 @@ func (tx *Transaction) removeBlocksDeckAttr(blockIDs []string, deckID string) (e
 		tx.writeTree(tree)
 
 		cache.PutBlockIALInBox(blockID, tree.Box, parse.IAL2Map(node.KramdownIAL))
-		pushBlockAttrs(oldAttrs, node)
+		pushBlockAttrs(oldAttrs, node, tx.Notebook)
 	}
 
 	return
@@ -934,7 +970,7 @@ func (tx *Transaction) doAddFlashcards(operation *Operation) (ret *TxErr) {
 		tx.writeTree(tree)
 
 		cache.PutBlockIALInBox(blockID, tree.Box, parse.IAL2Map(node.KramdownIAL))
-		pushBlockAttrs(oldAttrs, node)
+		pushBlockAttrs(oldAttrs, node, tx.Notebook)
 	}
 
 	deck := Decks[deckID]

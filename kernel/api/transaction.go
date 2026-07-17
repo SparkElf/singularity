@@ -71,12 +71,42 @@ func performTransactions(c *gin.Context) {
 		ret.Msg = "parses request failed"
 		return
 	}
-	for _, transaction := range transactions {
+	var contentStore string
+	for i, transaction := range transactions {
+		if notebookErr := validateTransactionNotebook(transaction); notebookErr != nil {
+			ret.Code = -1
+			ret.Msg = notebookErr.Error()
+			return
+		}
+		if i == 0 {
+			contentStore = transaction.Notebook
+		} else if transaction.Notebook != contentStore {
+			ret.Code = -1
+			ret.Msg = "all transactions in one request must use the same content store"
+			return
+		}
 		transaction.Timestamp = timestamp
 		transaction.MarkFromAPI() // 标记来自 HTTP 入口，供全局撤销日志捕获判别
 	}
+	if len(transactions) > 0 && transactions[0].Notebook != "" {
+		if err = registerEncryptedTransactionResponse(c, transactions[0].Notebook); err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
+	}
 
 	model.PerformTransactions(&transactions)
+	for _, transaction := range transactions {
+		if commitErr := transaction.WaitForCommit(); err == nil && commitErr != nil {
+			err = commitErr
+		}
+	}
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = "transaction failed: " + err.Error()
+		return
+	}
 
 	ret.Data = transactions
 
@@ -92,16 +122,72 @@ func performTransactions(c *gin.Context) {
 	c.Header("Server-Timing", fmt.Sprintf("total;dur=%d", elapsed))
 }
 
+func validateTransactionNotebook(transaction *model.Transaction) error {
+	if transaction == nil {
+		return fmt.Errorf("transaction is required")
+	}
+	if transaction.Notebook == "" {
+		return nil
+	}
+	notebook, err := encryptedNotebookFromArg(map[string]any{"notebook": transaction.Notebook})
+	if err != nil {
+		return err
+	}
+	transaction.Notebook = notebook
+	return nil
+}
+
+func ensureEncryptedTransactionNotebookUnlocked(notebook string) error {
+	if notebook != "" && !model.IsBoxUnlocked(notebook) {
+		return fmt.Errorf("encrypted notebook is locked, please unlock it first")
+	}
+	return nil
+}
+
+var transactionBeforeResponseRegistrationHook func(notebook string)
+
+func registerEncryptedTransactionResponse(c *gin.Context, notebook string) error {
+	if notebook == "" {
+		return nil
+	}
+	if transactionBeforeResponseRegistrationHook != nil {
+		transactionBeforeResponseRegistrationHook(notebook)
+	}
+	if err := RegisterEncryptedResponse(c, notebook); err != nil {
+		return err
+	}
+	return ensureEncryptedTransactionNotebookUnlocked(notebook)
+}
+
+func encryptedTransactionNotebookForResponse(c *gin.Context, arg map[string]any) (string, error) {
+	notebook, err := encryptedNotebookFromArg(arg)
+	if err != nil {
+		return "", err
+	}
+	if err = registerEncryptedTransactionResponse(c, notebook); err != nil {
+		return "", err
+	}
+	return notebook, nil
+}
+
 func pushTransactions(app, session string, transactions []*model.Transaction) {
 	pushMode := util.PushModeBroadcastExcludeSelf
-	if 0 < len(transactions) && 0 < len(transactions[0].DoOperations) {
-		model.FlushTxQueue() // 等待文件写入完成，后续渲染才能读取到最新的数据
-
-		action := transactions[0].DoOperations[0].Action
-		isAttrViewTx := strings.Contains(strings.ToLower(action), "attrview")
-		if isAttrViewTx && "setAttrViewName" != action {
-			pushMode = util.PushModeBroadcast
+	for _, tx := range transactions {
+		for _, operation := range tx.DoOperations {
+			action := operation.Action
+			isAttrViewTx := strings.Contains(strings.ToLower(action), "attrview")
+			if isAttrViewTx && "setAttrViewName" != action {
+				pushMode = util.PushModeBroadcast
+				break
+			}
 		}
+	}
+	for _, tx := range transactions {
+		tx.WaitForCommit()
+	}
+	notebook := ""
+	if len(transactions) > 0 {
+		notebook = transactions[0].Notebook
 	}
 
 	evt := util.NewCmdResult("transactions", 0, pushMode)
@@ -115,15 +201,11 @@ func pushTransactions(app, session string, transactions []*model.Transaction) {
 	}
 	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
 
-	for _, tx := range transactions {
-		tx.WaitForCommit()
-	}
-
 	// 附带每个 rootID 的撤销/重做可用状态，供前端本地镜像同步（多窗口/多端按钮态）
 	// 必须在 WaitForCommit 之后读取，确保 Record 已完成，状态含最新条目
 	undoStates := map[string]map[string]bool{}
 	for _, rootID := range rootIDs {
-		canUndo, canRedo, _ := model.GlobalUndoLog.State(rootID)
+		canUndo, canRedo, _ := model.GlobalUndoLog.State(notebook, rootID)
 		undoStates[rootID] = map[string]bool{
 			"canUndo": canUndo,
 			"canRedo": canRedo,
@@ -154,8 +236,14 @@ func undoState(c *gin.Context) {
 	) {
 		return
 	}
+	notebook, err := encryptedTransactionNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
-	canUndo, canRedo, peekMutatedRootIDs := model.GlobalUndoLog.State(rootID)
+	canUndo, canRedo, peekMutatedRootIDs := model.GlobalUndoLog.State(notebook, rootID)
 	ret.Data = map[string]any{
 		"canUndo":            canUndo,
 		"canRedo":            canRedo,
@@ -185,51 +273,42 @@ func performUndo(c *gin.Context) {
 	) {
 		return
 	}
-
-	entry := model.GlobalUndoLog.Undo(rootID)
-	if nil == entry {
-		// 栈空，无可撤销
-		ret.Data = map[string]any{
-			"canUndo": false,
-			"canRedo": false,
-		}
+	notebook, err := encryptedTransactionNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
-	tx := &model.Transaction{
-		Timestamp:      time.Now().UnixMilli(),
-		DoOperations:   entry.UndoOperationsForReplay(),
-		UndoOperations: entry.DoOperationsForReplay(),
-	}
-	tx.MarkReplay()
-	// 重放前解决剪切后粘贴造成的块 ID 冲突（已存在的 ID 换新，避免重复）
-	model.ResolveReplayDuplicateIds(tx)
-
-	if err := model.PerformTxSync(tx); nil != err {
-		// 逆操作执行失败，回滚执行栈。返回 code=0 + data.failed=true（而非 code=-1），
-		// 否则前端 processMessage 拦截导致 fetchPost 回调不执行、isUndoing 永不复位。
-		model.GlobalUndoLog.UndoRollback(entry, rootID)
+	replay, err := model.PerformUndoSync(notebook, rootID)
+	if err != nil {
+		// 返回 code=0 + data.failed=true，保证前端撤销状态机能消费失败并复位。
 		ret.Data = map[string]any{
 			"failed": true,
 			"msg":    "undo failed: " + err.Error(),
 		}
 		return
 	}
+	if replay.Transaction == nil {
+		// 栈空，无可撤销
+		ret.Data = map[string]any{
+			"canUndo": replay.CanUndo,
+			"canRedo": replay.CanRedo,
+		}
+		return
+	}
 
-	// 成功：联动从其它关联栈移除该 entry
-	model.GlobalUndoLog.UndoCommit(entry, rootID)
-
-	crossDoc := len(entry.MutatedRootIDs()) > 1
+	tx := replay.Transaction
+	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 
-	canUndo, canRedo, _ := model.GlobalUndoLog.State(rootID)
 	// 返回重放后（已解决 ID 冲突）的 tx 操作，前端乐观应用与 kernel 落盘一致
 	ret.Data = map[string]any{
 		"doOperations":   tx.DoOperations,
 		"undoOperations": tx.UndoOperations,
-		"mutatedRootIDs": entry.MutatedRootIDs(),
-		"canUndo":        canUndo,
-		"canRedo":        canRedo,
+		"mutatedRootIDs": replay.MutatedRootIDs,
+		"canUndo":        replay.CanUndo,
+		"canRedo":        replay.CanRedo,
 		"isUndo":         true,
 	}
 }
@@ -252,54 +331,45 @@ func performRedo(c *gin.Context) {
 	) {
 		return
 	}
-
-	entry := model.GlobalUndoLog.Redo(rootID)
-	if nil == entry {
-		ret.Data = map[string]any{
-			"canUndo": false,
-			"canRedo": false,
-		}
+	notebook, err := encryptedTransactionNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
-	tx := &model.Transaction{
-		Timestamp:      time.Now().UnixMilli(),
-		DoOperations:   entry.DoOperationsForReplay(),
-		UndoOperations: entry.UndoOperationsForReplay(),
-	}
-	tx.MarkReplay()
-	// 重放前解决剪切后粘贴造成的块 ID 冲突（已存在的 ID 换新，避免重复）
-	model.ResolveReplayDuplicateIds(tx)
-
-	if err := model.PerformTxSync(tx); nil != err {
-		// 重做失败，回滚执行栈。返回 code=0 + data.failed=true（避免前端 isUndoing 死锁）。
-		model.GlobalUndoLog.RedoRollback(entry, rootID)
+	replay, err := model.PerformRedoSync(notebook, rootID)
+	if err != nil {
 		ret.Data = map[string]any{
 			"failed": true,
 			"msg":    "redo failed: " + err.Error(),
 		}
 		return
 	}
+	if replay.Transaction == nil {
+		ret.Data = map[string]any{
+			"canUndo": replay.CanUndo,
+			"canRedo": replay.CanRedo,
+		}
+		return
+	}
 
-	// 成功：联动把 entry 重新挂到其它关联栈
-	model.GlobalUndoLog.RedoCommit(entry, rootID)
-
-	crossDoc := len(entry.MutatedRootIDs()) > 1
+	tx := replay.Transaction
+	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 
-	canUndo, canRedo, _ := model.GlobalUndoLog.State(rootID)
 	// 返回重放后（已解决 ID 冲突）的 tx 操作，前端乐观应用与 kernel 落盘一致
 	ret.Data = map[string]any{
 		"doOperations":   tx.DoOperations,
 		"undoOperations": tx.UndoOperations,
-		"mutatedRootIDs": entry.MutatedRootIDs(),
-		"canUndo":        canUndo,
-		"canRedo":        canRedo,
+		"mutatedRootIDs": replay.MutatedRootIDs,
+		"canUndo":        replay.CanUndo,
+		"canRedo":        replay.CanRedo,
 		"isUndo":         false,
 	}
 }
 
-// clearHistory 清理撤销日志。rootID 非空时清该文档栈并联动移除其它栈相关条目；为空时清空全部。
+// clearHistory 清理指定内容库的撤销日志。rootID 非空时清该文档栈并联动移除其它栈相关条目。
 func clearHistory(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
@@ -313,8 +383,18 @@ func clearHistory(c *gin.Context) {
 	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("rootID", &rootID, false, false)) {
 		return
 	}
+	notebook, err := encryptedTransactionNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
-	model.GlobalUndoLog.Clear(rootID)
+	if rootID == "" {
+		model.GlobalUndoLog.ClearStore(notebook)
+		return
+	}
+	model.GlobalUndoLog.Clear(notebook, rootID)
 }
 
 // pushUndoTransactions 广播 undo/redo 重放事务。
@@ -339,6 +419,13 @@ func pushUndoTransactions(app, session string, transactions []*model.Transaction
 	evt.AppId = app
 	evt.SessionId = session
 	evt.Data = transactions
+	for _, tx := range transactions {
+		tx.WaitForCommit()
+	}
+	notebook := ""
+	if len(transactions) > 0 {
+		notebook = transactions[0].Notebook
+	}
 
 	var rootIDs []string
 	for _, tx := range transactions {
@@ -348,7 +435,7 @@ func pushUndoTransactions(app, session string, transactions []*model.Transaction
 
 	undoStates := map[string]map[string]bool{}
 	for _, rootID := range rootIDs {
-		canUndo, canRedo, _ := model.GlobalUndoLog.State(rootID)
+		canUndo, canRedo, _ := model.GlobalUndoLog.State(notebook, rootID)
 		undoStates[rootID] = map[string]bool{
 			"canUndo": canUndo,
 			"canRedo": canRedo,
@@ -360,8 +447,5 @@ func pushUndoTransactions(app, session string, transactions []*model.Transaction
 		"isUndoReplay": isReplay,
 	}
 
-	for _, tx := range transactions {
-		tx.WaitForCommit()
-	}
 	util.PushEvent(evt)
 }

@@ -154,16 +154,6 @@ func GetDocsInfo(blockIDs []string, queryRefCount bool, queryAv bool) (rets []*B
 
 	trees := filesys.LoadTrees(blockIDs)
 	bts := treenode.GetBlockTrees(blockIDs)
-	for _, id := range blockIDs {
-		if _, ok := bts[id]; !ok {
-			for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-				if encBT := treenode.GetBlockTreeInBox(id, encBoxID); nil != encBT {
-					bts[id] = encBT
-					break
-				}
-			}
-		}
-	}
 	for _, blockID := range blockIDs {
 		tree := trees[blockID]
 		if nil == tree {
@@ -435,11 +425,19 @@ func queryBlockRefDefsInBox(bt *treenode.BlockTree, boxID string) (refDefs []*Re
 }
 
 func GetBlockRefIDsByFileAnnotationID(id string) []string {
-	return sql.QueryRefIDsByAnnotationID(id)
+	return GetBlockRefIDsByFileAnnotationIDInBox(id, "")
+}
+
+func GetBlockRefIDsByFileAnnotationIDInBox(id, boxID string) []string {
+	return sql.QueryRefIDsByAnnotationIDInBox(id, boxID)
 }
 
 func GetBlockDefIDsByRefText(refText string) (ret []string) {
-	ret = sql.QueryBlockDefIDsByRefText(refText)
+	return GetBlockDefIDsByRefTextInBox(refText, "")
+}
+
+func GetBlockDefIDsByRefTextInBox(refText, boxID string) (ret []string) {
+	ret = sql.QueryBlockDefIDsByRefTextInBox(refText, boxID)
 	sort.Sort(sort.Reverse(sort.StringSlice(ret)))
 	if 1 > len(ret) {
 		ret = []string{}
@@ -448,7 +446,11 @@ func GetBlockDefIDsByRefText(refText string) (ret []string) {
 }
 
 func GetBlockIndex(id string) (ret int) {
-	tree, _ := LoadTreeByBlockID(id)
+	return GetBlockIndexInBox(id, "")
+}
+
+func GetBlockIndexInBox(id, boxID string) (ret int) {
+	tree, _ := loadTreeByBlockIDInBox(id, boxID)
 	if nil == tree {
 		return
 	}
@@ -480,12 +482,16 @@ func GetBlockIndex(id string) (ret int) {
 }
 
 func GetBlocksIndexes(ids []string) (ret map[string]int) {
+	return GetBlocksIndexesInBox(ids, "")
+}
+
+func GetBlocksIndexesInBox(ids []string, boxID string) (ret map[string]int) {
 	ret = map[string]int{}
 	if 1 > len(ids) {
 		return
 	}
 
-	tree, _ := LoadTreeByBlockID(ids[0])
+	tree, _ := loadTreeByBlockIDInBox(ids[0], boxID)
 	if nil == tree {
 		return
 	}

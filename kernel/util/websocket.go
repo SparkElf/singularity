@@ -35,10 +35,18 @@ var (
 	sessions     = sync.Map{} // {appId, {sessionId, session}}
 	authSessions = sync.Map{}
 
-	// ReloadDocInfoGuard 由 model 层注入，在广播 docInfo 前检查 box 是否仍处于可广播状态。
-	// 加密笔记本锁定后返回 false，防止 500ms 延迟任务在锁定后泄漏明文元数据。
-	ReloadDocInfoGuard func(boxID string) bool
+	// ContentStoreBroadcastExecutor 由 model 层注入。它在加密内容库的生命周期
+	// 读锁内复查解锁状态并执行短广播，使 LockBox 与延迟事件线性化。
+	ContentStoreBroadcastExecutor func(boxID string, broadcast func())
 )
+
+func ExecuteContentStoreBroadcast(boxID string, broadcast func()) {
+	if boxID == "" || ContentStoreBroadcastExecutor == nil {
+		broadcast()
+		return
+	}
+	ContentStoreBroadcastExecutor(boxID, broadcast)
+}
 
 func BroadcastByTypeAndExcludeApp(excludeApp, typ, cmd string, code int, msg string, data any) {
 	sessions.Range(func(key, value any) bool {
@@ -349,33 +357,31 @@ func PushSaveDoc(rootID, typ string, sources any) {
 }
 
 func PushReloadDocInfo(docInfo map[string]any) {
-	// 加密笔记本锁定后丢弃延迟广播，避免泄漏明文元数据（title/alias/memo/bookmark）
-	if ReloadDocInfoGuard != nil {
-		if boxID, ok := docInfo["box"].(string); ok && boxID != "" {
-			if !ReloadDocInfoGuard(boxID) {
-				return
-			}
-		}
-	}
-	BroadcastByType("filetree", "reloadDocInfo", 0, "", docInfo)
+	boxID, _ := docInfo["box"].(string)
+	ExecuteContentStoreBroadcast(boxID, func() {
+		BroadcastByType("filetree", "reloadDocInfo", 0, "", docInfo)
+	})
 }
 
-func PushReloadProtyle(rootID string) {
-	BroadcastByType("protyle", "reload", 0, "", rootID)
+func PushReloadProtyle(rootID, notebook string) {
+	ExecuteContentStoreBroadcast(notebook, func() {
+		BroadcastByType("protyle", "reload", 0, "", map[string]any{
+			"rootID":   rootID,
+			"notebook": notebook,
+		})
+	})
 }
 
 func PushSetRefDynamicText(rootID, blockID, defBlockID, refText, boxID string) {
-	// 加密笔记本锁定后丢弃延迟广播，避免泄漏明文 refText
-	if ReloadDocInfoGuard != nil && boxID != "" {
-		if !ReloadDocInfoGuard(boxID) {
-			return
-		}
-	}
-	BroadcastByType("main", "setRefDynamicText", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "defBlockID": defBlockID, "refText": refText})
+	ExecuteContentStoreBroadcast(boxID, func() {
+		BroadcastByType("main", "setRefDynamicText", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "defBlockID": defBlockID, "refText": refText, "boxID": boxID})
+	})
 }
 
-func PushSetDefRefCount(rootID, blockID string, defIDs []string, refCount, rootRefCount int) {
-	BroadcastByType("main", "setDefRefCount", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "refCount": refCount, "rootRefCount": rootRefCount, "defIDs": defIDs})
+func PushSetDefRefCount(rootID, blockID string, defIDs []string, refCount, rootRefCount int, boxID string) {
+	ExecuteContentStoreBroadcast(boxID, func() {
+		BroadcastByType("main", "setDefRefCount", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "refCount": refCount, "rootRefCount": rootRefCount, "defIDs": defIDs, "boxID": boxID})
+	})
 }
 
 func PushProtyleLoading(rootID, msg string) {

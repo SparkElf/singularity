@@ -37,7 +37,7 @@ func init() {
 	register(WebSearchTool)
 }
 
-func webSearchHandler(args map[string]any) (CallToolResult, error) {
+func webSearchHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	query, _ := args["query"].(string)
 
 	result, err := util.WebSearch(query, "")

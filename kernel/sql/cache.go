@@ -32,12 +32,22 @@ import (
 
 var cacheDisabled = true
 
+var blockCacheStateMu sync.Mutex
+var blockCacheEpoch uint64
+
+// blockCacheAfterQueryHook 仅用于并发合同测试，在块查询完成后、尝试写回缓存前暂停。
+var blockCacheAfterQueryHook func(id string)
+
 func enableCache() {
+	blockCacheStateMu.Lock()
 	cacheDisabled = false
+	blockCacheStateMu.Unlock()
 }
 
 func disableCache() {
+	blockCacheStateMu.Lock()
 	cacheDisabled = true
+	blockCacheStateMu.Unlock()
 }
 
 var blockCache, _ = ristretto.NewCache(&ristretto.Config{
@@ -59,24 +69,52 @@ type blockCacheEntry struct {
 	block *Block
 }
 
-// blockCacheKey 为加密笔记本使用 box 维度缓存键；普通笔记本保持原有全局键，避免影响既有查询路径。
-func blockCacheKey(id, boxID string) string {
+func contentStoreBoxID(boxID string) string {
 	if IsEncryptedBoxFn != nil && IsEncryptedBoxFn(boxID) {
-		return boxID + "\x00" + id
+		return boxID
+	}
+	return ""
+}
+
+// blockCacheKey 为加密笔记本使用 box 维度缓存键；普通笔记本统一使用全局内容库键。
+func blockCacheKey(id, boxID string) string {
+	if contentStore := contentStoreBoxID(boxID); contentStore != "" {
+		return contentStore + "\x00" + id
 	}
 	return id
 }
 
 func ClearCache() {
+	clearBlockCache()
+	clearRefCache()
+}
+
+func clearBlockCache() {
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
+	blockCacheEpoch++
 	blockCache.Clear()
 	blockCacheKeysMu.Lock()
 	blockCacheKeys = map[string]map[string]struct{}{}
 	blockCacheKeysMu.Unlock()
-	clearRefCache()
 }
 
 func putBlockCache(block *Block) {
-	if cacheDisabled {
+	putBlockCacheAtEpoch(block, 0, false)
+}
+
+func blockCacheQueryEpoch() uint64 {
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
+	return blockCacheEpoch
+}
+
+func putBlockCacheFromQuery(block *Block, queryEpoch uint64) {
+	putBlockCacheAtEpoch(block, queryEpoch, true)
+}
+
+func putBlockCacheAtEpoch(block *Block, queryEpoch uint64, requireCurrentEpoch bool) {
+	if block == nil {
 		return
 	}
 
@@ -87,6 +125,12 @@ func putBlockCache(block *Block) {
 	}
 	cloned.Content = strings.ReplaceAll(cloned.Content, search.SearchMarkLeft, "")
 	cloned.Content = strings.ReplaceAll(cloned.Content, search.SearchMarkRight, "")
+
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
+	if cacheDisabled || (requireCurrentEpoch && queryEpoch != blockCacheEpoch) {
+		return
+	}
 	key := blockCacheKey(cloned.ID, cloned.Box)
 	addBlockCacheKey(cloned.ID, key)
 	if !blockCache.Set(key, &blockCacheEntry{key: key, block: cloned}, 1) {
@@ -99,6 +143,8 @@ func getBlockCache(id string) (ret *Block) {
 }
 
 func getBlockCacheInBox(id, boxID string) (ret *Block) {
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
 	if cacheDisabled {
 		return
 	}
@@ -113,6 +159,25 @@ func getBlockCacheInBox(id, boxID string) (ret *Block) {
 }
 
 func removeBlockCache(id string) {
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
+	blockCacheEpoch++
+	removeBlockCacheEntry(id)
+}
+
+func removeBlockCacheEntries(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	blockCacheStateMu.Lock()
+	defer blockCacheStateMu.Unlock()
+	blockCacheEpoch++
+	for _, id := range ids {
+		removeBlockCacheEntry(id)
+	}
+}
+
+func removeBlockCacheEntry(id string) {
 	blockCacheKeysMu.Lock()
 	keys := blockCacheKeys[id]
 	delete(blockCacheKeys, id)
@@ -120,7 +185,6 @@ func removeBlockCache(id string) {
 	for key := range keys {
 		blockCache.Del(key)
 	}
-	removeRefCacheByDefID(id)
 }
 
 func addBlockCacheKey(id, key string) {
@@ -146,9 +210,15 @@ func removeBlockCacheKey(id, key string) {
 }
 
 var defIDRefsCache = gcache.New(30*time.Minute, 5*time.Minute)
+var refCacheMu sync.Mutex
+var refCacheEpoch uint64
+var refCacheVersions = map[string]uint64{}
+
+// refCacheAfterQueryHook 仅用于并发合同测试，在冷查询完成后、尝试写回缓存前暂停。
+var refCacheAfterQueryHook func(key string)
 
 func refCacheKey(defBlockID, boxID string) string {
-	return boxID + "\x00" + defBlockID
+	return contentStoreBoxID(boxID) + "\x00" + defBlockID
 }
 
 func GetRefsCacheByDefID(defID string) (ret []*Ref) {
@@ -156,23 +226,33 @@ func GetRefsCacheByDefID(defID string) (ret []*Ref) {
 }
 
 func GetRefsCacheByDefIDInBox(defID, boxID string) (ret []*Ref) {
-	key := refCacheKey(defID, boxID)
-	for k, refs := range defIDRefsCache.Items() {
-		if k == key {
-			for _, ref := range refs.Object.(map[string]*Ref) {
-				ret = append(ret, ref)
-			}
+	contentStore := contentStoreBoxID(boxID)
+	key := refCacheKey(defID, contentStore)
+	refCacheMu.Lock()
+	if refs, ok := defIDRefsCache.Get(key); ok {
+		for _, ref := range refs.(map[string]*Ref) {
+			ret = append(ret, ref)
 		}
+		refCacheMu.Unlock()
+		return
 	}
-	if 1 > len(ret) {
-		allRefs := QueryRefsByDefID(defID, false)
-		for _, ref := range allRefs {
-			// 按 box 过滤：boxID 非空时只选同 box 的 Ref，boxID 为空时全部保留
-			if boxID == "" || ref.Box == boxID {
-				ret = append(ret, ref)
-				putRefCache(boxID, ref)
-			}
+	epoch, version := refCacheEpoch, refCacheVersions[key]
+	refCacheMu.Unlock()
+
+	ret = QueryRefsByDefIDInBox(defID, false, contentStore)
+	if refCacheAfterQueryHook != nil {
+		refCacheAfterQueryHook(key)
+	}
+	if len(ret) > 0 {
+		refsByBlock := make(map[string]*Ref, len(ret))
+		for _, ref := range ret {
+			refsByBlock[ref.BlockID] = ref
 		}
+		refCacheMu.Lock()
+		if refCacheEpoch == epoch && refCacheVersions[key] == version {
+			defIDRefsCache.SetDefault(key, refsByBlock)
+		}
+		refCacheMu.Unlock()
 	}
 	return
 }
@@ -184,6 +264,9 @@ func CacheRef(tree *parse.Tree, refNode *ast.Node) {
 
 func putRefCache(boxID string, ref *Ref) {
 	key := refCacheKey(ref.DefBlockID, boxID)
+	refCacheMu.Lock()
+	defer refCacheMu.Unlock()
+	refCacheVersions[key]++
 	defBlockRefs, ok := defIDRefsCache.Get(key)
 	if !ok {
 		defBlockRefs = map[string]*Ref{}
@@ -192,10 +275,18 @@ func putRefCache(boxID string, ref *Ref) {
 	defIDRefsCache.SetDefault(key, defBlockRefs)
 }
 
-func removeRefCacheByDefID(defID string) {
-	defIDRefsCache.Delete(refCacheKey(defID, ""))
+func removeRefCacheByDefIDInBox(defID, boxID string) {
+	key := refCacheKey(defID, boxID)
+	refCacheMu.Lock()
+	refCacheVersions[key]++
+	defIDRefsCache.Delete(key)
+	refCacheMu.Unlock()
 }
 
 func clearRefCache() {
+	refCacheMu.Lock()
+	defer refCacheMu.Unlock()
+	refCacheEpoch++
+	refCacheVersions = map[string]uint64{}
 	defIDRefsCache.Flush()
 }

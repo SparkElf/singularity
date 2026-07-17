@@ -52,7 +52,7 @@ func init() {
 	register(InboxTool)
 }
 
-func inboxHandler(args map[string]any) (CallToolResult, error) {
+func inboxHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":

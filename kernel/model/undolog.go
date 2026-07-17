@@ -32,10 +32,17 @@ import (
 // 会以同一指针同时挂在这些 rootID 的栈上，撤销任一端时联动其它端移除引用。
 type UndoEntry struct {
 	id             string
+	notebook       string
 	doOperations   []*Operation
 	undoOperations []*Operation
 	timestamp      int64
 	mutatedRootIDs []string // 真正被写盘修改的树 rootID，联动与跨文档判定用
+}
+
+// Notebook returns the authoritative content-store identity captured with the
+// original transaction.
+func (e *UndoEntry) Notebook() string {
+	return e.notebook
 }
 
 // DoOperationsForReplay 返回正向操作副本，供 redo 重放构造事务。
@@ -65,10 +72,15 @@ type undoStack struct {
 	hasUndo   bool // 复现前端 hasUndo 状态机：undo 后置 true，add 时若 true 则清 redo
 }
 
-// UndoLog 是全局撤销日志，按 rootID 分栈，所有窗口/客户端共享同一权威。
+type undoStackKey struct {
+	notebook string
+	rootID   string
+}
+
+// UndoLog 是全局撤销日志，按内容库和 rootID 分栈，所有窗口/客户端共享同一权威。
 type UndoLog struct {
 	mu     sync.Mutex
-	stacks map[string]*undoStack
+	stacks map[undoStackKey]*undoStack
 	max    int
 }
 
@@ -79,7 +91,7 @@ var undoEntrySeq uint64
 
 func newUndoLog(max int) *UndoLog {
 	return &UndoLog{
-		stacks: map[string]*undoStack{},
+		stacks: map[undoStackKey]*undoStack{},
 		max:    max,
 	}
 }
@@ -89,17 +101,18 @@ func newUndoEntryID() string {
 	return fmt.Sprintf("undo-%d-%d", time.Now().UnixNano(), seq)
 }
 
-// stack 返回 rootID 对应的栈，不存在则返回 nil。
-func (l *UndoLog) stack(rootID string) *undoStack {
-	return l.stacks[rootID]
+// stack 返回内容库和 rootID 对应的栈，不存在则返回 nil。
+func (l *UndoLog) stack(notebook, rootID string) *undoStack {
+	return l.stacks[undoStackKey{notebook: notebook, rootID: rootID}]
 }
 
-// stackOrCreate 返回 rootID 对应的栈，不存在则新建。
-func (l *UndoLog) stackOrCreate(rootID string) *undoStack {
-	s := l.stacks[rootID]
+// stackOrCreate 返回内容库和 rootID 对应的栈，不存在则新建。
+func (l *UndoLog) stackOrCreate(notebook, rootID string) *undoStack {
+	key := undoStackKey{notebook: notebook, rootID: rootID}
+	s := l.stacks[key]
 	if nil == s {
 		s = &undoStack{}
-		l.stacks[rootID] = s
+		l.stacks[key] = s
 	}
 	return s
 }
@@ -122,6 +135,7 @@ func (l *UndoLog) Record(tx *Transaction) {
 
 	entry := &UndoEntry{
 		id:             newUndoEntryID(),
+		notebook:       tx.Notebook,
 		doOperations:   cloneOperations(tx.DoOperations),
 		undoOperations: cloneOperations(tx.UndoOperations),
 		timestamp:      time.Now().UnixMilli(),
@@ -129,7 +143,7 @@ func (l *UndoLog) Record(tx *Transaction) {
 	}
 
 	for _, rootID := range rootIDs {
-		s := l.stackOrCreate(rootID)
+		s := l.stackOrCreate(tx.Notebook, rootID)
 		s.undoStack = append(s.undoStack, entry)
 		if s.hasUndo {
 			s.redoStack = nil
@@ -141,26 +155,26 @@ func (l *UndoLog) Record(tx *Transaction) {
 	}
 }
 
-// Peek 返回 rootID 撤销栈顶（不弹出），栈空返回 nil。
-func (l *UndoLog) Peek(rootID string) *UndoEntry {
+// Peek 返回内容库中 rootID 撤销栈顶（不弹出），栈空返回 nil。
+func (l *UndoLog) Peek(notebook, rootID string) *UndoEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s || 0 == len(s.undoStack) {
 		return nil
 	}
 	return s.undoStack[len(s.undoStack)-1]
 }
 
-// Undo 弹出 rootID 撤销栈顶，压入执行栈重做栈，置 hasUndo。仅动执行栈，不做联动移除。
+// Undo 弹出内容库中 rootID 撤销栈顶，压入执行栈重做栈，置 hasUndo。仅动执行栈，不做联动移除。
 // 成功执行逆操作后调 UndoCommit 完成联动；失败调 UndoRollback 精确回滚（因只动了执行栈）。
 // 返回弹出的 entry；栈空返回 nil。
-func (l *UndoLog) Undo(rootID string) *UndoEntry {
+func (l *UndoLog) Undo(notebook, rootID string) *UndoEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s || 0 == len(s.undoStack) {
 		return nil
 	}
@@ -177,7 +191,7 @@ func (l *UndoLog) Undo(rootID string) *UndoEntry {
 }
 
 // UndoCommit 在逆操作成功执行后，联动从其它关联栈移除该 entry（按 id 匹配）。
-func (l *UndoLog) UndoCommit(entry *UndoEntry, rootID string) {
+func (l *UndoLog) UndoCommit(entry *UndoEntry, notebook, rootID string) {
 	if nil == entry {
 		return
 	}
@@ -188,20 +202,20 @@ func (l *UndoLog) UndoCommit(entry *UndoEntry, rootID string) {
 		if r == rootID {
 			continue
 		}
-		l.removeEntry(r, entry.id)
+		l.removeEntry(notebook, r, entry.id)
 	}
 }
 
 // UndoRollback 在逆操作执行失败时回滚执行栈：把 entry 从重做栈移回撤销栈顶，复位 hasUndo。
 // 因 Undo 只动了执行栈，此回滚精确无误。
-func (l *UndoLog) UndoRollback(entry *UndoEntry, rootID string) {
+func (l *UndoLog) UndoRollback(entry *UndoEntry, notebook, rootID string) {
 	if nil == entry {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s {
 		return
 	}
@@ -216,11 +230,11 @@ func (l *UndoLog) UndoRollback(entry *UndoEntry, rootID string) {
 
 // Redo 弹出 rootID 重做栈顶，压回执行栈撤销栈。仅动执行栈，不做联动重挂。
 // 不改 hasUndo（复现前端 redo 的不对称）。成功后调 RedoCommit；失败调 RedoRollback。
-func (l *UndoLog) Redo(rootID string) *UndoEntry {
+func (l *UndoLog) Redo(notebook, rootID string) *UndoEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s || 0 == len(s.redoStack) {
 		return nil
 	}
@@ -232,7 +246,7 @@ func (l *UndoLog) Redo(rootID string) *UndoEntry {
 }
 
 // RedoCommit 在重做成功执行后，联动把 entry 重新挂到其它关联栈顶。
-func (l *UndoLog) RedoCommit(entry *UndoEntry, rootID string) {
+func (l *UndoLog) RedoCommit(entry *UndoEntry, notebook, rootID string) {
 	if nil == entry {
 		return
 	}
@@ -243,7 +257,7 @@ func (l *UndoLog) RedoCommit(entry *UndoEntry, rootID string) {
 		if r == rootID {
 			continue
 		}
-		rs := l.stackOrCreate(r)
+		rs := l.stackOrCreate(notebook, r)
 		rs.undoStack = append(rs.undoStack, entry)
 		if l.max < len(rs.undoStack) {
 			rs.undoStack = rs.undoStack[len(rs.undoStack)-l.max:]
@@ -253,14 +267,14 @@ func (l *UndoLog) RedoCommit(entry *UndoEntry, rootID string) {
 
 // RedoRollback 在重做执行失败时回滚执行栈：把 entry 从撤销栈移回重做栈顶。
 // 因 Redo 只动了执行栈，此回滚精确无误。
-func (l *UndoLog) RedoRollback(entry *UndoEntry, rootID string) {
+func (l *UndoLog) RedoRollback(entry *UndoEntry, notebook, rootID string) {
 	if nil == entry {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s {
 		return
 	}
@@ -275,12 +289,12 @@ func (l *UndoLog) RedoRollback(entry *UndoEntry, rootID string) {
 	}
 }
 
-// State 返回 rootID 的撤销/重做可用性及栈顶关联的 mutatedRootIDs。
-func (l *UndoLog) State(rootID string) (canUndo, canRedo bool, peekMutatedRootIDs []string) {
+// State 返回内容库中 rootID 的撤销/重做可用性及栈顶关联的 mutatedRootIDs。
+func (l *UndoLog) State(notebook, rootID string) (canUndo, canRedo bool, peekMutatedRootIDs []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	s := l.stack(rootID)
+	s := l.stack(notebook, rootID)
 	if nil == s {
 		return
 	}
@@ -294,17 +308,18 @@ func (l *UndoLog) State(rootID string) (canUndo, canRedo bool, peekMutatedRootID
 	return
 }
 
-// Clear 清理撤销日志。rootID 非空时清该文档栈并联动移除其它栈中相关条目；为空时清空全部。
-func (l *UndoLog) Clear(rootID string) {
+// Clear 清理指定内容库的撤销日志。rootID 非空时清该文档栈并联动移除其它栈中相关条目。
+func (l *UndoLog) Clear(notebook, rootID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if "" == rootID {
-		l.stacks = map[string]*undoStack{}
+		l.clearStoreLocked(notebook)
 		return
 	}
 
-	s := l.stacks[rootID]
+	key := undoStackKey{notebook: notebook, rootID: rootID}
+	s := l.stacks[key]
 	if nil == s {
 		return
 	}
@@ -324,19 +339,36 @@ func (l *UndoLog) Clear(rootID string) {
 			}
 		}
 	}
-	delete(l.stacks, rootID)
-	for otherID, other := range l.stacks {
+	delete(l.stacks, key)
+	for otherKey, other := range l.stacks {
+		if otherKey.notebook != notebook {
+			continue
+		}
 		for id := range linkedIDs {
 			other.undoStack = removeEntryByID(other.undoStack, id)
 			other.redoStack = removeEntryByID(other.redoStack, id)
 		}
-		_ = otherID
 	}
 }
 
-// removeEntry 从 rootID 栈中按 id 移除一条 entry（撤销联动用）。
-func (l *UndoLog) removeEntry(rootID, id string) {
-	s := l.stacks[rootID]
+// ClearStore 清除一个内容库的全部撤销历史，不影响其它内容库。
+func (l *UndoLog) ClearStore(notebook string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.clearStoreLocked(notebook)
+}
+
+func (l *UndoLog) clearStoreLocked(notebook string) {
+	for key := range l.stacks {
+		if key.notebook == notebook {
+			delete(l.stacks, key)
+		}
+	}
+}
+
+// removeEntry 从指定内容库的 rootID 栈中按 id 移除一条 entry（撤销联动用）。
+func (l *UndoLog) removeEntry(notebook, rootID, id string) {
+	s := l.stacks[undoStackKey{notebook: notebook, rootID: rootID}]
 	if nil == s {
 		return
 	}
@@ -416,7 +448,7 @@ func ResolveReplayDuplicateIds(tx *Transaction) {
 	for id := range ids {
 		idList = append(idList, id)
 	}
-	exist := treenode.ExistBlockTrees(idList)
+	exist := treenode.ExistBlockTreesInBox(idList, tx.Notebook)
 
 	// 已存在的 ID 生成替换
 	replacements := map[string]string{}

@@ -453,10 +453,23 @@ func SubTypeAbbr(n *ast.Node) string {
 var DynamicRefTexts = sync.Map{}
 
 func dynamicRefTextsKey(defBlockID, boxID string) string {
-	return boxID + "\x00" + defBlockID
+	contentStore := ""
+	if IsEncryptedBoxFn != nil && IsEncryptedBoxFn(boxID) {
+		contentStore = boxID
+	}
+	return contentStore + "\x00" + defBlockID
 }
 
 func SetDynamicBlockRefText(blockRef *ast.Node, refText string) {
+	boxID := ""
+	if blockRef != nil {
+		boxID = blockRef.Box
+	}
+	SetDynamicBlockRefTextInBox(blockRef, refText, boxID)
+}
+
+// SetDynamicBlockRefTextInBox 更新动态锚文本，并将缓存限定在指定内容库。
+func SetDynamicBlockRefTextInBox(blockRef *ast.Node, refText, boxID string) {
 	if !IsBlockRef(blockRef) {
 		return
 	}
@@ -479,21 +492,11 @@ func SetDynamicBlockRefText(blockRef *ast.Node, refText string) {
 
 	// 偶发编辑文档标题后引用处的动态锚文本不更新 https://github.com/siyuan-note/siyuan/issues/5891
 	defID := blockRef.TextMarkBlockRefID
-	DynamicRefTexts.Store(defID, refText)
-	// 同时以 box-aware key 存储（如果节点有 box 上下文）
-	if blockRef.Box != "" {
-		DynamicRefTexts.Store(dynamicRefTextsKey(defID, blockRef.Box), refText)
-	}
+	DynamicRefTexts.Store(dynamicRefTextsKey(defID, boxID), refText)
 }
 
 func GetDynamicRefText(defBlockID, boxID string) string {
-	if boxID != "" {
-		if v, ok := DynamicRefTexts.Load(dynamicRefTextsKey(defBlockID, boxID)); ok {
-			return v.(string)
-		}
-	}
-	// 回退到无 boxID 的旧 key（兼容旧数据/无 box 上下文的调用）
-	if v, ok := DynamicRefTexts.Load(defBlockID); ok {
+	if v, ok := DynamicRefTexts.Load(dynamicRefTextsKey(defBlockID, boxID)); ok {
 		return v.(string)
 	}
 	return ""
@@ -501,7 +504,7 @@ func GetDynamicRefText(defBlockID, boxID string) string {
 
 // RemoveDynamicRefTexts 删除指定 box 的所有动态引用锚文本缓存。
 func RemoveDynamicRefTexts(boxID string) {
-	prefix := boxID + "\x00"
+	prefix := dynamicRefTextsKey("", boxID)
 	DynamicRefTexts.Range(func(k, _ any) bool {
 		if key, ok := k.(string); ok {
 			if strings.HasPrefix(key, prefix) {

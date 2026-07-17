@@ -17,6 +17,7 @@
 package api
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -283,7 +284,8 @@ func openNotebook(c *gin.Context) {
 				startID = guideStartID[notebook]
 				if treenode.ExistBlockTree(startID) {
 					util.BroadcastByTypeAndApp("main", app, "openFileById", 0, "", map[string]any{
-						"id": startID,
+						"id":         startID,
+						"notebookId": notebook,
 					})
 					break
 				}
@@ -305,7 +307,10 @@ func closeNotebook(c *gin.Context) {
 	if util.InvalidIDPattern(notebook, ret) {
 		return
 	}
-	model.Unmount(notebook)
+	if err := model.Unmount(notebook); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+	}
 }
 
 func getNotebookConf(c *gin.Context) {
@@ -530,9 +535,12 @@ func createEncryptedNotebook(c *gin.Context) {
 	// 创建时 DEK 已缓存 + 加密 db 已打开，此处直接挂载；失败则锁定回滚，避免 DEK 残留
 	existed, err := model.Mount(id)
 	if err != nil {
-		model.LockBox(id)
 		ret.Code = -1
-		ret.Msg = err.Error()
+		if lockErr := model.LockBox(id); lockErr != nil {
+			ret.Msg = fmt.Sprintf("%s; rollback lock failed: %s", err, lockErr)
+		} else {
+			ret.Msg = err.Error()
+		}
 		return
 	}
 
@@ -637,17 +645,22 @@ func unlockAndOpenNotebook(c *gin.Context) {
 	defer util.PushClearMsg(msgId)
 	existed, err := model.Mount(notebook)
 	if err != nil {
-		model.LockBox(notebook)
 		ret.Code = -1
-		ret.Msg = err.Error()
+		if lockErr := model.LockBox(notebook); lockErr != nil {
+			ret.Msg = fmt.Sprintf("%s; rollback lock failed: %s", err, lockErr)
+		} else {
+			ret.Msg = err.Error()
+		}
 		return
 	}
 
 	box := model.Conf.Box(notebook)
 	if nil == box {
-		model.LockBox(notebook)
 		ret.Code = -1
 		ret.Msg = "opened notebook [" + notebook + "] not found"
+		if lockErr := model.LockBox(notebook); lockErr != nil {
+			ret.Msg += "; rollback lock failed: " + lockErr.Error()
+		}
 		return
 	}
 
@@ -686,7 +699,10 @@ func lockNotebook(c *gin.Context) {
 
 	// Unmount 内部的 unmount0 会清 DEK + 关闭加密 db，无需单独 LockBox。
 	// 反过来若先 LockBox 会关闭 db，导致 Unmount 的 Unindex 操作无 db 可用。
-	model.Unmount(notebook)
+	if err := model.Unmount(notebook); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+	}
 }
 
 // setNotebookCryptoAutoLock 设置加密笔记本自动锁定闲置分钟数。

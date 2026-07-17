@@ -66,14 +66,22 @@ var serveCmd = &cobra.Command{
 		model.InitConf()
 		go server.Serve(false, model.Conf.CookieKey)
 		model.InitAppearance()
-		sql.InitDatabase(false)
+		if err := sql.InitDatabase(false); err != nil {
+			logging.LogErrorf("initialize database failed: %s", err)
+			util.PushErrMsg(err.Error(), 0)
+			return
+		}
 		sql.InitHistoryDatabase(false)
 		sql.InitAssetContentDatabase(false)
 		sql.SetCaseSensitive(model.Conf.Search.CaseSensitive)
 		sql.SetIndexAssetPath(model.Conf.Search.IndexAssetPath)
 
 		model.BootSyncData()
-		model.InitBoxes()
+		if err := model.InitBoxes(); err != nil {
+			logging.LogErrorf("initialize notebooks failed: %s", err)
+			util.PushErrMsg(err.Error(), 0)
+			return
+		}
 		model.LoadFlashcards()
 		util.LoadAssetsTexts()
 

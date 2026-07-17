@@ -811,16 +811,17 @@ func FilterLocalStorageByPublishAccess(publishAccess PublishAccess, localStorage
 	}
 	docInfoItem := ret["local-docinfo"]
 	if docInfoItem != nil {
-		docInfo := docInfoItem.(map[string]any)
-		if docInfo != nil {
-			idItem := docInfo["id"]
-			if idItem != nil {
-				id := idItem.(string)
-				bt := treenode.GetBlockTree(id)
-				if bt != nil {
-					if !CheckPathAccessableByPublishIgnore(bt.BoxID, bt.Path, publishIgnore) {
-						docInfo["id"] = ""
-					}
+		if docInfo, ok := docInfoItem.(map[string]any); ok {
+			id, idOK := docInfo["id"].(string)
+			notebookID, notebookOK := docInfo["notebookId"].(string)
+			if !idOK || !notebookOK || id == "" || notebookID == "" {
+				docInfo["id"] = ""
+				docInfo["notebookId"] = ""
+			} else {
+				bt := treenode.GetBlockTreeInBox(id, notebookID)
+				if bt == nil || bt.BoxID != notebookID || !CheckPathAccessableByPublishIgnore(bt.BoxID, bt.Path, publishIgnore) {
+					docInfo["id"] = ""
+					docInfo["notebookId"] = ""
 				}
 			}
 		}
@@ -860,8 +861,8 @@ func FilterRecentDocsByPublishAccess(c *gin.Context, publishAccess PublishAccess
 	ret = []*RecentDoc{}
 	publishIgnore := GetInvisiblePublishAccess(publishAccess)
 	for _, recentDoc := range recentDocs {
-		bt := treenode.GetBlockTree(recentDoc.RootID)
-		if bt != nil {
+		_, bt, err := resolveRecentDocIdentity(recentDoc.RootID, recentDoc.NotebookID)
+		if err == nil && bt != nil {
 			passwordID, password := GetPathPasswordByPublishAccess(bt.BoxID, bt.Path, publishAccess)
 			if CheckPathAccessableByPublishIgnore(bt.BoxID, bt.Path, publishIgnore) && (passwordID == "" || CheckPublishAuthCookie(c, passwordID, password)) {
 				ret = append(ret, recentDoc)

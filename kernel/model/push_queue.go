@@ -35,11 +35,12 @@ import (
 )
 
 type pushEntry struct {
-	Action string `json:"action"`
-	Box    string `json:"box,omitempty"`
-	Path   string `json:"path,omitempty"`
-	ID     string `json:"id,omitempty"`
-	Title  string `json:"title,omitempty"`
+	Action   string `json:"action"`
+	Box      string `json:"box,omitempty"`
+	Notebook string `json:"notebook,omitempty"`
+	Path     string `json:"path,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Title    string `json:"title,omitempty"`
 }
 
 var (
@@ -74,12 +75,12 @@ func AppendPushReloadDocInfoEntry(box, p string) {
 	appendPushEntry(pushEntry{Action: "reloadDocInfo", Box: box, Path: p})
 }
 
-func AppendPushReloadProtyleEntry(id string) {
-	appendPushEntry(pushEntry{Action: "reloadProtyle", ID: id})
+func AppendPushReloadProtyleEntry(id, notebook string) {
+	appendPushEntry(pushEntry{Action: "reloadProtyle", ID: id, Notebook: notebook})
 }
 
-func AppendPushReloadAttrViewEntry(avID string) {
-	appendPushEntry(pushEntry{Action: "reloadAttrView", ID: avID})
+func AppendPushReloadAttrViewEntry(avID, notebook string) {
+	appendPushEntry(pushEntry{Action: "reloadAttrView", ID: avID, Notebook: notebook})
 }
 
 func AppendPushReloadUIEntry() {
@@ -176,15 +177,15 @@ func PollPushQueue() {
 			cache.RemoveDocIAL(e.Path)
 			cache.RemoveTreeData(tree.Root.ID)
 		case "reloadProtyle":
-			bt := treenode.GetBlockTree(e.ID)
+			bt := treenode.GetBlockTreeInBox(e.ID, e.Notebook)
 			if bt != nil {
-				cache.RemoveTreeData(bt.RootID)
-				cache.RemoveBlockIAL(e.ID)
-				util.PushReloadProtyle(bt.RootID)
+				cache.RemoveTreeDataInBox(bt.RootID, e.Notebook)
+				cache.RemoveBlockIALInBox(e.ID, e.Notebook)
+				util.PushReloadProtyle(bt.RootID, e.Notebook)
 			}
 		case "reloadAttrView":
-			cache.RemoveAVData(e.ID)
-			util.BroadcastByType("protyle", "refreshAttributeView", 0, "", map[string]any{"id": e.ID})
+			cache.RemoveAVDataInBox(e.ID, e.Notebook)
+			pushReloadAttrView(e.ID, e.Notebook)
 		case "reloadUI":
 			util.ReloadUI()
 		case "reloadFiletree":

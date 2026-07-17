@@ -89,8 +89,10 @@ func insertBlocks(tx *sql.Tx, blocks []*Block, context map[string]any) (err erro
 func insertBlocks0(tx *sql.Tx, bulk []*Block, context map[string]any) (err error) {
 	valueStrings := make([]string, 0, len(bulk))
 	valueArgs := make([]any, 0, len(bulk)*strings.Count(BlocksPlaceholder, "?"))
+	blockIDs := make([]string, 0, len(bulk))
 	hashBuf := bytes.Buffer{}
 	for _, b := range bulk {
+		blockIDs = append(blockIDs, b.ID)
 		valueStrings = append(valueStrings, BlocksPlaceholder)
 		valueArgs = append(valueArgs, b.ID)
 		valueArgs = append(valueArgs, b.ParentID)
@@ -113,7 +115,6 @@ func insertBlocks0(tx *sql.Tx, bulk []*Block, context map[string]any) (err error
 		valueArgs = append(valueArgs, b.Sort)
 		valueArgs = append(valueArgs, b.Created)
 		valueArgs = append(valueArgs, b.Updated)
-		putBlockCache(b)
 
 		hashBuf.WriteString(b.Hash)
 	}
@@ -122,6 +123,7 @@ func insertBlocks0(tx *sql.Tx, bulk []*Block, context map[string]any) (err error
 	if err = prepareExecInsertTx(tx, stmt, valueArgs); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 	hashBuf.WriteString("blocks")
 	evtHash := fmt.Sprintf("%x", sha256.Sum256(hashBuf.Bytes()))[:7]
 	// 使用下面的 EvtSQLInsertBlocksFTS 就可以了
@@ -369,11 +371,14 @@ func insertRefs0(tx *sql.Tx, bulk []*Ref) (err error) {
 		valueArgs = append(valueArgs, ref.Content)
 		valueArgs = append(valueArgs, ref.Markdown)
 		valueArgs = append(valueArgs, ref.Type)
-
-		putRefCache(ref.Box, ref)
 	}
 	stmt := fmt.Sprintf("INSERT INTO refs (id, def_block_id, def_block_parent_id, def_block_root_id, def_block_path, block_id, root_id, box, path, content, markdown, type) VALUES %s", strings.Join(valueStrings, ","))
-	err = prepareExecInsertTx(tx, stmt, valueArgs)
+	if err = prepareExecInsertTx(tx, stmt, valueArgs); err != nil {
+		return
+	}
+	for _, ref := range bulk {
+		registerRefCacheInvalidation(tx, refCacheIdentity{defBlockID: ref.DefBlockID, boxID: ref.Box})
+	}
 	return
 }
 
@@ -427,10 +432,10 @@ func insertFileAnnotationRefs0(tx *sql.Tx, bulk []*FileAnnotationRef) (err error
 }
 
 func indexTree(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err error) {
-	blocks, spans, assets, attributes := fromTree(tree.Root, tree)
-	refs, fileAnnotationRefs := refsFromTree(tree)
-	err = insertTree0(tx, tree, context, blocks, spans, assets, attributes, refs, fileAnnotationRefs)
-	return
+	// Durable queue replay may execute an index operation whose database
+	// transaction committed immediately before the queue prefix was removed.
+	// Reuse the idempotent replacement path so replay cannot duplicate rows.
+	return upsertTree(tx, tree, context)
 }
 
 func upsertTree(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err error) {

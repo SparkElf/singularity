@@ -44,6 +44,12 @@ func copyStdMarkdown(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
+	boxID, scopeErr := declaredNotebookForResponse(c, arg)
+	if scopeErr != nil {
+		ret.Code = -1
+		ret.Msg = scopeErr.Error()
+		return
+	}
 	assetsDestSpace2Underscore := false
 	if nil != arg["assetsDestSpace2Underscore"] {
 		assetsDestSpace2Underscore = arg["assetsDestSpace2Underscore"].(bool)
@@ -64,9 +70,14 @@ func copyStdMarkdown(c *gin.Context) {
 		imgTag = arg["imgTag"].(bool)
 	}
 
-	markdownContent := model.ExportStdMarkdown(id, assetsDestSpace2Underscore, fillCSSVar, adjustHeadingLevel, imgTag)
+	markdownContent, err := model.ExportStdMarkdownInBox(id, assetsDestSpace2Underscore, fillCSSVar, adjustHeadingLevel, imgTag, boxID)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	if model.IsReadOnlyRoleContext(c) {
-		bt := treenode.GetBlockTree(id)
+		bt := treenode.GetBlockTreeInBox(id, boxID)
 		if bt != nil {
 			publishAccess := model.GetPublishAccess()
 			markdownContent = model.FilterContentByPublishAccess(c, publishAccess, bt.BoxID, bt.Path, markdownContent, true)

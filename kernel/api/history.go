@@ -35,9 +35,8 @@ func searchHistory(c *gin.Context) {
 		return
 	}
 
-	var notebook, query, op string
+	var query, op string
 	if !util.ParseJsonArgs(arg, ret,
-		util.BindJsonArg("notebook", &notebook, false, false),
 		util.BindJsonArg("query", &query, false, false),
 		util.BindJsonArg("op", &op, false, false),
 	) {
@@ -59,7 +58,18 @@ func searchHistory(c *gin.Context) {
 		}
 		page = int(pageVal)
 	}
-	histories, pageCount, totalCount := model.FullTextSearchHistory(query, notebook, op, typ, page)
+	notebook, err := historyNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	histories, pageCount, totalCount, err := model.FullTextSearchHistory(query, notebook, op, typ, page)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	ret.Data = map[string]any{
 		"histories":  histories,
 		"pageCount":  pageCount,
@@ -76,10 +86,9 @@ func getHistoryItems(c *gin.Context) {
 		return
 	}
 
-	var created, notebook, query, op string
+	var created, query, op string
 	if !util.ParseJsonArgs(arg, ret,
 		util.BindJsonArg("created", &created, true, true),
-		util.BindJsonArg("notebook", &notebook, false, false),
 		util.BindJsonArg("query", &query, false, false),
 		util.BindJsonArg("op", &op, false, false),
 	) {
@@ -93,10 +102,31 @@ func getHistoryItems(c *gin.Context) {
 		}
 		typ = int(typeVal)
 	}
-	histories := model.FullTextSearchHistoryItems(created, query, notebook, op, typ)
+	notebook, err := historyNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	histories, err := model.FullTextSearchHistoryItems(created, query, notebook, op, typ)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	ret.Data = map[string]any{
 		"items": histories,
 	}
+}
+
+func historyNotebookForResponse(c *gin.Context, arg map[string]any) (string, error) {
+	if _, provided := arg["notebook"]; !provided {
+		if err := RegisterAllEncryptedResponses(c); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	return declaredNotebookForResponse(c, arg)
 }
 
 func reindexHistory(c *gin.Context) {
@@ -145,6 +175,12 @@ func getDocHistoryContent(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := historicalNotebookForResponse(c, arg, false)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	var historyPath, keyword string
 	if !util.ParseJsonArgs(arg, ret,
@@ -161,7 +197,7 @@ func getDocHistoryContent(c *gin.Context) {
 		}
 		highlight = highlightVal
 	}
-	id, rootID, content, isLargeDoc, err := model.GetDocHistoryContent(historyPath, keyword, highlight)
+	id, rootID, content, isLargeDoc, err := model.GetDocHistoryContent(notebook, historyPath, keyword, highlight)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -191,7 +227,13 @@ func rollbackDocHistory(c *gin.Context) {
 	) {
 		return
 	}
-	err := model.RollbackDocHistory(historyPath)
+	notebook, err := historicalNotebookForResponse(c, arg, false)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	err = model.RollbackDocHistory(historyPath, notebook)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()

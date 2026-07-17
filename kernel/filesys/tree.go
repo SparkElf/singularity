@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,34 +50,6 @@ func LoadTrees(ids []string) (ret map[string]*parse.Tree) {
 	}
 
 	bts := treenode.GetBlockTrees(ids)
-
-	// 全局 blocktree 未命中的 id，遍历已打开的加密笔记本查找
-	foundSet := map[string]bool{}
-	for id := range bts {
-		foundSet[id] = true
-	}
-	var missing []string
-	for _, id := range ids {
-		if !foundSet[id] {
-			missing = append(missing, id)
-		}
-	}
-	if len(missing) > 0 {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if len(missing) == 0 {
-				break
-			}
-			encBTs := treenode.GetBlockTreesInBox(missing, encBoxID)
-			maps.Copy(bts, encBTs)
-			var stillMissing []string
-			for _, id := range missing {
-				if _, found := encBTs[id]; !found {
-					stillMissing = append(stillMissing, id)
-				}
-			}
-			missing = stillMissing
-		}
-	}
 
 	luteEngine := util.NewLute()
 	var boxIDs []string
@@ -169,13 +140,22 @@ func ValidateBoxRelativePath(boxID, p string) (string, error) {
 }
 
 func LoadTreeWithFix(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, needFix bool, err error) {
+	if boxUsesEncryption(boxID) && DEKLockAcquire != nil {
+		DEKLockAcquire(boxID)
+		defer DEKLockRelease(boxID)
+		return loadTreeWithFix(boxID, p, luteEngine, true)
+	}
+	return loadTreeWithFix(boxID, p, luteEngine, false)
+}
+
+func loadTreeWithFix(boxID, p string, luteEngine *lute.Lute, boxLockHeld bool) (ret *parse.Tree, needFix bool, err error) {
 	if _, err = ValidateBoxRelativePath(boxID, p); err != nil {
 		logging.LogErrorf("invalid tree path [%s] for box [%s]: %s", p, boxID, err)
 		return
 	}
 	rootID := util.GetTreeID(p)
 	if raw, ok := cache.GetTreeDataInBox(rootID, boxID); ok {
-		ret, err = LoadTreeByData(raw, boxID, p, luteEngine)
+		ret, err = loadTreeByData(raw, boxID, p, luteEngine, boxLockHeld)
 		return
 	}
 
@@ -187,17 +167,22 @@ func LoadTreeWithFix(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, n
 	}
 
 	// 加密笔记本的 .sy 是密文，读盘后解密成明文供后续解析；非加密笔记本原样返回
-	if data, err = decryptData(boxID, p, data); nil != err {
+	if boxLockHeld {
+		data, err = decryptDataInBoxLocked(boxID, p, data)
+	} else {
+		data, err = decryptData(boxID, p, data)
+	}
+	if nil != err {
 		logging.LogErrorf("decrypt tree [%s] failed: %s", p, err)
 		return
 	}
 
-	data, needFix, err = fixTreeJSONData(boxID, p, data, luteEngine)
+	data, needFix, err = fixTreeJSONData(boxID, p, data, luteEngine, boxLockHeld)
 	if nil != err {
 		return
 	}
 
-	ret, err = LoadTreeByData(data, boxID, p, luteEngine)
+	ret, err = loadTreeByData(data, boxID, p, luteEngine, boxLockHeld)
 	if nil == err {
 		cache.SetTreeDataInBox(rootID, boxID, data)
 	}
@@ -209,7 +194,18 @@ func LoadTree(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err erro
 	return
 }
 
+// LoadTreeInBoxLocked loads a tree while the caller holds the box lifecycle
+// read lock. It never acquires DEKLock again, including parent IAL loads.
+func LoadTreeInBoxLocked(boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
+	ret, _, err = loadTreeWithFix(boxID, p, luteEngine, true)
+	return
+}
+
 func LoadTreeByData(data []byte, boxID, p string, luteEngine *lute.Lute) (ret *parse.Tree, err error) {
+	return loadTreeByData(data, boxID, p, luteEngine, false)
+}
+
+func loadTreeByData(data []byte, boxID, p string, luteEngine *lute.Lute, boxLockHeld bool) (ret *parse.Tree, err error) {
 	ret, err = parseJSON2Tree(boxID, p, data, luteEngine)
 	if nil != err {
 		logging.LogErrorf("parse tree [%s] failed: %s", p, err)
@@ -247,15 +243,18 @@ func LoadTreeByData(data []byte, boxID, p string, luteEngine *lute.Lute) (ret *p
 		parentPath := parentAbsPath
 		parentAbsPath = filepath.Join(util.DataDir, boxID, parentAbsPath)
 
-		parentDocIAL := DocIAL(parentAbsPath)
+		parentDocIAL := docIAL(parentAbsPath, boxLockHeld)
 		if 1 > len(parentDocIAL) {
 			// 子文档缺失父文档时自动补全 https://github.com/siyuan-note/siyuan/issues/7376
 			parentTree := treenode.NewTree(boxID, parentPath, hPathBuilder.String()+"Untitled", "Untitled")
-			if _, writeErr := WriteTree(parentTree); nil != writeErr {
+			if _, writeErr := writeTree(parentTree, boxLockHeld); nil != writeErr {
 				logging.LogErrorf("rebuild parent tree [%s] failed: %s", parentAbsPath, writeErr)
 			} else {
 				logging.LogInfof("rebuilt parent tree [%s]", parentAbsPath)
-				treenode.UpsertBlockTree(parentTree)
+				if err = treenode.UpsertBlockTree(parentTree); err != nil {
+					err = fmt.Errorf("persist rebuilt parent blocktree [%s]: %w", parentPath, err)
+					return
+				}
 			}
 			hPathBuilder.WriteString("Untitled/")
 			continue
@@ -275,11 +274,21 @@ func LoadTreeByData(data []byte, boxID, p string, luteEngine *lute.Lute) (ret *p
 }
 
 func DocIAL(absPath string) (ret map[string]string) {
+	return docIAL(absPath, false)
+}
+
+func docIAL(absPath string, boxLockHeld bool) (ret map[string]string) {
 	// 加密笔记本的 .sy 是密文，流式 jsoniter 解析无法处理，需先整体读+解密。
 	// 反推 boxID：路径形如 <DataDir>/<boxID>/...；非加密笔记本走原流式逻辑。
 	boxID := docIALBoxID(absPath)
-	if boxID != "" && DEKProvider != nil {
-		if dek, err := DEKProvider(boxID); err == nil && dek != nil {
+	if boxID != "" {
+		usesEncryption := false
+		if boxLockHeld {
+			usesEncryption = boxUsesEncryptionInBoxLocked(boxID)
+		} else {
+			usesEncryption = boxUsesEncryption(boxID)
+		}
+		if usesEncryption {
 			// 已解锁的加密 box：整体读密文 → 解密 → 流式解析
 			// 注意：filelock.ReadFile 内部已加锁，不能在外面再 Lock/Unlock（会死锁）
 			raw, readErr := filelock.ReadFile(absPath)
@@ -288,7 +297,13 @@ func DocIAL(absPath string) (ret map[string]string) {
 				return nil
 			}
 			relPath := filepath.ToSlash(strings.TrimPrefix(absPath, filepath.Join(util.DataDir, boxID)+string(os.PathSeparator)))
-			plain, decErr := decryptData(boxID, relPath, raw)
+			var plain []byte
+			var decErr error
+			if boxLockHeld {
+				plain, decErr = decryptDataInBoxLocked(boxID, relPath, raw)
+			} else {
+				plain, decErr = decryptData(boxID, relPath, raw)
+			}
 			if decErr != nil {
 				// 解密失败（可能文件损坏或密钥不匹配）：返回空 map 而非 nil，
 				// 避免 LoadTreeByData 的父文档补全逻辑把 nil 误判为"文档缺失"而凭空创建文档
@@ -344,13 +359,28 @@ func TreeSize(tree *parse.Tree) (size uint64) {
 }
 
 func WriteTree(tree *parse.Tree) (size uint64, err error) {
+	return writeTree(tree, false)
+}
+
+// WriteTreeInBoxLocked 在调用方持有 box 生命周期读锁时写入树，整个过程不会递归获取该锁。
+func WriteTreeInBoxLocked(tree *parse.Tree) (size uint64, err error) {
+	return writeTree(tree, true)
+}
+
+func writeTree(tree *parse.Tree, boxLockHeld bool) (size uint64, err error) {
 	data, filePath, err := prepareWriteTree(tree)
 	if err != nil {
 		return
 	}
 
 	// 加密笔记本的落盘内容用密文 encData，缓存与比对仍用明文 data（缓存存明文）
-	encData, encErr := encryptData(tree.Box, tree.Path, data)
+	var encData []byte
+	var encErr error
+	if boxLockHeld {
+		encData, encErr = encryptDataInBoxLocked(tree.Box, tree.Path, data)
+	} else {
+		encData, encErr = encryptData(tree.Box, tree.Path, data)
+	}
 	if encErr != nil {
 		err = encErr
 		return
@@ -364,7 +394,13 @@ func WriteTree(tree *parse.Tree) (size uint64, err error) {
 	} else {
 		// 读盘比对：加密笔记本的磁盘数据是密文，需先解密成明文再与 data 比对
 		if diskData, readErr := filelock.ReadFile(filePath); nil == readErr {
-			decDisk, decErr := decryptData(tree.Box, tree.Path, diskData)
+			var decDisk []byte
+			var decErr error
+			if boxLockHeld {
+				decDisk, decErr = decryptDataInBoxLocked(tree.Box, tree.Path, diskData)
+			} else {
+				decDisk, decErr = decryptData(tree.Box, tree.Path, diskData)
+			}
 			if decErr == nil && len(decDisk) == len(data) && bytes.Equal(decDisk, data) {
 				cache.SetTreeDataInBox(tree.ID, tree.Box, data)
 				return
@@ -406,7 +442,9 @@ func prepareWriteTree(tree *parse.Tree) (data []byte, filePath string, err error
 		newP := treenode.NewParagraph("")
 		tree.Root.AppendChild(newP)
 		tree.Root.SetIALAttr("updated", util.TimeFromID(newP.ID))
-		treenode.UpsertBlockTree(tree)
+		if err = treenode.UpsertBlockTree(tree); err != nil {
+			return
+		}
 	}
 
 	treenode.UpgradeSpec(tree)
@@ -491,7 +529,7 @@ func afterWriteTree(tree *parse.Tree) {
 }
 
 // fixTreeJSONData 订正树 JSON 数据。
-func fixTreeJSONData(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (data []byte, needFix bool, err error) {
+func fixTreeJSONData(boxID, p string, jsonData []byte, luteEngine *lute.Lute, boxLockHeld bool) (data []byte, needFix bool, err error) {
 	jsonData, needFix = removeUnescapedUnicodeNull(jsonData)
 	ret, parseNeedFix, err := dataparser.ParseJSON(jsonData, luteEngine.ParseOptions)
 	if parseNeedFix {
@@ -522,7 +560,13 @@ func fixTreeJSONData(boxID, p string, jsonData []byte, luteEngine *lute.Lute) (d
 	}
 
 	if pathID := util.GetTreeID(p); pathID != ret.Root.ID {
-		if encryptedBox(boxID) {
+		var usesEncryption bool
+		if boxLockHeld {
+			usesEncryption = boxUsesEncryptionInBoxLocked(boxID)
+		} else {
+			usesEncryption = boxUsesEncryption(boxID)
+		}
+		if usesEncryption {
 			// 加密 .sy：基名 ID（pathID）必须与解密后的根块 ID 一致。不一致说明密文被替换、
 			// 文件名被篡改或 AAD 认证被绕过，不得静默修正——fail-closed，符合加密笔记本威胁模型。
 			err = fmt.Errorf("encrypted .sy [%s]: base id [%s] != root id [%s]", p, pathID, ret.Root.ID)

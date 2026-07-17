@@ -643,6 +643,13 @@ Move documents by `id`:
 
 ## Blocks
 
+The general block mutation endpoints (`insertBlock`, `batchInsertBlock`, `appendBlock`, `batchAppendBlock`, `prependBlock`,
+`batchPrependBlock`, `updateBlock`, `batchUpdateBlock`, `deleteBlock`, `moveBlock`, `moveOutlineHeading`, `foldBlock`,
+`unfoldBlock`, `updateTaskListItemMarker`, and `batchUpdateTaskListItemMarker`) accept an optional top-level `notebook` ID.
+Omit it to use the ordinary global content store; pass it when targeting an encrypted notebook. Batch APIs use one top-level
+`notebook` for the whole batch. Returned transactions carry the canonical content-store identity: the encrypted notebook ID,
+or an empty string for the ordinary global store.
+
 ### Insert blocks
 
 * `/api/block/insertBlock`
@@ -654,7 +661,8 @@ Move documents by `id`:
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "nextID": "",
     "previousID": "20211229114650-vrek5x6",
-    "parentID": ""
+    "parentID": "",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
@@ -663,6 +671,7 @@ Move documents by `id`:
     * `nextID`: The ID of the next block, used to anchor the insertion position
     * `previousID`: The ID of the previous block, used to anchor the insertion position
     * `parentID`: The ID of the parent block, used to anchor the insertion position
+    * `notebook`: Optional notebook ID that declares the target content store
 
   `nextID`, `previousID`, and `parentID` must have at least one value, using priority: `nextID` > `previousID` >
   `parentID`
@@ -702,13 +711,15 @@ Move documents by `id`:
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: The data type to be inserted, the value can be `markdown` or `dom`
     * `data`: Data to be inserted
     * `parentID`: The ID of the parent block, used to anchor the insertion position
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -745,13 +756,15 @@ Move documents by `id`:
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: The data type to be inserted, the value can be `markdown` or `dom`
     * `data`: Data to be inserted
     * `parentID`: The ID of the parent block, used to anchor the insertion position
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -788,13 +801,15 @@ Move documents by `id`:
   {
     "dataType": "markdown",
     "data": "foobarbaz",
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: The data type to be updated, the value can be `markdown` or `dom`
     * `data`: Data to be updated
     * `id`: ID of the block to be updated
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -828,11 +843,13 @@ Move documents by `id`:
 
   ```json
   {
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: ID of the block to be deleted
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -866,7 +883,8 @@ Move documents by `id`:
   {
     "id": "20230406180530-3o1rqkc",
     "previousID": "20230406152734-if5kyx6",
-    "parentID": "20230404183855-woe52ko"
+    "parentID": "20230404183855-woe52ko",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
@@ -874,6 +892,7 @@ Move documents by `id`:
     * `previousID`: The ID of the previous block, used to anchor the insertion position
     * `parentID`: The ID of the parent block, used to anchor the insertion position, `previousID` and `parentID` cannot
       be empty at the same time, if they exist at the same time, `previousID` will be used first
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -909,11 +928,13 @@ Move documents by `id`:
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: Block ID to fold
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json
@@ -931,11 +952,13 @@ Move documents by `id`:
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: Block ID to unfold
+    * `notebook`: Optional notebook ID that declares the target content store
 * Return value
 
   ```json

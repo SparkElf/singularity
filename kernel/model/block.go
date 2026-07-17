@@ -18,10 +18,12 @@ package model
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"html"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +39,8 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
+
+var ErrEncryptedCrossTreeSwap = errors.New("encrypted cross-tree block swap requires an atomic journal")
 
 // Block 描述了内容块。
 type Block struct {
@@ -113,7 +117,11 @@ type Path struct {
 }
 
 func CheckBlockRef(ids []string) bool {
-	bts := treenode.GetBlockTrees(ids)
+	return CheckBlockRefInBox(ids, "")
+}
+
+func CheckBlockRefInBox(ids []string, boxID string) bool {
+	bts := treenode.GetBlockTreesInBox(ids, boxID)
 
 	var rootIDs, blockIDs []string
 	for _, bt := range bts {
@@ -136,13 +144,13 @@ func CheckBlockRef(ids []string) bool {
 	}
 
 	for _, rootID := range rootIDs {
-		refCounts := sql.QueryRootChildrenRefCount(rootID)
+		refCounts := sql.QueryRootChildrenRefCountInBox(rootID, boxID)
 		if existRef(refCounts) {
 			return true
 		}
 	}
 
-	refCounts := sql.QueryRefCount(blockIDs)
+	refCounts := sql.QueryRefCountInBox(blockIDs, boxID)
 	if existRef(refCounts) {
 		return true
 	}
@@ -394,6 +402,37 @@ func GetUnfoldedParentID(id string) (parentID string) {
 	return
 }
 
+// GetUnfoldedParentIDInBox 在指定内容库内查找首个折叠标题父块，空 box 只查询全局内容库。
+func GetUnfoldedParentIDInBox(id, boxID string) (parentID string, err error) {
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, node, err := loadBlockInBox(id, boxID)
+	if err != nil {
+		return "", err
+	}
+
+	var firstFoldedParent *ast.Node
+	for parent := treenode.HeadingParent(node); nil != parent && ast.NodeDocument != parent.Type; parent = treenode.HeadingParent(parent) {
+		if "1" == parent.IALAttr("fold") {
+			firstFoldedParent = parent
+			parentID = firstFoldedParent.ID
+		} else {
+			if nil != firstFoldedParent {
+				parentID = firstFoldedParent.ID
+			} else {
+				parentID = id
+			}
+			return
+		}
+	}
+	if "" == parentID {
+		parentID = id
+	}
+	return
+}
+
 func IsBlockFolded(id string) (isFolded, isRoot bool) {
 	tree, _ := LoadTreeByBlockID(id)
 	if nil == tree {
@@ -419,6 +458,40 @@ func IsBlockFolded(id string) (isFolded, isRoot bool) {
 
 	}
 	return
+}
+
+// IsBlockFoldedInBox 在指定内容库内检查块及其祖先的折叠状态，空 box 只查询全局内容库。
+func IsBlockFoldedInBox(id, boxID string) (isFolded, isRoot bool, err error) {
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	tree, node, err := loadBlockInBox(id, boxID)
+	if err != nil {
+		return false, false, err
+	}
+	isRoot = tree.Root == node
+
+	for range 32 {
+		block, blockErr := getBlock(id, tree)
+		if blockErr != nil {
+			return false, false, blockErr
+		}
+		if block == nil {
+			return false, false, ErrBlockNotFound
+		}
+		if "1" == block.IAL["fold"] {
+			return true, isRoot, nil
+		}
+		if block.ParentID == "" {
+			if block.ID != tree.Root.ID {
+				return false, false, fmt.Errorf("block [%s] has no document root", block.ID)
+			}
+			return false, isRoot, nil
+		}
+		id = block.ParentID
+	}
+	return false, false, fmt.Errorf("block [%s] ancestry exceeds the supported depth", id)
 }
 
 func RecentUpdatedBlocks() (ret []*Block) {
@@ -490,7 +563,9 @@ func TransferBlockRef(fromID, toID string, refIDs []string) (err error) {
 		}
 	}
 
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		return
+	}
 	return
 }
 
@@ -500,30 +575,152 @@ func SwapBlockRef(refID, defID string, includeChildren bool) (err error) {
 		return
 	}
 	refNode := treenode.GetNodeInTree(refTree, refID)
-	if nil == refNode {
+	if refNode, err = normalizeSwapBlockNode(refNode, refID); err != nil {
 		return
-	}
-	if ast.NodeListItem == refNode.Parent.Type {
-		refNode = refNode.Parent
 	}
 	defTree, err := LoadTreeByBlockID(defID)
 	if err != nil {
 		return
 	}
-	sameTree := defTree.ID == refTree.ID
+	sameTree, err := swapBlockRef(refTree, defTree, refNode, defID, includeChildren)
+	if err != nil {
+		return err
+	}
+	if err = indexWriteTreeUpsertQueue(refTree); err != nil {
+		return err
+	}
+	if !sameTree {
+		if err = indexWriteTreeUpsertQueue(defTree); err != nil {
+			return err
+		}
+	}
+	if err = sql.FlushQueue(); err != nil {
+		return
+	}
+	FlushTxQueue()
+	util.ReloadUI()
+	return nil
+}
+
+// SwapBlockRefInBox 只在指定内容库内交换引用块和定义块，空 box 只查询全局内容库。
+func SwapBlockRefInBox(refID, defID string, includeChildren bool, boxID string) (err error) {
+	if boxID == "" {
+		refTree, refNode, loadErr := loadBlockInBox(refID, "")
+		if loadErr != nil {
+			return loadErr
+		}
+		refNode, err = normalizeSwapBlockNode(refNode, refID)
+		if err != nil {
+			return err
+		}
+		defTree, _, loadErr := loadBlockInBox(defID, "")
+		if loadErr != nil {
+			return loadErr
+		}
+		sameTree, swapErr := swapBlockRef(refTree, defTree, refNode, defID, includeChildren)
+		if swapErr != nil {
+			return swapErr
+		}
+		if err = indexWriteTreeUpsertQueue(refTree); err != nil {
+			return err
+		}
+		if !sameTree {
+			if err = indexWriteTreeUpsertQueue(defTree); err != nil {
+				return err
+			}
+		}
+		if err = sql.FlushQueue(); err != nil {
+			return err
+		}
+		FlushTxQueue()
+		util.ReloadUI()
+		return nil
+	}
+
+	acquireBoxOperationLock(boxID)
+	defer releaseBoxOperationLock(boxID)
+
+	refTree, refNode, err := loadBlockInBox(refID, boxID)
+	if err != nil {
+		return err
+	}
+	refNode, err = normalizeSwapBlockNode(refNode, refID)
+	if err != nil {
+		return err
+	}
+	defTree, _, err := loadBlockInBox(defID, boxID)
+	if err != nil {
+		return err
+	}
+	if refTree.ID != defTree.ID {
+		return fmt.Errorf("%w: [%s] and [%s]", ErrEncryptedCrossTreeSwap, refTree.ID, defTree.ID)
+	}
+	sameTree, err := swapBlockRef(refTree, defTree, refNode, defID, includeChildren)
+	if err != nil {
+		return err
+	}
+	if err = indexWriteTreeUpsertQueue(refTree); err != nil {
+		return err
+	}
+	if !sameTree {
+		if err = indexWriteTreeUpsertQueue(defTree); err != nil {
+			return err
+		}
+	}
+	if err = sql.FlushQueue(); err != nil {
+		return err
+	}
+	FlushTxQueue()
+	util.ReloadUI()
+	return nil
+}
+
+func normalizeSwapBlockNode(node *ast.Node, id string) (*ast.Node, error) {
+	if node == nil {
+		return nil, fmt.Errorf("%w: %s", ErrBlockNotFound, id)
+	}
+	if node.Parent == nil {
+		return nil, fmt.Errorf("root block [%s] cannot be swapped", id)
+	}
+	if !node.IsBlock() {
+		return nil, fmt.Errorf("block [%s] has unsupported node type [%s]", id, node.Type.String())
+	}
+	if ast.NodeListItem == node.Parent.Type {
+		node = node.Parent
+	}
+	if ast.NodeListItem == node.Type && (node.Parent == nil || ast.NodeList != node.Parent.Type || node.Parent.ListData == nil) {
+		return nil, fmt.Errorf("block [%s] has an unsupported list structure", id)
+	}
+	return node, nil
+}
+
+func swapBlockRef(refTree, defTree *parse.Tree, refNode *ast.Node, defID string, includeChildren bool) (sameTree bool, err error) {
+	sameTree = defTree.ID == refTree.ID
 	var defNode *ast.Node
 	if !sameTree {
 		defNode = treenode.GetNodeInTree(defTree, defID)
 	} else {
 		defNode = treenode.GetNodeInTree(refTree, defID)
 	}
-	if nil == defNode {
-		return
+	defNode, err = normalizeSwapBlockNode(defNode, defID)
+	if err != nil {
+		return false, err
+	}
+	if refNode == defNode {
+		return false, fmt.Errorf("blocks [%s] and [%s] resolve to the same swappable block", refNode.ID, defNode.ID)
+	}
+	for parent := defNode.Parent; parent != nil; parent = parent.Parent {
+		if parent == refNode {
+			return false, fmt.Errorf("blocks [%s] and [%s] overlap and cannot be swapped", refNode.ID, defNode.ID)
+		}
+	}
+	for parent := refNode.Parent; parent != nil; parent = parent.Parent {
+		if parent == defNode {
+			return false, fmt.Errorf("blocks [%s] and [%s] overlap and cannot be swapped", refNode.ID, defNode.ID)
+		}
 	}
 	var defNodeChildren []*ast.Node
-	if ast.NodeListItem == defNode.Parent.Type {
-		defNode = defNode.Parent
-	} else if ast.NodeHeading == defNode.Type && includeChildren {
+	if ast.NodeHeading == defNode.Type && includeChildren {
 		defNodeChildren = treenode.HeadingChildren(defNode)
 	}
 	if ast.NodeListItem == defNode.Type {
@@ -596,30 +793,21 @@ func SwapBlockRef(refID, defID string, includeChildren bool) (err error) {
 		}
 	}
 	refPivot.Unlink()
-
-	if err = indexWriteTreeUpsertQueue(refTree); err != nil {
-		return
-	}
-	if !sameTree {
-		if err = indexWriteTreeUpsertQueue(defTree); err != nil {
-			return
-		}
-	}
-	FlushTxQueue()
-	util.ReloadUI()
-	return
+	return sameTree, nil
 }
 
-func GetHeadingDeleteTransaction(id string) (transaction *Transaction, err error) {
-	tree, err := LoadTreeByBlockID(id)
+func GetHeadingDeleteTransactionInNotebook(id, notebookID string) (transaction *Transaction, err error) {
+	boxID, err := contentStoreForNotebook(notebookID)
 	if err != nil {
-		return
+		return nil, err
 	}
-
-	node := treenode.GetNodeInTree(tree, id)
-	if nil == node {
-		err = fmt.Errorf(Conf.Language(15), id)
-		return
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, node, err := loadBlockInContentStore(id, boxID, notebookID)
+	if err != nil {
+		return nil, err
 	}
 
 	if ast.NodeHeading != node.Type {
@@ -630,7 +818,7 @@ func GetHeadingDeleteTransaction(id string) (transaction *Transaction, err error
 	nodes = append(nodes, node)
 	nodes = append(nodes, treenode.HeadingChildren(node)...)
 
-	transaction = &Transaction{}
+	transaction = &Transaction{Notebook: boxID}
 	luteEngine := util.NewLute()
 	for _, n := range nodes {
 		op := &Operation{}
@@ -653,16 +841,18 @@ func GetHeadingDeleteTransaction(id string) (transaction *Transaction, err error
 	return
 }
 
-func GetHeadingInsertTransaction(id string) (transaction *Transaction, err error) {
-	tree, err := LoadTreeByBlockID(id)
+func GetHeadingInsertTransactionInNotebook(id, notebookID string) (transaction *Transaction, err error) {
+	boxID, err := contentStoreForNotebook(notebookID)
 	if err != nil {
-		return
+		return nil, err
 	}
-
-	node := treenode.GetNodeInTree(tree, id)
-	if nil == node {
-		err = fmt.Errorf(Conf.Language(15), id)
-		return
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, node, err := loadBlockInContentStore(id, boxID, notebookID)
+	if err != nil {
+		return nil, err
 	}
 
 	if ast.NodeHeading != node.Type {
@@ -673,7 +863,7 @@ func GetHeadingInsertTransaction(id string) (transaction *Transaction, err error
 	nodes = append(nodes, node)
 	nodes = append(nodes, treenode.HeadingChildren(node)...)
 
-	transaction = &Transaction{}
+	transaction = &Transaction{Notebook: boxID}
 	luteEngine := util.NewLute()
 	for _, n := range nodes {
 		n.ID = ast.NewNodeID()
@@ -693,14 +883,21 @@ func GetHeadingInsertTransaction(id string) (transaction *Transaction, err error
 	return
 }
 
-func GetHeadingChildrenIDs(id string) (ret []string) {
-	tree, err := LoadTreeByBlockID(id)
+func GetHeadingChildrenIDsInNotebook(id, notebookID string) (ret []string, err error) {
+	boxID, err := contentStoreForNotebook(notebookID)
 	if err != nil {
-		return
+		return nil, err
 	}
-	heading := treenode.GetNodeInTree(tree, id)
-	if nil == heading || ast.NodeHeading != heading.Type {
-		return
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, heading, err := loadBlockInContentStore(id, boxID, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	if ast.NodeHeading != heading.Type {
+		return nil, nil
 	}
 
 	children := treenode.HeadingChildren(heading)
@@ -739,14 +936,21 @@ func AppendHeadingChildren(id, childrenDOM string) {
 	}
 }
 
-func GetHeadingChildrenDOM(id string, removeFoldAttr bool) (ret string) {
-	tree, err := LoadTreeByBlockID(id)
+func GetHeadingChildrenDOMInNotebook(id, notebookID string, removeFoldAttr bool) (ret string, err error) {
+	boxID, err := contentStoreForNotebook(notebookID)
 	if err != nil {
-		return
+		return "", err
 	}
-	heading := treenode.GetNodeInTree(tree, id)
-	if nil == heading || ast.NodeHeading != heading.Type {
-		return
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, heading, err := loadBlockInContentStore(id, boxID, notebookID)
+	if err != nil {
+		return "", err
+	}
+	if ast.NodeHeading != heading.Type {
+		return "", nil
 	}
 
 	nodes := append([]*ast.Node{}, heading)
@@ -783,16 +987,18 @@ func GetHeadingChildrenDOM(id string, removeFoldAttr bool) (ret string) {
 	return
 }
 
-func GetHeadingLevelTransaction(id string, level int) (transaction *Transaction, err error) {
-	tree, err := LoadTreeByBlockID(id)
+func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (transaction *Transaction, err error) {
+	boxID, err := contentStoreForNotebook(notebookID)
 	if err != nil {
-		return
+		return nil, err
 	}
-
-	node := treenode.GetNodeInTree(tree, id)
-	if nil == node {
-		err = fmt.Errorf(Conf.Language(15), id)
-		return
+	if boxID != "" {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+	}
+	_, node, err := loadBlockInContentStore(id, boxID, notebookID)
+	if err != nil {
+		return nil, err
 	}
 
 	if ast.NodeHeading != node.Type {
@@ -812,9 +1018,9 @@ func GetHeadingLevelTransaction(id string, level int) (transaction *Transaction,
 		ccH := c.ChildrenByType(ast.NodeHeading)
 		childrenHeadings = append(childrenHeadings, ccH...)
 	}
-	fillBlockRefCount(childrenHeadings)
+	fillBlockRefCountInBox(childrenHeadings, boxID)
 
-	transaction = &Transaction{}
+	transaction = &Transaction{Notebook: boxID}
 	if "1" == node.IALAttr("fold") {
 		unfoldHeading(node, node)
 	}
@@ -962,7 +1168,7 @@ func resolveEmbedContent(n *ast.Node, luteEngine *lute.Lute) {
 
 // loadTreeForBlockDOM 按指定 box 加载树，空 box 不回退搜索已打开的加密笔记本。
 func loadTreeForBlockDOM(id, boxID string) *parse.Tree {
-	bt := treenode.GetBlockTreeInBox(id, boxID)
+	bt := getBlockTreeInContentStore(id, boxID)
 	if nil == bt {
 		return nil
 	}
@@ -971,6 +1177,67 @@ func loadTreeForBlockDOM(id, boxID string) *parse.Tree {
 		return nil
 	}
 	return tree
+}
+
+func getBlockTreeInContentStore(id, boxID string) *treenode.BlockTree {
+	if boxID != "" {
+		return treenode.GetBlockTreeInBox(id, boxID)
+	}
+	return treenode.GetBlockTreesInBox([]string{id}, "")[id]
+}
+
+func loadBlockInBox(id, boxID string) (tree *parse.Tree, node *ast.Node, err error) {
+	return loadBlockInContentStore(id, boxID, "")
+}
+
+func contentStoreForNotebook(notebookID string) (boxID string, err error) {
+	if !ast.IsNodeIDPattern(notebookID) {
+		return "", ErrInvalidID
+	}
+	box := Conf.GetBox(notebookID)
+	if box == nil {
+		return "", fmt.Errorf("%w: %s", ErrBoxNotFound, notebookID)
+	}
+	if box.Encrypted {
+		return notebookID, nil
+	}
+	return "", nil
+}
+
+func loadBlockInContentStore(id, boxID, expectedNotebookID string) (tree *parse.Tree, node *ast.Node, err error) {
+	if !ast.IsNodeIDPattern(id) {
+		return nil, nil, ErrInvalidID
+	}
+	if boxID != "" {
+		var dek []byte
+		if dek, err = GetDEKIfUnlocked(boxID); err != nil {
+			return nil, nil, err
+		}
+		zeroAndClear(dek)
+	}
+
+	bt := getBlockTreeInContentStore(id, boxID)
+	if bt == nil {
+		return nil, nil, ErrBlockNotFound
+	}
+	if expectedNotebookID != "" && bt.BoxID != expectedNotebookID {
+		return nil, nil, fmt.Errorf("%w: block [%s] in notebook [%s]", ErrBlockNotFound, id, expectedNotebookID)
+	}
+	tree, err = loadTreeByBlockTree(bt)
+	if err != nil {
+		return nil, nil, err
+	}
+	if tree == nil {
+		return nil, nil, ErrTreeNotFound
+	}
+	node = treenode.GetNodeInTree(tree, id)
+	if node == nil {
+		return nil, nil, ErrBlockNotFound
+	}
+	if !node.IsBlock() {
+		return nil, nil, fmt.Errorf("block [%s] has unsupported node type [%s]", id, node.Type.String())
+	}
+	return tree, node, nil
 }
 
 func resolveEmbedContentInBox(n *ast.Node, luteEngine *lute.Lute, boxID string) {
@@ -1292,10 +1559,10 @@ func getBlock(id string, tree *parse.Tree) (ret *Block, err error) {
 	return
 }
 
-func getEmbeddedBlock(trees map[string]*parse.Tree, sqlBlock *sql.Block, headingMode int, breadcrumb bool) (block *Block, blockPaths []*BlockPath) {
+func getEmbeddedBlock(trees map[string]*parse.Tree, sqlBlock *sql.Block, headingMode int, breadcrumb bool, boxID string) (block *Block, blockPaths []*BlockPath) {
 	tree, _ := trees[sqlBlock.RootID]
 	if nil == tree {
-		tree, _ = LoadTreeByBlockID(sqlBlock.RootID)
+		tree, _ = loadTreeByBlockIDInBox(sqlBlock.RootID, boxID)
 	}
 	if nil == tree {
 		return
@@ -1360,21 +1627,13 @@ func getEmbeddedBlock(trees map[string]*parse.Tree, sqlBlock *sql.Block, heading
 		nodes = append(nodes, def)
 	}
 
-	b := treenode.GetBlockTree(def.ID)
-	if nil == b {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encBT := treenode.GetBlockTreeInBox(def.ID, encBoxID); nil != encBT {
-				b = encBT
-				break
-			}
-		}
-	}
+	b := treenode.GetBlockTreeInBox(def.ID, boxID)
 	if nil == b {
 		return
 	}
 
 	// 嵌入块查询结果中显示块引用计数 https://github.com/siyuan-note/siyuan/issues/7191
-	fillBlockRefCount(nodes)
+	fillBlockRefCountInBox(nodes, boxID)
 
 	luteEngine := NewLute()
 	luteEngine.RenderOptions.ProtyleContenteditable = true
@@ -1399,4 +1658,34 @@ func getEmbeddedBlock(trees map[string]*parse.Tree, sqlBlock *sql.Block, heading
 		blockPaths = []*BlockPath{}
 	}
 	return
+}
+
+func fillBlockRefCountInBox(nodes []*ast.Node, boxID string) {
+	if boxID == "" {
+		fillBlockRefCount(nodes)
+		return
+	}
+
+	var defIDs []string
+	for _, node := range nodes {
+		ast.Walk(node, func(n *ast.Node, entering bool) ast.WalkStatus {
+			if entering && n.IsBlock() {
+				defIDs = append(defIDs, n.ID)
+			}
+			return ast.WalkContinue
+		})
+	}
+	defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
+	refCount := sql.QueryRefCountInBox(defIDs, boxID)
+	for _, node := range nodes {
+		ast.Walk(node, func(n *ast.Node, entering bool) ast.WalkStatus {
+			if !entering || !n.IsBlock() {
+				return ast.WalkContinue
+			}
+			if count := refCount[n.ID]; count > 0 {
+				n.SetIALAttr("refcount", strconv.Itoa(count))
+			}
+			return ast.WalkContinue
+		})
+	}
 }

@@ -135,6 +135,13 @@ var (
 	}
 )
 
+func contentResponseMiddlewares() []gin.HandlerFunc {
+	return []gin.HandlerFunc{
+		api.ContentResponseLifecycle,
+		gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp3", ".wav", ".ogg", ".mov", ".weba", ".mkv", ".mp4", ".webm", ".flac"})),
+	}
+}
+
 func Serve(fastMode bool, cookieKey string) {
 	gin.SetMode(gin.ReleaseMode)
 	ginServer := gin.New()
@@ -146,8 +153,8 @@ func Serve(fastMode bool, cookieKey string) {
 		model.Activity,   // 记录用户活动时间，用于 AutoFixIndex 的空闲判断
 		corsMiddleware(), // 后端服务支持 CORS 预检请求验证 https://github.com/siyuan-note/siyuan/pull/5593
 		jwtMiddleware,    // 解析 JWT https://github.com/siyuan-note/siyuan/issues/11364
-		gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{".pdf", ".mp3", ".wav", ".ogg", ".mov", ".weba", ".mkv", ".mp4", ".webm", ".flac"})),
 	)
+	ginServer.Use(contentResponseMiddlewares()...)
 
 	sessionStore = cookie.NewStore([]byte(cookieKey))
 	sessionStore.Options(sessions.Options{
@@ -318,91 +325,93 @@ func rewritePortJSON(pid, port string) {
 func serveExport(ginServer *gin.Engine) {
 	// Potential data export disclosure security vulnerability https://github.com/siyuan-note/siyuan/issues/12213
 	exportGroup := ginServer.Group("/export/", model.CheckAuth)
-	exportBaseDir := filepath.Join(util.TempDir, "export")
 
 	exportGroup.GET("/*filepath", func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/export/temp/") {
-			tempBaseDir := filepath.Join(util.TempDir, "export", "temp")
-			relativePath := strings.TrimPrefix(c.Request.URL.Path, "/export/temp/")
-			relativePath = filepath.Clean(relativePath)
-			if strings.Contains(relativePath, "..") {
-				c.Status(http.StatusUnauthorized)
-				return
-			}
-			fullPath := filepath.Join(tempBaseDir, relativePath)
-			if !gulu.File.IsSubPath(tempBaseDir, fullPath) {
-				c.Status(http.StatusUnauthorized)
-				return
-			}
-
-			if util.IsSensitivePath(fullPath) {
-				logging.LogErrorf("refuse to export sensitive file [%s]", c.Request.URL.Path)
-				c.Status(http.StatusForbidden)
-				return
-			}
-
-			c.File(fullPath)
-			return
-		}
-
-		filePath := strings.TrimPrefix(c.Request.URL.Path, "/export/")
-
-		decodedPath, err := url.PathUnescape(filePath)
+		relativePath, err := util.CanonicalExportRelativePath(strings.TrimPrefix(c.Request.URL.Path, "/export/"))
 		if err != nil {
-			decodedPath = filePath
-		}
-
-		fullPath := filepath.Join(exportBaseDir, decodedPath)
-		if !gulu.File.IsSubPath(exportBaseDir, fullPath) {
 			c.Status(http.StatusUnauthorized)
 			return
 		}
 
-		// 加密导出受控路径（<boxID>/<kind>/<file>）：按注册表无条件校验，不依赖 IsEncryptedBox。
-		// 笔记本删除后 IsEncryptedBox 返回 false，若以它为门控会 fail-open 暴露明文产物。
-		if model.IsManagedEncryptedExportPath(decodedPath) {
-			boxID, artifact, ok := model.ResolveManagedEncryptedExport(decodedPath)
-			if !ok {
+		// Opaque managed tokens and legacy notebook-prefixed paths never fall
+		// through to ordinary static-file serving.
+		if model.IsManagedEncryptedExportPath(relativePath) {
+			claim, claimErr := model.ClaimManagedEncryptedExport(relativePath)
+			if errors.Is(claimErr, model.ErrManagedEncryptedExportUnavailable) {
 				c.Status(http.StatusNotFound)
 				return
 			}
-			fullPath = artifact
-			if !gulu.File.IsSubPath(exportBaseDir, fullPath) {
+			if claimErr != nil {
+				logging.LogWarnf("open managed export failed: %s", claimErr)
+				c.Status(http.StatusGone)
+				return
+			}
+			if retainErr := api.RetainManagedEncryptedExportClaim(c, claim); retainErr != nil {
+				closeErr := claim.Close()
+				logging.LogWarnf("retain managed export claim for response failed: %s", errors.Join(retainErr, closeErr))
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			dek, dekErr := model.GetDEKIfUnlocked(claim.BoxID)
+			if dekErr != nil {
 				c.Status(http.StatusForbidden)
 				return
 			}
-			model.HoldBoxReadLock(boxID)
-			defer model.ReleaseBoxReadLock(boxID)
-			if _, dekErr := model.GetDEKIfUnlocked(boxID); dekErr != nil {
-				c.Status(http.StatusForbidden)
+			clear(dek)
+
+			fileInfo, statErr := claim.File.Stat()
+			if statErr != nil || !fileInfo.Mode().IsRegular() {
+				logging.LogWarnf("stat managed export for notebook [%s] failed: %v", claim.BoxID, statErr)
+				c.Status(http.StatusGone)
 				return
 			}
-		}
-
-		if util.IsSensitivePath(fullPath) {
-			logging.LogErrorf("refuse to export sensitive file [%s]", c.Request.URL.Path)
-			c.Status(http.StatusForbidden)
+			c.Header("Content-Disposition", formatContentDispositionAttachment(claim.DisplayFileName))
+			writer := &managedExportResponseWriter{ResponseWriter: c.Writer}
+			http.ServeContent(writer, c.Request, claim.DisplayFileName, fileInfo.ModTime(), claim.File)
+			if writer.writeErr != nil {
+				logging.LogWarnf("send managed export for notebook [%s] failed: %s", claim.BoxID, writer.writeErr)
+			}
 			return
 		}
 
-		fileInfo, err := os.Stat(fullPath)
-		if os.IsNotExist(err) {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		if err != nil {
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-
-		if fileInfo.IsDir() {
-			c.Status(http.StatusNotFound)
-			return
-		}
-
-		c.Header("Content-Disposition", formatContentDispositionAttachment(filepath.Base(decodedPath)))
-		c.File(fullPath)
+		serveOrdinaryExportFile(c, relativePath, !strings.HasPrefix(relativePath, "temp/"))
 	})
+}
+
+func serveOrdinaryExportFile(c *gin.Context, relativePath string, attachment bool) {
+	opened, err := util.OpenLocalExportFile(relativePath)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, util.ErrUnsafeExportFile) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		logging.LogWarnf("open ordinary export [%s] failed: %s", relativePath, err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if closeErr := opened.Close(); closeErr != nil {
+			logging.LogWarnf("close ordinary export [%s] failed: %s", relativePath, closeErr)
+		}
+	}()
+	fileName := path.Base(relativePath)
+	if attachment {
+		c.Header("Content-Disposition", formatContentDispositionAttachment(fileName))
+	}
+	http.ServeContent(c.Writer, c.Request, fileName, opened.Info.ModTime(), opened.File)
+}
+
+type managedExportResponseWriter struct {
+	http.ResponseWriter
+	writeErr error
+}
+
+func (writer *managedExportResponseWriter) Write(data []byte) (int, error) {
+	written, err := writer.ResponseWriter.Write(data)
+	if err != nil && writer.writeErr == nil {
+		writer.writeErr = err
+	}
+	return written, err
 }
 
 func serveWidgets(ginServer *gin.Engine) {
@@ -783,6 +792,14 @@ func serveAssets(ginServer *gin.Engine) {
 
 func serveSVG(context *gin.Context, assetAbsPath string) bool {
 	if strings.HasSuffix(assetAbsPath, ".svg") {
+		boxID := model.ExtractBoxIDFromAssetsPath(assetAbsPath)
+		if boxID != "" && model.IsEncryptedBox(boxID) {
+			if err := api.RegisterEncryptedResponse(context, boxID); err != nil {
+				logging.LogErrorf("register encrypted SVG response for notebook [%s] failed: %s", boxID, err)
+				context.Status(http.StatusInternalServerError)
+				return true
+			}
+		}
 		data, err := readAssetBytes(assetAbsPath)
 		if err != nil {
 			logging.LogErrorf("read svg file failed: %s", err)
@@ -813,6 +830,7 @@ func readAssetBytes(absPath string) ([]byte, error) {
 			model.ReleaseBoxReadLock(boxID)
 			return nil, dekErr
 		}
+		defer clear(dek)
 		defer model.ReleaseBoxReadLock(boxID)
 		diskName := filepath.Base(absPath)
 		plain, decErr := model.DecryptAsset(boxID, diskName, dek, data)
@@ -832,6 +850,11 @@ func serveEncryptedAsset(context *gin.Context, absPath string) bool {
 	if boxID == "" || !model.IsEncryptedBox(boxID) {
 		return false // 非加密 box，走原路径
 	}
+	if err := api.RegisterEncryptedResponse(context, boxID); err != nil {
+		logging.LogErrorf("register encrypted asset response for notebook [%s] failed: %s", boxID, err)
+		context.Status(http.StatusInternalServerError)
+		return true
+	}
 	model.HoldBoxReadLock(boxID)
 	dek, err := model.GetDEKIfUnlocked(boxID)
 	if err != nil {
@@ -840,6 +863,7 @@ func serveEncryptedAsset(context *gin.Context, absPath string) bool {
 		context.Status(http.StatusForbidden)
 		return true
 	}
+	defer clear(dek)
 	defer model.ReleaseBoxReadLock(boxID)
 	ciphertext, readErr := os.ReadFile(absPath)
 	if readErr != nil {
@@ -876,6 +900,11 @@ func serveEncryptedHistory(context *gin.Context, absPath string) bool {
 	if boxID == "" || !model.IsEncryptedBox(boxID) {
 		return false // 非加密 box，走原路径
 	}
+	if err := api.RegisterEncryptedResponse(context, boxID); err != nil {
+		logging.LogErrorf("register encrypted history response for notebook [%s] failed: %s", boxID, err)
+		context.Status(http.StatusInternalServerError)
+		return true
+	}
 	model.HoldBoxReadLock(boxID)
 	dek, err := model.GetDEKIfUnlocked(boxID)
 	if err != nil {
@@ -884,6 +913,7 @@ func serveEncryptedHistory(context *gin.Context, absPath string) bool {
 		context.Status(http.StatusForbidden)
 		return true
 	}
+	defer clear(dek)
 	defer model.ReleaseBoxReadLock(boxID)
 	ciphertext, readErr := os.ReadFile(absPath)
 	if readErr != nil {
@@ -974,12 +1004,19 @@ func serveRepoDiff(ginServer *gin.Engine) {
 		// 从路径提取 boxID，加密笔记本已锁定时拒绝访问（锁定后 repo 预览解密文件仍存在磁盘上）
 		parts := strings.SplitN(strings.TrimPrefix(requestPath, "/"), "/", 2)
 		if len(parts) >= 1 && model.IsEncryptedBox(parts[0]) {
+			if err := api.RegisterEncryptedResponse(context, parts[0]); err != nil {
+				logging.LogErrorf("register encrypted repository diff response for notebook [%s] failed: %s", parts[0], err)
+				context.Status(http.StatusInternalServerError)
+				return
+			}
 			model.HoldBoxReadLock(parts[0])
 			defer model.ReleaseBoxReadLock(parts[0])
-			if _, dekErr := model.GetDEKIfUnlocked(parts[0]); dekErr != nil {
+			dek, dekErr := model.GetDEKIfUnlocked(parts[0])
+			if dekErr != nil {
 				context.Status(http.StatusForbidden)
 				return
 			}
+			clear(dek)
 		}
 		p := filepath.Join(repoDiffBaseDir, requestPath)
 		if !gulu.File.IsSubPath(repoDiffBaseDir, p) {

@@ -39,7 +39,7 @@ func init() {
 	register(SyncTool)
 }
 
-func syncHandler(args map[string]any) (CallToolResult, error) {
+func syncHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "perform":

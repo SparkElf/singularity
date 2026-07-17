@@ -30,7 +30,12 @@ import (
 )
 
 func GetRefDuplicatedDefRootIDs() (ret []string) {
-	rows, err := query("SELECT DISTINCT def_block_root_id FROM `refs` GROUP BY def_block_id, def_block_root_id, block_id HAVING COUNT(*) > 1")
+	return GetRefDuplicatedDefRootIDsInBox("")
+}
+
+// GetRefDuplicatedDefRootIDsInBox finds duplicate references in one content store.
+func GetRefDuplicatedDefRootIDsInBox(boxID string) (ret []string) {
+	rows, err := queryForBox(boxID, "SELECT DISTINCT def_block_root_id FROM `refs` GROUP BY def_block_id, def_block_root_id, block_id HAVING COUNT(*) > 1")
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -138,11 +143,10 @@ func QueryRootChildrenRefCount(defRootID string) (ret map[string]int) {
 	return
 }
 
-func QueryRootBlockRefCount() (ret map[string]int) {
+func QueryRootBlockRefCount(boxID string) (ret map[string]int) {
 	ret = map[string]int{}
 
-	// 全局 refs
-	rows, err := query("SELECT def_block_root_id, COUNT(DISTINCT block_id) AS ref_cnt FROM refs GROUP BY def_block_root_id")
+	rows, err := queryForBox(boxID, "SELECT def_block_root_id, COUNT(DISTINCT block_id) AS ref_cnt FROM refs GROUP BY def_block_root_id")
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -157,27 +161,11 @@ func QueryRootBlockRefCount() (ret map[string]int) {
 		}
 		ret[id] = cnt
 	}
-
-	// 加密笔记本的 refs
-	for _, encBoxID := range GetEncryptedBoxIDs() {
-		encRows, encErr := queryForBox(encBoxID, "SELECT def_block_root_id, COUNT(DISTINCT block_id) AS ref_cnt FROM refs GROUP BY def_block_root_id")
-		if encErr != nil {
-			continue
-		}
-		for encRows.Next() {
-			var id string
-			var cnt int
-			if err = encRows.Scan(&id, &cnt); err != nil {
-				continue
-			}
-			ret[id] += cnt
-		}
-		encRows.Close()
-	}
 	return
 }
 
 func QueryDefRootBlocksByRefRootID(refRootID string) (ret []*Block) {
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query("SELECT * FROM blocks WHERE id IN (SELECT DISTINCT def_block_root_id FROM refs WHERE root_id = ?)", refRootID)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
@@ -185,7 +173,7 @@ func QueryDefRootBlocksByRefRootID(refRootID string) (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -264,13 +252,17 @@ func getRefText(defBlockID string) string {
 }
 
 func QueryBlockDefIDsByRefText(refText string) (ret []string) {
-	ret = queryDefIDsByDefText(refText)
-	ret = append(ret, queryDefIDsByNameAliasAndDocTitle(refText)...)
+	return QueryBlockDefIDsByRefTextInBox(refText, "")
+}
+
+func QueryBlockDefIDsByRefTextInBox(refText, boxID string) (ret []string) {
+	ret = queryDefIDsByDefTextInBox(refText, boxID)
+	ret = append(ret, queryDefIDsByNameAliasAndDocTitleInBox(refText, boxID)...)
 	ret = gulu.Str.RemoveDuplicatedElem(ret)
 	return
 }
 
-func queryDefIDsByDefText(keyword string) (ret []string) {
+func queryDefIDsByDefTextInBox(keyword, boxID string) (ret []string) {
 	ret = []string{}
 	var q, arg string
 	if caseSensitive {
@@ -280,7 +272,7 @@ func queryDefIDsByDefText(keyword string) (ret []string) {
 		q = "SELECT DISTINCT(def_block_id) FROM refs WHERE content LIKE ? ESCAPE '\\'"
 		arg = escapeLikePattern(keyword)
 	}
-	rows, err := query(q, arg)
+	rows, err := queryForBox(boxID, q, arg)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -297,7 +289,7 @@ func queryDefIDsByDefText(keyword string) (ret []string) {
 	return
 }
 
-func queryDefIDsByNameAliasAndDocTitle(keyword string) (ret []string) {
+func queryDefIDsByNameAliasAndDocTitleInBox(keyword, boxID string) (ret []string) {
 	ret = []string{}
 	escaped := escapeLikePattern(keyword)
 	aliasArg := "%," + escaped + ",%"
@@ -317,7 +309,7 @@ func queryDefIDsByNameAliasAndDocTitle(keyword string) (ret []string) {
 		" UNION ALL SELECT id FROM (" +
 		"SELECT id FROM blocks WHERE type = 'd' AND " + docCond + " LIMIT ?" +
 		")"
-	rows, err := query(q, exactArg, aliasArg, exactArg, 32)
+	rows, err := queryForBox(boxID, q, exactArg, aliasArg, exactArg, 32)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -494,6 +486,7 @@ func DefRefs(condition string, limit int) (ret []map[*Block]*Block) {
 		refs[rel] = &ref
 	}
 
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err = query("SELECT def.* FROM blocks AS def, refs AS r WHERE def.id = r.def_block_id LIMIT ?", limit)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
@@ -502,7 +495,7 @@ func DefRefs(condition string, limit int) (ret []map[*Block]*Block) {
 	defer rows.Close()
 	defs := map[string]*Block{}
 	for rows.Next() {
-		if def := scanBlockRows(rows); nil != def {
+		if def := scanBlockRows(rows, queryEpoch); nil != def {
 			defs[def.ID] = def
 		}
 	}

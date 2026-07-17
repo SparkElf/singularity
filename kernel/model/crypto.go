@@ -52,41 +52,263 @@ const boxEncryptionSpec = 1
 // errMasterPasswordMigrationPending 表示改密已切换全局 verifier，但部分笔记本配置尚待恢复。
 var errMasterPasswordMigrationPending = errors.New("master password migration is pending")
 
+type exclusiveGate struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	locked bool
+}
+
+func newExclusiveGate() *exclusiveGate {
+	ret := &exclusiveGate{}
+	ret.cond = sync.NewCond(&ret.mu)
+	return ret
+}
+
+func (gate *exclusiveGate) lock(onBlocked func()) {
+	gate.mu.Lock()
+	notified := false
+	for gate.locked {
+		if !notified && onBlocked != nil {
+			notified = true
+			gate.mu.Unlock()
+			onBlocked()
+			gate.mu.Lock()
+			continue
+		}
+		gate.cond.Wait()
+	}
+	gate.locked = true
+	gate.mu.Unlock()
+}
+
+func (gate *exclusiveGate) unlock() {
+	gate.mu.Lock()
+	if !gate.locked {
+		gate.mu.Unlock()
+		panic("unlock of unlocked exclusive gate")
+	}
+	gate.locked = false
+	gate.cond.Broadcast()
+	gate.mu.Unlock()
+}
+
+type writerPreferredRWGate struct {
+	mu             sync.Mutex
+	cond           *sync.Cond
+	readers        int
+	writer         bool
+	waitingWriters int
+}
+
+func newWriterPreferredRWGate() *writerPreferredRWGate {
+	ret := &writerPreferredRWGate{}
+	ret.cond = sync.NewCond(&ret.mu)
+	return ret
+}
+
+func (gate *writerPreferredRWGate) readLock() {
+	gate.mu.Lock()
+	for gate.writer || gate.waitingWriters > 0 {
+		gate.cond.Wait()
+	}
+	gate.readers++
+	gate.mu.Unlock()
+}
+
+func (gate *writerPreferredRWGate) readUnlock() {
+	gate.mu.Lock()
+	if gate.readers < 1 {
+		gate.mu.Unlock()
+		panic("read unlock of unlocked response gate")
+	}
+	gate.readers--
+	if gate.readers == 0 {
+		gate.cond.Broadcast()
+	}
+	gate.mu.Unlock()
+}
+
+func (gate *writerPreferredRWGate) writeLock(onBlocked func()) {
+	gate.mu.Lock()
+	gate.waitingWriters++
+	notified := false
+	for gate.writer || gate.readers > 0 {
+		if !notified && onBlocked != nil {
+			notified = true
+			gate.mu.Unlock()
+			onBlocked()
+			gate.mu.Lock()
+			continue
+		}
+		gate.cond.Wait()
+	}
+	gate.waitingWriters--
+	gate.writer = true
+	gate.mu.Unlock()
+}
+
+func (gate *writerPreferredRWGate) writeUnlock() {
+	gate.mu.Lock()
+	if !gate.writer {
+		gate.mu.Unlock()
+		panic("write unlock of unlocked response gate")
+	}
+	gate.writer = false
+	gate.cond.Broadcast()
+	gate.mu.Unlock()
+}
+
 // notebookCryptoMu 串行化加密笔记本的控制面操作（Enable/Disable/Create/ChangeMasterPassword/Import/restore 等），
 // 避免 ChangeMasterPassword 枚举与 CreateEncryptedBox 并发导致新笔记本用旧 KEK 但 verifier 已切换的不可恢复状态。
-var notebookCryptoMu sync.Mutex
+var notebookCryptoMu = newExclusiveGate()
 
-// boxLifecycleLocks 为每个 box 提供一个 RWMutex，协调锁定操作与在途解密请求。
+// boxLifecycleLocks 为每个 box 协调锁定操作与在途解密请求。
 // 在途解密请求持读锁，LockBox 持写锁，确保锁定后不会有新的解密输出。
-var boxLifecycleLocks = sync.Map{} // map[string]*sync.RWMutex
+var boxLifecycleLocks = sync.Map{} // map[string]*writerPreferredRWGate
+
+type boxResponseWriteBlockedObserver func(boxID string)
+type boxLifecycleWriteBlockedObserver func(boxID string)
+type notebookCryptoBlockedObserver func()
+
+var boxResponseWriteBlockedObserverForTest atomic.Pointer[boxResponseWriteBlockedObserver]
+var boxLifecycleWriteBlockedObserverForTest atomic.Pointer[boxLifecycleWriteBlockedObserver]
+var notebookCryptoBlockedObserverForTest atomic.Pointer[notebookCryptoBlockedObserver]
+
+// boxResponseLocks 为每个 box 提供独立的响应门禁，保证既有明文响应在锁定完成前结束。
+// 响应门禁独立于生命周期锁，允许请求在持有响应读锁时继续执行内层 filesys 和 AV 读锁。
+var boxResponseLocks = sync.Map{} // map[string]*writerPreferredRWGate
+
+// boxOperationLocks 串行化单个 box 的跨文件操作与锁定、解锁控制面，避免生命周期写锁插入操作中途。
+var boxOperationLocks = sync.Map{} // map[string]*sync.Mutex
+
+func acquireBoxResponseReadLock(boxID string) {
+	gateI, _ := boxResponseLocks.LoadOrStore(boxID, newWriterPreferredRWGate())
+	gateI.(*writerPreferredRWGate).readLock()
+}
+
+func releaseBoxResponseReadLock(boxID string) {
+	if gateI, ok := boxResponseLocks.Load(boxID); ok {
+		gateI.(*writerPreferredRWGate).readUnlock()
+	}
+}
+
+func acquireBoxResponseWriteLock(boxID string) {
+	gateI, _ := boxResponseLocks.LoadOrStore(boxID, newWriterPreferredRWGate())
+	gateI.(*writerPreferredRWGate).writeLock(func() {
+		if observer := boxResponseWriteBlockedObserverForTest.Load(); observer != nil {
+			(*observer)(boxID)
+		}
+	})
+}
+
+func releaseBoxResponseWriteLock(boxID string) {
+	if gateI, ok := boxResponseLocks.Load(boxID); ok {
+		gateI.(*writerPreferredRWGate).writeUnlock()
+	}
+}
+
+func acquireNotebookCryptoLock() {
+	notebookCryptoMu.lock(func() {
+		if observer := notebookCryptoBlockedObserverForTest.Load(); observer != nil {
+			(*observer)()
+		}
+	})
+}
+
+func releaseNotebookCryptoLock() {
+	notebookCryptoMu.unlock()
+}
+
+func acquireBoxOperationLock(boxID string) {
+	muI, _ := boxOperationLocks.LoadOrStore(boxID, &sync.Mutex{})
+	muI.(*sync.Mutex).Lock()
+}
+
+func releaseBoxOperationLock(boxID string) {
+	if muI, ok := boxOperationLocks.Load(boxID); ok {
+		muI.(*sync.Mutex).Unlock()
+	}
+}
 
 func acquireBoxReadLock(boxID string) {
-	muI, _ := boxLifecycleLocks.LoadOrStore(boxID, &sync.RWMutex{})
-	muI.(*sync.RWMutex).RLock()
+	gateI, _ := boxLifecycleLocks.LoadOrStore(boxID, newWriterPreferredRWGate())
+	gateI.(*writerPreferredRWGate).readLock()
 }
 
 func releaseBoxReadLock(boxID string) {
-	if muI, ok := boxLifecycleLocks.Load(boxID); ok {
-		muI.(*sync.RWMutex).RUnlock()
+	if gateI, ok := boxLifecycleLocks.Load(boxID); ok {
+		gateI.(*writerPreferredRWGate).readUnlock()
 	}
 }
 
 func acquireBoxWriteLock(boxID string) {
-	muI, _ := boxLifecycleLocks.LoadOrStore(boxID, &sync.RWMutex{})
-	muI.(*sync.RWMutex).Lock()
+	gateI, _ := boxLifecycleLocks.LoadOrStore(boxID, newWriterPreferredRWGate())
+	gateI.(*writerPreferredRWGate).writeLock(func() {
+		if observer := boxLifecycleWriteBlockedObserverForTest.Load(); observer != nil {
+			(*observer)(boxID)
+		}
+	})
 }
 
 func releaseBoxWriteLock(boxID string) {
-	if muI, ok := boxLifecycleLocks.Load(boxID); ok {
-		muI.(*sync.RWMutex).Unlock()
+	if gateI, ok := boxLifecycleLocks.Load(boxID); ok {
+		gateI.(*writerPreferredRWGate).writeUnlock()
 	}
 }
 
-// NotebookCryptoMuLock 锁定 notebookCryptoMu，供 api 层读取一致的状态快照。
-func NotebookCryptoMuLock() { notebookCryptoMu.Lock() }
+// NotebookCryptoMuLock 锁定加密笔记本控制面，供 api 层读取或持有一致的成员生命周期。
+func NotebookCryptoMuLock() { acquireNotebookCryptoLock() }
 
 // NotebookCryptoMuUnlock 解锁 notebookCryptoMu。
-func NotebookCryptoMuUnlock() { notebookCryptoMu.Unlock() }
+func NotebookCryptoMuUnlock() { releaseNotebookCryptoLock() }
+
+// SetBoxResponseWriteBlockedObserverForTest installs the single test observer
+// notified after a response writer has confirmed an active conflicting owner.
+func SetBoxResponseWriteBlockedObserverForTest(observer func(boxID string)) (restore func()) {
+	callback := boxResponseWriteBlockedObserver(observer)
+	installed := &callback
+	if observer == nil || !boxResponseWriteBlockedObserverForTest.CompareAndSwap(nil, installed) {
+		panic("box response blocked observer is already installed or nil")
+	}
+	var restored atomic.Bool
+	return func() {
+		if restored.CompareAndSwap(false, true) && !boxResponseWriteBlockedObserverForTest.CompareAndSwap(installed, nil) {
+			panic("box response blocked observer ownership changed")
+		}
+	}
+}
+
+// SetBoxLifecycleWriteBlockedObserverForTest installs the single test observer
+// notified after a lifecycle writer has confirmed an active reader or writer.
+func SetBoxLifecycleWriteBlockedObserverForTest(observer func(boxID string)) (restore func()) {
+	callback := boxLifecycleWriteBlockedObserver(observer)
+	installed := &callback
+	if observer == nil || !boxLifecycleWriteBlockedObserverForTest.CompareAndSwap(nil, installed) {
+		panic("box lifecycle blocked observer is already installed or nil")
+	}
+	var restored atomic.Bool
+	return func() {
+		if restored.CompareAndSwap(false, true) && !boxLifecycleWriteBlockedObserverForTest.CompareAndSwap(installed, nil) {
+			panic("box lifecycle blocked observer ownership changed")
+		}
+	}
+}
+
+// SetNotebookCryptoBlockedObserverForTest installs the single test observer
+// notified after a notebook control operation has confirmed lock contention.
+func SetNotebookCryptoBlockedObserverForTest(observer func()) (restore func()) {
+	callback := notebookCryptoBlockedObserver(observer)
+	installed := &callback
+	if observer == nil || !notebookCryptoBlockedObserverForTest.CompareAndSwap(nil, installed) {
+		panic("notebook crypto blocked observer is already installed or nil")
+	}
+	var restored atomic.Bool
+	return func() {
+		if restored.CompareAndSwap(false, true) && !notebookCryptoBlockedObserverForTest.CompareAndSwap(installed, nil) {
+			panic("notebook crypto blocked observer ownership changed")
+		}
+	}
+}
 
 // notebookCryptoBackupPath 是 NotebookCrypto 的备份路径，位于 DataDir/.siyuan/ 下（进入 dejavu 同步范围）。
 // MasterSalt 是加密体系的全局根基：conf/conf.json 丢失后若重新启用会生成新 salt，
@@ -143,15 +365,18 @@ func atomicWriteFile(path string, data []byte) error {
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return errors.Join(err, os.Remove(tmpPath))
+	}
+	return nil
 }
 
 // ExportNotebookCryptoBackup 把密钥备份文件复制到 export 目录，返回可下载的相对路径。
 // 供用户主动导出保存，作为同步之外的独立恢复途径（详见设计文档 §4.1）。
 // 备份文件本身不含主密码（salt 不保密、verifier 是密文），拿到它也解不开任何数据。
 func ExportNotebookCryptoBackup() (downloadPath string, err error) {
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	backupPath := notebookCryptoBackupPath()
 	data, readErr := filelock.ReadFile(backupPath)
@@ -189,8 +414,8 @@ func ExportNotebookCryptoBackup() (downloadPath string, err error) {
 // 若有现存加密笔记本其 WrappedDEK 将被新 KEK 孤立（数据锁死）；即使无现存笔记本也拒绝，
 // 避免覆盖后旧主密码失效造成用户困惑。换密钥材料应走“先禁用再导入”。
 func ImportNotebookCryptoBackup(data []byte, password string) error {
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	// 已启用即拒绝（对齐设计 §4.1，与 api handler 注释一致）
 	Conf.m.RLock()
@@ -608,8 +833,8 @@ func EnableEncryptedNotebook(password string) error {
 		return errors.New("password must not be empty")
 	}
 
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	Conf.m.Lock()
 	if Conf.NotebookCrypto.Enabled {
@@ -694,8 +919,8 @@ func EnableEncryptedNotebook(password string) error {
 // 且不能有依赖当前密钥备份的已删除笔记本历史（否则禁用并删除备份会让这些历史永久锁死，违反 §19）。
 // 清除全局加密配置（MasterSalt/KEKVerifier），KEK/DEK 不再可用。
 func DisableEncryptedNotebook() error {
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	// 检查是否还有加密笔记本（含 conf 损坏但存在备份的）
 	if ids := ListAllEncryptedBoxIDs(); len(ids) > 0 {
@@ -725,8 +950,8 @@ func DisableEncryptedNotebook() error {
 // 前置：仅在本机 Enabled=false 时调用，避免覆盖正在使用的本机配置。
 // 安全：salt 不保密、verifier 是密文，装回配置本身不暴露任何明文数据（解锁仍需主密码派生 KEK）。
 func restoreNotebookCryptoConfigFromBackup() {
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	Conf.m.RLock()
 	enabled := Conf.NotebookCrypto.Enabled
@@ -917,14 +1142,24 @@ func UnlockBox(boxID string, password string, boxEnc *conf.BoxEncryption) error 
 		return errors.New("no encrypted key material for box")
 	}
 
-	// 全局配置锁先于笔记本生命周期锁获取（设计 §17 锁顺序约定），避免与持子系统锁后回取配置锁的路径死锁。
-	// notebookCryptoMu 持锁期间调用的 deriveKEK/conf 修复只申请 Conf.m/cachedDEKsLock，不回取 box 生命周期锁。
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	// 控制面固定按 notebookCryptoMu → response → box operation → box lifecycle 的顺序获取，各层不反向获取上层锁。
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
-	// 获取 box 写锁，与 LockBox/unmount0 串行化，防止并发锁/解锁导致 db/DEK 状态不一致
+	acquireBoxResponseWriteLock(boxID)
+	defer releaseBoxResponseWriteLock(boxID)
+
+	// 响应门禁关闭后再与跨文件操作串行化，防止解锁与在途响应、操作或 LockBox 交错。
+	acquireBoxOperationLock(boxID)
+	defer releaseBoxOperationLock(boxID)
+
 	acquireBoxWriteLock(boxID)
-	defer releaseBoxWriteLock(boxID)
+	lifecycleWriteHeld := true
+	defer func() {
+		if lifecycleWriteHeld {
+			releaseBoxWriteLock(boxID)
+		}
+	}()
 
 	kek, err := deriveKEK(password)
 	if err != nil {
@@ -939,17 +1174,58 @@ func UnlockBox(boxID string, password string, boxEnc *conf.BoxEncryption) error 
 	}
 	boxEnc = trustedCrypt
 
+	recovery := sql.BeginEncryptedIndexQueueRecovery(boxID)
+
 	// 持锁保护"开 db + 缓存 DEK"的原子性，避免与并发的 LockBox 导致 db/DEK 不一致
 	cachedDEKsLock.Lock()
-	defer cachedDEKsLock.Unlock()
+	clearPreviousDEK := func() {
+		if previous := cachedDEKs[boxID]; previous != nil {
+			zeroAndClear(previous)
+			delete(cachedDEKs, boxID)
+		}
+	}
 	if err = sql.OpenEncryptedDB(boxID, dek); err != nil {
+		treenode.RemoveEncryptedBlockTreeDBFile(boxID)
+		sql.RemoveEncryptedDBFile(boxID)
+		clearPreviousDEK()
+		cachedDEKsLock.Unlock()
+		zeroAndClear(dek)
+		recovery.Cancel()
 		return err
 	}
 	if err = treenode.OpenEncryptedBlockTreeDB(boxID, dek); err != nil {
-		sql.RemoveEncryptedDBFile(boxID) // 清理已创建的 content db 文件，避免遗留空加密库
+		treenode.RemoveEncryptedBlockTreeDBFile(boxID)
+		sql.RemoveEncryptedDBFile(boxID)
+		clearPreviousDEK()
+		cachedDEKsLock.Unlock()
+		zeroAndClear(dek)
+		recovery.Cancel()
 		return err
 	}
+	clearPreviousDEK()
 	cachedDEKs[boxID] = dek
+	cachedDEKsLock.Unlock()
+
+	// Durable recovery loads encrypted trees through the DEK provider and takes
+	// lifecycle read ownership. Keep response/operation ownership, but publish
+	// the DEK and release lifecycle write ownership before entering recovery.
+	releaseBoxWriteLock(boxID)
+	lifecycleWriteHeld = false
+	recoveryErr := recovery.Recover()
+	acquireBoxWriteLock(boxID)
+	lifecycleWriteHeld = true
+	if recoveryErr != nil {
+		cachedDEKsLock.Lock()
+		if cached, ok := cachedDEKs[boxID]; ok {
+			zeroAndClear(cached)
+			delete(cachedDEKs, boxID)
+		}
+		cachedDEKsLock.Unlock()
+		treenode.RemoveEncryptedBlockTreeDBFile(boxID)
+		sql.RemoveEncryptedDBFile(boxID)
+		recovery.Cancel()
+		return fmt.Errorf("recover encrypted index queue for notebook [%s]: %w", boxID, recoveryErr)
+	}
 
 	// 初始化自动锁定访问时间戳，记录解锁时刻
 	newVal := &atomic.Int64{}
@@ -986,19 +1262,60 @@ func IsBoxUnlocked(boxID string) bool {
 	return ok
 }
 
-// LockBox 清除指定笔记本的 DEK 并删除其加密 db 文件。Unmount 单个加密笔记本或手动锁定时调用。
-func LockBox(boxID string) {
-	FlushTxQueue()
+// The lock hooks are deterministic concurrency-test boundaries around
+// transaction admission, a contended SQL admission close, and completed drain acquisition.
+var lockBoxAfterTransactionAdmissionCloseHook func(boxID string)
+var lockBoxAdmissionBlockedHook func(boxID string)
+var lockBoxAfterSQLDrainHook func(boxID string)
+
+// LockBox drains accepted writes before clearing the DEK and encrypted indexes.
+// A drain failure leaves the unlocked content store intact and usable.
+func LockBox(boxID string) (err error) {
+	acquireBoxResponseWriteLock(boxID)
+	defer releaseBoxResponseWriteLock(boxID)
+	return lockBoxResponseWriteHeld(boxID)
+}
+
+// lockBoxResponseWriteHeld drains and locks one notebook after the caller has
+// excluded every plaintext response for that notebook.
+func lockBoxResponseWriteHeld(boxID string) (err error) {
+	acquireBoxOperationLock(boxID)
+	defer releaseBoxOperationLock(boxID)
+
+	transactionDrain := transactionAdmission.close(boxID)
+	defer transactionDrain.release()
+	if lockBoxAfterTransactionAdmissionCloseHook != nil {
+		lockBoxAfterTransactionAdmissionCloseHook(boxID)
+	}
+	transactionDrain.wait()
+
+	var onAdmissionBlocked func()
+	if hook := lockBoxAdmissionBlockedHook; hook != nil {
+		onAdmissionBlocked = func() { hook(boxID) }
+	}
+	releaseSQL, err := sql.DrainQueueForBox(boxID, onAdmissionBlocked)
+	if err != nil {
+		return err
+	}
+	defer releaseSQL()
+	if lockBoxAfterSQLDrainHook != nil {
+		lockBoxAfterSQLDrainHook(boxID)
+	}
+
 	acquireBoxWriteLock(boxID)
 	lockBoxHeld(boxID)
-	releaseBoxWriteLock(boxID)
-	// 单 box 锁定后需要刷新全局缓存（树/Block/IAL/AV）
+	// SQL drain 和生命周期写锁均已成功取得，目标内容库不会再接受重放或提交。
+	GlobalUndoLog.ClearStore(boxID)
+	// 明文缓存必须在生命周期写锁内清除。若先释放写锁，新 reader
+	// 可能在清理前命中缓存并在 LockBox 返回后继续持有明文。
 	cache.ClearTreeCache()
 	sql.ClearCache()
 	cache.ClearDocsIAL()
 	cache.ClearBlocksIAL()
 	cache.ClearAVCache()
 	ResetVirtualBlockRefCache()
+	releaseBoxWriteLock(boxID)
+	return nil
 }
 
 // lockBoxHeld 在已持有 box 写锁的前提下执行该 box 的锁定清理（不含全局缓存刷新）。
@@ -1111,8 +1428,8 @@ func GetDEK(boxID string) ([]byte, error) {
 }
 
 // ClearDEK 清除指定笔记本的 DEK。Unmount 单个加密笔记本时调用。
-func ClearDEK(boxID string) {
-	LockBox(boxID)
+func ClearDEK(boxID string) error {
+	return LockBox(boxID)
 }
 
 // ChangeMasterPassword 改主密码：用旧密码校验后，用新密码派生新 KEK，
@@ -1132,8 +1449,8 @@ func ChangeMasterPassword(oldPassword, newPassword string) error {
 		return errors.New("new password must not be empty")
 	}
 
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	// 改密期间不能有已 Mount 的加密笔记本（DEK 在内存），否则新旧 KEK 切换会让缓存与磁盘不一致
 	cachedDEKsLock.RLock()
@@ -1284,6 +1601,14 @@ func IsEncryptedBox(boxID string) bool {
 	return backup != nil && len(backup.WrappedDEK) > 0
 }
 
+// TransactionNotebookForBox 返回事务使用的内容库身份：加密笔记本使用 box ID，普通笔记本使用全局空身份。
+func TransactionNotebookForBox(boxID string) string {
+	if IsEncryptedBox(boxID) {
+		return boxID
+	}
+	return ""
+}
+
 // GetBoxEncryption 获取加密笔记本的 BoxEncryption（含 WrappedDEK）。
 // 优先读 conf.json，若缺失/损坏则 fallback 到 per-notebook backup。
 // 返回 nil 表示该 box 非加密；conf 标记加密但密钥材料缺失时返回明确错误。
@@ -1391,21 +1716,12 @@ func IsBlockRefCrossingBoundary(srcBoxID, defBlockID string) bool {
 		return false
 	}
 	if IsEncryptedBox(srcBoxID) {
-		// 源在加密 box：def 块必须在同一加密 box（查加密 blocktree db）
+		// 源在加密 box：只查询显式源内容库，未命中即跨边界。
 		bt := treenode.GetBlockTreeInBox(defBlockID, srcBoxID)
 		return nil == bt || bt.BoxID != srcBoxID
 	}
-	// 源在普通 box：def 块必须在普通 box（查全局 blocktree，且其 box 非加密）
+	// 源在普通 box：只查询全局内容库，未命中即 fail-closed。
 	bt := treenode.GetBlockTree(defBlockID)
-	if nil == bt {
-		// 全局查不到时遍历加密笔记本查找，防止对向漏判（普通 box 引用加密笔记本块）
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encBT := treenode.GetBlockTreeInBox(defBlockID, encBoxID); nil != encBT {
-				bt = encBT
-				break
-			}
-		}
-	}
 	if nil == bt {
 		// 普通库未命中且锁定的加密 blocktree 不可查询时必须 fail-closed，否则只要知道加密块 ID，
 		// 就能在加密笔记本锁定后把跨边界引用写入全局明文数据库。同一事务树内的新块由调用方单独放行。
@@ -1453,6 +1769,16 @@ func HoldBoxReadLock(boxID string) {
 // ReleaseBoxReadLock 释放 HoldBoxReadLock 获取的 box 读锁。
 func ReleaseBoxReadLock(boxID string) {
 	releaseBoxReadLock(boxID)
+}
+
+// HoldBoxResponseReadLock 获取 box 响应读锁，调用方必须持有到明文响应写入完成。
+func HoldBoxResponseReadLock(boxID string) {
+	acquireBoxResponseReadLock(boxID)
+}
+
+// ReleaseBoxResponseReadLock 释放 HoldBoxResponseReadLock 获取的响应读锁。
+func ReleaseBoxResponseReadLock(boxID string) {
+	releaseBoxResponseReadLock(boxID)
 }
 
 // extractBoxIDFromPath 从 data 目录下的绝对路径反推 boxID。
@@ -1515,6 +1841,7 @@ func ExtractBoxIDFromHistoryPath(absPath string) string {
 // 与 filesys.encryptData/decryptData 共用同一 AAD 构造入口，保证加解密一致。
 func EncryptFile(boxID, relativePath string, dek, plaintext []byte) ([]byte, error) {
 	fileKey := util.DeriveSubKey(dek, "siyuan/file")
+	defer zeroAndClear(fileKey)
 	aad, err := filesys.SyAAD(boxID, relativePath)
 	if err != nil {
 		return nil, err
@@ -1525,6 +1852,7 @@ func EncryptFile(boxID, relativePath string, dek, plaintext []byte) ([]byte, err
 // DecryptFile 对应解密。
 func DecryptFile(boxID, relativePath string, dek, ciphertext []byte) ([]byte, error) {
 	fileKey := util.DeriveSubKey(dek, "siyuan/file")
+	defer zeroAndClear(fileKey)
 	aad, err := filesys.SyAAD(boxID, relativePath)
 	if err != nil {
 		return nil, err
@@ -1536,6 +1864,7 @@ func DecryptFile(boxID, relativePath string, dek, ciphertext []byte) ([]byte, er
 // diskName 为磁盘上的脱敏文件名（加密 box）或原始文件名（普通 box）。
 func EncryptAsset(boxID, diskName string, dek, plaintext []byte) ([]byte, error) {
 	assetKey := util.DeriveSubKey(dek, "siyuan/asset")
+	defer zeroAndClear(assetKey)
 	aad := "siyuan:v1:asset:" + boxID + ":assets/" + diskName
 	return util.EncryptWithAAD(assetKey, plaintext, []byte(aad))
 }
@@ -1543,18 +1872,21 @@ func EncryptAsset(boxID, diskName string, dek, plaintext []byte) ([]byte, error)
 // DecryptAsset 对应解密。
 func DecryptAsset(boxID, diskName string, dek, ciphertext []byte) ([]byte, error) {
 	assetKey := util.DeriveSubKey(dek, "siyuan/asset")
+	defer zeroAndClear(assetKey)
 	aad := "siyuan:v1:asset:" + boxID + ":assets/" + diskName
 	return util.DecryptWithAAD(assetKey, ciphertext, []byte(aad))
 }
 
 func EncryptAssetNameMapping(boxID string, dek, plaintext []byte) ([]byte, error) {
 	assetKey := util.DeriveSubKey(dek, "siyuan/asset")
+	defer zeroAndClear(assetKey)
 	aad := "siyuan:v1:asset-names:" + boxID
 	return util.EncryptWithAAD(assetKey, plaintext, []byte(aad))
 }
 
 func DecryptAssetNameMapping(boxID string, dek, ciphertext []byte) ([]byte, error) {
 	assetKey := util.DeriveSubKey(dek, "siyuan/asset")
+	defer zeroAndClear(assetKey)
 	aad := "siyuan:v1:asset-names:" + boxID
 	return util.DecryptWithAAD(assetKey, ciphertext, []byte(aad))
 }
@@ -1615,6 +1947,7 @@ func copyAssetDecryptIfEncrypted(srcPath, destPath string) error {
 			// 加密笔记本未解锁：fail-closed，拒绝复制（不复制密文，避免泄漏无效文件）
 			return errors.New(Conf.Language(314))
 		}
+		defer zeroAndClear(dek)
 		raw, readErr := filelock.ReadFile(srcPath)
 		if readErr != nil {
 			return readErr
@@ -1636,8 +1969,8 @@ func copyAssetDecryptIfEncrypted(srcPath, destPath string) error {
 // 前置：加密功能已启用。创建时需要主密码（临时派生 KEK 用于 wrap DEK，用完即弃）。
 // 创建后直接用生成的 DEK 打开加密 db 并缓存（已解锁状态），调用方随后调 openNotebook 即可挂载。
 func CreateEncryptedBox(name, password string) (id string, err error) {
-	notebookCryptoMu.Lock()
-	defer notebookCryptoMu.Unlock()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
 
 	Conf.m.RLock()
 	enabled := Conf.NotebookCrypto.Enabled
@@ -1768,7 +2101,10 @@ func AutoLockIdleEncryptedBoxesJob() {
 				if box := Conf.Box(boxID); nil != box {
 					boxName = box.Name
 				}
-				Unmount(boxID)
+				if err := Unmount(boxID); err != nil {
+					logging.LogErrorf("auto-lock encrypted notebook [%s] failed: %s", boxID, err)
+					continue
+				}
 				// 自动锁定会关闭正在编辑的文档，推一条提示避免用户以为崩溃
 				util.PushMsg(fmt.Sprintf(Conf.Language(322), boxName), 0)
 			}

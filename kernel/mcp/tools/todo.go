@@ -50,7 +50,7 @@ func init() {
 	register(TodoWriteTool)
 }
 
-func todoWriteHandler(args map[string]any) (CallToolResult, error) {
+func todoWriteHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	rawTodos, ok := args["todos"]
 	if !ok {
 		return CallToolResult{

@@ -43,7 +43,7 @@ func init() {
 	register(DailynoteTool)
 }
 
-func dailynoteHandler(args map[string]any) (CallToolResult, error) {
+func dailynoteHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "create":
@@ -107,6 +107,7 @@ func dailynoteAppend(args map[string]any) (CallToolResult, error) {
 
 	parentID := util.GetTreeID(p)
 	transactions := []*model.Transaction{{
+		Notebook: model.TransactionNotebookForBox(notebook),
 		DoOperations: []*model.Operation{{
 			Action:   "appendInsert",
 			Data:     data,
@@ -116,7 +117,7 @@ func dailynoteAppend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-	util.PushReloadProtyle(parentID)
+	util.PushReloadProtyle(parentID, model.TransactionNotebookForBox(notebook))
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("block appended to daily note: %s", parentID)}}}, nil
 }
 
@@ -145,6 +146,7 @@ func dailynotePrepend(args map[string]any) (CallToolResult, error) {
 
 	parentID := util.GetTreeID(p)
 	transactions := []*model.Transaction{{
+		Notebook: model.TransactionNotebookForBox(notebook),
 		DoOperations: []*model.Operation{{
 			Action:   "prependInsert",
 			Data:     data,
@@ -154,6 +156,6 @@ func dailynotePrepend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-	util.PushReloadProtyle(parentID)
+	util.PushReloadProtyle(parentID, model.TransactionNotebookForBox(notebook))
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("block prepended to daily note: %s", parentID)}}}, nil
 }

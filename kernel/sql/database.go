@@ -18,6 +18,7 @@ package sql
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -63,6 +64,8 @@ var (
 	// sql 包不直接 import model（循环依赖），路由函数据此 fail-closed：
 	// 加密笔记本未解锁时绝不回退全局库，避免加密笔记本索引污染全局明文库。
 	IsEncryptedBoxFn func(boxID string) bool
+
+	initDatabaseAdmissionBlockedHook func()
 )
 
 func init() {
@@ -78,14 +81,15 @@ func init() {
 	})
 }
 
-func InitDatabase(forceRebuild bool) {
+func InitDatabase(forceRebuild bool) error {
 	initDatabaseLock.Lock()
 	defer initDatabaseLock.Unlock()
-
-	initDatabase(forceRebuild)
+	releaseAdmission := queueAdmission.close(initDatabaseAdmissionBlockedHook)
+	defer releaseAdmission()
+	return initDatabaseAdmissionOwned(forceRebuild)
 }
 
-func initDatabase(forceRebuild bool) {
+func initDatabaseAdmissionOwned(forceRebuild bool) error {
 	ClearCache()
 	disableCache()
 	defer enableCache()
@@ -93,25 +97,26 @@ func initDatabase(forceRebuild bool) {
 	util.IncBootProgress(2, util.BootL10n(301, "Initializing database..."))
 
 	if forceRebuild {
-		ClearQueue()
-		closeDatabase()
-		util.RemoveDatabaseFile(util.DBPath)
-	}
-
-	initDBConnection()
-	initIndexQueue()
-	treenode.InitBlockTree(forceRebuild)
-
-	if !forceRebuild {
+		if err := clearQueueAdmissionOwned(); err != nil {
+			return fmt.Errorf("clear queue before forced database rebuild: %w", err)
+		}
+	} else {
+		if db == nil {
+			initDBConnection()
+		}
 		// 检查数据库结构版本，如果版本不一致的话说明改过表结构，需要重建
 		if util.DatabaseVer == getDatabaseVer() {
 			// 老库版本一致但缺少新加的列时，做幂等迁移（不升 DatabaseVer，避免全库重建丢失已嵌入向量）
+			initIndexQueue()
+			treenode.InitBlockTree(false)
 			migrateBlockEmbeddingsSchema()
 			recoverIndexQueue()
-			return
+			return nil
 		}
 		logging.LogInfof("the database structure is changed, rebuilding database...")
-		clearIndexQueueEntries()
+		if err := clearQueueAdmissionOwned(); err != nil {
+			return fmt.Errorf("clear queue before database version rebuild: %w", err)
+		}
 	}
 
 	// 不存在库或者版本不一致都会走到这里
@@ -120,11 +125,13 @@ func initDatabase(forceRebuild bool) {
 	treenode.CloseDatabase()
 	util.RemoveDatabaseFile(util.DBPath)
 	initDBConnection()
+	initIndexQueue()
 	initDBTables()
 	util.RemoveDatabaseFile(util.BlockTreeDBPath)
 	treenode.InitBlockTree(true)
 
 	logging.LogInfof("reinitialized database [%s]", util.DBPath)
+	return nil
 }
 
 func initDBTables() {
@@ -848,10 +855,15 @@ func buildSpanFromNode(n *ast.Node, tree *parse.Tree, rootID, boxID, p string) (
 
 		if ast.NodeInlineHTML == n.Type {
 			// 没有行级 HTML，只有块级 HTML，这里转换为块
-			n.ID = ast.NewNodeID()
-			n.SetIALAttr("id", n.ID)
-			n.SetIALAttr("updated", n.ID[:14])
-			b, attrs := buildBlockFromNode(n, tree)
+			indexedNode := *n
+			indexedNode.KramdownIAL = make([][]string, len(n.KramdownIAL))
+			for i, kv := range n.KramdownIAL {
+				indexedNode.KramdownIAL[i] = append([]string(nil), kv...)
+			}
+			indexedNode.ID = ast.NewNodeID()
+			indexedNode.SetIALAttr("id", indexedNode.ID)
+			indexedNode.SetIALAttr("updated", indexedNode.ID[:14])
+			b, attrs := buildBlockFromNode(&indexedNode, tree)
 			b.Type = ast.NodeHTMLBlock.String()
 			blocks = append(blocks, b)
 			attributes = append(attributes, attrs...)
@@ -1079,7 +1091,6 @@ func deleteBlocksByIDs(tx *sql.Tx, ids []string) (err error) {
 
 	var ftsIDs []string
 	for _, id := range ids {
-		removeBlockCache(id)
 		ftsIDs = append(ftsIDs, "\""+id+"\"")
 	}
 
@@ -1114,6 +1125,7 @@ func deleteBlocksByIDs(tx *sql.Tx, ids []string) (err error) {
 	if err = execStmtTx(tx, stmt); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, ids)
 
 	// block_embeddings 表在加密 db 中不存在（加密笔记本不参与嵌入向量化），对该表不存在的错误容错
 	stmt = "DELETE FROM block_embeddings WHERE id IN (" + strings.Join(ftsIDs, ",") + ")"
@@ -1126,6 +1138,10 @@ func deleteBlocksByIDs(tx *sql.Tx, ids []string) (err error) {
 }
 
 func deleteBlocksByBoxTx(tx *sql.Tx, box string) (err error) {
+	blockIDs, err := queryBlockCacheIDs(tx, "box = ?", box)
+	if err != nil {
+		return err
+	}
 	// external content 模式下 FTS 行需按 rowid 删除，rowid 来自 blocks 表，
 	// 因此必须先删 FTS（此时 blocks 尚在），再删 blocks，否则子查询查不到 rowid。
 	stmt := "DELETE FROM blocks_fts WHERE rowid IN (SELECT rowid FROM blocks WHERE box = ?)"
@@ -1136,7 +1152,7 @@ func deleteBlocksByBoxTx(tx *sql.Tx, box string) (err error) {
 	if err = execStmtTx(tx, stmt, box); err != nil {
 		return
 	}
-	ClearCache()
+	registerBlockCacheInvalidations(tx, blockIDs)
 	return
 }
 
@@ -1177,16 +1193,150 @@ func deleteAttributesByBoxTx(tx *sql.Tx, box string) (err error) {
 	return
 }
 
-func deleteRefsByPath(tx *sql.Tx, box, path string) (err error) {
-	stmt := "DELETE FROM refs WHERE box = ? AND path = ?"
-	err = execStmtTx(tx, stmt, box, path)
+var blockCacheInvalidationsMu sync.Mutex
+var blockCacheInvalidations = map[*sql.Tx]map[string]struct{}{}
+
+func registerBlockCacheInvalidation(tx *sql.Tx, id string) {
+	if tx == nil || id == "" {
+		return
+	}
+	blockCacheInvalidationsMu.Lock()
+	ids := blockCacheInvalidations[tx]
+	if ids == nil {
+		ids = map[string]struct{}{}
+		blockCacheInvalidations[tx] = ids
+	}
+	ids[id] = struct{}{}
+	blockCacheInvalidationsMu.Unlock()
+}
+
+func registerBlockCacheInvalidations(tx *sql.Tx, ids []string) {
+	for _, id := range ids {
+		registerBlockCacheInvalidation(tx, id)
+	}
+}
+
+func takeBlockCacheInvalidations(tx *sql.Tx) []string {
+	blockCacheInvalidationsMu.Lock()
+	ids := blockCacheInvalidations[tx]
+	delete(blockCacheInvalidations, tx)
+	blockCacheInvalidationsMu.Unlock()
+	ret := make([]string, 0, len(ids))
+	for id := range ids {
+		ret = append(ret, id)
+	}
+	return ret
+}
+
+func discardBlockCacheInvalidations(tx *sql.Tx) {
+	blockCacheInvalidationsMu.Lock()
+	delete(blockCacheInvalidations, tx)
+	blockCacheInvalidationsMu.Unlock()
+}
+
+func queryBlockCacheIDs(tx *sql.Tx, where string, args ...any) (ret []string, err error) {
+	rows, err := tx.Query("SELECT id FROM blocks WHERE "+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id sql.NullString
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id.Valid && id.String != "" {
+			ret = append(ret, id.String)
+		}
+	}
+	err = rows.Err()
 	return
 }
 
-func deleteRefsByPathTx(tx *sql.Tx, box, path string) (err error) {
-	stmt := "DELETE FROM refs WHERE box = ? AND path = ?"
-	err = execStmtTx(tx, stmt, box, path)
+type refCacheIdentity struct {
+	defBlockID string
+	boxID      string
+}
+
+var refCacheInvalidationsMu sync.Mutex
+var refCacheInvalidations = map[*sql.Tx]map[refCacheIdentity]struct{}{}
+
+func registerRefCacheInvalidation(tx *sql.Tx, identity refCacheIdentity) {
+	if tx == nil || identity.defBlockID == "" {
+		return
+	}
+	identity.boxID = contentStoreBoxID(identity.boxID)
+	refCacheInvalidationsMu.Lock()
+	identities := refCacheInvalidations[tx]
+	if identities == nil {
+		identities = map[refCacheIdentity]struct{}{}
+		refCacheInvalidations[tx] = identities
+	}
+	identities[identity] = struct{}{}
+	refCacheInvalidationsMu.Unlock()
+}
+
+func takeRefCacheInvalidations(tx *sql.Tx) []refCacheIdentity {
+	refCacheInvalidationsMu.Lock()
+	identities := refCacheInvalidations[tx]
+	delete(refCacheInvalidations, tx)
+	refCacheInvalidationsMu.Unlock()
+	ret := make([]refCacheIdentity, 0, len(identities))
+	for identity := range identities {
+		ret = append(ret, identity)
+	}
+	return ret
+}
+
+func discardRefCacheInvalidations(tx *sql.Tx) {
+	refCacheInvalidationsMu.Lock()
+	delete(refCacheInvalidations, tx)
+	refCacheInvalidationsMu.Unlock()
+}
+
+func queryRefCacheIdentities(tx *sql.Tx, where string, args ...any) (ret []refCacheIdentity, err error) {
+	rows, err := tx.Query("SELECT DISTINCT def_block_id, box FROM refs WHERE "+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var identity refCacheIdentity
+		if err = rows.Scan(&identity.defBlockID, &identity.boxID); err != nil {
+			return nil, err
+		}
+		ret = append(ret, identity)
+	}
+	err = rows.Err()
 	return
+}
+
+func removeRefCacheIdentities(identities []refCacheIdentity) {
+	for _, identity := range identities {
+		removeRefCacheByDefIDInBox(identity.defBlockID, identity.boxID)
+	}
+}
+
+func deleteRefsWhere(tx *sql.Tx, where string, args ...any) (err error) {
+	identities, err := queryRefCacheIdentities(tx, where, args...)
+	if err != nil {
+		return err
+	}
+	if err = execStmtTx(tx, "DELETE FROM refs WHERE "+where, args...); err != nil {
+		return err
+	}
+	for _, identity := range identities {
+		registerRefCacheInvalidation(tx, identity)
+	}
+	return
+}
+
+func deleteRefsByPath(tx *sql.Tx, box, path string) (err error) {
+	return deleteRefsWhere(tx, "box = ? AND path = ?", box, path)
+}
+
+func deleteRefsByPathTx(tx *sql.Tx, box, path string) (err error) {
+	return deleteRefsWhere(tx, "box = ? AND path = ?", box, path)
 }
 
 func deleteRefsByBoxTx(tx *sql.Tx, box string) (err error) {
@@ -1197,9 +1347,7 @@ func deleteRefsByBoxTx(tx *sql.Tx, box string) (err error) {
 }
 
 func deleteBlockRefsByBoxTx(tx *sql.Tx, box string) (err error) {
-	stmt := "DELETE FROM refs WHERE box = ?"
-	err = execStmtTx(tx, stmt, box)
-	return
+	return deleteRefsWhere(tx, "box = ?", box)
 }
 
 func deleteFileAnnotationRefsByPath(tx *sql.Tx, box, path string) (err error) {
@@ -1221,6 +1369,10 @@ func deleteFileAnnotationRefsByBoxTx(tx *sql.Tx, box string) (err error) {
 }
 
 func deleteByRootID(tx *sql.Tx, rootID string, context map[string]any) (err error) {
+	blockIDs, err := queryBlockCacheIDs(tx, "root_id = ?", rootID)
+	if err != nil {
+		return err
+	}
 	// external content 模式下 FTS 行需按 rowid 删除，必须先删 FTS 再删 blocks。
 	stmt := "DELETE FROM blocks_fts WHERE rowid IN (SELECT rowid FROM blocks WHERE root_id = ?)"
 	if err = execStmtTx(tx, stmt, rootID); err != nil {
@@ -1230,6 +1382,7 @@ func deleteByRootID(tx *sql.Tx, rootID string, context map[string]any) (err erro
 	if err = execStmtTx(tx, stmt, rootID); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 	stmt = "DELETE FROM spans WHERE root_id = ?"
 	if err = execStmtTx(tx, stmt, rootID); err != nil {
 		return
@@ -1238,8 +1391,7 @@ func deleteByRootID(tx *sql.Tx, rootID string, context map[string]any) (err erro
 	if err = execStmtTx(tx, stmt, rootID); err != nil {
 		return
 	}
-	stmt = "DELETE FROM refs WHERE root_id = ?"
-	if err = execStmtTx(tx, stmt, rootID); err != nil {
+	if err = deleteRefsWhere(tx, "root_id = ?", rootID); err != nil {
 		return
 	}
 	stmt = "DELETE FROM file_annotation_refs WHERE root_id = ?"
@@ -1250,7 +1402,6 @@ func deleteByRootID(tx *sql.Tx, rootID string, context map[string]any) (err erro
 	if err = execStmtTx(tx, stmt, rootID); err != nil {
 		return
 	}
-	ClearCache()
 	eventbus.Publish(eventbus.EvtSQLDeleteBlocks, context, rootID)
 	return
 }
@@ -1262,6 +1413,10 @@ func batchDeleteByRootIDs(tx *sql.Tx, rootIDs []string, context map[string]any) 
 
 	ids := strings.Join(rootIDs, "','")
 	ids = "('" + ids + "')"
+	blockIDs, err := queryBlockCacheIDs(tx, "root_id IN "+ids)
+	if err != nil {
+		return err
+	}
 	// external content 模式下 FTS 行需按 rowid 删除，必须先删 FTS 再删 blocks。
 	stmt := "DELETE FROM blocks_fts WHERE rowid IN (SELECT rowid FROM blocks WHERE root_id IN " + ids + ")"
 	if err = execStmtTx(tx, stmt); err != nil {
@@ -1271,6 +1426,7 @@ func batchDeleteByRootIDs(tx *sql.Tx, rootIDs []string, context map[string]any) 
 	if err = execStmtTx(tx, stmt); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 	stmt = "DELETE FROM spans WHERE root_id IN " + ids
 	if err = execStmtTx(tx, stmt); err != nil {
 		return
@@ -1279,8 +1435,7 @@ func batchDeleteByRootIDs(tx *sql.Tx, rootIDs []string, context map[string]any) 
 	if err = execStmtTx(tx, stmt); err != nil {
 		return
 	}
-	stmt = "DELETE FROM refs WHERE root_id IN " + ids
-	if err = execStmtTx(tx, stmt); err != nil {
+	if err = deleteRefsWhere(tx, "root_id IN "+ids); err != nil {
 		return
 	}
 	stmt = "DELETE FROM file_annotation_refs WHERE root_id IN " + ids
@@ -1291,12 +1446,15 @@ func batchDeleteByRootIDs(tx *sql.Tx, rootIDs []string, context map[string]any) 
 	if err = execStmtTx(tx, stmt); err != nil {
 		return
 	}
-	ClearCache()
 	eventbus.Publish(eventbus.EvtSQLDeleteBlocks, context, fmt.Sprintf("%d", len(rootIDs)))
 	return
 }
 
 func batchDeleteByPathPrefix(tx *sql.Tx, boxID, pathPrefix string) (err error) {
+	blockIDs, err := queryBlockCacheIDs(tx, "box = ? AND path LIKE ?", boxID, pathPrefix+"%")
+	if err != nil {
+		return err
+	}
 	// external content 模式下 FTS 行需按 rowid 删除，必须先删 FTS 再删 blocks。
 	stmt := "DELETE FROM blocks_fts WHERE rowid IN (SELECT rowid FROM blocks WHERE box = ? AND path LIKE ?)"
 	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
@@ -1306,6 +1464,7 @@ func batchDeleteByPathPrefix(tx *sql.Tx, boxID, pathPrefix string) (err error) {
 	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 	stmt = "DELETE FROM spans WHERE box = ? AND path LIKE ?"
 	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
 		return
@@ -1314,8 +1473,7 @@ func batchDeleteByPathPrefix(tx *sql.Tx, boxID, pathPrefix string) (err error) {
 	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
 		return
 	}
-	stmt = "DELETE FROM refs WHERE box = ? AND path LIKE ?"
-	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
+	if err = deleteRefsWhere(tx, "box = ? AND path LIKE ?", boxID, pathPrefix+"%"); err != nil {
 		return
 	}
 	stmt = "DELETE FROM file_annotation_refs WHERE box = ? AND path LIKE ?"
@@ -1326,15 +1484,24 @@ func batchDeleteByPathPrefix(tx *sql.Tx, boxID, pathPrefix string) (err error) {
 	if err = execStmtTx(tx, stmt, boxID, pathPrefix+"%"); err != nil {
 		return
 	}
-	ClearCache()
 	return
 }
 
 func batchUpdatePath(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err error) {
+	blockIDs, err := queryBlockCacheIDs(tx, "root_id = ?", tree.ID)
+	if err != nil {
+		return err
+	}
+	refCacheIdentities, err := queryRefCacheIdentities(tx, "root_id = ? OR def_block_root_id = ?", tree.ID, tree.ID)
+	if err != nil {
+		return err
+	}
+
 	stmt := "UPDATE blocks SET box = ?, path = ?, hpath = ? WHERE root_id = ?"
 	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.HPath, tree.ID); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 
 	stmt = "UPDATE spans SET box = ?, path = ? WHERE root_id = ?"
 	if err = execStmtTx(tx, stmt, tree.Box, tree.Path, tree.ID); err != nil {
@@ -1361,19 +1528,26 @@ func batchUpdatePath(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err 
 		return
 	}
 
-	ClearCache()
+	for _, identity := range refCacheIdentities {
+		registerRefCacheInvalidation(tx, identity)
+		registerRefCacheInvalidation(tx, refCacheIdentity{defBlockID: identity.defBlockID, boxID: tree.Box})
+	}
 	evtHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tree.ID)))[:7]
 	eventbus.Publish(eventbus.EvtSQLUpdateBlocksHPaths, context, 1, evtHash)
 	return
 }
 
 func batchUpdateHPath(tx *sql.Tx, tree *parse.Tree, context map[string]any) (err error) {
+	blockIDs, err := queryBlockCacheIDs(tx, "root_id = ?", tree.ID)
+	if err != nil {
+		return err
+	}
 	stmt := "UPDATE blocks SET hpath = ? WHERE root_id = ?"
 	if err = execStmtTx(tx, stmt, tree.HPath, tree.ID); err != nil {
 		return
 	}
+	registerBlockCacheInvalidations(tx, blockIDs)
 
-	ClearCache()
 	evtHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tree.ID)))[:7]
 	eventbus.Publish(eventbus.EvtSQLUpdateBlocksHPaths, context, 1, evtHash)
 	return
@@ -1417,8 +1591,8 @@ func queryTx(tx *sql.Tx, query string, args ...any) (*sql.Rows, error) {
 		return nil, errors.New("statement is empty")
 	}
 
-	if nil == db {
-		return nil, errors.New("database is nil")
+	if nil == tx {
+		return nil, errors.New("transaction is nil")
 	}
 	return tx.Query(query, args...)
 }
@@ -1559,9 +1733,26 @@ func commitTx(tx *sql.Tx) (err error) {
 	if err = tx.Commit(); err != nil {
 		logging.LogErrorf("commit tx failed: %s\n  %s", err, logging.ShortStack())
 	}
+	blockIDs := takeBlockCacheInvalidations(tx)
+	refCacheIdentities := takeRefCacheInvalidations(tx)
+	if err == nil {
+		removeBlockCacheEntries(blockIDs)
+		removeRefCacheIdentities(refCacheIdentities)
+	}
 
 	closeTxPreparedStmts(tx)
 	return
+}
+
+func rollbackTx(tx *sql.Tx) error {
+	if tx == nil {
+		return nil
+	}
+	err := tx.Rollback()
+	discardBlockCacheInvalidations(tx)
+	discardRefCacheInvalidations(tx)
+	closeTxPreparedStmts(tx)
+	return err
 }
 
 func beginHistoryTx() (tx *sql.Tx, err error) {
@@ -1674,16 +1865,7 @@ func prepareExecInsertTx(tx *sql.Tx, stmtSQL string, args []any) (err error) {
 	}
 
 	if _, err = stmt.Exec(args...); err != nil {
-		tx.Rollback()
 		logging.LogErrorf("exec database stmt [%s] failed: %s\n  %s", stmtSQL, err, logging.ShortStack())
-
-		if isRecoverableDBFileError(err) {
-			closeDatabase()
-			util.RemoveDatabaseFile(util.DBPath)
-			time.Sleep(time.Second)
-			initDatabase(true)
-			logging.LogFatalf(logging.ExitCodeUnavailableDatabase, "database disk image [%s] is malformed, please restart SiYuan kernel to rebuild it\n\t%s\n\t%v", util.DBPath, stmtSQL, args)
-		}
 		return
 	}
 	return
@@ -1691,16 +1873,7 @@ func prepareExecInsertTx(tx *sql.Tx, stmtSQL string, args []any) (err error) {
 
 func execStmtTx(tx *sql.Tx, stmt string, args ...any) (err error) {
 	if _, err = tx.Exec(stmt, args...); err != nil {
-		tx.Rollback()
 		logging.LogErrorf("exec database stmt [%s] failed: %s\n  %s", stmt, err, logging.ShortStack())
-
-		if isRecoverableDBFileError(err) {
-			closeDatabase()
-			util.RemoveDatabaseFile(util.DBPath)
-			time.Sleep(time.Second)
-			initDatabase(true)
-			logging.LogFatalf(logging.ExitCodeUnavailableDatabase, "database disk image [%s] is malformed, please restart SiYuan kernel to rebuild it\n\t%s\n\t%v", util.DBPath, stmt, args)
-		}
 		return
 	}
 	return
@@ -1847,10 +2020,9 @@ func OpenEncryptedDB(boxID string, dek []byte) (err error) {
 	dbPath := util.EncryptedDBPath(boxID)
 	// 派生 content 子密钥，与 blocktree/assets/file/AV 用途分离
 	contentKey := util.DeriveSubKey(dek, "siyuan/sqlcipher/content")
+	defer clear(contentKey)
 	// SQLCipher DSN：_key=x'<hex>' 让 go-sqlite3 执行 PRAGMA key；其余 PRAGMA 与全局 siyuan.db 对齐
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=OFF&_mmap_size=4294967296&_secure_delete=OFF" +
-		"&_cache_size=-128000&_page_size=32768&_busy_timeout=7000&_ignore_check_constraints=ON" +
-		"&_temp_store=MEMORY&_case_sensitive_like=OFF&_key=x'" + hex.EncodeToString(contentKey) + "'"
+	dsn := encryptedDatabaseDSN(dbPath, contentKey)
 	boxDB, err := sql.Open("sqlite3_extended", dsn)
 	if err != nil {
 		return err
@@ -1862,6 +2034,122 @@ func OpenEncryptedDB(boxID string, dek []byte) (err error) {
 		return err
 	}
 	encryptedDBs.Store(boxID, boxDB)
+	return nil
+}
+
+func encryptedDatabaseDSN(dbPath string, contentKey []byte) string {
+	return dbPath + "?_journal_mode=WAL&_synchronous=OFF&_mmap_size=4294967296&_secure_delete=OFF" +
+		"&_cache_size=-128000&_page_size=32768&_busy_timeout=7000&_ignore_check_constraints=ON" +
+		"&_temp_store=MEMORY&_case_sensitive_like=OFF&_key=x'" + hex.EncodeToString(contentKey) + "'"
+}
+
+// BackupEncryptedDB creates a consistent SQLCipher snapshot of an open
+// encrypted content index.
+func BackupEncryptedDB(boxID, backupPath string, dek []byte) error {
+	source := GetEncryptedDB(boxID)
+	if source == nil {
+		return fmt.Errorf("encrypted database for box [%s] is not open", boxID)
+	}
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove previous encrypted database snapshot: %w", err)
+	}
+	contentKey := util.DeriveSubKey(dek, "siyuan/sqlcipher/content")
+	defer clear(contentKey)
+	destination, err := sql.Open("sqlite3_extended", encryptedDatabaseDSN(backupPath, contentKey))
+	if err != nil {
+		return fmt.Errorf("open encrypted database snapshot: %w", err)
+	}
+	defer destination.Close()
+	if err = destination.Ping(); err != nil {
+		return fmt.Errorf("initialize encrypted database snapshot: %w", err)
+	}
+	if err = backupSQLiteDatabase(destination, source); err != nil {
+		return fmt.Errorf("backup encrypted database [%s]: %w", boxID, err)
+	}
+	return nil
+}
+
+// RestoreEncryptedDB restores a snapshot into an already open encrypted
+// content index.
+func RestoreEncryptedDB(boxID, backupPath string, dek []byte) error {
+	destination := GetEncryptedDB(boxID)
+	if destination == nil {
+		return fmt.Errorf("encrypted database for box [%s] is not open", boxID)
+	}
+	contentKey := util.DeriveSubKey(dek, "siyuan/sqlcipher/content")
+	defer clear(contentKey)
+	source, err := sql.Open("sqlite3_extended", encryptedDatabaseDSN(backupPath, contentKey))
+	if err != nil {
+		return fmt.Errorf("open encrypted database snapshot for restore: %w", err)
+	}
+	defer source.Close()
+	if err = source.Ping(); err != nil {
+		return fmt.Errorf("initialize encrypted database snapshot for restore: %w", err)
+	}
+	if err = backupSQLiteDatabase(destination, source); err != nil {
+		return fmt.Errorf("restore encrypted database [%s]: %w", boxID, err)
+	}
+	ClearCache()
+	return nil
+}
+
+func backupSQLiteDatabase(destination, source *sql.DB) error {
+	ctx := context.Background()
+	destinationConn, err := destination.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer destinationConn.Close()
+	sourceConn, err := source.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer sourceConn.Close()
+	return destinationConn.Raw(func(destinationDriver any) error {
+		destinationSQLite, ok := destinationDriver.(*sqlite3.SQLiteConn)
+		if !ok {
+			return fmt.Errorf("unexpected destination SQLite driver [%T]", destinationDriver)
+		}
+		return sourceConn.Raw(func(sourceDriver any) error {
+			sourceSQLite, ok := sourceDriver.(*sqlite3.SQLiteConn)
+			if !ok {
+				return fmt.Errorf("unexpected source SQLite driver [%T]", sourceDriver)
+			}
+			backup, backupErr := destinationSQLite.Backup("main", sourceSQLite, "main")
+			if backupErr != nil {
+				return backupErr
+			}
+			done, stepErr := backup.Step(-1)
+			finishErr := backup.Finish()
+			if stepErr == nil && !done {
+				stepErr = errors.New("SQLite backup did not finish")
+			}
+			return errors.Join(stepErr, finishErr)
+		})
+	})
+}
+
+// ResetEncryptedIndex clears one encrypted notebook's derived content index
+// in a single database transaction.
+func ResetEncryptedIndex(boxID string) error {
+	boxDB := GetEncryptedDB(boxID)
+	if boxDB == nil {
+		return fmt.Errorf("encrypted database for box [%s] is not open", boxID)
+	}
+	tx, err := boxDB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin encrypted index reset [%s]: %w", boxID, err)
+	}
+	if err = deleteByBoxTx(tx, boxID); err != nil {
+		resetErr := fmt.Errorf("reset encrypted index [%s]: %w", boxID, err)
+		if rollbackErr := rollbackTx(tx); rollbackErr != nil {
+			resetErr = errors.Join(resetErr, fmt.Errorf("rollback encrypted index reset [%s]: %w", boxID, rollbackErr))
+		}
+		return resetErr
+	}
+	if err = commitTx(tx); err != nil {
+		return fmt.Errorf("commit encrypted index reset [%s]: %w", boxID, err)
+	}
 	return nil
 }
 

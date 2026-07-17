@@ -66,6 +66,7 @@ func copyDecryptedAsset(src, dest string) error {
 	if dekErr != nil {
 		return dekErr
 	}
+	defer clear(dek)
 	diskName := filepath.Base(src)
 	data, readErr := os.ReadFile(src)
 	if readErr != nil {

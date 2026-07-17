@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
 	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
@@ -286,12 +287,89 @@ func setCriteria(criteria []*Criterion) (err error) {
 }
 
 type RecentDoc struct {
-	RootID   string `json:"rootID"`
-	Icon     string `json:"icon,omitempty"`
-	Title    string `json:"title,omitempty"`
-	ViewedAt int64  `json:"viewedAt,omitempty"` // 浏览时间字段
-	ClosedAt int64  `json:"closedAt,omitempty"` // 关闭时间字段
-	OpenAt   int64  `json:"openAt,omitempty"`   // 文档第一次从文档树加载到页签的时间
+	RootID     string `json:"rootID"`
+	NotebookID string `json:"notebookId,omitempty"`
+	Icon       string `json:"icon,omitempty"`
+	Title      string `json:"title,omitempty"`
+	ViewedAt   int64  `json:"viewedAt,omitempty"` // 浏览时间字段
+	ClosedAt   int64  `json:"closedAt,omitempty"` // 关闭时间字段
+	OpenAt     int64  `json:"openAt,omitempty"`   // 文档第一次从文档树加载到页签的时间
+}
+
+type RecentDocIdentity struct {
+	RootID     string `json:"rootID"`
+	NotebookID string `json:"notebookId"`
+}
+
+// recentDocRecord 是全局存储格式，不包含运行时派生的标题和图标明文。
+type recentDocRecord struct {
+	RootID     string `json:"rootID"`
+	NotebookID string `json:"notebookId,omitempty"`
+	ViewedAt   int64  `json:"viewedAt,omitempty"`
+	ClosedAt   int64  `json:"closedAt,omitempty"`
+	OpenAt     int64  `json:"openAt,omitempty"`
+}
+
+func recentDocIdentityKey(rootID, notebookID string) string {
+	return notebookID + "\x00" + rootID
+}
+
+func resolveRecentDocIdentity(rootID, notebookID string) (identity RecentDocIdentity, bt *treenode.BlockTree, err error) {
+	if !ast.IsNodeIDPattern(rootID) || !ast.IsNodeIDPattern(notebookID) {
+		return identity, nil, ErrInvalidID
+	}
+	contentStore := ""
+	if IsEncryptedBox(notebookID) {
+		contentStore = notebookID
+	}
+	bt = treenode.GetBlockTreeInBox(rootID, contentStore)
+	if bt == nil || bt.BoxID != notebookID {
+		return identity, nil, fmt.Errorf("%w: recent document [%s] in notebook [%s]", ErrBlockNotFound, rootID, notebookID)
+	}
+	identity = RecentDocIdentity{RootID: bt.RootID, NotebookID: notebookID}
+	return
+}
+
+// recentDocMigrationStores 只有在所有加密 blocktree 均可检查时才允许旧身份迁移。
+func recentDocMigrationStores() (openedBoxIDs []string, allEncryptedStoresOpened bool) {
+	openedBoxIDs = treenode.GetOpenedEncryptedBoxIDs()
+	openedBoxes := make(map[string]bool, len(openedBoxIDs))
+	for _, boxID := range openedBoxIDs {
+		openedBoxes[boxID] = true
+	}
+	allEncryptedStoresOpened = true
+	for _, boxID := range ListAllEncryptedBoxIDs() {
+		if !openedBoxes[boxID] {
+			allEncryptedStoresOpened = false
+			break
+		}
+	}
+	return openedBoxIDs, allEncryptedStoresOpened
+}
+
+func resolveLegacyRecentDocIdentity(rootID string, openedBoxIDs []string, allEncryptedStoresOpened bool) (identity RecentDocIdentity, bt *treenode.BlockTree, ok bool) {
+	if !allEncryptedStoresOpened || !ast.IsNodeIDPattern(rootID) {
+		return
+	}
+
+	candidates := make([]*treenode.BlockTree, 0, 2)
+	if ordinary := treenode.GetBlockTreeInBox(rootID, ""); ordinary != nil && !IsEncryptedBox(ordinary.BoxID) {
+		candidates = append(candidates, ordinary)
+	}
+	for _, boxID := range openedBoxIDs {
+		if encrypted := treenode.GetBlockTreeInBox(rootID, boxID); encrypted != nil && encrypted.BoxID == boxID {
+			candidates = append(candidates, encrypted)
+			if len(candidates) > 1 {
+				return RecentDocIdentity{}, nil, false
+			}
+		}
+	}
+	if len(candidates) != 1 || !ast.IsNodeIDPattern(candidates[0].BoxID) {
+		return RecentDocIdentity{}, nil, false
+	}
+	bt = candidates[0]
+	identity = RecentDocIdentity{RootID: bt.RootID, NotebookID: bt.BoxID}
+	return identity, bt, true
 }
 
 var recentDocLock = sync.Mutex{}
@@ -303,7 +381,11 @@ func GetRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 }
 
 // UpdateRecentDocOpenTime 更新文档打开时间（只在第一次从文档树加载到页签时调用）
-func UpdateRecentDocOpenTime(rootID string) (err error) {
+func UpdateRecentDocOpenTime(rootID, notebookID string) (err error) {
+	identity, _, err := resolveRecentDocIdentity(rootID, notebookID)
+	if err != nil {
+		return err
+	}
 	recentDocLock.Lock()
 	defer recentDocLock.Unlock()
 
@@ -316,7 +398,7 @@ func UpdateRecentDocOpenTime(rootID string) (err error) {
 	// 查找文档并更新打开时间和浏览时间
 	found := false
 	for _, doc := range recentDocs {
-		if doc.RootID == rootID {
+		if recentDocIdentityKey(doc.RootID, doc.NotebookID) == recentDocIdentityKey(identity.RootID, identity.NotebookID) {
 			doc.OpenAt = timeNow
 			doc.ViewedAt = timeNow
 			doc.ClosedAt = 0
@@ -328,9 +410,10 @@ func UpdateRecentDocOpenTime(rootID string) (err error) {
 	// 如果文档不存在，创建新记录
 	if !found {
 		recentDoc := &RecentDoc{
-			RootID:   rootID,
-			OpenAt:   timeNow,
-			ViewedAt: timeNow,
+			RootID:     identity.RootID,
+			NotebookID: identity.NotebookID,
+			OpenAt:     timeNow,
+			ViewedAt:   timeNow,
 		}
 		recentDocs = append([]*RecentDoc{recentDoc}, recentDocs...)
 	}
@@ -340,7 +423,11 @@ func UpdateRecentDocOpenTime(rootID string) (err error) {
 }
 
 // UpdateRecentDocViewTime 更新文档浏览时间
-func UpdateRecentDocViewTime(rootID string) (err error) {
+func UpdateRecentDocViewTime(rootID, notebookID string) (err error) {
+	identity, _, err := resolveRecentDocIdentity(rootID, notebookID)
+	if err != nil {
+		return err
+	}
 	recentDocLock.Lock()
 	defer recentDocLock.Unlock()
 
@@ -353,7 +440,7 @@ func UpdateRecentDocViewTime(rootID string) (err error) {
 	// 查找文档并更新浏览时间，保留原来的打开时间
 	found := false
 	for _, doc := range recentDocs {
-		if doc.RootID == rootID {
+		if recentDocIdentityKey(doc.RootID, doc.NotebookID) == recentDocIdentityKey(identity.RootID, identity.NotebookID) {
 			// OpenAt 保持不变，保留原来的打开时间
 			doc.ViewedAt = timeNow
 			doc.ClosedAt = 0
@@ -365,7 +452,8 @@ func UpdateRecentDocViewTime(rootID string) (err error) {
 	// 如果文档不存在，创建新记录
 	if !found {
 		recentDoc := &RecentDoc{
-			RootID: rootID,
+			RootID:     identity.RootID,
+			NotebookID: identity.NotebookID,
 			// 新创建的记录不设置 OpenAt，因为这是浏览而不是打开
 			ViewedAt: timeNow,
 		}
@@ -377,14 +465,22 @@ func UpdateRecentDocViewTime(rootID string) (err error) {
 }
 
 // UpdateRecentDocCloseTime 更新文档关闭时间
-func UpdateRecentDocCloseTime(rootID string) (err error) {
-	return BatchUpdateRecentDocCloseTime([]string{rootID})
+func UpdateRecentDocCloseTime(rootID, notebookID string) (err error) {
+	return BatchUpdateRecentDocCloseTime([]RecentDocIdentity{{RootID: rootID, NotebookID: notebookID}})
 }
 
 // BatchUpdateRecentDocCloseTime 批量更新文档关闭时间
-func BatchUpdateRecentDocCloseTime(rootIDs []string) (err error) {
-	if len(rootIDs) == 0 {
+func BatchUpdateRecentDocCloseTime(docs []RecentDocIdentity) (err error) {
+	if len(docs) == 0 {
 		return
+	}
+	identities := make(map[string]RecentDocIdentity, len(docs))
+	for _, doc := range docs {
+		identity, _, resolveErr := resolveRecentDocIdentity(doc.RootID, doc.NotebookID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		identities[recentDocIdentityKey(identity.RootID, identity.NotebookID)] = identity
 	}
 
 	recentDocLock.Lock()
@@ -395,34 +491,25 @@ func BatchUpdateRecentDocCloseTime(rootIDs []string) (err error) {
 		return
 	}
 
-	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
-	rootIDsMap := make(map[string]bool, len(rootIDs))
-	for _, id := range rootIDs {
-		rootIDsMap[id] = true
-	}
-
 	closeTime := time.Now().Unix()
 
 	// 更新已存在的文档
 	updated := false
 	for _, doc := range recentDocs {
-		if rootIDsMap[doc.RootID] {
+		key := recentDocIdentityKey(doc.RootID, doc.NotebookID)
+		if _, ok := identities[key]; ok {
 			doc.ClosedAt = closeTime
 			updated = true
-			delete(rootIDsMap, doc.RootID) // 标记已处理
+			delete(identities, key)
 		}
 	}
 
 	// 为不存在的文档创建新记录
-	for rootID := range rootIDsMap {
-		tree, loadErr := LoadTreeByBlockID(rootID)
-		if loadErr != nil {
-			continue
-		}
-
+	for _, identity := range identities {
 		recentDoc := &RecentDoc{
-			RootID:   tree.Root.ID,
-			ClosedAt: closeTime, // 设置关闭时间
+			RootID:     identity.RootID,
+			NotebookID: identity.NotebookID,
+			ClosedAt:   closeTime,
 		}
 
 		recentDocs = append([]*RecentDoc{recentDoc}, recentDocs...)
@@ -464,33 +551,70 @@ func getRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 	if err != nil {
 		return
 	}
+	openedEncryptedBoxIDs, allEncryptedStoresOpened := recentDocMigrationStores()
 
-	IDs := make([]string, 0, len(recentDocs))
-	for _, doc := range recentDocs {
-		IDs = append(IDs, doc.RootID)
-	}
-	bts := treenode.GetBlockTrees(IDs)
 	mergedDocs := make(map[string]*RecentDoc, len(recentDocs))
-	rootIDs := make([]string, 0, len(recentDocs))
+	ordinaryRootIDs := make([]string, 0, len(recentDocs))
+	preservedEncryptedDocs := make([]*RecentDoc, 0)
+	preservedLegacyDocs := make([]*RecentDoc, 0)
 	changed := false
 
 	for _, doc := range recentDocs {
-		bt := bts[doc.RootID]
-		if nil == bt {
+		if doc == nil {
 			changed = true
 			continue
 		}
-
-		// 文档块可能已经转换成标题块 https://github.com/siyuan-note/siyuan/pull/16727#issuecomment-3810081850
-		if doc.RootID != bt.RootID {
+		if doc.Title != "" || doc.Icon != "" {
+			doc.Title = ""
+			doc.Icon = ""
 			changed = true
-			doc.RootID = bt.RootID
 		}
 
-		if merged, ok := mergedDocs[bt.RootID]; !ok {
+		var identity RecentDocIdentity
+		var bt *treenode.BlockTree
+		if doc.NotebookID == "" {
+			var migrated bool
+			identity, bt, migrated = resolveLegacyRecentDocIdentity(doc.RootID, openedEncryptedBoxIDs, allEncryptedStoresOpened)
+			if !migrated {
+				preservedLegacyDocs = append(preservedLegacyDocs, doc)
+				continue
+			}
+			doc.NotebookID = identity.NotebookID
+			changed = true
+		} else {
+			if !ast.IsNodeIDPattern(doc.RootID) || !ast.IsNodeIDPattern(doc.NotebookID) {
+				changed = true
+				continue
+			}
+			if IsEncryptedBox(doc.NotebookID) && !IsBoxUnlocked(doc.NotebookID) {
+				preservedEncryptedDocs = append(preservedEncryptedDocs, doc)
+				continue
+			}
+			var resolveErr error
+			identity, bt, resolveErr = resolveRecentDocIdentity(doc.RootID, doc.NotebookID)
+			if resolveErr != nil {
+				if IsEncryptedBox(doc.NotebookID) {
+					preservedEncryptedDocs = append(preservedEncryptedDocs, doc)
+					continue
+				}
+				changed = true
+				continue
+			}
+		}
+
+		// 文档块可能已经转换成标题块 https://github.com/siyuan-note/siyuan/pull/16727#issuecomment-3810081850
+		if doc.RootID != identity.RootID {
+			changed = true
+			doc.RootID = identity.RootID
+		}
+
+		key := recentDocIdentityKey(identity.RootID, identity.NotebookID)
+		if merged, ok := mergedDocs[key]; !ok {
 			doc.Title = path.Base(bt.HPath) // Recent docs not updated after renaming https://github.com/siyuan-note/siyuan/issues/7827
-			mergedDocs[bt.RootID] = doc
-			rootIDs = append(rootIDs, bt.RootID)
+			mergedDocs[key] = doc
+			if !IsEncryptedBox(identity.NotebookID) {
+				ordinaryRootIDs = append(ordinaryRootIDs, identity.RootID)
+			}
 		} else {
 			// 合并重复记录
 			changed = true
@@ -506,9 +630,14 @@ func getRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 		}
 	}
 
-	attrs := sql.BatchGetBlockAttrs(rootIDs)
-	for rootID, doc := range mergedDocs {
-		if ial, ok := attrs[rootID]; ok {
+	attrs := sql.BatchGetBlockAttrs(ordinaryRootIDs)
+	for _, doc := range mergedDocs {
+		if IsEncryptedBox(doc.NotebookID) {
+			tree, loadErr := loadTreeByBlockIDInBox(doc.RootID, doc.NotebookID)
+			if loadErr == nil && tree != nil {
+				doc.Icon = tree.Root.IALAttr("icon")
+			}
+		} else if ial, ok := attrs[doc.RootID]; ok {
 			if icon, ok := ial["icon"]; ok && icon != "" {
 				doc.Icon = icon
 			}
@@ -517,7 +646,11 @@ func getRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 	}
 
 	if changed {
-		if errSet := setRecentDocs(ret); errSet != nil {
+		persisted := make([]*RecentDoc, 0, len(ret)+len(preservedEncryptedDocs)+len(preservedLegacyDocs))
+		persisted = append(persisted, ret...)
+		persisted = append(persisted, preservedEncryptedDocs...)
+		persisted = append(persisted, preservedLegacyDocs...)
+		if errSet := setRecentDocs(persisted); errSet != nil {
 			logging.LogErrorf("update storage [recent-doc] failed in getRecentDocs: %s", errSet)
 		}
 	}
@@ -525,48 +658,7 @@ func getRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 	// 根据排序参数进行排序
 	switch sortBy {
 	case "updated": // 按更新时间排序
-		// 从数据库查询最近修改的文档
-		sqlBlocks := sql.SelectBlocksRawStmt("SELECT * FROM blocks WHERE type = 'd' ORDER BY updated DESC", 1, Conf.FileTree.RecentDocsMaxListCount)
-		ret = []*RecentDoc{}
-		if 1 > len(sqlBlocks) {
-			return
-		}
-
-		// 获取文档树信息
-		var rootIDs []string
-		for _, sqlBlock := range sqlBlocks {
-			rootIDs = append(rootIDs, sqlBlock.ID)
-		}
-		bts := treenode.GetBlockTrees(rootIDs)
-
-		for _, sqlBlock := range sqlBlocks {
-			bt := bts[sqlBlock.ID]
-			if nil == bt {
-				continue
-			}
-
-			// 解析 IAL 获取 icon
-			icon := ""
-			if sqlBlock.IAL != "" {
-				ialStr := strings.TrimPrefix(sqlBlock.IAL, "{:")
-				ialStr = strings.TrimSuffix(ialStr, "}")
-				ial := parse.Tokens2IAL([]byte(ialStr))
-				for _, kv := range ial {
-					if kv[0] == "icon" {
-						icon = kv[1]
-						break
-					}
-				}
-			}
-			// 获取文档标题
-			title := path.Base(bt.HPath)
-			doc := &RecentDoc{
-				RootID: sqlBlock.ID,
-				Icon:   icon,
-				Title:  title,
-			}
-			ret = append(ret, doc)
-		}
+		ret = recentDocsByUpdated(openedEncryptedBoxIDs)
 	case "closedAt": // 按关闭时间排序
 		filtered := make([]*RecentDoc, 0, len(ret))
 		for _, doc := range ret {
@@ -612,16 +704,99 @@ func getRecentDocs(sortBy string) (ret []*RecentDoc, err error) {
 	return
 }
 
-// normalizeRecentDocs 规范化最近文档列表：去重、清空 Title/Icon、按类型截取配置的最大数量记录
+type updatedRecentDoc struct {
+	doc     *RecentDoc
+	updated string
+}
+
+func recentDocsByUpdated(openedEncryptedBoxIDs []string) []*RecentDoc {
+	limit := Conf.FileTree.RecentDocsMaxListCount
+	stores := make([]string, 0, len(openedEncryptedBoxIDs)+1)
+	stores = append(stores, "")
+	stores = append(stores, openedEncryptedBoxIDs...)
+
+	candidates := make([]updatedRecentDoc, 0, len(stores)*limit)
+	seen := make(map[string]bool, len(stores)*limit)
+	for _, contentStore := range stores {
+		blocks := sql.SelectBlocksRawStmtInBox("SELECT * FROM blocks WHERE type = 'd' ORDER BY updated DESC", 1, limit, contentStore)
+		for _, block := range blocks {
+			bt := treenode.GetBlockTreeInBox(block.ID, contentStore)
+			if bt == nil || bt.BoxID != block.Box || (contentStore != "" && bt.BoxID != contentStore) || (contentStore == "" && IsEncryptedBox(bt.BoxID)) {
+				continue
+			}
+			key := recentDocIdentityKey(block.ID, bt.BoxID)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			icon := ""
+			if block.IAL != "" {
+				ialStr := strings.TrimSuffix(strings.TrimPrefix(block.IAL, "{:"), "}")
+				for _, kv := range parse.Tokens2IAL([]byte(ialStr)) {
+					if kv[0] == "icon" {
+						icon = kv[1]
+						break
+					}
+				}
+			}
+			candidates = append(candidates, updatedRecentDoc{
+				doc: &RecentDoc{
+					RootID:     block.ID,
+					NotebookID: bt.BoxID,
+					Icon:       icon,
+					Title:      path.Base(bt.HPath),
+				},
+				updated: block.Updated,
+			})
+		}
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].updated != candidates[j].updated {
+			return candidates[i].updated > candidates[j].updated
+		}
+		if candidates[i].doc.NotebookID != candidates[j].doc.NotebookID {
+			return candidates[i].doc.NotebookID < candidates[j].doc.NotebookID
+		}
+		return candidates[i].doc.RootID < candidates[j].doc.RootID
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	ret := make([]*RecentDoc, 0, len(candidates))
+	for _, candidate := range candidates {
+		ret = append(ret, candidate.doc)
+	}
+	return ret
+}
+
+// normalizeRecentDocs 规范化最近文档列表：去重并按类型截取配置的最大数量记录。
 func normalizeRecentDocs(recentDocs []*RecentDoc) []*RecentDoc {
 	maxCount := Conf.FileTree.RecentDocsMaxListCount
 
 	// 去重
 	seen := make(map[string]struct{}, len(recentDocs))
 	deduplicated := make([]*RecentDoc, 0, len(recentDocs))
+	legacyDocs := make([]*RecentDoc, 0)
 	for _, doc := range recentDocs {
-		if _, ok := seen[doc.RootID]; !ok {
-			seen[doc.RootID] = struct{}{}
+		if doc == nil {
+			continue
+		}
+		if doc.NotebookID == "" {
+			key := recentDocIdentityKey(doc.RootID, "")
+			if _, ok := seen[key]; !ok {
+				seen[key] = struct{}{}
+				deduplicated = append(deduplicated, doc)
+				legacyDocs = append(legacyDocs, doc)
+			}
+			continue
+		}
+		if !ast.IsNodeIDPattern(doc.RootID) || !ast.IsNodeIDPattern(doc.NotebookID) {
+			continue
+		}
+		key := recentDocIdentityKey(doc.RootID, doc.NotebookID)
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
 			deduplicated = append(deduplicated, doc)
 		}
 	}
@@ -636,6 +811,9 @@ func normalizeRecentDocs(recentDocs []*RecentDoc) []*RecentDoc {
 	var closedDocs []*RecentDoc
 
 	for _, doc := range deduplicated {
+		if doc.NotebookID == "" {
+			continue
+		}
 		if doc.ViewedAt > 0 {
 			viewedDocs = append(viewedDocs, doc)
 		}
@@ -670,16 +848,18 @@ func normalizeRecentDocs(recentDocs []*RecentDoc) []*RecentDoc {
 	// 合并三类记录
 	docMap := make(map[string]*RecentDoc, maxCount*2)
 	for _, doc := range viewedDocs {
-		docMap[doc.RootID] = doc
+		docMap[recentDocIdentityKey(doc.RootID, doc.NotebookID)] = doc
 	}
 	for _, doc := range openedDocs {
-		if _, ok := docMap[doc.RootID]; !ok {
-			docMap[doc.RootID] = doc
+		key := recentDocIdentityKey(doc.RootID, doc.NotebookID)
+		if _, ok := docMap[key]; !ok {
+			docMap[key] = doc
 		}
 	}
 	for _, doc := range closedDocs {
-		if _, ok := docMap[doc.RootID]; !ok {
-			docMap[doc.RootID] = doc
+		key := recentDocIdentityKey(doc.RootID, doc.NotebookID)
+		if _, ok := docMap[key]; !ok {
+			docMap[key] = doc
 		}
 	}
 
@@ -687,6 +867,7 @@ func normalizeRecentDocs(recentDocs []*RecentDoc) []*RecentDoc {
 	for _, doc := range docMap {
 		result = append(result, doc)
 	}
+	result = append(result, legacyDocs...)
 
 	return result
 }
@@ -700,7 +881,17 @@ func setRecentDocs(recentDocs []*RecentDoc) (err error) {
 		return
 	}
 
-	data, err := gulu.JSON.MarshalIndentJSON(recentDocs, "", "  ")
+	records := make([]recentDocRecord, 0, len(recentDocs))
+	for _, doc := range recentDocs {
+		records = append(records, recentDocRecord{
+			RootID:     doc.RootID,
+			NotebookID: doc.NotebookID,
+			ViewedAt:   doc.ViewedAt,
+			ClosedAt:   doc.ClosedAt,
+			OpenAt:     doc.OpenAt,
+		})
+	}
+	data, err := gulu.JSON.MarshalIndentJSON(records, "", "  ")
 	if err != nil {
 		logging.LogErrorf("marshal storage [recent-doc] failed: %s", err)
 		return

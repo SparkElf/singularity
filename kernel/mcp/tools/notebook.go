@@ -46,7 +46,7 @@ func init() {
 	register(NotebookTool)
 }
 
-func notebookHandler(args map[string]any) (CallToolResult, error) {
+func notebookHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":
@@ -162,7 +162,9 @@ func notebookOpen(args map[string]any) (CallToolResult, error) {
 	}
 
 	time.Sleep(1 * time.Second)
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "flush notebook index failed: " + err.Error()}}, IsError: true}, nil
+	}
 
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "notebook opened: " + id}}}, nil
 }
@@ -173,10 +175,14 @@ func notebookClose(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
 
-	model.Unmount(id)
+	if err := model.Unmount(id); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "close notebook failed: " + err.Error()}}, IsError: true}, nil
+	}
 
 	time.Sleep(1 * time.Second)
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "flush notebook index failed: " + err.Error()}}, IsError: true}, nil
+	}
 
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "notebook closed: " + id}}}, nil
 }

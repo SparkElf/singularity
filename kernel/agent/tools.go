@@ -56,7 +56,7 @@ func executeTool(tc openai.ToolCall, sessionID string) (string, bool) {
 	if t.Source == "native" || t.Source == "" {
 		args["_sessionID"] = sessionID
 	}
-	result, err := t.Handler(args)
+	result, err := t.Handler(tools.CallContext{}, args)
 	if err != nil {
 		return "tool execution error: " + err.Error(), true
 	}

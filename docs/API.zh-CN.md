@@ -638,6 +638,12 @@
 
 ## 块
 
+通用块变更接口（`insertBlock`、`batchInsertBlock`、`appendBlock`、`batchAppendBlock`、`prependBlock`、
+`batchPrependBlock`、`updateBlock`、`batchUpdateBlock`、`deleteBlock`、`moveBlock`、`moveOutlineHeading`、`foldBlock`、
+`unfoldBlock`、`updateTaskListItemMarker` 和 `batchUpdateTaskListItemMarker`）接受可选的顶层 `notebook` ID。
+省略时使用普通全局内容库；操作加密笔记本时必须传入。批量接口的整个批次共用一个顶层 `notebook`。
+返回事务的 `notebook` 是规范化内容库身份：加密笔记本为其 ID，普通全局内容库为空字符串。
+
 ### 插入块
 
 * `/api/block/insertBlock`
@@ -649,7 +655,8 @@
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "nextID": "",
     "previousID": "20211229114650-vrek5x6",
-    "parentID": ""
+    "parentID": "",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
@@ -658,6 +665,7 @@
     * `nextID`：后一个块的 ID，用于锚定插入位置
     * `previousID`：前一个块的 ID，用于锚定插入位置
     * `parentID`：父块 ID，用于锚定插入位置
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 
   `nextID`、`previousID`、`parentID` 三个参数必须至少存在一个有值，优先级为 `nextID` > `previousID` > `parentID`
 * 返回值
@@ -696,13 +704,15 @@
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`：待插入数据类型，值可选择 `markdown` 或者 `dom`
     * `data`：待插入的数据
     * `parentID`：父块的 ID，用于锚定插入位置
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -739,13 +749,15 @@
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`：待插入数据类型，值可选择 `markdown` 或者 `dom`
     * `data`：待插入的数据
     * `parentID`：父块的 ID，用于锚定插入位置
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -782,13 +794,15 @@
   {
     "dataType": "markdown",
     "data": "foobarbaz",
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`：待更新数据类型，值可选择 `markdown` 或者 `dom`
     * `data`：待更新的数据
     * `id`：待更新块的 ID
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -822,11 +836,13 @@
 
   ```json
   {
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`：待删除块的 ID
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -860,13 +876,15 @@
   {
     "id": "20230406180530-3o1rqkc",
     "previousID": "20230406152734-if5kyx6",
-    "parentID": "20230404183855-woe52ko"
+    "parentID": "20230404183855-woe52ko",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`：待移动块 ID
     * `previousID`：前一个块的 ID，用于锚定插入位置
     * `parentID`：父块的 ID，用于锚定插入位置，`previousID` 和 `parentID` 不能同时为空，同时存在的话优先使用 `previousID`
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -902,11 +920,13 @@
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`：待折叠块的 ID
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json
@@ -924,11 +944,13 @@
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`：待展开块的 ID
+    * `notebook`：可选的笔记本 ID，用于声明目标内容库
 * 返回值
 
   ```json

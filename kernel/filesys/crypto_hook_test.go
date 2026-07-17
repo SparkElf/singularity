@@ -17,8 +17,15 @@
 package filesys
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/88250/lute/render"
+	"github.com/siyuan-note/siyuan/kernel/cache"
+	"github.com/siyuan-note/siyuan/kernel/treenode"
+	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 // TestSyObjectBase 校验稳定文件基名的提取与合法性。
@@ -98,5 +105,90 @@ func TestSyAADRejectsInvalidBase(t *testing.T) {
 	}
 	if _, err := SyAAD("20240101120000-boxid01", "notanid.sy"); err == nil {
 		t.Fatal("should reject non-node-id stem")
+	}
+}
+
+func TestLoadTreeInBoxLockedDoesNotReacquireLifecycleLock(t *testing.T) {
+	const (
+		boxID    = "20260716000000-lockbox"
+		parentID = "20260716000001-parentx"
+		childID  = "20260716000002-childxx"
+	)
+	originalDataDir := util.DataDir
+	originalProvider := DEKProvider
+	originalAcquire := DEKLockAcquire
+	originalRelease := DEKLockRelease
+	util.DataDir = t.TempDir()
+	cache.ClearTreeCache()
+	t.Cleanup(func() {
+		cache.ClearTreeCache()
+		util.DataDir = originalDataDir
+		DEKProvider = originalProvider
+		DEKLockAcquire = originalAcquire
+		DEKLockRelease = originalRelease
+	})
+
+	dek, err := util.GenerateDEK()
+	if err != nil {
+		t.Fatalf("generate tree encryption key: %v", err)
+	}
+	defer clear(dek)
+	writeEncryptedTreeFixture(t, boxID, "/"+parentID+".sy", "Parent", dek)
+	childPath := "/" + parentID + "/" + childID + ".sy"
+	writeEncryptedTreeFixture(t, boxID, childPath, "Child", dek)
+
+	DEKProvider = func(string) ([]byte, error) {
+		return append([]byte(nil), dek...), nil
+	}
+	// A pending lifecycle writer blocks recursive RLock acquisition. The locked
+	// entry point must complete without invoking this hook at either the child
+	// decrypt or parent IAL decrypt stage.
+	nestedAcquire := make(chan struct{}, 1)
+	writerReleased := make(chan struct{})
+	DEKLockAcquire = func(string) {
+		nestedAcquire <- struct{}{}
+		<-writerReleased
+	}
+	DEKLockRelease = func(string) {}
+
+	loaded := make(chan error, 1)
+	go func() {
+		_, loadErr := LoadTreeInBoxLocked(boxID, childPath, util.NewLute())
+		loaded <- loadErr
+	}()
+
+	select {
+	case loadErr := <-loaded:
+		if loadErr != nil {
+			t.Fatalf("load encrypted child tree under caller-owned lock: %v", loadErr)
+		}
+	case <-nestedAcquire:
+		close(writerReleased)
+		<-loaded
+		t.Fatal("LoadTreeInBoxLocked recursively acquired the lifecycle read lock while a writer was pending")
+	}
+}
+
+func writeEncryptedTreeFixture(t *testing.T, boxID, treePath, title string, dek []byte) {
+	t.Helper()
+	tree := treenode.NewTree(boxID, treePath, "/"+title, title)
+	luteEngine := util.NewLute()
+	data := render.NewJSONRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions).Render()
+	fileKey := util.DeriveSubKey(dek, "siyuan/file")
+	defer clear(fileKey)
+	aad, err := SyAAD(boxID, treePath)
+	if err != nil {
+		t.Fatalf("build encrypted tree AAD: %v", err)
+	}
+	ciphertext, err := util.EncryptWithAAD(fileKey, data, []byte(aad))
+	if err != nil {
+		t.Fatalf("encrypt tree fixture: %v", err)
+	}
+	absPath := filepath.Join(util.DataDir, boxID, treePath)
+	if err = os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		t.Fatalf("create encrypted tree directory: %v", err)
+	}
+	if err = os.WriteFile(absPath, ciphertext, 0644); err != nil {
+		t.Fatalf("write encrypted tree fixture: %v", err)
 	}
 }

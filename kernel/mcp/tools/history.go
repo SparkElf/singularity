@@ -21,19 +21,18 @@ import (
 	"strings"
 
 	"github.com/siyuan-note/siyuan/kernel/model"
-	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 var HistoryTool = &Tool{
 	Name:        "history",
-	Description: "Document history operations. Actions: list(query?, notebook?, op?, type?, page?), search(query, notebook?, op?, type?, page?), get(path), rollback(path), clear().",
+	Description: "Document history operations. Actions: list(query?, notebook?, op?, type?, page?), search(query, notebook?, op?, type?, page?), get(path, notebook), rollback(path, notebook), clear().",
 	InputSchema: ToolSchema{
 		Type: "object",
 		Properties: map[string]Property{
 			"action":   {Type: "string", Description: "Operation", Enum: []string{"list", "search", "get", "rollback", "clear"}},
 			"query":    {Type: "string", Description: "Search query (for list, search)"},
-			"notebook": {Type: "string", Description: "Notebook ID filter (for list, search)"},
+			"notebook": {Type: "string", Description: "Notebook ID filter (for list, search) or owner identity (required for get and rollback)"},
 			"op":       {Type: "string", Description: "Operation filter: delete/update/create (for list, search)"},
 			"type":     {Type: "number", Description: "Search type: 0=name,1=content,2=asset,3=docID,4=database (default 1)"},
 			"page":     {Type: "number", Description: "Page number (default 1)"},
@@ -48,7 +47,7 @@ func init() {
 	register(HistoryTool)
 }
 
-func historyHandler(args map[string]any) (CallToolResult, error) {
+func historyHandler(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":
@@ -56,9 +55,9 @@ func historyHandler(args map[string]any) (CallToolResult, error) {
 	case "search":
 		return historySearch(args)
 	case "get":
-		return historyGet(args)
+		return historyGet(callContext, args)
 	case "rollback":
-		return historyRollback(args)
+		return historyRollback(callContext, args)
 	case "clear":
 		return historyClear(args)
 	}
@@ -70,7 +69,10 @@ func historyHandler(args map[string]any) (CallToolResult, error) {
 
 func historyList(args map[string]any) (CallToolResult, error) {
 	query, _ := args["query"].(string)
-	notebook, _ := args["notebook"].(string)
+	notebook, _, err := NotebookArg(args)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "list history failed: " + err.Error()}}, IsError: true}, nil
+	}
 	op, _ := args["op"].(string)
 	typ := 1
 	if v, ok := args["type"].(float64); ok {
@@ -81,7 +83,10 @@ func historyList(args map[string]any) (CallToolResult, error) {
 		page = int(v)
 	}
 
-	results, pageCount, totalCount := model.FullTextSearchHistory(query, notebook, op, typ, page)
+	results, pageCount, totalCount, err := model.FullTextSearchHistory(query, notebook, op, typ, page)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "list history failed: " + err.Error()}}, IsError: true}, nil
+	}
 	if len(results) == 0 {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "no history found"}}}, nil
 	}
@@ -89,22 +94,34 @@ func historyList(args map[string]any) (CallToolResult, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("History (%d total, page %d/%d):\n\n", totalCount, page, pageCount))
 	for _, ts := range results {
-		items := model.FullTextSearchHistoryItems(ts, query, notebook, op, typ)
+		items, err := model.FullTextSearchHistoryItems(ts, query, notebook, op, typ)
+		if err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "list history items failed: " + err.Error()}}, IsError: true}, nil
+		}
 		sb.WriteString(fmt.Sprintf("--- %s (%d items) ---\n", ts, len(items)))
 		for _, item := range items {
-			sb.WriteString(fmt.Sprintf("  - [%s] %s (path: %s)\n", item.Op, item.Title, item.Path))
+			sb.WriteString(fmt.Sprintf("  - [%s] %s (path: %s, notebook: %s)\n", item.Op, item.Title, item.Path, item.Notebook))
 		}
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
 
-func historyGet(args map[string]any) (CallToolResult, error) {
+func historyGet(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	path, _ := args["path"].(string)
 	if path == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "path is required"}}, IsError: true}, nil
 	}
+	notebook, err := HistoricalNotebookArg(args, false)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "get history failed: " + err.Error()}}, IsError: true}, nil
+	}
+	if model.IsEncryptedBox(notebook) && callContext.RegisterEncryptedResponses != nil {
+		if err = callContext.RegisterEncryptedResponses([]string{notebook}); err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "get history failed: " + err.Error()}}, IsError: true}, nil
+		}
+	}
 
-	_, _, content, _, err := model.GetDocHistoryContent(path, "", false)
+	_, _, content, _, err := model.GetDocHistoryContent(notebook, path, "", false)
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "get history failed: " + err.Error()}}, IsError: true}, nil
 	}
@@ -120,7 +137,10 @@ func historySearch(args map[string]any) (CallToolResult, error) {
 	if query == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "query is required"}}, IsError: true}, nil
 	}
-	box, _ := args["notebook"].(string)
+	box, _, err := NotebookArg(args)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "search history failed: " + err.Error()}}, IsError: true}, nil
+	}
 	op, _ := args["op"].(string)
 	typ := 1
 	if v, ok := args["type"].(float64); ok {
@@ -131,7 +151,10 @@ func historySearch(args map[string]any) (CallToolResult, error) {
 		page = int(v)
 	}
 
-	timestamps, pageCount, totalCount := model.FullTextSearchHistory(query, box, op, typ, page)
+	timestamps, pageCount, totalCount, err := model.FullTextSearchHistory(query, box, op, typ, page)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "search history failed: " + err.Error()}}, IsError: true}, nil
+	}
 	if len(timestamps) == 0 {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("no history found for '%s'", query)}}}, nil
 	}
@@ -139,26 +162,34 @@ func historySearch(args map[string]any) (CallToolResult, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Search '%s' (%d total, page %d/%d):\n\n", query, totalCount, page, pageCount))
 	for _, ts := range timestamps {
-		items := model.FullTextSearchHistoryItems(ts, query, box, op, typ)
+		items, err := model.FullTextSearchHistoryItems(ts, query, box, op, typ)
+		if err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "search history items failed: " + err.Error()}}, IsError: true}, nil
+		}
 		sb.WriteString(fmt.Sprintf("--- %s (%d items) ---\n", ts, len(items)))
 		for _, item := range items {
-			sb.WriteString(fmt.Sprintf("  - [%s] %s (path: %s)\n", item.Op, item.Title, item.Path))
+			sb.WriteString(fmt.Sprintf("  - [%s] %s (path: %s, notebook: %s)\n", item.Op, item.Title, item.Path, item.Notebook))
 		}
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
 
-func historyRollback(args map[string]any) (CallToolResult, error) {
+func historyRollback(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	path, _ := args["path"].(string)
 	if path == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "path is required"}}, IsError: true}, nil
 	}
-	if err := model.RollbackDocHistory(path); err != nil {
+	notebook, err := HistoricalNotebookArg(args, false)
+	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback failed: " + err.Error()}}, IsError: true}, nil
 	}
-	docID := util.GetTreeID(path)
-	if bt := treenode.GetBlockTree(docID); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
+	if model.IsEncryptedBox(notebook) && callContext.RegisterEncryptedResponses != nil {
+		if err = callContext.RegisterEncryptedResponses([]string{notebook}); err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback failed: " + err.Error()}}, IsError: true}, nil
+		}
+	}
+	if err = model.RollbackDocHistory(path, notebook); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback failed: " + err.Error()}}, IsError: true}, nil
 	}
 	util.PushReloadFiletree()
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "history rolled back: " + path}}}, nil

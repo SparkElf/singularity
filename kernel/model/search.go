@@ -192,6 +192,8 @@ type EmbedBlock struct {
 	BlockPaths []*BlockPath `json:"blockPaths"`
 }
 
+var ErrEncryptedEmbedBlockScriptUnsupported = errors.New("encrypted notebooks do not support JavaScript query embeds")
+
 func UpdateEmbedBlock(id, content string) (err error) {
 	bt := treenode.GetBlockTree(id)
 	if nil == bt {
@@ -218,6 +220,13 @@ func GetEmbedBlock(embedBlockID string, includeIDs []string, headingMode int, br
 	return getEmbedBlock(embedBlockID, includeIDs, headingMode, breadcrumb)
 }
 
+func GetEmbedBlockInBox(embedBlockID string, includeIDs []string, headingMode int, breadcrumb bool, boxID string) (ret []*EmbedBlock, err error) {
+	if boxID != "" {
+		return nil, ErrEncryptedEmbedBlockScriptUnsupported
+	}
+	return getEmbedBlock(embedBlockID, includeIDs, headingMode, breadcrumb), nil
+}
+
 func getEmbedBlock(embedBlockID string, includeIDs []string, headingMode int, breadcrumb bool) (ret []*EmbedBlock) {
 	stmt := "SELECT * FROM `blocks` WHERE `id` IN ('" + strings.Join(includeIDs, "','") + "')"
 	sqlBlocks := sql.SelectBlocksRawStmtNoParse(stmt, 1024)
@@ -231,28 +240,36 @@ func getEmbedBlock(embedBlockID string, includeIDs []string, headingMode int, br
 		return m[sqlBlocks[i].ID] < m[sqlBlocks[j].ID]
 	})
 
-	ret = buildEmbedBlock(embedBlockID, []string{}, headingMode, breadcrumb, sqlBlocks)
+	ret = buildEmbedBlock(embedBlockID, []string{}, headingMode, breadcrumb, sqlBlocks, "")
 	return
 }
 
 func SearchEmbedBlock(embedBlockID, stmt string, excludeIDs []string, headingMode int, breadcrumb bool) (ret []*EmbedBlock) {
-	return SearchEmbedBlockInBox(embedBlockID, stmt, excludeIDs, headingMode, breadcrumb, "")
+	ret, _ = SearchEmbedBlockInBox(embedBlockID, stmt, excludeIDs, headingMode, breadcrumb, "")
+	return
 }
 
 // SearchEmbedBlockInBox 与 SearchEmbedBlock 一致，但按 boxID 路由 SQL 到加密 content db。
-// 加密笔记本的嵌入块查询走独立加密库（全局 siyuan.db 不含加密数据），boxID 为空时落回全局库。
-func SearchEmbedBlockInBox(embedBlockID, stmt string, excludeIDs []string, headingMode int, breadcrumb bool, boxID string) (ret []*EmbedBlock) {
+// 加密笔记本的嵌入块查询走独立加密库（全局 siyuan.db 不含加密数据），boxID 为空时只查询全局库。
+func SearchEmbedBlockInBox(embedBlockID, stmt string, excludeIDs []string, headingMode int, breadcrumb bool, boxID string) (ret []*EmbedBlock, err error) {
 	var sqlBlocks []*sql.Block
 	if "" != boxID {
+		acquireBoxOperationLock(boxID)
+		defer releaseBoxOperationLock(boxID)
+		dek, dekErr := GetDEKIfUnlocked(boxID)
+		if dekErr != nil {
+			return nil, dekErr
+		}
+		zeroAndClear(dek)
 		sqlBlocks = sql.SelectBlocksRawStmtNoParseInBox(stmt, Conf.Search.Limit, boxID)
 	} else {
 		sqlBlocks = sql.SelectBlocksRawStmtNoParse(stmt, Conf.Search.Limit)
 	}
-	ret = buildEmbedBlock(embedBlockID, excludeIDs, headingMode, breadcrumb, sqlBlocks)
+	ret = buildEmbedBlock(embedBlockID, excludeIDs, headingMode, breadcrumb, sqlBlocks, boxID)
 	return
 }
 
-func buildEmbedBlock(embedBlockID string, excludeIDs []string, headingMode int, breadcrumb bool, sqlBlocks []*sql.Block) (ret []*EmbedBlock) {
+func buildEmbedBlock(embedBlockID string, excludeIDs []string, headingMode int, breadcrumb bool, sqlBlocks []*sql.Block, boxID string) (ret []*EmbedBlock) {
 	var tmp []*sql.Block
 	for _, b := range sqlBlocks {
 		if "query_embed" == b.Type { // 嵌入块不再嵌入
@@ -271,7 +288,7 @@ func buildEmbedBlock(embedBlockID string, excludeIDs []string, headingMode int, 
 	count := 0
 	for _, sb := range sqlBlocks {
 		if nil == trees[sb.RootID] {
-			tree, _ := LoadTreeByBlockID(sb.RootID)
+			tree, _ := loadTreeByBlockIDInBox(sb.RootID, boxID)
 			if nil == tree {
 				continue
 			}
@@ -284,7 +301,7 @@ func buildEmbedBlock(embedBlockID string, excludeIDs []string, headingMode int, 
 	}
 
 	for _, sb := range sqlBlocks {
-		block, blockPaths := getEmbeddedBlock(trees, sb, headingMode, breadcrumb)
+		block, blockPaths := getEmbeddedBlock(trees, sb, headingMode, breadcrumb, boxID)
 		if nil == block {
 			continue
 		}
@@ -295,7 +312,9 @@ func buildEmbedBlock(embedBlockID string, excludeIDs []string, headingMode int, 
 	}
 
 	// 嵌入块支持搜索 https://github.com/siyuan-note/siyuan/issues/7112
-	task.AppendTaskWithTimeout(task.DatabaseIndexEmbedBlock, 30*time.Second, updateEmbedBlockContent, embedBlockID, ret)
+	if boxID == "" {
+		task.AppendTaskWithTimeout(task.DatabaseIndexEmbedBlock, 30*time.Second, updateEmbedBlockContent, embedBlockID, ret)
+	}
 
 	// 添加笔记本名称
 	var boxIDs []string
@@ -787,7 +806,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "em", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "em", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -797,7 +816,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "strong", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "strong", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -807,7 +826,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "kbd", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "kbd", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 						}
@@ -816,7 +835,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "mark", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "mark", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -826,7 +845,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "s", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "s", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -836,7 +855,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "sub", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "sub", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 						}
@@ -845,7 +864,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "sup", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "sup", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 						}
@@ -854,7 +873,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "tag", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "tag", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 						}
@@ -865,7 +884,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "u", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "u", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -914,7 +933,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 							return ast.WalkContinue
 						}
 
-						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "text", luteEngine)
+						replaceNodeTextMarkTextContent(n, method, keyword, escapedKey, replacement, r, "text", tree.Box, luteEngine)
 						if "" == n.TextMarkTextContent {
 							unlinks = append(unlinks, n)
 							mergeSamePreNext(n)
@@ -980,21 +999,27 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 		util.PushEndlessProgress(fmt.Sprintf(Conf.Language(207), i+1, len(renameRoots)))
 	}
 
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.PushClearProgress()
+		return
+	}
 
 	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
 	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id)
+		ReloadProtyle(id, "")
 	}
 
 	updateAttributeViewBlockText(updateNodes)
 
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.PushClearProgress()
+		return
+	}
 	util.PushClearProgress()
 	return
 }
 
-func replaceNodeTextMarkTextContent(n *ast.Node, method int, keyword, escapedKey string, replacement string, r *regexp.Regexp, typ string, luteEngine *lute.Lute) {
+func replaceNodeTextMarkTextContent(n *ast.Node, method int, keyword, escapedKey string, replacement string, r *regexp.Regexp, typ, sourceBoxID string, luteEngine *lute.Lute) {
 	if 0 == method {
 		if strings.Contains(typ, "tag") {
 			keyword = strings.TrimPrefix(keyword, "#")
@@ -1026,7 +1051,7 @@ func replaceNodeTextMarkTextContent(n *ast.Node, method int, keyword, escapedKey
 					for rNode := tree.Root.FirstChild.FirstChild; nil != rNode; rNode = rNode.Next {
 						replaceNodes = append(replaceNodes, rNode)
 						if blockRefID, _, _ := treenode.GetBlockRef(rNode); "" != blockRefID {
-							task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, blockRefID)
+							appendRefreshRefCountTask(blockRefID, sourceBoxID)
 						}
 					}
 

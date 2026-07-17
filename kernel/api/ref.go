@@ -36,7 +36,17 @@ func refreshBacklink(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	model.RefreshBacklink(id)
+	boxID, err := encryptedNotebookFromArg(arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if boxID != "" {
+		model.RefreshBacklinkInBox(id, boxID)
+	} else {
+		model.RefreshBacklink(id)
+	}
 	model.FlushTxQueue()
 }
 
@@ -52,9 +62,11 @@ func getBackmentionDoc(c *gin.Context) {
 	defID := arg["defID"].(string)
 	refTreeID := arg["refTreeID"].(string)
 	keyword := arg["keyword"].(string)
-	var notebook string
-	if val, ok := arg["notebook"]; ok {
-		notebook = val.(string)
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
 	}
 	containChildren := model.Conf.Editor.BacklinkContainChildren
 	if val, ok := arg["containChildren"]; ok {
@@ -66,8 +78,8 @@ func getBackmentionDoc(c *gin.Context) {
 	}
 	var backlinks []*model.Backlink
 	var keywords []string
-	if notebook != "" && model.IsEncryptedBox(notebook) {
-		backlinks, keywords = model.GetBackmentionDocInBox(defID, refTreeID, keyword, containChildren, highlight, notebook)
+	if boxID != "" {
+		backlinks, keywords = model.GetBackmentionDocInBox(defID, refTreeID, keyword, containChildren, highlight, boxID)
 	} else {
 		backlinks, keywords = model.GetBackmentionDoc(defID, refTreeID, keyword, containChildren, highlight)
 	}
@@ -89,9 +101,11 @@ func getBacklinkDoc(c *gin.Context) {
 	defID := arg["defID"].(string)
 	refTreeID := arg["refTreeID"].(string)
 	keyword := arg["keyword"].(string)
-	var notebook string
-	if val, ok := arg["notebook"]; ok {
-		notebook = val.(string)
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
 	}
 	containChildren := model.Conf.Editor.BacklinkContainChildren
 	if val, ok := arg["containChildren"]; ok {
@@ -103,8 +117,8 @@ func getBacklinkDoc(c *gin.Context) {
 	}
 	var backlinks []*model.Backlink
 	var keywords []string
-	if notebook != "" && model.IsEncryptedBox(notebook) {
-		backlinks, keywords = model.GetBacklinkDocInBox(defID, refTreeID, keyword, containChildren, highlight, notebook)
+	if boxID != "" {
+		backlinks, keywords = model.GetBacklinkDocInBox(defID, refTreeID, keyword, containChildren, highlight, boxID)
 	} else {
 		backlinks, keywords = model.GetBacklinkDoc(defID, refTreeID, keyword, containChildren, highlight)
 	}
@@ -144,12 +158,16 @@ func getBacklink2(c *gin.Context) {
 	if val, ok := arg["containChildren"]; ok {
 		containChildren = val.(bool)
 	}
-	var boxID string
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	var backlinks, backmentions []*model.Path
 	var linkRefsCount, mentionsCount int
-	// 加密笔记本的反链面板走 InBox 版（查加密 content db）
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2InBox(id, keyword, mentionKeyword, sort, mentionSort, containChildren, notebook)
+	if boxID != "" {
+		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2InBox(id, keyword, mentionKeyword, sort, mentionSort, containChildren, boxID)
 	} else {
 		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2(id, keyword, mentionKeyword, sort, mentionSort, containChildren)
 	}
@@ -193,12 +211,16 @@ func getBacklink(c *gin.Context) {
 	if val, ok := arg["containChildren"]; ok {
 		containChildren = val.(bool)
 	}
-	var boxID string
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	var backlinks, backmentions []*model.Path
 	var linkRefsCount, mentionsCount int
-	// 加密笔记本的反链面板走 InBox 版（查加密 content db）
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklinkInBox(id, keyword, mentionKeyword, beforeLen, containChildren, notebook)
+	if boxID != "" {
+		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklinkInBox(id, keyword, mentionKeyword, beforeLen, containChildren, boxID)
 	} else {
 		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink(id, keyword, mentionKeyword, beforeLen, containChildren)
 	}

@@ -227,7 +227,7 @@ var blockInsertCmd = &cobra.Command{
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
 		if bt := treenode.GetBlockTree(parentID); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println("ok")
 		return nil
@@ -269,7 +269,7 @@ var blockAppendCmd = &cobra.Command{
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
 		if bt := treenode.GetBlockTree(parentID); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println("ok")
 		return nil
@@ -311,7 +311,7 @@ var blockPrependCmd = &cobra.Command{
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
 		if bt := treenode.GetBlockTree(parentID); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println("ok")
 		return nil
@@ -348,7 +348,7 @@ var blockUpdateCmd = &cobra.Command{
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
 		if bt := treenode.GetBlockTree(id); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println("ok")
 		return nil
@@ -381,7 +381,7 @@ var blockDeleteCmd = &cobra.Command{
 		model.FlushTxQueue()
 
 		if bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println(id)
 		return nil
@@ -428,7 +428,7 @@ var blockMoveCmd = &cobra.Command{
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
 		if bt := treenode.GetBlockTree(id); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
+			model.AppendPushReloadProtyleEntry(bt.RootID, model.TransactionNotebookForBox(bt.BoxID))
 		}
 		fmt.Println("ok")
 		return nil

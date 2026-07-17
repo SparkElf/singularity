@@ -119,7 +119,17 @@ func RenameBox(boxID, name string) (err error) {
 
 var boxLock = sync.Map{}
 
-func RemoveBox(boxID string) (err error) {
+func RemoveBox(boxID string) error {
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
+	acquireBoxResponseWriteLock(boxID)
+	defer releaseBoxResponseWriteLock(boxID)
+	databaseIndexOpMu.Lock()
+	defer databaseIndexOpMu.Unlock()
+	return removeBoxResponseWriteAndIndexLocked(boxID)
+}
+
+func removeBoxResponseWriteAndIndexLocked(boxID string) (err error) {
 	if _, ok := boxLock.Load(boxID); ok {
 		err = errors.New(Conf.language(239))
 		return
@@ -145,7 +155,9 @@ func RemoveBox(boxID string) (err error) {
 		return fmt.Errorf("can not remove [%s] caused by it is not a dir", boxID)
 	}
 
-	unmount0(boxID)
+	if err = unmount0ResponseWriteAndIndexLocked(boxID); err != nil {
+		return
+	}
 
 	// 删目录前缓存加密状态：删目录后 conf.json 不复存在，IsEncryptedBox 会返回 false
 	isEncrypted := IsEncryptedBox(boxID)
@@ -209,10 +221,18 @@ func RemoveBox(boxID string) (err error) {
 	return
 }
 
-func Unmount(boxID string) {
-	FlushTxQueue()
-
-	unmount0(boxID)
+func Unmount(boxID string) (err error) {
+	err = func() error {
+		acquireBoxResponseWriteLock(boxID)
+		defer releaseBoxResponseWriteLock(boxID)
+		FlushTxQueue()
+		databaseIndexOpMu.Lock()
+		defer databaseIndexOpMu.Unlock()
+		return unmount0ResponseWriteAndIndexLocked(boxID)
+	}()
+	if err != nil {
+		return err
+	}
 
 	cmdName := "closeBox"
 	if IsUserGuide(boxID) {
@@ -227,44 +247,80 @@ func Unmount(boxID string) {
 		"box": boxID,
 	}
 	util.PushEvent(evt)
+	return nil
 }
 
 // clearDEKIfUnlockedEncryptedBox 清除已解锁但未挂载的加密笔记本的 DEK。
 // unmount0 在 box 未挂载（Conf.Box 返回 nil）时调用，覆盖 unlockBox 解锁后未 mount 即 lock 的场景：
 // 此时 DEK 仍在内存，若不清除，锁定后认证 API 仍可读取明文。
-func clearDEKIfUnlockedEncryptedBox(boxID string) {
+func clearDEKIfUnlockedEncryptedBox(boxID string) error {
 	if IsEncryptedBox(boxID) && IsBoxUnlocked(boxID) {
-		ClearDEK(boxID)
+		return ClearDEK(boxID)
 	}
+	return nil
 }
 
-func unmount0(boxID string) {
+func clearDEKIfUnlockedEncryptedBoxResponseWriteHeld(boxID string) error {
+	if IsEncryptedBox(boxID) && IsBoxUnlocked(boxID) {
+		return lockBoxResponseWriteHeld(boxID)
+	}
+	return nil
+}
+
+func unmount0(boxID string) error {
+	acquireBoxResponseWriteLock(boxID)
+	defer releaseBoxResponseWriteLock(boxID)
+	databaseIndexOpMu.Lock()
+	defer databaseIndexOpMu.Unlock()
+	return unmount0ResponseWriteAndIndexLocked(boxID)
+}
+
+func unmount0ResponseWriteAndIndexLocked(boxID string) (err error) {
 	box := Conf.Box(boxID)
 	if nil == box {
 		// 笔记本未挂载（Closed）。若它是已解锁的加密笔记本（DEK 在内存），
 		// 仍需 ClearDEK 清除残留密钥材料，否则锁定后认证 API 仍可读取明文。
-		clearDEKIfUnlockedEncryptedBox(boxID)
-		return
+		return clearDEKIfUnlockedEncryptedBoxResponseWriteHeld(boxID)
 	}
 
 	boxConf := box.GetConf()
-	boxConf.Closed = true
-	if err := box.SaveConf(boxConf); err != nil {
-		logging.LogErrorf("save box conf [%s] failed: %s", box.ID, err)
-	}
-	if IsEncryptedBox(box.ID) {
+	isEncrypted := IsEncryptedBox(box.ID)
+	if isEncrypted {
 		// 加密笔记本关闭：跳过 Unindex（索引 db 马上要删，逐条删是白费），
 		// 先等待事务队列和 SQL 索引队列落盘（确保 pending 写入已持久化到加密 .sy），
 		// 生成文件历史，再 ClearDEK（=LockBox）清除 DEK 并删除加密 db 文件。
 		// 加密索引可由 box.Index() 全量重建，关闭即删文件避免残留旧索引数据导致下次解锁叠加重复行。
-		FlushTxQueue()
-		sql.FlushQueue()
 		// 关闭前生成一次文件历史：锁定后定时器无法为加密笔记本生成历史（不在 GetOpenedBoxes 里）
 		GenerateFileHistoryForBox(box)
-		ClearDEK(boxID)
-	} else {
-		box.Unindex()
 	}
+
+	boxConf.Closed = true
+	if err = box.SaveConf(boxConf); err != nil {
+		logging.LogErrorf("save box conf [%s] failed: %s", box.ID, err)
+		return err
+	}
+	restoreOpenState := func(cause error) error {
+		boxConf.Closed = false
+		if saveErr := box.SaveConf(boxConf); saveErr != nil {
+			return errors.Join(cause, fmt.Errorf("restore notebook [%s] open state: %w", boxID, saveErr))
+		}
+		return cause
+	}
+	if isEncrypted {
+		if err = lockBoxResponseWriteHeld(boxID); err != nil {
+			return restoreOpenState(err)
+		}
+	} else {
+		if err = unindexLocked(box.ID); err != nil {
+			return restoreOpenState(err)
+		}
+		if err = sql.FlushQueue(); err != nil {
+			err = fmt.Errorf("flush notebook unindex queue [%s]: %w", box.ID, err)
+			return restoreOpenState(err)
+		}
+		ResetVirtualBlockRefCache()
+	}
+	return nil
 }
 
 func Mount(boxID string) (alreadyMount bool, err error) {
@@ -286,7 +342,9 @@ func Mount(boxID string) (alreadyMount bool, err error) {
 
 		guideBox := Conf.Box(boxID)
 		if nil != guideBox {
-			unmount0(guideBox.ID)
+			if err = unmount0(guideBox.ID); err != nil {
+				return
+			}
 			reMountGuide = true
 		}
 
@@ -357,15 +415,28 @@ func Mount(boxID string) (alreadyMount bool, err error) {
 
 	box := &Box{ID: boxID}
 	boxConf := box.GetConf()
+	box.Name = boxConf.Name
 	boxConf.Closed = false
 	if err := box.SaveConf(boxConf); err != nil {
-		logging.LogErrorf("save box conf [%s] failed: %s", boxID, err)
+		return false, fmt.Errorf("open notebook [%s]: %w", boxID, err)
+	}
+	restoreClosedState := func(cause error) error {
+		boxConf.Closed = true
+		if saveErr := box.SaveConf(boxConf); saveErr != nil {
+			return errors.Join(cause, fmt.Errorf("restore notebook [%s] closed state: %w", boxID, saveErr))
+		}
+		return cause
 	}
 
 	// 缓存根一级的文档树展开
-	files, _, _ := ListDocTree(box.ID, "/", util.SortModeUnassigned, false, false, Conf.FileTree.MaxListCount)
+	files, _, listErr := ListDocTree(box.ID, "/", util.SortModeUnassigned, false, false, Conf.FileTree.MaxListCount)
+	if listErr != nil {
+		return false, restoreClosedState(fmt.Errorf("list notebook [%s] documents: %w", boxID, listErr))
+	}
 	if 0 < len(files) {
-		box.Index()
+		if err = box.Index(); err != nil {
+			return false, restoreClosedState(err)
+		}
 	}
 
 	if reMountGuide {

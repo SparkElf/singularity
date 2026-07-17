@@ -34,6 +34,7 @@ var BlockTool = &Tool{
 		Type: "object",
 		Properties: map[string]Property{
 			"action":     {Type: "string", Description: "Operation", Enum: []string{"get", "get_kramdown", "get_children", "tree_stat", "dom", "insert", "append", "prepend", "update", "delete", "move", "breadcrumb", "batch_get", "batch_kramdown"}},
+			"notebook":   {Type: "string", Description: "Notebook ID for write actions; omit for the ordinary global content store"},
 			"id":         {Type: "string", Description: "Block ID"},
 			"ids":        {Type: "string", Description: "Comma-separated block IDs (for batch_get, batch_kramdown)"},
 			"data":       {Type: "string", Description: "Content (markdown or dom)"},
@@ -51,8 +52,17 @@ func init() {
 	register(BlockTool)
 }
 
-func blockHandler(args map[string]any) (CallToolResult, error) {
+func blockHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
+	contentStore := ""
+	switch action {
+	case "insert", "append", "prepend", "update", "delete", "move":
+		notebook, _, err := NotebookArg(args)
+		if err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: action + " block failed: " + err.Error()}}, IsError: true}, nil
+		}
+		contentStore = model.TransactionNotebookForBox(notebook)
+	}
 	switch action {
 	case "get":
 		return blockGet(args)
@@ -65,17 +75,17 @@ func blockHandler(args map[string]any) (CallToolResult, error) {
 	case "dom":
 		return blockDom(args)
 	case "insert":
-		return blockInsert(args)
+		return blockInsert(args, contentStore)
 	case "append":
-		return blockAppend(args)
+		return blockAppend(args, contentStore)
 	case "prepend":
-		return blockPrepend(args)
+		return blockPrepend(args, contentStore)
 	case "update":
-		return blockUpdate(args)
+		return blockUpdate(args, contentStore)
 	case "delete":
-		return blockDelete(args)
+		return blockDelete(args, contentStore)
 	case "move":
-		return blockMove(args)
+		return blockMove(args, contentStore)
 	case "breadcrumb":
 		return blockBreadcrumb(args)
 	case "batch_get":
@@ -148,7 +158,7 @@ func blockGetChildren(args map[string]any) (CallToolResult, error) {
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
 
-func blockInsert(args map[string]any) (CallToolResult, error) {
+func blockInsert(args map[string]any, contentStore string) (CallToolResult, error) {
 	data, dataType := getBlockData(args)
 	if data == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "data is required"}}, IsError: true}, nil
@@ -167,7 +177,7 @@ func blockInsert(args map[string]any) (CallToolResult, error) {
 
 	// 仅靠 parentID 定位目标时，目标必须是容器块，否则非法嵌套
 	if parentID != "" && previousID == "" && nextID == "" {
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, contentStore); err != nil {
 			return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 		}
 	}
@@ -181,6 +191,7 @@ func blockInsert(args map[string]any) (CallToolResult, error) {
 	}
 
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action:     "insert",
 			Data:       data,
@@ -192,24 +203,12 @@ func blockInsert(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	reloadID := nextID
-	if reloadID == "" {
-		reloadID = previousID
-	}
-	if reloadID == "" {
-		reloadID = parentID
-	}
-	if reloadID != "" {
-		if bt := treenode.GetBlockTree(reloadID); bt != nil {
-			util.PushReloadProtyle(bt.RootID)
-		}
-	}
+	broadcastBlockTransactions(transactions)
 
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block inserted"}}}, nil
 }
 
-func blockAppend(args map[string]any) (CallToolResult, error) {
+func blockAppend(args map[string]any, contentStore string) (CallToolResult, error) {
 	data, dataType := getBlockData(args)
 	if data == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "data is required"}}, IsError: true}, nil
@@ -219,7 +218,7 @@ func blockAppend(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "parentID is required"}}, IsError: true}, nil
 	}
 	// append 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-	if err := treenode.CheckContainerParent(parentID); err != nil {
+	if err := treenode.CheckContainerParentInBox(parentID, contentStore); err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 	}
 
@@ -232,6 +231,7 @@ func blockAppend(args map[string]any) (CallToolResult, error) {
 	}
 
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action:   "appendInsert",
 			Data:     data,
@@ -241,14 +241,11 @@ func blockAppend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	if bt := treenode.GetBlockTree(parentID); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
-	}
+	broadcastBlockTransactions(transactions)
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block appended"}}}, nil
 }
 
-func blockPrepend(args map[string]any) (CallToolResult, error) {
+func blockPrepend(args map[string]any, contentStore string) (CallToolResult, error) {
 	data, dataType := getBlockData(args)
 	if data == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "data is required"}}, IsError: true}, nil
@@ -258,7 +255,7 @@ func blockPrepend(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "parentID is required"}}, IsError: true}, nil
 	}
 	// prepend 只用 parentID 定位目标，目标必须是容器块，否则非法嵌套
-	if err := treenode.CheckContainerParent(parentID); err != nil {
+	if err := treenode.CheckContainerParentInBox(parentID, contentStore); err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 	}
 
@@ -271,6 +268,7 @@ func blockPrepend(args map[string]any) (CallToolResult, error) {
 	}
 
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action:   "prependInsert",
 			Data:     data,
@@ -280,14 +278,11 @@ func blockPrepend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	if bt := treenode.GetBlockTree(parentID); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
-	}
+	broadcastBlockTransactions(transactions)
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block prepended"}}}, nil
 }
 
-func blockUpdate(args map[string]any) (CallToolResult, error) {
+func blockUpdate(args map[string]any, contentStore string) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
@@ -302,6 +297,7 @@ func blockUpdate(args map[string]any) (CallToolResult, error) {
 	data = pinBlockID(data, dataType, id)
 
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action: "update",
 			ID:     id,
@@ -311,10 +307,7 @@ func blockUpdate(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	if bt := treenode.GetBlockTree(id); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
-	}
+	broadcastBlockTransactions(transactions)
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block updated"}}}, nil
 }
 
@@ -354,15 +347,14 @@ func pinBlockID(data, dataType, id string) string {
 	return luteEngine.Tree2BlockDOM(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 }
 
-func blockDelete(args map[string]any) (CallToolResult, error) {
+func blockDelete(args map[string]any, contentStore string) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
 
-	bt := treenode.GetBlockTree(id)
-
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action: "delete",
 			ID:     id,
@@ -371,10 +363,7 @@ func blockDelete(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	if bt != nil {
-		util.PushReloadProtyle(bt.RootID)
-	}
+	broadcastBlockTransactions(transactions)
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block deleted: " + id}}}, nil
 }
 
@@ -397,7 +386,7 @@ func markdownToBlockDOM(md string) (string, error) {
 	return result, nil
 }
 
-func blockMove(args map[string]any) (CallToolResult, error) {
+func blockMove(args map[string]any, contentStore string) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
@@ -410,15 +399,16 @@ func blockMove(args map[string]any) (CallToolResult, error) {
 
 	// 仅靠 parentID 定位目标时（无 previousID），目标必须是容器块，否则 doMove parent-only 分支会形成非法嵌套
 	if previousID == "" {
-		if err := treenode.CheckListItemNesting(parentID, id); err != nil {
+		if err := treenode.CheckListItemNestingInBox(parentID, id, contentStore); err != nil {
 			return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 		}
-		if err := treenode.CheckContainerParent(parentID); err != nil {
+		if err := treenode.CheckContainerParentInBox(parentID, contentStore); err != nil {
 			return CallToolResult{Content: []ContentItem{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 		}
 	}
 
 	transactions := []*model.Transaction{{
+		Notebook: contentStore,
 		DoOperations: []*model.Operation{{
 			Action:     "move",
 			ID:         id,
@@ -429,11 +419,14 @@ func blockMove(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-
-	if bt := treenode.GetBlockTree(id); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
-	}
+	broadcastBlockTransactions(transactions)
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "block moved: " + id}}}, nil
+}
+
+func broadcastBlockTransactions(transactions []*model.Transaction) {
+	event := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)
+	event.Data = transactions
+	util.PushEvent(event)
 }
 
 func blockBreadcrumb(args map[string]any) (CallToolResult, error) {

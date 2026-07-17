@@ -39,35 +39,58 @@ import (
 )
 
 func RefreshBacklink(id string) {
+	RefreshBacklinkInBox(id, "")
+}
+
+func RefreshBacklinkInBox(id, boxID string) {
 	FlushTxQueue()
-	refreshRefsByDefID(id)
+	refreshRefsByDefIDInBox(id, boxID)
 }
 
 func refreshRefsByDefID(defID string) {
-	// 全局查 + 加密笔记本fallback
-	refs := sql.QueryRefsByDefID(defID, true)
-	if len(refs) == 0 {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encRefs := sql.QueryRefsByDefIDInBox(defID, true, encBoxID); len(encRefs) > 0 {
-				refs = encRefs
-				break
-			}
-		}
+	refreshRefsByDefIDInBox(defID, "")
+}
+
+func refreshRefsByDefIDInBox(defID, boxID string) {
+	boxID = attributeViewStoreBoxID(boxID)
+	var refs []*sql.Ref
+	if boxID == "" {
+		refs = sql.QueryRefsByDefID(defID, true)
+	} else {
+		refs = sql.QueryRefsByDefIDInBox(defID, true, boxID)
 	}
 	var rootIDs []string
 	for _, ref := range refs {
 		rootIDs = append(rootIDs, ref.RootID)
-		task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, ref.DefBlockID)
+		appendRefreshRefCountTask(ref.DefBlockID, boxID)
 	}
 	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
-	trees := filesys.LoadTrees(rootIDs)
+	trees := map[string]*parse.Tree{}
+	if boxID == "" {
+		trees = filesys.LoadTrees(rootIDs)
+	} else {
+		for _, rootID := range rootIDs {
+			tree, err := loadTreeByBlockIDInBox(rootID, boxID)
+			if err == nil && tree != nil {
+				trees[rootID] = tree
+			}
+		}
+	}
 	for _, tree := range trees {
-		sql.UpdateRefsTreeQueue(tree)
-		task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, tree.ID)
+		if err := sql.UpdateRefsTreeQueue(tree); err != nil {
+			logging.LogErrorf("persist reference refresh queue for tree [%s/%s] failed: %s", tree.Box, tree.Path, err)
+			return
+		}
+		appendRefreshRefCountTask(tree.ID, boxID)
 	}
-	if bt := treenode.GetBlockTree(defID); nil != bt {
-		task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, defID)
+	if bt := treenode.GetBlockTreeInBox(defID, boxID); nil != bt {
+		appendRefreshRefCountTask(defID, boxID)
 	}
+}
+
+func appendRefreshRefCountTask(blockID, boxID string) {
+	boxID = attributeViewStoreBoxID(boxID)
+	task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, blockID, boxID)
 }
 
 type Backlink struct {
@@ -122,7 +145,7 @@ func GetBackmentionDoc(defID, refTreeID, keyword string, containChildren, highli
 	var refTree *parse.Tree
 	trees := filesys.LoadTrees(mentionBlockIDs)
 	for id, tree := range trees {
-		backlink := buildBacklink(id, tree, originalRefBlockIDs, mentionKeywords, highlight, luteEngine)
+		backlink := buildBacklink(id, tree, originalRefBlockIDs, mentionKeywords, highlight, luteEngine, "")
 		if nil != backlink {
 			ret = append(ret, backlink)
 		}
@@ -151,29 +174,11 @@ func GetBacklinkDoc(defID, refTreeID, keyword string, containChildren, highlight
 	ret = []*Backlink{}
 	sqlBlock := sql.GetBlock(defID)
 	if nil == sqlBlock {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encBlock := sql.GetBlockInBox(defID, encBoxID); nil != encBlock {
-				sqlBlock = encBlock
-				break
-			}
-		}
-	}
-	if nil == sqlBlock {
 		return
 	}
 	rootID := sqlBlock.RootID
 
 	tmpRefs := sql.QueryRefsByDefID(defID, containChildren)
-	var encBoxIDUsed string
-	if len(tmpRefs) == 0 {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encRefs := sql.QueryRefsByDefIDInBox(defID, containChildren, encBoxID); len(encRefs) > 0 {
-				tmpRefs = encRefs
-				encBoxIDUsed = encBoxID
-				break
-			}
-		}
-	}
 	var refs []*sql.Ref
 	for _, ref := range tmpRefs {
 		if ref.RootID == refTreeID {
@@ -182,7 +187,7 @@ func GetBacklinkDoc(defID, refTreeID, keyword string, containChildren, highlight
 	}
 	refs = removeDuplicatedRefs(refs)
 
-	linkRefs, _, _, originalRefBlockIDs := buildLinkRefsInBox(rootID, refs, keywords, encBoxIDUsed)
+	linkRefs, _, _, originalRefBlockIDs := buildLinkRefs(rootID, refs, keywords)
 	refTree, err := LoadTreeByBlockID(refTreeID)
 	if err != nil {
 		logging.LogWarnf("load ref tree [%s] failed: %s", refTreeID, err)
@@ -191,7 +196,7 @@ func GetBacklinkDoc(defID, refTreeID, keyword string, containChildren, highlight
 
 	luteEngine := util.NewLute()
 	for _, linkRef := range linkRefs {
-		backlink := buildBacklink(linkRef.ID, refTree, originalRefBlockIDs, keywords, highlight, luteEngine)
+		backlink := buildBacklink(linkRef.ID, refTree, originalRefBlockIDs, keywords, highlight, luteEngine, "")
 		if nil != backlink {
 			ret = append(ret, backlink)
 		}
@@ -237,7 +242,7 @@ func GetBacklinkDocInBox(defID, refTreeID, keyword string, containChildren, high
 
 	luteEngine := util.NewLute()
 	for _, linkRef := range linkRefs {
-		backlink := buildBacklink(linkRef.ID, refTree, originalRefBlockIDs, keywords, highlight, luteEngine)
+		backlink := buildBacklink(linkRef.ID, refTree, originalRefBlockIDs, keywords, highlight, luteEngine, boxID)
 		if nil != backlink {
 			ret = append(ret, backlink)
 		}
@@ -295,7 +300,7 @@ func GetBackmentionDocInBox(defID, refTreeID, keyword string, containChildren, h
 		if loadErr != nil || tree == nil {
 			continue
 		}
-		backlink := buildBacklink(id, tree, originalRefBlockIDs, mentionKeywords, highlight, luteEngine)
+		backlink := buildBacklink(id, tree, originalRefBlockIDs, mentionKeywords, highlight, luteEngine, boxID)
 		if nil != backlink {
 			ret = append(ret, backlink)
 		}
@@ -341,7 +346,7 @@ func sortBacklinks(backlinks []*Backlink, tree *parse.Tree) {
 	})
 }
 
-func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[string]string, keywords []string, highlight bool, luteEngine *lute.Lute) (ret *Backlink) {
+func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[string]string, keywords []string, highlight bool, luteEngine *lute.Lute, boxID string) (ret *Backlink) {
 	node := treenode.GetNodeInTree(refTree, refID)
 	if nil == node {
 		return
@@ -373,7 +378,11 @@ func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[st
 	}
 
 	// 反链面板中显示块引用计数 Display reference counts in the backlink panel https://github.com/siyuan-note/siyuan/issues/13618
-	fillBlockRefCount(renderNodes)
+	if boxID == "" {
+		fillBlockRefCount(renderNodes)
+	} else {
+		fillBacklinkBlockRefCountInBox(renderNodes, boxID)
+	}
 
 	dom := renderBlockDOMByNodes(renderNodes, luteEngine)
 	var blockPaths []*BlockPath
@@ -385,6 +394,30 @@ func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[st
 	}
 	ret = &Backlink{DOM: dom, BlockPaths: blockPaths, Expand: expand, node: node}
 	return
+}
+
+func fillBacklinkBlockRefCountInBox(nodes []*ast.Node, boxID string) {
+	var defIDs []string
+	for _, node := range nodes {
+		ast.Walk(node, func(node *ast.Node, entering bool) ast.WalkStatus {
+			if entering && node.IsBlock() {
+				defIDs = append(defIDs, node.ID)
+			}
+			return ast.WalkContinue
+		})
+	}
+	defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
+	refCount := sql.QueryRefCountInBox(defIDs, boxID)
+	for _, node := range nodes {
+		ast.Walk(node, func(node *ast.Node, entering bool) ast.WalkStatus {
+			if entering && node.IsBlock() {
+				if count := refCount[node.ID]; count > 0 {
+					node.SetIALAttr("refcount", strconv.Itoa(count))
+				}
+			}
+			return ast.WalkContinue
+		})
+	}
 }
 
 func getBacklinkRenderNodes(n *ast.Node, originalRefBlockIDs map[string]string) (ret []*ast.Node, expand bool) {

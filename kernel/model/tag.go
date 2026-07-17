@@ -26,6 +26,7 @@ import (
 	"github.com/88250/gulu"
 	"github.com/88250/lute/ast"
 	"github.com/emirpasic/gods/sets/hashset"
+	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/search"
 	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
@@ -109,16 +110,22 @@ func RemoveTag(label string) (err error) {
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.ClearPushProgress(100)
+		return
+	}
 
 	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
 	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id)
+		ReloadProtyle(id, "")
 	}
 
 	updateAttributeViewBlockText(updateNodes)
 
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.ClearPushProgress(100)
+		return
+	}
 	util.PushClearProgress()
 	return
 }
@@ -214,16 +221,22 @@ func RenameTag(oldLabel, newLabel string) (err error) {
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.ClearPushProgress(100)
+		return
+	}
 
 	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
 	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id)
+		ReloadProtyle(id, "")
 	}
 
 	updateAttributeViewBlockText(updateNodes)
 
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		util.ClearPushProgress(100)
+		return
+	}
 	util.PushClearProgress()
 	return
 }
@@ -249,9 +262,12 @@ type Tags []*Tag
 
 func BuildTags(ignoreMaxListHintArg bool, appID string, sortVal int) (ret *Tags) {
 	FlushTxQueue()
-	sql.FlushQueue()
-
 	ret = &Tags{}
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before building tags failed: %s", err)
+		return
+	}
+
 	labels := labelTags()
 	tags := Tags{}
 	for label := range labels {
@@ -316,7 +332,10 @@ func sortTags(tags Tags, sortVal int) {
 func SearchTags(keyword string) (ret []string) {
 	ret = []string{}
 
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before searching tags failed: %s", err)
+		return
+	}
 
 	labels := labelBlocksByKeyword(keyword)
 	keyword = strings.Join(strings.Split(keyword, " "), search.TermSep)

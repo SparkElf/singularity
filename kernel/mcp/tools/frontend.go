@@ -23,13 +23,14 @@ package tools
 // convertMCPToolsToOpenAI() lists this tool for the LLM.
 var FrontendTool = &Tool{
 	Name:        "frontend",
-	Description: "Frontend/UI actions in the SiYuan editor (run in the browser; may change what the user sees). Actions: open_setting(query?), focus_block(id), open_document(id), open_search(query?). Plugins may register more — see <plugin_actions> and invoke by full name (e.g. plugin__myplugin__myaction).",
+	Description: "Frontend/UI actions in the SiYuan editor (run in the browser; may change what the user sees). Actions: open_setting(query?), focus_block(id), open_document(id, notebookId), open_search(query?). Plugins may register more — see <plugin_actions> and invoke by full name (e.g. plugin__myplugin__myaction).",
 	InputSchema: ToolSchema{
 		Type: "object",
 		Properties: map[string]Property{
-			"action": {Type: "string", Description: "Operation"},
-			"id":     {Type: "string", Description: "Block or document ID (for focus_block and open_document)"},
-			"query":  {Type: "string", Description: "Search keyword (for open_setting to locate a config item, for open_search to pre-fill the search box)"},
+			"action":     {Type: "string", Description: "Operation"},
+			"id":         {Type: "string", Description: "Block or document ID (for focus_block and open_document)"},
+			"notebookId": {Type: "string", Description: "Target notebook ID (required for open_document; do not infer it from id)"},
+			"query":      {Type: "string", Description: "Search keyword (for open_setting to locate a config item, for open_search to pre-fill the search box)"},
 		},
 		Required: []string{"action"},
 	},
@@ -40,7 +41,7 @@ func init() {
 	register(FrontendTool)
 }
 
-func frontendHandler(args map[string]any) (CallToolResult, error) {
+func frontendHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	return CallToolResult{
 		Content: []ContentItem{{Type: "text", Text: "frontend actions are only available in the interactive agent chat (not via direct tool invocation)"}},
 		IsError: true,

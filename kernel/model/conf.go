@@ -874,7 +874,12 @@ func Close(force, setCurrentWorkspace bool, execInstallPkg int) (exitCode int) {
 	closeUserGuide()
 
 	// Improve indexing completeness when exiting https://github.com/siyuan-note/siyuan/issues/12039
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before exiting failed: %s", err)
+		util.PushErrMsg(err.Error(), 0)
+		exitCode = 1
+		return
+	}
 
 	util.IsExiting.Store(true)
 	waitSecondForExecInstallPkg := false
@@ -900,7 +905,9 @@ func Close(force, setCurrentWorkspace bool, execInstallPkg int) (exitCode int) {
 	// 放在 BroadcastByType("exit")（第 933 行）之前推送，随后的 time.Sleep(500ms) 留给前端处理事件。
 	for _, box := range Conf.GetOpenedBoxes() {
 		if IsEncryptedBox(box.ID) && !IsUserGuide(box.ID) {
-			Unmount(box.ID)
+			if err := Unmount(box.ID); err != nil {
+				logging.LogErrorf("close encrypted notebook [%s] during exit failed: %s", box.ID, err)
+			}
 		}
 	}
 	sql.CloseDatabase()
@@ -1097,6 +1104,11 @@ func (conf *AppConf) GetBoxes() (ret []*Box) {
 }
 
 func (conf *AppConf) GetOpenedBoxes() (ret []*Box) {
+	ret, _ = listOpenedBoxes()
+	return
+}
+
+func listOpenedBoxes() (ret []*Box, err error) {
 	ret = []*Box{}
 	notebooks, err := ListNotebooks()
 	if err != nil {
@@ -1109,6 +1121,21 @@ func (conf *AppConf) GetOpenedBoxes() (ret []*Box) {
 		}
 	}
 	return
+}
+
+func listOpenedBoxesStrict() (ret []*Box, err error) {
+	ret = []*Box{}
+	notebooks, err := listNotebooksStrict()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, notebook := range notebooks {
+		if !notebook.Closed {
+			ret = append(ret, notebook)
+		}
+	}
+	return ret, nil
 }
 
 func (conf *AppConf) GetClosedBoxes() (ret []*Box) {
@@ -1141,18 +1168,35 @@ func (conf *AppConf) language(num int) (ret string) {
 	return
 }
 
-func InitBoxes() {
+func InitBoxes() error {
 	blockCount := treenode.CountBlocks()
 	initialized := 0 < blockCount
-	for _, box := range Conf.GetOpenedBoxes() {
-		box.UpdateHistoryGenerated() // 初始化历史生成时间为当前时间
-
+	if !initialized {
+		databaseIndexOpMu.Lock()
+		defer databaseIndexOpMu.Unlock()
+	}
+	openedBoxes, err := listOpenedBoxesStrict()
+	if err != nil {
+		return fmt.Errorf("list opened notebooks for initialization: %w", err)
+	}
+	for _, box := range openedBoxes {
 		if !initialized {
-			indexBox(box.ID)
+			if err := indexBoxLocked(box, len(openedBoxes)); err != nil {
+				return err
+			}
 		}
+	}
+	if !initialized {
+		if err = sql.FlushQueue(); err != nil {
+			return fmt.Errorf("flush notebook initialization index queue: %w", err)
+		}
+	}
+	for _, box := range openedBoxes {
+		box.UpdateHistoryGenerated() // 初始化历史生成时间为当前时间
 	}
 
 	logging.LogInfof("tree/block count [%d/%d]", treenode.CountTrees(), blockCount)
+	return nil
 }
 
 func IsSubscriber() bool {
@@ -1350,7 +1394,12 @@ func clearWorkspaceTemp() {
 
 func closeUserGuide() {
 	defer logging.Recover()
+	acquireNotebookCryptoLock()
+	defer releaseNotebookCryptoLock()
+	closeUserGuideLocked()
+}
 
+func closeUserGuideLocked() {
 	dirs, err := os.ReadDir(util.DataDir)
 	if err != nil {
 		logging.LogErrorf("read dir [%s] failed: %s", util.DataDir, err)
@@ -1402,11 +1451,14 @@ func closeUserGuide() {
 
 		msgId := util.PushMsg(Conf.language(233), 30000)
 
-		unindex(boxID)
-
-		sql.FlushQueue()
-
-		if removeErr := RemoveBox(boxID); nil == removeErr {
+		removeErr := func() error {
+			acquireBoxResponseWriteLock(boxID)
+			defer releaseBoxResponseWriteLock(boxID)
+			databaseIndexOpMu.Lock()
+			defer databaseIndexOpMu.Unlock()
+			return removeBoxResponseWriteAndIndexLocked(boxID)
+		}()
+		if nil == removeErr {
 			evt := util.NewCmdResult("removeBox", 0, util.PushModeBroadcast)
 			evt.Data = map[string]any{
 				"box": boxID,

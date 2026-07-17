@@ -17,18 +17,26 @@
 package treenode
 
 import (
+	"fmt"
+
 	"github.com/88250/gulu"
 	"github.com/siyuan-note/logging"
 )
 
-func ClearRedundantBlockTrees(boxID string, paths []string) {
-	redundantPaths := getRedundantPaths(boxID, paths)
-	for _, p := range redundantPaths {
-		removeBlockTreesByPath(boxID, p)
+func ClearRedundantBlockTrees(boxID string, paths []string) error {
+	redundantPaths, err := getRedundantPaths(boxID, paths)
+	if err != nil {
+		return err
 	}
+	for _, p := range redundantPaths {
+		if err = removeBlockTreesByPath(boxID, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func getRedundantPaths(boxID string, paths []string) (ret []string) {
+func getRedundantPaths(boxID string, paths []string) (ret []string, err error) {
 	pathsMap := map[string]bool{}
 	for _, path := range paths {
 		pathsMap[path] = true
@@ -38,15 +46,13 @@ func getRedundantPaths(boxID string, paths []string) (ret []string) {
 	sqlStmt := "SELECT path FROM blocktrees WHERE box_id = ?"
 	rows, err := queryForBox(boxID, sqlStmt, boxID)
 	if err != nil {
-		logging.LogErrorf("query block tree failed: %s", err)
-		return
+		return nil, fmt.Errorf("query blocktree paths for notebook [%s]: %w", boxID, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var path string
 		if err = rows.Scan(&path); err != nil {
-			logging.LogErrorf("scan block tree failed: %s", err)
-			return
+			return nil, fmt.Errorf("scan blocktree path for notebook [%s]: %w", boxID, err)
 		}
 		btPathsMap[path] = true
 	}
@@ -57,18 +63,19 @@ func getRedundantPaths(boxID string, paths []string) (ret []string) {
 		}
 	}
 	ret = gulu.Str.RemoveDuplicatedElem(ret)
-	return
+	return ret, rows.Err()
 }
 
-func removeBlockTreesByPath(boxID, path string) {
+func removeBlockTreesByPath(boxID, path string) error {
 	sqlStmt := "DELETE FROM blocktrees WHERE box_id = ? AND path = ?"
 	_, err := execForBox(boxID, sqlStmt, boxID, path)
 	if err != nil {
-		logging.LogErrorf("delete block tree failed: %s", err)
+		return fmt.Errorf("remove blocktrees by path [%s/%s]: %w", boxID, path, err)
 	}
+	return nil
 }
 
-func GetNotExistPaths(boxID string, paths []string) (ret []string) {
+func GetNotExistPaths(boxID string, paths []string) (ret []string, err error) {
 	pathsMap := map[string]bool{}
 	for _, path := range paths {
 		pathsMap[path] = true
@@ -78,15 +85,13 @@ func GetNotExistPaths(boxID string, paths []string) (ret []string) {
 	sqlStmt := "SELECT path FROM blocktrees WHERE box_id = ?"
 	rows, err := queryForBox(boxID, sqlStmt, boxID)
 	if err != nil {
-		logging.LogErrorf("query block tree failed: %s", err)
-		return
+		return nil, fmt.Errorf("query existing blocktree paths for notebook [%s]: %w", boxID, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var path string
 		if err = rows.Scan(&path); err != nil {
-			logging.LogErrorf("scan block tree failed: %s", err)
-			return
+			return nil, fmt.Errorf("scan existing blocktree path for notebook [%s]: %w", boxID, err)
 		}
 		btPathsMap[path] = true
 	}
@@ -97,13 +102,23 @@ func GetNotExistPaths(boxID string, paths []string) (ret []string) {
 		}
 	}
 	ret = gulu.Str.RemoveDuplicatedElem(ret)
-	return
+	return ret, rows.Err()
 }
 
 func GetRootUpdated() (ret map[string]string) {
+	return GetRootUpdatedInBox("")
+}
+
+// GetRootUpdatedInBox returns document update times from one block-tree store.
+func GetRootUpdatedInBox(boxID string) (ret map[string]string) {
 	ret = map[string]string{}
 	sqlStmt := "SELECT root_id, updated FROM blocktrees WHERE root_id = id AND type = 'd'"
-	rows, err := db.Query(sqlStmt)
+	var args []any
+	if boxID != "" {
+		sqlStmt += " AND box_id = ?"
+		args = append(args, boxID)
+	}
+	rows, err := queryForBox(boxID, sqlStmt, args...)
 	if err != nil {
 		logging.LogErrorf("query block tree failed: %s", err)
 		return

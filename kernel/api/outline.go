@@ -48,11 +48,16 @@ func getDocOutline(c *gin.Context) {
 	if util.InvalidIDPattern(rootID, ret) {
 		return
 	}
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	var headings []*model.Path
-	var err error
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		headings, err = model.OutlineInBox(rootID, preview, notebook)
+	if boxID != "" {
+		headings, err = model.OutlineInBox(rootID, preview, boxID)
 	} else {
 		headings, err = model.Outline(rootID, preview)
 	}
@@ -63,7 +68,7 @@ func getDocOutline(c *gin.Context) {
 	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
-		bt := treenode.GetBlockTree(rootID)
+		bt := treenode.GetBlockTreeInBox(rootID, boxID)
 		if bt != nil {
 			passwordID, password := model.GetPathPasswordByPublishAccess(bt.BoxID, bt.Path, publishAccess)
 			if password != "" && !model.CheckPublishAuthCookie(c, passwordID, password) {

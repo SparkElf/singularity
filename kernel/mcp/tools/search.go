@@ -51,7 +51,7 @@ func init() {
 	register(SearchTool)
 }
 
-func searchHandler(args map[string]any) (CallToolResult, error) {
+func searchHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "fulltext":

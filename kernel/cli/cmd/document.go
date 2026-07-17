@@ -72,6 +72,9 @@ var documentCreateCmd = &cobra.Command{
 		if notebook == "" {
 			return fmt.Errorf("--notebook is required")
 		}
+		if err := rejectEncryptedNotebookCLI(cmd, args); err != nil {
+			return err
+		}
 		if title == "" {
 			return fmt.Errorf("--title is required")
 		}
@@ -250,7 +253,9 @@ var documentDuplicateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		model.DuplicateDoc(tree)
+		if err = model.DuplicateDoc(tree, ""); err != nil {
+			return err
+		}
 		model.AppendPushReloadFiletreeEntry()
 		fmt.Println(tree.ID)
 		return nil

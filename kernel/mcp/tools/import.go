@@ -43,7 +43,7 @@ func init() {
 	register(ImportTool)
 }
 
-func importHandler(args map[string]any) (CallToolResult, error) {
+func importHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "md":

@@ -45,7 +45,7 @@ func init() {
 	register(AttrTool)
 }
 
-func attrHandler(args map[string]any) (CallToolResult, error) {
+func attrHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "get":

@@ -386,7 +386,7 @@ func ListDocTree(boxID, listPath string, sortMode int, flashcard, showHidden boo
 	}
 
 	start = time.Now()
-	refCount := sql.QueryRootBlockRefCount()
+	refCount := sql.QueryRootBlockRefCount(boxID)
 	for _, doc := range docs {
 		if count := refCount[doc.ID]; 0 < count {
 			doc.Count = count
@@ -999,43 +999,226 @@ func loadNodesByMode(node *ast.Node, inputIndex, mode, size int, isDoc, isHeadin
 	return
 }
 
-func writeTreeUpsertQueue(tree *parse.Tree) (err error) {
-	size, err := filesys.WriteTree(tree)
-	if err != nil {
-		return
+type contentCommitToken struct {
+	boxID          string
+	queueAdmission *sql.QueueAdmissionLease
+}
+
+func acquireContentCommitToken(boxID string) *contentCommitToken {
+	queueAdmission := sql.AcquireQueueAdmissionLease()
+	acquireBoxReadLock(boxID)
+	token := &contentCommitToken{boxID: boxID, queueAdmission: queueAdmission}
+	if contentCommitAcceptedHook != nil {
+		contentCommitAcceptedHook(boxID)
 	}
-	sql.UpsertTreeQueue(tree)
+	return token
+}
+
+func (token *contentCommitToken) release() {
+	releaseBoxReadLock(token.boxID)
+	token.queueAdmission.Release()
+}
+
+// contentCommitAcceptedHook 仅用于并发合同测试，在提交令牌获取后、内容写入前暂停。
+var contentCommitAcceptedHook func(boxID string)
+
+// contentCommitBeforeEnqueueHook 仅用于并发合同测试，在文件、缓存和块树完成后暂停持久入队。
+var contentCommitBeforeEnqueueHook func(tree *parse.Tree)
+
+// contentCommitAfterEnqueueHook 仅用于并发合同测试，在持久入队完成后暂停提交令牌释放。
+var contentCommitAfterEnqueueHook func(tree *parse.Tree)
+
+func runContentCommitBeforeEnqueueHook(tree *parse.Tree) {
+	if contentCommitBeforeEnqueueHook != nil {
+		contentCommitBeforeEnqueueHook(tree)
+	}
+}
+
+type contentQueueAction uint8
+
+const (
+	contentQueueUpsert contentQueueAction = iota
+	contentQueueIndex
+	contentQueueRename
+)
+
+func (action contentQueueAction) enqueue(lease *sql.QueueAdmissionLease, tree *parse.Tree) error {
+	switch action {
+	case contentQueueUpsert:
+		return lease.UpsertTreeQueue(tree)
+	case contentQueueIndex:
+		return lease.IndexTreeQueue(tree)
+	case contentQueueRename:
+		return lease.RenameTreeQueue(tree)
+	default:
+		return fmt.Errorf("unsupported content queue action [%d]", action)
+	}
+}
+
+type treeContentStateSnapshot struct {
+	boxID          string
+	rootID         string
+	path           string
+	absPath        string
+	fileData       []byte
+	fileExists     bool
+	treeData       []byte
+	treeDataExists bool
+	docIAL         map[string]string
+	docIALExists   bool
+}
+
+func captureTreeContentState(boxID, rootID, treePath string) (*treeContentStateSnapshot, error) {
+	relativePath, err := filesys.ValidateBoxRelativePath(boxID, treePath)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := &treeContentStateSnapshot{
+		boxID:   boxID,
+		rootID:  rootID,
+		path:    treePath,
+		absPath: filepath.Join(util.DataDir, boxID, filepath.FromSlash(relativePath)),
+	}
+	fileData, readErr := filelock.ReadFile(snapshot.absPath)
+	if readErr == nil {
+		snapshot.fileData = append([]byte(nil), fileData...)
+		snapshot.fileExists = true
+	} else if !os.IsNotExist(readErr) {
+		return nil, fmt.Errorf("read tree before content commit [%s/%s]: %w", boxID, treePath, readErr)
+	}
+	if treeData, ok := cache.GetTreeDataInBox(rootID, boxID); ok {
+		snapshot.treeData = append([]byte(nil), treeData...)
+		snapshot.treeDataExists = true
+	}
+	if docIAL := cache.GetDocIALInBox(treePath, boxID); docIAL != nil {
+		snapshot.docIAL = docIAL
+		snapshot.docIALExists = true
+	}
+	return snapshot, nil
+}
+
+func (snapshot *treeContentStateSnapshot) restoreFile() error {
+	if snapshot.fileExists {
+		return filelock.WriteFile(snapshot.absPath, snapshot.fileData)
+	}
+	fileErr := filelock.Remove(snapshot.absPath)
+	if os.IsNotExist(fileErr) {
+		return nil
+	}
+	return fileErr
+}
+
+func (snapshot *treeContentStateSnapshot) restoreCaches() {
+	cache.RemoveTreeDataInBox(snapshot.rootID, snapshot.boxID)
+	if snapshot.treeDataExists {
+		cache.SetTreeDataInBox(snapshot.rootID, snapshot.boxID, append([]byte(nil), snapshot.treeData...))
+	}
+	cache.RemoveDocIALInBox(snapshot.path, snapshot.boxID)
+	if snapshot.docIALExists {
+		cache.PutDocIALInBox(snapshot.path, snapshot.boxID, maps.Clone(snapshot.docIAL))
+	}
+}
+
+func (snapshot *treeContentStateSnapshot) restore() error {
+	fileErr := snapshot.restoreFile()
+	snapshot.restoreCaches()
+	if fileErr != nil {
+		return fmt.Errorf("restore tree after rejected content commit [%s/%s]: %w", snapshot.boxID, snapshot.path, fileErr)
+	}
+	return nil
+}
+
+type preparedTreeContentCommit struct {
+	state      *treeContentStateSnapshot
+	blocktrees *treenode.BlockTreeBatchSnapshot
+	size       uint64
+}
+
+func prepareTreeContentCommit(tree *parse.Tree) (*preparedTreeContentCommit, error) {
+	state, err := captureTreeContentState(tree.Box, tree.ID, tree.Path)
+	if err != nil {
+		return nil, err
+	}
+	blocktrees, err := treenode.ReplaceBlockTrees([]*parse.Tree{tree})
+	if err != nil {
+		return nil, err
+	}
+	size, err := filesys.WriteTreeInBoxLocked(tree)
+	if err != nil {
+		return nil, errors.Join(err, blocktrees.Restore(), state.restore())
+	}
+	return &preparedTreeContentCommit{state: state, blocktrees: blocktrees, size: size}, nil
+}
+
+func (commit *preparedTreeContentCommit) rollback() error {
+	return errors.Join(commit.blocktrees.Restore(), commit.state.restore())
+}
+
+func commitTreeContentInToken(tree *parse.Tree, token *contentCommitToken, action contentQueueAction) (uint64, error) {
+	commit, err := prepareTreeContentCommit(tree)
+	if err != nil {
+		return 0, err
+	}
+	runContentCommitBeforeEnqueueHook(tree)
+	if err = action.enqueue(token.queueAdmission, tree); err != nil {
+		return 0, errors.Join(err, commit.rollback())
+	}
+	if contentCommitAfterEnqueueHook != nil {
+		contentCommitAfterEnqueueHook(tree)
+	}
+	return commit.size, nil
+}
+
+func writeTreeUpsertQueueInCommit(tree *parse.Tree, token *contentCommitToken) (size uint64, err error) {
+	return commitTreeContentInToken(tree, token, contentQueueUpsert)
+}
+
+func writeTreeUpsertQueue(tree *parse.Tree) (err error) {
+	token := acquireContentCommitToken(tree.Box)
+	defer token.release()
+	size, err := writeTreeUpsertQueueInCommit(tree, token)
+	if err != nil {
+		return err
+	}
 	refreshDocInfoWithSize(tree, size)
 	return
 }
 
 func indexWriteTreeIndexQueue(tree *parse.Tree) (err error) {
-	treenode.IndexBlockTree(tree)
-	_, err = filesys.WriteTree(tree)
-	if err != nil {
-		return
-	}
-	sql.IndexTreeQueue(tree)
+	token := acquireContentCommitToken(tree.Box)
+	defer token.release()
+
+	_, err = commitTreeContentInToken(tree, token, contentQueueIndex)
 	return
 }
 
 func indexWriteTreeUpsertQueue(tree *parse.Tree) (err error) {
-	treenode.UpsertBlockTree(tree)
-	return writeTreeUpsertQueue(tree)
-}
-
-func renameWriteJSONQueue(tree *parse.Tree) (err error) {
-	size, err := filesys.WriteTree(tree)
+	token := acquireContentCommitToken(tree.Box)
+	defer token.release()
+	size, err := indexWriteTreeUpsertQueueInCommit(tree, token)
 	if err != nil {
-		return
+		return err
 	}
-	sql.RenameTreeQueue(tree)
-	treenode.UpsertBlockTree(tree)
 	refreshDocInfoWithSize(tree, size)
 	return
 }
 
-func DuplicateDoc(tree *parse.Tree) {
+func indexWriteTreeUpsertQueueInCommit(tree *parse.Tree, token *contentCommitToken) (size uint64, err error) {
+	return commitTreeContentInToken(tree, token, contentQueueUpsert)
+}
+
+func renameWriteJSONQueue(tree *parse.Tree) (err error) {
+	token := acquireContentCommitToken(tree.Box)
+	defer token.release()
+	size, err := commitTreeContentInToken(tree, token, contentQueueRename)
+	if err != nil {
+		return
+	}
+	refreshDocInfoWithSize(tree, size)
+	return
+}
+
+func DuplicateDoc(tree *parse.Tree, transactionNotebook string) (err error) {
 	msgId := util.PushMsg(Conf.Language(116), 30000)
 	defer util.PushClearMsg(msgId)
 
@@ -1058,7 +1241,9 @@ func DuplicateDoc(tree *parse.Tree) {
 		return ast.WalkContinue
 	})
 
-	createTreeTx(tree)
+	if err = createTreeTx(tree, transactionNotebook); err != nil {
+		return
+	}
 	box := Conf.Box(tree.Box)
 	if nil != box {
 		box.addSort(previousPath, tree.ID)
@@ -1068,11 +1253,23 @@ func DuplicateDoc(tree *parse.Tree) {
 	arg := map[string]any{}
 	arg["listDocTree"] = true
 	PushCreate(box, tree.Path, arg)
+	return
 }
 
-func createTreeTx(tree *parse.Tree) {
-	transaction := &Transaction{DoOperations: []*Operation{{Action: "create", Data: tree}}}
+func createTreeTx(tree *parse.Tree, transactionNotebook string) error {
+	if tree == nil {
+		return errors.New("transaction tree is nil")
+	}
+	if Conf.GetBox(tree.Box) == nil {
+		return fmt.Errorf("%w: %s", ErrBoxNotFound, tree.Box)
+	}
+	expectedNotebook := TransactionNotebookForBox(tree.Box)
+	if transactionNotebook != expectedNotebook {
+		return fmt.Errorf("transaction notebook [%s] does not own tree box [%s]", transactionNotebook, tree.Box)
+	}
+	transaction := &Transaction{Notebook: transactionNotebook, DoOperations: []*Operation{{Action: "create", Data: tree}}}
 	PerformTransactions(&[]*Transaction{transaction})
+	return nil
 }
 
 var createDocLock = sync.Mutex{}
@@ -1176,6 +1373,7 @@ func CreateDailyNote(boxID string) (p string, existed bool, err error) {
 		err = ErrBoxNotFound
 		return
 	}
+	transactionNotebook := TransactionNotebookForBox(box.ID)
 
 	boxConf := box.GetConf()
 	if "" == boxConf.DailyNoteSavePath || "/" == boxConf.DailyNoteSavePath {
@@ -1196,7 +1394,7 @@ func CreateDailyNote(boxID string) (p string, existed bool, err error) {
 		existed = true
 		p = existRoot.Path
 
-		tree, loadErr := LoadTreeByBlockID(existRoot.RootID)
+		tree, loadErr := LoadTreeByBlockIDInBox(existRoot.RootID, transactionNotebook)
 		if nil != loadErr {
 			logging.LogWarnf("load tree by block id [%s] failed: %v", existRoot.RootID, loadErr)
 			return
@@ -1233,7 +1431,7 @@ func CreateDailyNote(boxID string) (p string, existed bool, err error) {
 	}
 	if "" != templateDom {
 		var tree *parse.Tree
-		tree, err = LoadTreeByBlockID(id)
+		tree, err = LoadTreeByBlockIDInBox(id, transactionNotebook)
 		if err == nil {
 			tree.Root.FirstChild.Unlink()
 
@@ -1265,7 +1463,7 @@ func CreateDailyNote(boxID string) (p string, existed bool, err error) {
 
 	FlushTxQueue()
 
-	tree, err := LoadTreeByBlockID(id)
+	tree, err := LoadTreeByBlockIDInBox(id, transactionNotebook)
 	if err != nil {
 		logging.LogErrorf("load tree by block id [%s] failed: %v", id, err)
 		return
@@ -1318,6 +1516,18 @@ func GetHPathByID(id string) (hPath string, err error) {
 	tree, err := LoadTreeByBlockID(id)
 	if err != nil {
 		return
+	}
+	hPath = tree.HPath
+	return
+}
+
+func GetHPathByIDForNotebook(id, notebook string) (hPath string, err error) {
+	tree, err := LoadTreeByBlockIDInBox(id, notebook)
+	if err != nil {
+		return
+	}
+	if tree.Box != notebook {
+		return "", ErrBlockNotFound
 	}
 	hPath = tree.HPath
 	return
@@ -1475,7 +1685,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 		return
 	}
 
-	fromParentTree := loadParentTree(tree)
+	fromParentTree := loadParentTree(tree.Box, tree.Path)
 
 	moveToRoot := "/" == toPath
 	toBlockID := tree.ID
@@ -1543,7 +1753,9 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 			return
 		}
 
-		moveTree(tree)
+		if err = moveTree(tree); err != nil {
+			return
+		}
 	} else {
 		absFromPath := filepath.Join(util.DataDir, fromBox.ID, fromPath)
 		absToPath := filepath.Join(util.DataDir, toBox.ID, newPath)
@@ -1559,14 +1771,20 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 			return
 		}
 
-		moveTree(tree)
+		if err = moveTree(tree); err != nil {
+			return
+		}
 		moveSorts(tree.ID, fromBox.ID, toBox.ID)
 	}
 
 	if needMoveSubDocs {
 		// 将其所有子文档的移动事件推送到前端 https://github.com/siyuan-note/siyuan/issues/11661
 		subDocsFolder := path.Join(toFolder, tree.ID)
-		syFiles := listSyFiles(path.Join(toBox.ID, subDocsFolder))
+		var syFiles []string
+		syFiles, err = listSyFiles(path.Join(toBox.ID, subDocsFolder))
+		if err != nil {
+			return
+		}
 		for _, syFile := range syFiles {
 			relPath := strings.TrimPrefix(syFile, "/"+path.Join(toBox.ID, toFolder))
 			subFromPath := path.Join(path.Dir(fromPath), relPath)
@@ -1574,6 +1792,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 
 			evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
 			evt.Data = map[string]any{
+				"id":           strings.TrimSuffix(path.Base(syFile), ".sy"),
 				"fromNotebook": fromBox.ID,
 				"fromPath":     subFromPath,
 				"toNotebook":   toBox.ID,
@@ -1587,6 +1806,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 
 	evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
 	evt.Data = map[string]any{
+		"id":           tree.ID,
 		"fromNotebook": fromBox.ID,
 		"fromPath":     fromPath,
 		"toNotebook":   toBox.ID,
@@ -1609,9 +1829,12 @@ func RemoveDoc(boxID, p string) {
 	FlushTxQueue()
 	luteEngine := util.NewLute()
 	tree := removeDoc(box, p, luteEngine)
+	if tree == nil {
+		return
+	}
 	IncSync()
 
-	refreshParentDocInfo(tree)
+	refreshParentDocInfo(tree.Box, tree.Path)
 }
 
 func RemoveDocs(paths []string) {
@@ -1626,12 +1849,14 @@ func RemoveDocs(paths []string) {
 	var trees []*parse.Tree
 	for p, box := range pathsBoxes {
 		tree := removeDoc(box, p, luteEngine)
-		trees = append(trees, tree)
+		if tree != nil {
+			trees = append(trees, tree)
+		}
 	}
 
 	parentTrees := map[string]*parse.Tree{}
 	for _, tree := range trees {
-		parentTree := loadParentTree(tree)
+		parentTree := loadParentTree(tree.Box, tree.Path)
 		if nil != parentTree {
 			parentTrees[parentTree.ID] = parentTree
 		}
@@ -1666,7 +1891,7 @@ func removeDoc(box *Box, p string, luteEngine *lute.Lute) (ret *parse.Tree) {
 		copyDocAssetsToDataAssets(box.ID, p)
 	}
 
-	removeIDs := treenode.RootChildIDs(ret.ID)
+	removeIDs := treenode.RootChildIDsInBox(ret.ID, box.ID)
 	dir := path.Dir(p)
 	childrenDir := path.Join(dir, ret.ID)
 	existChildren := box.Exist(childrenDir)
@@ -1684,12 +1909,15 @@ func removeDoc(box *Box, p string, luteEngine *lute.Lute) (ret *parse.Tree) {
 	allRemoveRootIDs = append(allRemoveRootIDs, removeIDs...)
 	allRemoveRootIDs = gulu.Str.RemoveDuplicatedElem(allRemoveRootIDs)
 	for _, rootID := range allRemoveRootIDs {
-		removeTree, _ := LoadTreeByBlockID(rootID)
+		removeTree, _ := loadTreeByBlockIDInBox(rootID, attributeViewStoreBoxID(box.ID))
 		if nil == removeTree {
 			continue
 		}
 
-		syncDelete2AvBlock(removeTree.Root, removeTree, true, nil)
+		if avErr := syncDelete2AvBlock(removeTree.Root, removeTree, true, nil); avErr != nil {
+			logging.LogErrorf("remove document attribute view mirror [%s/%s] failed: %s", box.ID, rootID, avErr)
+			return nil
+		}
 	}
 
 	if existChildren {
@@ -1713,7 +1941,11 @@ func removeDoc(box *Box, p string, luteEngine *lute.Lute) (ret *parse.Tree) {
 		}
 	}
 
-	treenode.RemoveBlockTreesByPathPrefix(box.ID, childrenDir)
+	if err = treenode.RemoveBlockTreesByPathPrefix(box.ID, childrenDir); err != nil {
+		logging.LogErrorf("remove blocktrees by path prefix [%s/%s] failed: %s", box.ID, childrenDir, err)
+		ret = nil
+		return
+	}
 	cache.RemoveDocIAL(ret.Path)
 	cache.RemoveTreeData(ret.ID)
 
@@ -1731,10 +1963,12 @@ func removeDoc0(tree *parse.Tree, childrenDir string) {
 	refDefIDs := getRefDefIDs(tree.Root)
 	// 推送定义节点引用计数
 	for _, defID := range refDefIDs {
-		task.AppendAsyncTaskWithDelay(task.SetDefRefCount, util.SQLFlushInterval, refreshRefCount, defID)
+		appendRefreshRefCountTask(defID, tree.Box)
 	}
 
-	sql.RemoveTreePathQueue(tree.Box, childrenDir)
+	if err := sql.RemoveTreePathQueue(tree.Box, childrenDir); err != nil {
+		logging.LogErrorf("persist document removal queue [%s/%s] failed: %s", tree.Box, childrenDir, err)
+	}
 }
 
 func RenameDoc(boxID, p, title string) (err error) {
@@ -1801,8 +2035,12 @@ func RenameDoc(boxID, p, title string) (err error) {
 				continue
 			}
 
-			treenode.SetBlockTreePath(subTree)
-			sql.RenameTreeQueue(subTree)
+			if err = treenode.SetBlockTreePath(subTree); err != nil {
+				return fmt.Errorf("persist renamed blocktree path for tree [%s/%s]: %w", subTree.Box, subTree.Path, err)
+			}
+			if err = sql.RenameTreeQueue(subTree); err != nil {
+				return
+			}
 		}
 
 		refText := getNodeRefText(tree.Root)
@@ -1857,15 +2095,20 @@ func createDoc(boxID, p, title, dom string, titleEmpty bool) (tree *parse.Tree, 
 		err = errors.New(Conf.Language(0))
 		return
 	}
+	transactionNotebook := TransactionNotebookForBox(box.ID)
 
 	id := util.GetTreeID(p)
 	var hPath string
 	folder := path.Dir(p)
 	if "/" != folder {
 		parentID := path.Base(folder)
-		parentTree, loadErr := LoadTreeByBlockID(parentID)
+		parentTree, loadErr := LoadTreeByBlockIDInBox(parentID, transactionNotebook)
 		if nil != loadErr {
 			logging.LogErrorf("get parent tree [%s] failed", parentID)
+			err = ErrBlockNotFound
+			return
+		}
+		if parentTree.Box != box.ID {
 			err = ErrBlockNotFound
 			return
 		}
@@ -1939,8 +2182,9 @@ func createDoc(boxID, p, title, dom string, titleEmpty bool) (tree *parse.Tree, 
 		unlink.Unlink()
 	}
 
-	transaction := &Transaction{DoOperations: []*Operation{{Action: "create", Data: tree}}}
-	PerformTransactions(&[]*Transaction{transaction})
+	if err = createTreeTx(tree, transactionNotebook); err != nil {
+		return
+	}
 	FlushTxQueue()
 	return
 }

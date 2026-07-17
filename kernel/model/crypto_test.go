@@ -27,7 +27,11 @@ import (
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
+	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/siyuan/kernel/conf"
+	"github.com/siyuan-note/siyuan/kernel/sql"
+	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -38,8 +42,18 @@ func setDEKForTest(boxID string, dek []byte) {
 	cachedDEKs[boxID] = dek
 }
 
+func useTemporaryQueueDir(t *testing.T) {
+	t.Helper()
+	originalQueueDir := util.QueueDir
+	util.QueueDir = t.TempDir()
+	t.Cleanup(func() {
+		util.QueueDir = originalQueueDir
+	})
+}
+
 // TestIsBoxUnlockedLifecycle 验证 DEK 缓存的存在/缺失状态。
 func TestIsBoxUnlockedLifecycle(t *testing.T) {
+	useTemporaryQueueDir(t)
 	LockBox("lifecycle-test-box") // 确保初始干净
 	boxID := "lifecycle-test-box"
 	if IsBoxUnlocked(boxID) {
@@ -58,6 +72,7 @@ func TestIsBoxUnlockedLifecycle(t *testing.T) {
 
 // TestGetDEKReturnsErrorAfterLock 验证 LockBox 后 GetDEK 报错。
 func TestGetDEKReturnsErrorAfterLock(t *testing.T) {
+	useTemporaryQueueDir(t)
 	dek, _ := util.GenerateDEK()
 	boxID := "get-dek-test-box"
 	setDEKForTest(boxID, dek)
@@ -78,6 +93,7 @@ func TestGetDEKReturnsErrorAfterLock(t *testing.T) {
 
 // TestWrapNewDEKRoundTrip 验证用 KEK 生成 DEK → 包络 → 解包 → 还原。
 func TestWrapNewDEKRoundTrip(t *testing.T) {
+	useTemporaryQueueDir(t)
 	kek, _ := util.GenerateDEK()
 	defer LockBox("wrap-roundtrip-box")
 
@@ -100,6 +116,7 @@ func TestWrapNewDEKRoundTrip(t *testing.T) {
 
 // TestDecryptWrappedDEKWithWrongKEK 验证用错误的 KEK 解密 WrappedDEK 失败（GCM MAC 校验）。
 func TestDecryptWrappedDEKWithWrongKEK(t *testing.T) {
+	useTemporaryQueueDir(t)
 	kek1, _ := util.GenerateDEK()
 	boxEnc, _, _ := WrapNewDEK("wrong-kek-box", kek1)
 
@@ -113,6 +130,7 @@ func TestDecryptWrappedDEKWithWrongKEK(t *testing.T) {
 
 // TestWrapNewDEKProducesUniqueDEKs 验证两次调用 WrapNewDEK 生成不同的 DEK（随机性）。
 func TestWrapNewDEKProducesUniqueDEKs(t *testing.T) {
+	useTemporaryQueueDir(t)
 	kek, _ := util.GenerateDEK()
 	defer LockBox("uniq-box-1")
 	defer LockBox("uniq-box-2")
@@ -152,6 +170,7 @@ func TestBoxEncryptionRoundTripViaUtil(t *testing.T) {
 // 直接测试 clearDEKIfUnlockedEncryptedBox（unmount0 在 box==nil 分支调用的清理逻辑），
 // 避免依赖未初始化的全局 Conf。
 func TestUnmount0ClearsDEKForUnmountedEncryptedBox(t *testing.T) {
+	useTemporaryQueueDir(t)
 	boxID := "unmount-unlocked-test-box"
 
 	// 临时替换 DataDir，创建加密 box 的 conf.json，让 IsEncryptedBox 返回 true
@@ -189,7 +208,9 @@ func TestUnmount0ClearsDEKForUnmountedEncryptedBox(t *testing.T) {
 	}
 
 	// 调用清理逻辑（unmount0 在 box 未挂载分支调用的函数）
-	clearDEKIfUnlockedEncryptedBox(boxID)
+	if err := clearDEKIfUnlockedEncryptedBox(boxID); err != nil {
+		t.Fatalf("clear unlocked encrypted notebook: %v", err)
+	}
 
 	// 验证 DEK 已被清除
 	if IsBoxUnlocked(boxID) {
@@ -379,6 +400,80 @@ func TestUnknownBlockRefFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEncryptedBlockRefUsesOnlyExplicitSourceStore(t *testing.T) {
+	const (
+		sourceBox     = "20260716000000-refsrc1"
+		otherBox      = "20260716000000-refdst2"
+		sourceBlockID = "20260716000001-refsrc1"
+		otherBlockID  = "20260716000001-refdst2"
+	)
+	originalDataDir := util.DataDir
+	originalTempDir := util.TempDir
+	tempDir := t.TempDir()
+	util.DataDir = filepath.Join(tempDir, "data")
+	util.TempDir = filepath.Join(tempDir, "temp")
+	if err := os.MkdirAll(util.TempDir, 0755); err != nil {
+		t.Fatalf("create encrypted blocktree directory: %v", err)
+	}
+	t.Cleanup(func() {
+		treenode.CloseEncryptedBlockTreeDB(sourceBox)
+		treenode.CloseEncryptedBlockTreeDB(otherBox)
+		util.TempDir = originalTempDir
+		util.DataDir = originalDataDir
+	})
+
+	for _, boxID := range []string{sourceBox, otherBox} {
+		boxConf := conf.NewBoxConf()
+		boxConf.Encrypted = true
+		confData, err := gulu.JSON.MarshalIndentJSON(boxConf, "", "  ")
+		if err != nil {
+			t.Fatalf("marshal encrypted notebook config: %v", err)
+		}
+		confDir := filepath.Join(util.DataDir, boxID, ".siyuan")
+		if err = os.MkdirAll(confDir, 0755); err != nil {
+			t.Fatalf("create encrypted notebook config directory: %v", err)
+		}
+		if err = os.WriteFile(filepath.Join(confDir, "conf.json"), confData, 0644); err != nil {
+			t.Fatalf("write encrypted notebook config: %v", err)
+		}
+		dek, generateErr := util.GenerateDEK()
+		if generateErr != nil {
+			t.Fatalf("generate encrypted blocktree key: %v", generateErr)
+		}
+		openErr := treenode.OpenEncryptedBlockTreeDB(boxID, dek)
+		zeroAndClear(dek)
+		if openErr != nil {
+			t.Fatalf("open encrypted blocktree database: %v", openErr)
+		}
+	}
+
+	for boxID, blockID := range map[string]string{sourceBox: sourceBlockID, otherBox: otherBlockID} {
+		root := &ast.Node{Type: ast.NodeDocument, ID: blockID}
+		if err := treenode.UpsertBlockTree(&parse.Tree{
+			Root:  root,
+			ID:    blockID,
+			Box:   boxID,
+			Path:  "/" + blockID + ".sy",
+			HPath: "/Boundary",
+		}); err != nil {
+			t.Fatalf("index encrypted blocktree boundary fixture: %v", err)
+		}
+	}
+	if !IsEncryptedBox(sourceBox) || !IsEncryptedBox(otherBox) {
+		t.Fatal("encrypted notebook boundary fixture was not recognized")
+	}
+	if treenode.GetBlockTreeInBox(sourceBlockID, sourceBox) == nil || treenode.GetBlockTreeInBox(otherBlockID, otherBox) == nil {
+		t.Fatal("encrypted blocktree boundary fixture was not indexed")
+	}
+
+	if IsBlockRefCrossingBoundary(sourceBox, sourceBlockID) {
+		t.Fatal("reference within the explicit encrypted source store was rejected")
+	}
+	if !IsBlockRefCrossingBoundary(sourceBox, otherBlockID) {
+		t.Fatal("reference resolved only by another opened encrypted store was accepted")
+	}
+}
+
 // TestBackupMACRoundTrip 验证 writeNotebookCryptoBackupData(nc, kek) 写入的备份，
 // 重新加载后 verifyKEKMAC 能通过——即 MAC 在 prepareBackupForWrite 之后计算（顺序正确）。
 func TestBackupMACRoundTrip(t *testing.T) {
@@ -416,42 +511,191 @@ func TestBackupMACRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLockBoxConcurrentReads 验证 LockBox（单 box）能与在途读锁正确串行化。
+// TestLockBoxConcurrentReads 验证 LockBox（单 box）等待在途读锁释放。
 func TestLockBoxConcurrentReads(t *testing.T) {
-	LockBox("concurrent-single-box") // 清理初始状态
-	boxID := "concurrent-single-box"
+	useTemporaryQueueDir(t)
+	const boxID = "concurrent-single-box"
+	if err := LockBox(boxID); err != nil {
+		t.Fatalf("clear initial box state: %v", err)
+	}
 	dek, _ := util.GenerateDEK()
 	setDEKForTest(boxID, dek)
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	for range 5 {
-		wg.Go(func() {
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-					HoldBoxReadLock(boxID)
-					time.Sleep(time.Microsecond)
-					ReleaseBoxReadLock(boxID)
-				}
-			}
-		})
+	HoldBoxReadLock(boxID)
+	readHeld := true
+	defer func() {
+		if readHeld {
+			ReleaseBoxReadLock(boxID)
+		}
+	}()
+
+	lockDone := make(chan error, 1)
+	writeBlocked := make(chan struct{})
+	var blockedOnce sync.Once
+	restoreObserver := SetBoxLifecycleWriteBlockedObserverForTest(func(candidateBoxID string) {
+		if candidateBoxID == boxID {
+			blockedOnce.Do(func() { close(writeBlocked) })
+		}
+	})
+	t.Cleanup(restoreObserver)
+	go func() {
+		lockDone <- LockBox(boxID)
+	}()
+
+	select {
+	case <-writeBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("LockBox was not blocked by the active content reader")
 	}
 
-	time.Sleep(10 * time.Millisecond)
-	LockBox(boxID)
-	close(stop)
-	wg.Wait()
+	ReleaseBoxReadLock(boxID)
+	readHeld = false
+	select {
+	case err := <-lockDone:
+		if err != nil {
+			t.Fatalf("LockBox after releasing content reader: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LockBox did not finish after the content reader released")
+	}
 
 	if IsBoxUnlocked(boxID) {
 		t.Fatalf("box should be locked after concurrent LockBox")
 	}
 }
 
+func TestUnmountDrainFailureKeepsContentStoreOpen(t *testing.T) {
+	const (
+		boxID = "20260716000000-drainfl"
+		rootID = "20260716000001-drainfl"
+	)
+	origDataDir := util.DataDir
+	origQueueDir := util.QueueDir
+	origConf := Conf
+	origUndoLog := GlobalUndoLog
+	tempDir := t.TempDir()
+	util.DataDir = filepath.Join(tempDir, "data")
+	util.QueueDir = filepath.Join(tempDir, "queue")
+	Conf = NewAppConf()
+	Conf.System = conf.NewSystem()
+	Conf.Editor = conf.NewEditor()
+	Conf.FileTree = conf.NewFileTree()
+	Conf.Search = conf.NewSearch()
+	GlobalUndoLog = newUndoLog(4)
+	defer func() {
+		if clearErr := sql.ClearQueue(); clearErr != nil {
+			t.Errorf("clear drain failure queue during cleanup: %v", clearErr)
+		}
+		util.QueueDir = origQueueDir
+		util.DataDir = origDataDir
+		Conf = origConf
+		GlobalUndoLog = origUndoLog
+		cachedDEKsLock.Lock()
+		zeroAndClear(cachedDEKs[boxID])
+		delete(cachedDEKs, boxID)
+		cachedDEKsLock.Unlock()
+	}()
+
+	confDir := filepath.Join(util.DataDir, boxID, ".siyuan")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("create encrypted notebook config directory: %v", err)
+	}
+	boxConf := conf.NewBoxConf()
+	boxConf.Encrypted = true
+	boxConf.Closed = false
+	confData, err := gulu.JSON.MarshalIndentJSON(boxConf, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal encrypted notebook config: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(confDir, "conf.json"), confData, 0644); err != nil {
+		t.Fatalf("write encrypted notebook config: %v", err)
+	}
+
+	dek, err := util.GenerateDEK()
+	if err != nil {
+		t.Fatalf("generate test DEK: %v", err)
+	}
+	setDEKForTest(boxID, dek)
+	if err = os.MkdirAll(util.QueueDir, 0755); err != nil {
+		t.Fatalf("create SQL queue directory: %v", err)
+	}
+	queueEntry, err := json.Marshal(map[string]string{
+		"action": "index_node",
+		"id":     "20260716000000-drainop",
+		"box":    boxID,
+	})
+	if err != nil {
+		t.Fatalf("marshal SQL queue entry: %v", err)
+	}
+	queueEntry = append(queueEntry, '\n')
+	if err = os.WriteFile(filepath.Join(util.QueueDir, "index.queue"), queueEntry, 0644); err != nil {
+		t.Fatalf("write SQL queue fixture: %v", err)
+	}
+	GlobalUndoLog.Record(&Transaction{
+		Notebook:       boxID,
+		DoOperations:   []*Operation{{Action: "insert", ID: rootID}},
+		UndoOperations: []*Operation{{Action: "delete", ID: rootID}},
+		trees:          map[string]*parse.Tree{rootID: nil},
+		fromAPI:        true,
+	})
+
+	if err = Unmount(boxID); err == nil {
+		t.Fatal("Unmount should report a SQL drain failure when the encrypted database is unavailable")
+	}
+	if !IsBoxUnlocked(boxID) {
+		t.Fatal("Unmount cleared the DEK after SQL drain failure")
+	}
+	if got := (&Box{ID: boxID}).GetConf().Closed; got {
+		t.Fatal("Unmount left the notebook closed after SQL drain failure")
+	}
+	if _, err = GetDEK(boxID); err != nil {
+		t.Fatalf("content store should remain usable after drain failure: %v", err)
+	}
+	if canUndo, canRedo, _ := GlobalUndoLog.State(boxID, rootID); !canUndo || canRedo {
+		t.Fatalf("undo history after drain failure = undo:%t redo:%t, want preserved undo", canUndo, canRedo)
+	}
+}
+
+func TestLockBoxClearsOnlyTargetUndoStore(t *testing.T) {
+	useTemporaryQueueDir(t)
+	const (
+		targetBox = "20260716000000-lockund"
+		otherBox  = "20260716000001-lockund"
+		rootID    = "20260716000002-lockund"
+	)
+	originalUndoLog := GlobalUndoLog
+	GlobalUndoLog = newUndoLog(4)
+	t.Cleanup(func() { GlobalUndoLog = originalUndoLog })
+
+	for _, notebook := range []string{targetBox, otherBox} {
+		GlobalUndoLog.Record(&Transaction{
+			Notebook:       notebook,
+			DoOperations:   []*Operation{{Action: "insert", ID: rootID}},
+			UndoOperations: []*Operation{{Action: "delete", ID: rootID}},
+			trees:          map[string]*parse.Tree{rootID: nil},
+			fromAPI:        true,
+		})
+	}
+	dek, err := util.GenerateDEK()
+	if err != nil {
+		t.Fatalf("generate target notebook key: %v", err)
+	}
+	setDEKForTest(targetBox, dek)
+
+	if err = LockBox(targetBox); err != nil {
+		t.Fatalf("lock target notebook: %v", err)
+	}
+	if canUndo, canRedo, _ := GlobalUndoLog.State(targetBox, rootID); canUndo || canRedo {
+		t.Fatalf("target history after lock = undo:%t redo:%t, want empty", canUndo, canRedo)
+	}
+	if canUndo, canRedo, _ := GlobalUndoLog.State(otherBox, rootID); !canUndo || canRedo {
+		t.Fatalf("other history after target lock = undo:%t redo:%t, want preserved undo", canUndo, canRedo)
+	}
+}
+
 // TestLockBoxClearsTempDirs 验证 LockBox 删除 per-box 临时目录。
 func TestLockBoxClearsTempDirs(t *testing.T) {
+	useTemporaryQueueDir(t)
 	boxID := "temp-cleanup-box"
 	dek, _ := util.GenerateDEK()
 	setDEKForTest(boxID, dek)

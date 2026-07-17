@@ -37,6 +37,7 @@ import (
 	"github.com/araddon/dateparse"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/av"
 	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/conf"
 	"github.com/siyuan-note/siyuan/kernel/filesys"
@@ -90,6 +91,14 @@ func StatJob() {
 }
 
 func ListNotebooks() (ret []*Box, err error) {
+	return listNotebooks(false)
+}
+
+func listNotebooksStrict() (ret []*Box, err error) {
+	return listNotebooks(true)
+}
+
+func listNotebooks(strict bool) (ret []*Box, err error) {
 	ret = []*Box{}
 	dirs, err := os.ReadDir(util.DataDir)
 	if err != nil {
@@ -115,6 +124,9 @@ func ListNotebooks() (ret []*Box, err error) {
 		boxConfPath := filepath.Join(boxDirPath, ".siyuan", "conf.json")
 		isExistConf := filelock.IsExist(boxConfPath)
 		if !isExistConf {
+			if strict {
+				return nil, fmt.Errorf("notebook configuration [%s] is missing", boxConfPath)
+			}
 			if !IsUserGuide(id) {
 				// conf.json 缺失时检查加密备份，确认是否为加密笔记本
 				backup, backupErr := readNotebookCryptBackup(id)
@@ -142,10 +154,16 @@ func ListNotebooks() (ret []*Box, err error) {
 		} else {
 			data, readErr := filelock.ReadFile(boxConfPath)
 			if nil != readErr {
+				if strict {
+					return nil, fmt.Errorf("read notebook configuration [%s]: %w", boxConfPath, readErr)
+				}
 				logging.LogErrorf("read box conf [%s] failed: %s", boxConfPath, readErr)
 				continue
 			}
 			if readErr = gulu.JSON.UnmarshalJSON(data, boxConf); nil != readErr {
+				if strict {
+					return nil, fmt.Errorf("parse notebook configuration [%s]: %w", boxConfPath, readErr)
+				}
 				logging.LogErrorf("parse box conf [%s] failed: %s", boxConfPath, readErr)
 				// 检查加密备份，有备份则保留损坏 conf 不删（避免标记为缺失后自动恢复旧数据）
 				backup, backupErr := readNotebookCryptBackup(id)
@@ -179,7 +197,9 @@ func ListNotebooks() (ret []*Box, err error) {
 			if err := box.SaveConf(boxConf); err != nil {
 				logging.LogErrorf("save box conf [%s] failed: %s", boxDirPath, err)
 			}
-			box.Unindex()
+			if unindexErr := box.Unindex(); unindexErr != nil {
+				return ret, fmt.Errorf("repair corrupted notebook [%s]: %w", box.ID, unindexErr)
+			}
 			logging.LogWarnf("fixed a corrupted box [%s]", boxDirPath)
 		}
 		ret = append(ret, box)
@@ -522,9 +542,13 @@ func isSkipFile(filename string) bool {
 	return strings.HasPrefix(filename, ".") || "node_modules" == filename || "dist" == filename || "target" == filename
 }
 
-func moveTree(tree *parse.Tree) {
-	treenode.SetBlockTreePath(tree)
-	sql.MoveTreeQueue(tree)
+func moveTree(tree *parse.Tree) error {
+	if err := treenode.SetBlockTreePath(tree); err != nil {
+		return fmt.Errorf("persist moved blocktree path for tree [%s/%s]: %w", tree.Box, tree.Path, err)
+	}
+	if err := sql.MoveTreeQueue(tree); err != nil {
+		return err
+	}
 
 	box := Conf.Box(tree.Box)
 	subFiles := box.ListFiles(tree.Path)
@@ -539,13 +563,18 @@ func moveTree(tree *parse.Tree) {
 			continue
 		}
 
-		treenode.SetBlockTreePath(subTree)
-		sql.MoveTreeQueue(subTree)
+		if err = treenode.SetBlockTreePath(subTree); err != nil {
+			return fmt.Errorf("persist moved blocktree path for tree [%s/%s]: %w", subTree.Box, subTree.Path, err)
+		}
+		if err = sql.MoveTreeQueue(subTree); err != nil {
+			return err
+		}
 		msg := fmt.Sprintf(Conf.Language(107), html.EscapeString(subTree.HPath))
 		util.PushStatusBar(msg)
 	}
 
 	refreshDocInfo(tree)
+	return nil
 }
 
 func parseKTree(kramdown []byte) (ret *parse.Tree) {
@@ -846,13 +875,16 @@ func VacuumDataIndex() {
 
 func FullReindex(needResetScroll bool) {
 	util.PushEndlessProgress(Conf.language(35))
+	task.AppendTask(task.DatabaseIndexFull, fullReindexTask, needResetScroll)
+}
 
-	task.AppendTask(task.DatabaseIndexFull, fullReindex)
-	task.AppendTask(task.DatabaseIndexRef, IndexRefs)
-	go func() {
-		sql.FlushQueue()
-		ResetVirtualBlockRefCache()
-	}()
+func fullReindexTask(needResetScroll bool) {
+	if err := rebuildDataIndex(); err != nil {
+		logging.LogErrorf("full data index rebuild failed: %s", err)
+		util.PushClearProgress()
+		util.PushErrMsg(err.Error(), 7000)
+		return
+	}
 	task.AppendTaskWithTimeout(task.DatabaseIndexEmbedBlock, 30*time.Second, autoIndexEmbedBlock)
 	if needResetScroll {
 		task.AppendTask(task.ReloadUI, util.ReloadUIResetScroll)
@@ -861,8 +893,36 @@ func FullReindex(needResetScroll bool) {
 	}
 }
 
-func FullReindexDirect() {
-	fullReindex()
+func FullReindexDirect() error {
+	return rebuildDataIndex()
+}
+
+func rebuildDataIndex() error {
+	databaseIndexOpMu.Lock()
+	defer databaseIndexOpMu.Unlock()
+	return rebuildDataIndexLocked()
+}
+
+func rebuildDataIndexLocked() error {
+	openedBoxes, err := listOpenedBoxesStrict()
+	if err != nil {
+		return fmt.Errorf("list opened notebooks before full index rebuild: %w", err)
+	}
+
+	if err = fullReindexLocked(openedBoxes); err != nil {
+		return err
+	}
+	if err = indexRefsLocked(openedBoxes); err != nil {
+		return err
+	}
+	if err = sql.FlushQueue(); err != nil {
+		return fmt.Errorf("flush reference index queue: %w", err)
+	}
+	for _, box := range openedBoxes {
+		box.UpdateHistoryGenerated()
+	}
+	ResetVirtualBlockRefCache()
+	return nil
 }
 
 func ReindexFTS() {
@@ -871,7 +931,10 @@ func ReindexFTS() {
 	util.PushEndlessProgress(Conf.language(296))
 	defer util.PushClearProgress()
 
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before rebuilding fts index failed: %s", err)
+		return
+	}
 	FlushTxQueue()
 	if err := sql.RebuildFTSIndex(); err != nil {
 		logging.LogErrorf("rebuild fts index failed, falling back to full reindex: %s", err)
@@ -879,7 +942,7 @@ func ReindexFTS() {
 	}
 }
 
-func fullReindex() {
+func fullReindexLocked(openedBoxes []*Box) error {
 	cache.ClearTreeCache()
 	cache.ClearDocsIAL()
 	cache.ClearBlocksIAL()
@@ -887,21 +950,109 @@ func fullReindex() {
 
 	pushSQLInsertBlocksFTSMsg, pushSQLDeleteBlocksMsg = true, true
 	defer func() {
-		sql.FlushQueue()
 		pushSQLInsertBlocksFTSMsg, pushSQLDeleteBlocksMsg = false, false
 	}()
 
 	FlushTxQueue()
 
-	sql.InitDatabase(true)
-
+	if err := sql.InitDatabase(true); err != nil {
+		return fmt.Errorf("initialize database for full index rebuild: %w", err)
+	}
 	sql.IndexIgnoreCached = false
-	openedBoxes := Conf.GetOpenedBoxes()
 	for _, openedBox := range openedBoxes {
-		indexBox(openedBox.ID)
+		if IsEncryptedBox(openedBox.ID) {
+			continue
+		}
+		if err := indexBoxLocked(openedBox, len(openedBoxes)); err != nil {
+			return err
+		}
+	}
+	if err := sql.FlushQueue(); err != nil {
+		return fmt.Errorf("flush ordinary notebooks during full index rebuild: %w", err)
+	}
+	for _, openedBox := range openedBoxes {
+		if !IsEncryptedBox(openedBox.ID) {
+			continue
+		}
+		if err := rebuildEncryptedBoxIndexLocked(openedBox, len(openedBoxes)); err != nil {
+			return err
+		}
 	}
 	LoadFlashcards()
 	debug.FreeOSMemory()
+	return nil
+}
+
+func rebuildEncryptedBoxIndexLocked(box *Box, openedBoxCount int) error {
+	acquireBoxOperationLock(box.ID)
+	defer releaseBoxOperationLock(box.ID)
+
+	transactionDrain := transactionAdmission.close(box.ID)
+	defer transactionDrain.release()
+	transactionDrain.wait()
+
+	queueOwner := sql.AcquireExclusiveQueueAdmission(nil)
+	defer queueOwner.Release()
+	if err := queueOwner.FlushQueue(); err != nil {
+		return fmt.Errorf("flush accepted work before encrypted notebook rebuild [%s]: %w", box.ID, err)
+	}
+
+	acquireBoxReadLock(box.ID)
+	defer releaseBoxReadLock(box.ID)
+
+	dek, err := GetDEKIfUnlocked(box.ID)
+	if err != nil {
+		return fmt.Errorf("snapshot encrypted notebook index [%s]: %w", box.ID, err)
+	}
+	defer zeroAndClear(dek)
+	if err = os.MkdirAll(util.TempDir, 0755); err != nil {
+		return fmt.Errorf("create encrypted index snapshot directory: %w", err)
+	}
+	snapshotFile, err := os.CreateTemp(util.TempDir, "encrypted-index-*.db")
+	if err != nil {
+		return fmt.Errorf("create encrypted index snapshot [%s]: %w", box.ID, err)
+	}
+	snapshotPath := snapshotFile.Name()
+	defer func() {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(snapshotPath + suffix)
+		}
+	}()
+	if closeErr := snapshotFile.Close(); closeErr != nil {
+		return fmt.Errorf("close encrypted index snapshot [%s]: %w", box.ID, closeErr)
+	}
+	if err = sql.BackupEncryptedDB(box.ID, snapshotPath, dek); err != nil {
+		return err
+	}
+	mirrorSnapshot, err := av.CaptureMirrorBlocks(box.ID)
+	if err != nil {
+		return err
+	}
+	blocktreeSnapshot, err := treenode.RemoveBlockTreeBox(box.ID)
+	if err != nil {
+		return fmt.Errorf("snapshot encrypted notebook blocktrees [%s]: %w", box.ID, err)
+	}
+	queueBatch := queueOwner.BeginQueueBatch()
+	restore := func(cause error) error {
+		queueErr := queueBatch.Rollback()
+		databaseErr := sql.RestoreEncryptedDB(box.ID, snapshotPath, dek)
+		blocktreeErr := blocktreeSnapshot.Restore()
+		mirrorErr := mirrorSnapshot.Restore()
+		if queueErr != nil {
+			queueErr = fmt.Errorf("rollback rejected encrypted index queue batch [%s]: %w", box.ID, queueErr)
+		}
+		return errors.Join(cause, queueErr, databaseErr, blocktreeErr, mirrorErr)
+	}
+	if err = sql.ResetEncryptedIndex(box.ID); err != nil {
+		return restore(err)
+	}
+	if err = indexBoxWithQueueBatchLocked(box, openedBoxCount, queueBatch); err != nil {
+		return restore(err)
+	}
+	if err = queueOwner.FlushQueue(); err != nil {
+		return restore(fmt.Errorf("flush encrypted notebook rebuild queue [%s]: %w", box.ID, err))
+	}
+	return nil
 }
 
 func ChangeBoxSort(boxIDs []string) {

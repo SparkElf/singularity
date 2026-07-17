@@ -72,20 +72,22 @@ func listDocTree(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
-	if util.InvalidIDPattern(notebook, ret) {
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
 	// 加密笔记本锁定时拒绝直接列举磁盘目录，防止泄漏文档 ID、层级和数量
 	if model.IsEncryptedBox(notebook) {
-		model.HoldBoxReadLock(notebook)
-		defer model.ReleaseBoxReadLock(notebook)
-		if _, dekErr := model.GetDEKIfUnlocked(notebook); dekErr != nil {
+		dek, dekErr := model.GetDEKIfUnlocked(notebook)
+		if dekErr != nil {
 			ret.Code = -1
 			ret.Msg = model.Conf.Language(314)
 			return
 		}
+		clear(dek)
 	}
 
 	p := arg["path"].(string)
@@ -205,7 +207,10 @@ func upsertIndexes(c *gin.Context) {
 	for _, p := range pathsArg {
 		paths = append(paths, p.(string))
 	}
-	model.UpsertIndexes(paths)
+	if err := model.UpsertIndexes(paths); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+	}
 }
 
 func removeIndexes(c *gin.Context) {
@@ -222,7 +227,10 @@ func removeIndexes(c *gin.Context) {
 	for _, p := range pathsArg {
 		paths = append(paths, p.(string))
 	}
-	model.RemoveIndexes(paths)
+	if err := model.RemoveIndexes(paths); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+	}
 }
 
 func doc2Heading(c *gin.Context) {
@@ -363,8 +371,10 @@ func getHPathByPath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
-	if util.InvalidIDPattern(notebook, ret) {
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
@@ -416,7 +426,19 @@ func getHPathByID(c *gin.Context) {
 		return
 	}
 
-	hPath, err := model.GetHPathByID(id)
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook).Error()
+		return
+	}
+
+	hPath, err := model.GetHPathByIDForNotebook(id, notebook)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -488,8 +510,10 @@ func getIDsByHPath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
-	if util.InvalidIDPattern(notebook, ret) {
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
@@ -728,17 +752,37 @@ func duplicateDoc(c *gin.Context) {
 		return
 	}
 
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook).Error()
+		return
+	}
+	transactionNotebook := model.TransactionNotebookForBox(notebook)
 	id := arg["id"].(string)
-	tree, err := model.LoadTreeByBlockID(id)
+	tree, err := model.LoadTreeByBlockIDInBox(id, transactionNotebook)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		ret.Data = map[string]any{"closeTimeout": 7000}
 		return
 	}
+	if tree.Box != notebook {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: document [%s] in notebook [%s]", model.ErrBlockNotFound, id, notebook).Error()
+		return
+	}
 
-	notebook := tree.Box
-	model.DuplicateDoc(tree)
+	if err = model.DuplicateDoc(tree, transactionNotebook); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	ret.Data = map[string]any{
 		"id":       tree.Root.ID,
@@ -911,7 +955,12 @@ func getDocCreateSavePath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	box := model.Conf.Box(notebook)
 	var docCreateSaveBox string
 	docCreateSavePathTpl := model.Conf.FileTree.DocCreateSavePath
@@ -966,7 +1015,12 @@ func getRefCreateSavePath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	box := model.Conf.Box(notebook)
 	var refCreateSaveBox string
 	refCreateSavePathTpl := model.Conf.FileTree.RefCreateSavePath
@@ -1019,7 +1073,12 @@ func getShorthandSavePath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	shorthandSaveBox := model.Conf.FileTree.ShorthandSaveBox
 	shorthandSavePathTpl := model.Conf.FileTree.ShorthandSavePath
@@ -1099,7 +1158,12 @@ func listDocsByPath(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	p := arg["path"].(string)
 
 	// 越界校验：拒绝 ..，确保路径位于 <data>/<notebook>/ 内
@@ -1176,6 +1240,12 @@ func getDoc(c *gin.Context) {
 
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
+		return
+	}
+	contentStore, scopeErr := encryptedNotebookForResponse(c, arg)
+	if scopeErr != nil {
+		ret.Code = -1
+		ret.Msg = scopeErr.Error()
 		return
 	}
 
@@ -1257,9 +1327,9 @@ func getDoc(c *gin.Context) {
 	var keywords []string
 	var err error
 	// 加密笔记本的打开文档走 InBox 版（查加密 blocktree + content db）
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
+	if contentStore != "" {
 		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, err =
-			model.GetDocInBox(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight, notebook)
+			model.GetDocInBox(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight, contentStore)
 	} else {
 		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, err =
 			model.GetDoc(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight)

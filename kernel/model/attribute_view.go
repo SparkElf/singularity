@@ -1086,7 +1086,10 @@ func ChangeAttrViewLayout(blockID, avID string, newLayout av.LayoutType) (err er
 		}
 	}
 
-	blockIDs := treenode.GetMirrorAttrViewBlockIDs(avID)
+	blockIDs, err := treenode.GetMirrorAttrViewBlockIDsInBoxStrict(avID, "")
+	if err != nil {
+		return err
+	}
 	for _, bID := range blockIDs {
 		node, tree, _ := getNodeByBlockID(nil, bID)
 		if nil == node || nil == tree {
@@ -1637,11 +1640,6 @@ func insertItemAfter(items []string, item, previousItemID string) []string {
 }
 
 func DuplicateDatabaseBlock(avID string) (newAvID, newBlockID string, err error) {
-	// 加密笔记本的 AV 定义在笔记本级目录，通过 fallback 查找实际路径
-	oldAvPath, avBoxID := av.FindAttributeViewPath(avID)
-	if oldAvPath == "" {
-		oldAvPath = av.GetAttributeViewDataPath(avID)
-	}
 	newAvID, newBlockID = ast.NewNodeID(), ast.NewNodeID()
 
 	oldAv, err := av.ParseAttributeView(avID)
@@ -1649,69 +1647,48 @@ func DuplicateDatabaseBlock(avID string) (newAvID, newBlockID string, err error)
 		return
 	}
 
-	data, err := filelock.ReadFile(oldAvPath)
+	data, err := gulu.JSON.MarshalJSON(oldAv)
 	if err != nil {
-		logging.LogErrorf("read attribute view [%s] failed: %s", avID, err)
+		logging.LogErrorf("marshal attribute view [%s] failed: %s", avID, err)
 		return
 	}
-
-	// 加密笔记本的 AV 是密文，需先解密再处理（av.DecryptAVData 内部按 box 加密/已解锁路由）
-	if avBoxID != "" && IsEncryptedBox(avBoxID) {
-		var decErr error
-		data, decErr = av.DecryptAVData(avBoxID, avID, data)
-		if decErr != nil {
-			logging.LogErrorf("decrypt attribute view [%s] failed: %s", avID, decErr)
-			err = decErr
-			return
-		}
-	}
-
-	data = bytes.ReplaceAll(data, []byte(avID), []byte(newAvID))
-	av.UpsertBlockRel(newAvID, newBlockID)
 
 	newAv := &av.AttributeView{}
 	if err = gulu.JSON.UnmarshalJSON(data, newAv); err != nil {
 		logging.LogErrorf("unmarshal attribute view [%s] failed: %s", newAvID, err)
 		return
 	}
+	newAv.ID = newAvID
 
 	if "" != newAv.Name {
 		newAv.Name = oldAv.Name + " (Duplicated " + time.Now().Format("2006-01-02 15:04:05") + ")"
 	}
 
 	for _, keyValues := range newAv.KeyValues {
-		if nil != keyValues.Key.Relation && keyValues.Key.Relation.IsTwoWay {
+		if nil == keyValues.Key.Relation {
+			continue
+		}
+		if keyValues.Key.Relation.AvID == avID {
+			keyValues.Key.Relation.AvID = newAvID
+		}
+		if keyValues.Key.Relation.IsTwoWay {
 			// 断开双向关联
 			keyValues.Key.Relation.IsTwoWay = false
 			keyValues.Key.Relation.BackKeyID = ""
 		}
 	}
 
-	data, err = gulu.JSON.MarshalJSON(newAv)
-	if err != nil {
-		logging.LogErrorf("marshal attribute view [%s] failed: %s", newAvID, err)
+	if err = av.SaveAttributeView(newAv); err != nil {
+		logging.LogErrorf("save attribute view [%s] failed: %s", newAvID, err)
+		return
+	}
+	if _, err = av.UpsertBlockRel(newAvID, newBlockID); err != nil {
 		return
 	}
 
-	// 加密笔记本的新 AV 定义也存笔记本级目录，且需 avKey 加密
-	newAvPath := filepath.Join(util.DataDir, "storage", "av", newAvID+".json")
-	if avBoxID != "" {
-		newAvPath = filepath.Join(util.DataDir, avBoxID, "storage", "av", newAvID+".json")
-		var encErr error
-		data, encErr = av.EncryptAVData(avBoxID, newAvID, data)
-		if encErr != nil {
-			logging.LogErrorf("encrypt attribute view [%s] failed: %s", newAvID, encErr)
-			err = encErr
-			return
-		}
-		av.SetAVBoxID(newAvID, avBoxID)
-	}
-	if err = filelock.WriteFile(newAvPath, data); err != nil {
-		logging.LogErrorf("write attribute view [%s] failed: %s", newAvID, err)
+	if err = updateBoundBlockAvsAttribute([]string{newAvID}, ""); err != nil {
 		return
 	}
-
-	updateBoundBlockAvsAttribute([]string{newAvID})
 	return
 }
 
@@ -1789,7 +1766,10 @@ func GetAttributeViewPrimaryKeyValues(avID, keyword string, page, pageSize int) 
 	}
 	attributeViewName = getAttrViewName(attrView)
 
-	databaseBlockIDs = treenode.GetMirrorAttrViewBlockIDs(avID)
+	databaseBlockIDs, err = treenode.GetMirrorAttrViewBlockIDsInBoxStrict(avID, "")
+	if err != nil {
+		return
+	}
 
 	keyValues = attrView.GetBlockKeyValues()
 	var values []*av.Value
@@ -2105,7 +2085,7 @@ func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 		}
 
 		itemID := blockVal.BlockID
-		view, err := getRenderAttributeViewView(attrView, "", nodeID)
+		view, err := getRenderAttributeViewView(attrView, "", nodeID, "", true)
 		if nil != err {
 			continue
 		}
@@ -2175,7 +2155,9 @@ func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 			}
 			blockIDs = gulu.Str.RemoveDuplicatedElem(blockIDs)
 			for _, blockID := range blockIDs {
-				av.UpsertBlockRel(avID, blockID)
+				if _, mirrorErr := av.UpsertBlockRel(avID, blockID); mirrorErr != nil {
+					logging.LogErrorf("persist attribute view mirror [%s/%s] failed: %s", avID, blockID, mirrorErr)
+				}
 			}
 		}
 
@@ -2811,7 +2793,9 @@ func updateAttributeViewColRelation(operation *Operation) (err error) {
 				}
 			}
 
-			av.RemoveAvRel(srcAv.ID, srcRel.AvID)
+			if err = av.RemoveAvRel(srcAv.ID, srcRel.AvID); err != nil {
+				return
+			}
 		}
 
 		srcRel = &av.Relation{
@@ -2917,9 +2901,11 @@ func updateAttributeViewColRelation(operation *Operation) (err error) {
 		ReloadAttrView(destAv.ID)
 	}
 
-	av.UpsertAvBackRel(srcAv.ID, destAv.ID)
+	if err = av.UpsertAvBackRel(srcAv.ID, destAv.ID); err != nil {
+		return
+	}
 	if operation.IsTwoWay && !isSameAv {
-		av.UpsertAvBackRel(destAv.ID, srcAv.ID)
+		err = av.UpsertAvBackRel(destAv.ID, srcAv.ID)
 	}
 	return
 }
@@ -3027,7 +3013,7 @@ func (tx *Transaction) doRemoveAttrViewView(operation *Operation) (ret *TxErr) {
 			}
 
 			cache.PutBlockIALInBox(node.ID, boxID, parse.IAL2Map(node.KramdownIAL))
-			pushBlockAttrs(oldAttrs, node)
+			pushBlockAttrs(oldAttrs, node, tx.Notebook)
 		}
 	}
 
@@ -3465,19 +3451,23 @@ func (tx *Transaction) setAttributeViewName(operation *Operation) (err error) {
 		avNames := getAvNames(node.IALAttr(av.NodeAttrNameAvs))
 		oldAttrs := parse.IAL2Map(node.KramdownIAL)
 		node.SetIALAttr(av.NodeAttrViewNames, avNames)
-		pushBlockAttrs(oldAttrs, node)
+		pushBlockAttrs(oldAttrs, node, tx.Notebook)
 	}
 	return
 }
 
 func getAvNames(avIDs string) (ret string) {
+	return getAvNamesInBox(avIDs, "")
+}
+
+func getAvNamesInBox(avIDs, boxID string) (ret string) {
 	if "" == avIDs {
 		return
 	}
 	avNames := bytes.Buffer{}
 	nodeAvIDs := strings.SplitSeq(avIDs, ",")
 	for nodeAvID := range nodeAvIDs {
-		nodeAvName, getErr := av.GetAttributeViewName(nodeAvID)
+		nodeAvName, getErr := av.GetAttributeViewNameInBox(nodeAvID, boxID)
 		if nil != getErr {
 			continue
 		}
@@ -3539,7 +3529,7 @@ func (tx *Transaction) getAttrViewBoundNodes(attrView *av.AttributeView) (trees 
 }
 
 func (tx *Transaction) doSetAttrViewFilters(operation *Operation) (ret *TxErr) {
-	err := SetAttrViewFilters(operation.AvID, operation.BlockID, operation.Data.([]any))
+	err := setAttrViewFiltersInBox(tx.Notebook, operation.AvID, operation.BlockID, operation.Data.([]any))
 	if err != nil {
 		return &TxErr{code: TxErrHandleAttributeView, id: operation.AvID, msg: err.Error()}
 	}
@@ -3547,50 +3537,53 @@ func (tx *Transaction) doSetAttrViewFilters(operation *Operation) (ret *TxErr) {
 }
 
 // avParseView 根据 blockID 推导 box 上下文，使用 box-aware 或全局 AV 解析。
-func avParseView(avID, blockID string) (*av.AttributeView, error) {
-	boxID := deriveAVBoxID(blockID)
-	if boxID != "" {
-		return av.ParseAttributeViewInBox(avID, boxID)
+func avParseViewInBox(avID, blockID, notebook string) (*av.AttributeView, error) {
+	boxID, err := attributeViewStoreForBlock(blockID, notebook)
+	if err != nil {
+		return nil, err
 	}
-	return av.ParseAttributeView(avID)
+	if boxID != "" {
+		return nil, ErrEncryptedAttributeViewUnsupported
+	}
+	return av.ParseAttributeViewInBox(avID, boxID)
 }
 
 // avSaveView 根据 blockID 推导 box 上下文，使用 box-aware 或全局 AV 保存。
-func avSaveView(attrView *av.AttributeView, blockID string) error {
-	boxID := deriveAVBoxID(blockID)
-	if boxID != "" {
-		_, parseErr := av.ParseAttributeViewInBox(attrView.ID, boxID)
-		if parseErr == nil {
-			return av.SaveAttributeView(attrView)
-		}
+func avSaveViewInBox(attrView *av.AttributeView, blockID, notebook string) error {
+	boxID, err := attributeViewStoreForBlock(blockID, notebook)
+	if err != nil {
+		return err
 	}
-	return av.SaveAttributeView(attrView)
+	return av.SaveAttributeViewInBox(attrView, boxID)
 }
 
-// deriveAVBoxID 通过 blockID 反查所在 box。blockID 为空或不是加密 box 时返回空串。
-func deriveAVBoxID(blockID string) string {
+// attributeViewStoreBoxID 将显式 notebook 身份映射为 AV 内容库存储身份；普通库统一使用全局存储。
+func attributeViewStoreBoxID(notebook string) string {
+	if notebook != "" && IsEncryptedBox(notebook) {
+		return notebook
+	}
+	return ""
+}
+
+func attributeViewStoreForBlock(blockID, notebook string) (string, error) {
 	if blockID == "" {
-		return ""
+		return "", ErrBlockNotFound
 	}
-	bt := treenode.GetBlockTree(blockID)
-	if bt == nil {
-		for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-			if encBT := treenode.GetBlockTreeInBox(blockID, encBoxID); encBT != nil {
-				bt = encBT
-				break
-			}
-		}
+	bt := treenode.GetBlockTreeInBox(blockID, notebook)
+	if bt == nil || (notebook != "" && bt.BoxID != notebook) || (notebook == "" && IsEncryptedBox(bt.BoxID)) {
+		return "", ErrBlockNotFound
 	}
-	if bt == nil || !IsEncryptedBox(bt.BoxID) {
-		return ""
-	}
-	return bt.BoxID
+	return attributeViewStoreBoxID(notebook), nil
 }
 
 // SetAttrViewFilters 用新的过滤规则数组整体替换指定视图的过滤规则，并持久化。
 // data 为 JSON 反序列化前的 []any（通常是前端传来的过滤节点树）。
 func SetAttrViewFilters(avID, blockID string, data []any) (err error) {
-	attrView, err := avParseView(avID, blockID)
+	return setAttrViewFiltersInBox("", avID, blockID, data)
+}
+
+func setAttrViewFiltersInBox(notebook, avID, blockID string, data []any) (err error) {
+	attrView, err := avParseViewInBox(avID, blockID, notebook)
 	if err != nil {
 		return
 	}
@@ -3622,12 +3615,12 @@ func SetAttrViewFilters(avID, blockID string, data []any) (err error) {
 		return
 	}
 
-	err = avSaveView(attrView, blockID)
+	err = avSaveViewInBox(attrView, blockID, notebook)
 	return
 }
 
 func (tx *Transaction) doSetAttrViewSorts(operation *Operation) (ret *TxErr) {
-	err := SetAttrViewSorts(operation.AvID, operation.BlockID, operation.Data.([]any))
+	err := setAttrViewSortsInBox(tx.Notebook, operation.AvID, operation.BlockID, operation.Data.([]any))
 	if err != nil {
 		return &TxErr{code: TxErrHandleAttributeView, id: operation.AvID, msg: err.Error()}
 	}
@@ -3637,7 +3630,11 @@ func (tx *Transaction) doSetAttrViewSorts(operation *Operation) (ret *TxErr) {
 // SetAttrViewSorts 用新的排序规则数组整体替换指定视图的排序规则，并持久化。
 // data 为 JSON 反序列化前的 []any。
 func SetAttrViewSorts(avID, blockID string, data []any) (err error) {
-	attrView, err := avParseView(avID, blockID)
+	return setAttrViewSortsInBox("", avID, blockID, data)
+}
+
+func setAttrViewSortsInBox(notebook, avID, blockID string, data []any) (err error) {
+	attrView, err := avParseViewInBox(avID, blockID, notebook)
 	if err != nil {
 		return
 	}
@@ -3658,7 +3655,7 @@ func SetAttrViewSorts(avID, blockID string, data []any) (err error) {
 	}
 	view.Sorts = newSorts
 
-	err = avSaveView(attrView, blockID)
+	err = avSaveViewInBox(attrView, blockID, notebook)
 	return
 }
 
@@ -4031,7 +4028,12 @@ func RemoveAttributeViewBlock(srcIDs []string, avID string) (err error) {
 }
 
 func removeAttributeViewBlock(srcIDs []string, avID string, tx *Transaction) (err error) {
-	attrView, err := av.ParseAttributeView(avID)
+	notebook := ""
+	if tx != nil {
+		notebook = tx.Notebook
+	}
+	avBoxID := attributeViewStoreBoxID(notebook)
+	attrView, err := av.ParseAttributeViewInBox(avID, avBoxID)
 	if err != nil {
 		return
 	}
@@ -4045,19 +4047,18 @@ func removeAttributeViewBlock(srcIDs []string, avID string, tx *Transaction) (er
 			} else {
 				// Remove av block also remove node attr https://github.com/siyuan-note/siyuan/issues/9091#issuecomment-1709824006
 				if !val.IsDetached && nil != val.Block {
-					bt := treenode.GetBlockTree(val.Block.ID)
-					if nil == bt {
-						for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-							if encBT := treenode.GetBlockTreeInBox(val.Block.ID, encBoxID); nil != encBT {
-								bt = encBT
-								break
-							}
-						}
+					bt := treenode.GetBlockTreeInBox(val.Block.ID, notebook)
+					if bt != nil && ((tx != nil && !tx.ownsBlockTree(bt)) || (tx == nil && IsEncryptedBox(bt.BoxID))) {
+						bt = nil
 					}
 					if nil != bt {
 						tree := trees[bt.RootID]
 						if nil == tree {
-							tree, _ = LoadTreeByBlockID(val.Block.ID)
+							if tx != nil {
+								tree, _ = tx.loadTree(val.Block.ID)
+							} else {
+								tree, _ = LoadTreeByBlockID(val.Block.ID)
+							}
 						}
 
 						if nil != tree {
@@ -4083,23 +4084,27 @@ func removeAttributeViewBlock(srcIDs []string, avID string, tx *Transaction) (er
 
 	regenAttrViewGroups(attrView)
 
-	err = av.SaveAttributeView(attrView)
+	err = av.SaveAttributeViewInBox(attrView, avBoxID)
 	if nil != err {
 		return
 	}
 
-	refreshRelatedSrcAvs(avID, tx)
+	refreshRelatedSrcAvs(avID, tx, avBoxID)
 
 	historyDir, err := getHistoryDir(HistoryOpUpdate)
 	if err != nil {
 		logging.LogErrorf("get history dir failed: %s", err)
 		return
 	}
-	blockIDs := treenode.GetMirrorAttrViewBlockIDs(avID)
+	blockIDs := treenode.GetMirrorAttrViewBlockIDsInBox(avID, avBoxID)
 	for _, blockID := range blockIDs {
 		tree := trees[blockID]
 		if nil == tree {
-			tree, _ = LoadTreeByBlockID(blockID)
+			if tx != nil {
+				tree, _ = tx.loadTree(blockID)
+			} else {
+				tree, _ = LoadTreeByBlockID(blockID)
+			}
 		}
 		if nil == tree {
 			continue
@@ -4113,11 +4118,14 @@ func removeAttributeViewBlock(srcIDs []string, avID string, tx *Transaction) (er
 		}
 	}
 
-	srcAvPath, _ := av.FindAttributeViewPath(avID)
+	srcAvPath, _ := av.FindAttributeViewPathInBox(avID, avBoxID)
 	if srcAvPath == "" {
 		return
 	}
 	destAvPath := filepath.Join(historyDir, "storage", "av", avID+".json")
+	if avBoxID != "" {
+		destAvPath = filepath.Join(historyDir, avBoxID, "storage", "av", avID+".json")
+	}
 	if copyErr := filelock.Copy(srcAvPath, destAvPath); nil != copyErr {
 		logging.LogErrorf("copy av [%s] failed: %s", srcAvPath, copyErr)
 	}
@@ -4128,6 +4136,7 @@ func removeAttributeViewBlock(srcIDs []string, avID string, tx *Transaction) (er
 
 func removeNodeAvID(node *ast.Node, avID string, tx *Transaction, tree *parse.Tree) (err error) {
 	attrs := parse.IAL2Map(node.KramdownIAL)
+	avBoxID := attributeViewStoreBoxID(tree.Box)
 	if ast.NodeDocument == node.Type {
 		delete(attrs, DocHiddenAttr)
 		node.RemoveIALAttr(DocHiddenAttr)
@@ -4138,7 +4147,7 @@ func removeNodeAvID(node *ast.Node, avID string, tx *Transaction, tree *parse.Tr
 		avIDs = gulu.Str.RemoveElem(avIDs, avID)
 		var existAvIDs []string
 		for _, attributeViewID := range avIDs {
-			if av.IsAttributeViewExist(attributeViewID) {
+			if av.IsAttributeViewExistInBox(attributeViewID, avBoxID) {
 				existAvIDs = append(existAvIDs, attributeViewID)
 			}
 		}
@@ -4149,7 +4158,7 @@ func removeNodeAvID(node *ast.Node, avID string, tx *Transaction, tree *parse.Tr
 		} else {
 			attrs[av.NodeAttrNameAvs] = strings.Join(avIDs, ",")
 			node.SetIALAttr(av.NodeAttrNameAvs, strings.Join(avIDs, ","))
-			avNames := getAvNames(node.IALAttr(av.NodeAttrNameAvs))
+			avNames := getAvNamesInBox(node.IALAttr(av.NodeAttrNameAvs), avBoxID)
 			attrs[av.NodeAttrViewNames] = avNames
 		}
 	}
@@ -5108,12 +5117,16 @@ func RemoveAttributeViewKey(avID, keyID string, removeRelationDest bool) (err er
 				}
 
 				if destAv != attrView {
-					av.SaveAttributeView(destAv)
+					if err = av.SaveAttributeView(destAv); err != nil {
+						return
+					}
 					ReloadAttrView(destAv.ID)
 				}
 
 				if !destAvRelSrcAv {
-					av.RemoveAvRel(destAv.ID, attrView.ID)
+					if err = av.RemoveAvRel(destAv.ID, attrView.ID); err != nil {
+						return
+					}
 				}
 			}
 
@@ -5124,7 +5137,9 @@ func RemoveAttributeViewKey(avID, keyID string, removeRelationDest bool) (err er
 				}
 			}
 			if !srcAvRelDestAv {
-				av.RemoveAvRel(attrView.ID, removedKey.Relation.AvID)
+				if err = av.RemoveAvRel(attrView.ID, removedKey.Relation.AvID); err != nil {
+					return
+				}
 			}
 		}
 	}
@@ -5258,7 +5273,7 @@ func replaceAttributeViewBlock0(attrView *av.AttributeView, oldBlockID, newNodeI
 				content = util.UnescapeHTML(content)
 				blockVal.Block.Icon, blockVal.Block.Content = icon, content
 
-				refreshRelatedSrcAvs(avID, tx)
+				refreshRelatedSrcAvs(avID, tx, "")
 			} else {
 				blockVal.Block.ID = ""
 			}
@@ -5525,12 +5540,13 @@ func updateAttributeViewValue(tx *Transaction, attrView *av.AttributeView, keyID
 		return
 	}
 
-	refreshRelatedSrcAvs(avID, tx)
+	refreshRelatedSrcAvs(avID, tx, "")
 	return
 }
 
-func refreshRelatedSrcAvs(destAvID string, tx *Transaction) {
-	relatedAvIDs := av.GetSrcAvIDs(destAvID)
+func refreshRelatedSrcAvs(destAvID string, tx *Transaction, boxID string) {
+	boxID = attributeViewStoreBoxID(boxID)
+	relatedAvIDs := av.GetSrcAvIDsInBox(destAvID, boxID)
 
 	var tmp []string
 	for _, relatedAvID := range relatedAvIDs {
@@ -5547,14 +5563,14 @@ func refreshRelatedSrcAvs(destAvID string, tx *Transaction) {
 		tx.relatedAvIDs = append(tx.relatedAvIDs, relatedAvIDs...)
 	} else {
 		for _, relatedAvID := range relatedAvIDs {
-			destAv, _ := av.ParseAttributeView(relatedAvID)
+			destAv, _ := av.ParseAttributeViewInBox(relatedAvID, boxID)
 			if nil == destAv {
 				continue
 			}
 
 			regenAttrViewGroups(destAv)
-			av.SaveAttributeView(destAv)
-			ReloadAttrView(relatedAvID)
+			av.SaveAttributeViewInBox(destAv, boxID)
+			ReloadAttrViewInBox(relatedAvID, boxID)
 		}
 	}
 }
@@ -6051,13 +6067,15 @@ func getAttrViewName(attrView *av.AttributeView) string {
 	return ret
 }
 
-func updateBoundBlockAvsAttribute(avIDs []string) {
+func updateBoundBlockAvsAttribute(avIDs []string, notebook string) error {
 	// 更新指定 avIDs 中绑定块的 avs 属性
 
 	cachedTrees, saveTrees := map[string]*parse.Tree{}, map[string]*parse.Tree{}
 	luteEngine := util.NewLute()
+	avBoxID := attributeViewStoreBoxID(notebook)
+	transactionNotebook := TransactionNotebookForBox(notebook)
 	for _, avID := range avIDs {
-		attrView, _ := av.ParseAttributeView(avID)
+		attrView, _ := av.ParseAttributeViewInBox(avID, avBoxID)
 		if nil == attrView {
 			continue
 		}
@@ -6077,14 +6095,9 @@ func updateBoundBlockAvsAttribute(avIDs []string) {
 				continue
 			}
 
-			bt := treenode.GetBlockTree(boundBlockID)
-			if nil == bt {
-				for _, encBoxID := range treenode.GetOpenedEncryptedBoxIDs() {
-					if encBT := treenode.GetBlockTreeInBox(boundBlockID, encBoxID); nil != encBT {
-						bt = encBT
-						break
-					}
-				}
+			bt := treenode.GetBlockTreeInBox(boundBlockID, notebook)
+			if bt != nil && ((notebook != "" && bt.BoxID != notebook) || (notebook == "" && IsEncryptedBox(bt.BoxID))) {
+				bt = nil
 			}
 			if nil == bt {
 				continue
@@ -6115,7 +6128,7 @@ func updateBoundBlockAvsAttribute(avIDs []string) {
 				saveTrees[bt.RootID] = tree
 			}
 
-			avNames := getAvNames(attrs[av.NodeAttrNameAvs])
+			avNames := getAvNamesInBox(attrs[av.NodeAttrNameAvs], avBoxID)
 			if "" != avNames {
 				attrs[av.NodeAttrViewNames] = avNames
 			}
@@ -6125,7 +6138,7 @@ func updateBoundBlockAvsAttribute(avIDs []string) {
 				continue
 			}
 			cache.PutBlockIALInBox(node.ID, bt.BoxID, parse.IAL2Map(node.KramdownIAL))
-			pushBlockAttrs(oldAttrs, node)
+			pushBlockAttrs(oldAttrs, node, transactionNotebook)
 			if "" != avNames {
 				node.RemoveIALAttr(av.NodeAttrViewNames)
 			}
@@ -6134,10 +6147,13 @@ func updateBoundBlockAvsAttribute(avIDs []string) {
 
 	for _, saveTree := range saveTrees {
 		if treeErr := indexWriteTreeUpsertQueue(saveTree); nil != treeErr {
-			logging.LogErrorf("index write tree upsert queue failed: %s", treeErr)
+			return fmt.Errorf("persist bound block attributes for tree [%s/%s]: %w", saveTree.Box, saveTree.Path, treeErr)
 		}
 
 		avNodes := saveTree.Root.ChildrenByType(ast.NodeAttributeView)
-		av.BatchUpsertBlockRel(avNodes)
+		if err := av.BatchUpsertBlockRelInBox(avNodes, avBoxID); err != nil {
+			return fmt.Errorf("persist bound block attribute view mirror index for tree [%s/%s]: %w", saveTree.Box, saveTree.Path, err)
+		}
 	}
+	return nil
 }

@@ -128,6 +128,9 @@ var inboxConvertCmd = &cobra.Command{
 		if notebook == "" {
 			return fmt.Errorf("--notebook is required")
 		}
+		if err := rejectEncryptedNotebookCLI(cmd, args); err != nil {
+			return err
+		}
 
 		idsRaw, _ := cmd.Flags().GetString("ids")
 		ids := parseShorthandIDs(idsRaw)

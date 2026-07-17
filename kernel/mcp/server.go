@@ -18,10 +18,13 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	kernelapi "github.com/siyuan-note/siyuan/kernel/api"
+	"github.com/siyuan-note/siyuan/kernel/mcp/tools"
 	"github.com/siyuan-note/siyuan/kernel/model"
 )
 
@@ -73,7 +76,6 @@ func handlePost(c *gin.Context) {
 		})
 		return
 	}
-
 	protoVersion := c.GetHeader("MCP-Protocol-Version")
 	if protoVersion == ProtocolV20260728 {
 		handlePost2026(c, &req)
@@ -95,8 +97,11 @@ func handlePost(c *gin.Context) {
 			return
 		}
 	}
+	if !prepareContentResponse(c, &req) {
+		return
+	}
 
-	response := processRequest(&req, session, protoVersion)
+	response := processRequest(&req, session, protoVersion, callContextForRequest(c))
 
 	if req.Method == "initialize" {
 		c.Header("Mcp-Session-Id", session.ID)
@@ -105,14 +110,98 @@ func handlePost(c *gin.Context) {
 	writeResponse(c, response)
 }
 
+func prepareContentResponse(c *gin.Context, req *JsonRpcRequest) bool {
+	if err := registerContentResponse(c, req); err != nil {
+		writeResponse(c, &JsonRpcErrorResponse{
+			JsonRpc: "2.0",
+			Error:   RpcError{Code: -32603, Message: err.Error()},
+			ID:      req.ID,
+		})
+		return false
+	}
+	return true
+}
+
+func registerContentResponse(c *gin.Context, req *JsonRpcRequest) error {
+	if req.Method != "tools/call" || req.ID == nil {
+		return nil
+	}
+	params, ok := req.Params.(map[string]any)
+	if !ok {
+		return nil
+	}
+	toolName, _ := params["name"].(string)
+	args, _ := params["arguments"].(map[string]any)
+	if args == nil {
+		return nil
+	}
+	action, _ := args["action"].(string)
+
+	switch toolName {
+	case "export":
+		switch action {
+		case "md", "html", "preview", "docx":
+			notebook, _, err := tools.NotebookArg(args)
+			if err != nil {
+				return err
+			}
+			return kernelapi.RegisterEncryptedResponse(c, notebook)
+		case "sy", "md-zip":
+			_, _, err := tools.NotebookArg(args)
+			return err
+		}
+	case "document":
+		if action == "list" {
+			notebook, provided, err := tools.NotebookArg(args)
+			if err != nil {
+				return err
+			}
+			if !provided {
+				return fmt.Errorf("notebook is required")
+			}
+			return kernelapi.RegisterEncryptedResponse(c, notebook)
+		}
+	case "history":
+		switch action {
+		case "list", "search":
+			notebook, provided, err := tools.NotebookArg(args)
+			if err != nil {
+				return err
+			}
+			if !provided {
+				return kernelapi.RegisterAllEncryptedResponses(c)
+			}
+			return kernelapi.RegisterEncryptedResponse(c, notebook)
+		case "get":
+			notebook, err := tools.HistoricalNotebookArg(args, false)
+			if err != nil {
+				return err
+			}
+			return kernelapi.RegisterEncryptedResponse(c, notebook)
+		}
+	}
+	return nil
+}
+
+func callContextForRequest(c *gin.Context) tools.CallContext {
+	return tools.CallContext{
+		RegisterEncryptedResponses: func(boxIDs []string) error {
+			return kernelapi.RegisterEncryptedResponses(c, boxIDs)
+		},
+	}
+}
+
 func handlePost2026(c *gin.Context, req *JsonRpcRequest) {
 	mcpMethod := c.GetHeader("Mcp-Method")
 	if mcpMethod != "" && mcpMethod != req.Method {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Mcp-Method header does not match body method"})
 		return
 	}
+	if !prepareContentResponse(c, req) {
+		return
+	}
 
-	response := processRequest2026(req)
+	response := processRequest2026(req, callContextForRequest(c))
 	writeResponse(c, response)
 }
 
