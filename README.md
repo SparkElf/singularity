@@ -2,8 +2,8 @@
 title: "Singularity"
 description: "An enterprise knowledge base in active development, built from the SiYuan codebase."
 author: "Singularity Contributors"
-date: "2026-07-15"
-version: "1.0.0"
+date: "2026-07-17"
+version: "1.1.0"
 status: "draft"
 tags: ["singularity", "knowledge-base", "siyuan", "agpl"]
 ---
@@ -19,6 +19,7 @@ tags: ["singularity", "knowledge-base", "siyuan", "agpl"]
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0.0 | 2026-07-15 | Singularity Contributors | Replaced the upstream product page with the Singularity project entry point |
+| 1.1.0 | 2026-07-17 | Singularity Contributors | Promoted the integrated SiYuan 3.7.2 commit to the upstream baseline |
 
 ## Table of Contents
 
@@ -46,7 +47,7 @@ Report suspected vulnerabilities privately by following the [security policy](.g
 
 ## License and upstream
 
-Singularity is a modified work based on [SiYuan](https://github.com/siyuan-note/siyuan), currently anchored to upstream version `3.7.1` at commit `41f2861c87575ff5ac4b50a0520b1a4fe55b4a70`.
+Singularity is a modified work based on [SiYuan](https://github.com/siyuan-note/siyuan), currently anchored to upstream version `3.7.2` at commit `c8dcdd0860ef000a14552c619fe19c0dcb5175f5`.
 
 The project is distributed under the [GNU Affero General Public License v3.0](LICENSE). Preserve applicable copyright, license, source-availability, and attribution notices when modifying, deploying, or redistributing it. See [NOTICE](NOTICE) for the upstream baseline and trademark attribution.
 

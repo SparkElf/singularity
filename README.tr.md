@@ -2,8 +2,8 @@
 title: "Singularity"
 description: "SiYuan kod tabanı üzerine geliştirilen ve etkin geliştirme aşamasında olan kurumsal bilgi tabanı."
 author: "Singularity Contributors"
-date: "2026-07-15"
-version: "1.0.0"
+date: "2026-07-17"
+version: "1.1.0"
 status: "draft"
 tags: ["singularity", "bilgi-tabani", "siyuan", "agpl"]
 ---
@@ -19,6 +19,7 @@ tags: ["singularity", "bilgi-tabani", "siyuan", "agpl"]
 | Sürüm | Tarih | Yazar | Değişiklik |
 |-------|-------|-------|------------|
 | 1.0.0 | 2026-07-15 | Singularity Contributors | Üst projenin ürün tanıtımı Singularity proje girişiyle değiştirildi |
+| 1.1.0 | 2026-07-17 | Singularity Contributors | Birleştirilmiş SiYuan 3.7.2 kaydı üst proje tabanına yükseltildi |
 
 ## İçindekiler
 
@@ -46,7 +47,7 @@ Bir değişiklik önermeden önce [katkı rehberini](.github/CONTRIBUTING.md) ok
 
 ## Lisans ve üst proje
 
-Singularity, [SiYuan](https://github.com/siyuan-note/siyuan) temel alınarak değiştirilmiş bir çalışmadır. Güncel üst proje tabanı `3.7.1` sürümü ve `41f2861c87575ff5ac4b50a0520b1a4fe55b4a70` kaydıdır.
+Singularity, [SiYuan](https://github.com/siyuan-note/siyuan) temel alınarak değiştirilmiş bir çalışmadır. Güncel üst proje tabanı `3.7.2` sürümü ve `c8dcdd0860ef000a14552c619fe19c0dcb5175f5` kaydıdır.
 
 Proje [GNU Affero General Public License v3.0](LICENSE) altında dağıtılır. Değiştirirken, dağıtırken veya yeniden yayımlarken geçerli telif, lisans, kaynak sağlama ve atıf bildirimlerini koruyun. Üst proje tabanı ve ticari marka atıfları için [NOTICE](NOTICE) dosyasına bakın.
 
