@@ -27,41 +27,56 @@ export const saveExport = (option: IExportOptions) => {
     if (!["html", "htmlmd"].includes(option.type)) {
         return;
     }
-    const startExport = () => {
+    const startExport = async (rootTitle: string) => {
         const msgId = showMessage(window.siyuan.languages.exporting, -1);
         const url = option.type === "htmlmd" ? "/api/export/exportMdHTML" : "/api/export/exportHTML";
-        fetchPost(url, {
-            id: option.id,
-            pdf: false,
-            removeAssets: false,
-            merge: true,
-            savePath: ""
-        }, async exportResponse => {
+        try {
+            const exportResponse = await fetchSyncPost(url, {
+                id: option.id,
+                notebook: option.notebookId,
+                pdf: false,
+                removeAssets: false,
+                merge: true,
+                savePath: ""
+            });
+            if (exportResponse.code !== 0) {
+                if (exportResponse.code > 0) {
+                    showMessage(exportResponse.msg, exportResponse.data?.closeTimeout || 0, "error");
+                }
+                return;
+            }
             const html = await onExport(exportResponse, undefined, "", option);
-            fetchPost("/api/export/exportBrowserHTML", {
-                folder: exportResponse.data.folder,
+            const zipResponse = await fetchSyncPost("/api/export/exportBrowserHTML", {
+                job: exportResponse.data.job,
+                notebook: option.notebookId,
                 html,
                 name: exportResponse.data.name
-            }, zipResponse => {
-                if (zipResponse.code === -1) {
-                    hideMessage(msgId);
-                    showMessage(window.siyuan.languages._kernel[14].replace("%s", zipResponse.msg), 0, "error");
-                    return;
-                }
-                saveExportFile(zipResponse.data.zip, msgId);
             });
-        });
+            if (zipResponse.code !== 0) {
+                if (zipResponse.code > 0) {
+                    showMessage(zipResponse.msg, zipResponse.data?.closeTimeout || 0, "error");
+                }
+                return;
+            }
+            saveExportFile(zipResponse.data.zip, msgId);
+        } catch (error) {
+            showMessage(error instanceof Error ? error.message : String(error), 0, "error");
+        } finally {
+            hideMessage(msgId);
+        }
     };
-    fetchPost("/api/block/getBlockInfo", {id: option.id}, (response) => {
+    fetchPost("/api/block/getBlockInfo", {id: option.id, notebook: option.notebookId}, (response) => {
         if (response.code !== 0) {
             showMessage(response.msg, 0, "error");
             return;
         }
         if (isEncryptedBox(response.data.box)) {
-            confirmDialog("⚠️ " + window.siyuan.languages.export, window.siyuan.languages.encryptedExportRiskTip, startExport);
+            confirmDialog("⚠️ " + window.siyuan.languages.export, window.siyuan.languages.encryptedExportRiskTip, () => {
+                void startExport(response.data.rootTitle);
+            });
             return;
         }
-        startExport();
+        void startExport(response.data.rootTitle);
     });
 };
 
@@ -169,7 +184,8 @@ ${getIconScript(servePath)}
     });
 </script>
 ${getSnippetJS()}</body></html>`;
-    void filePath;
-    void msgId;
-    return html;
+    // 移动端导出 PDF、浏览器导出 HTML
+    if (typeof filePath === "undefined") {
+        return html;
+    }
 };

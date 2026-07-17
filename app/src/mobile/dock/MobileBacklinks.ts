@@ -9,6 +9,8 @@ export class MobileBacklinks {
     public element: HTMLElement;
     private tree: Tree;
     private notebookId: string;
+    private readonly targetNotebookIds = new Map<string, string>();
+    private requestGeneration = 0;
     private mTree: Tree;
     public beforeLen = 10;
 
@@ -44,15 +46,27 @@ export class MobileBacklinks {
         this.tree = new Tree({
             element: this.element.querySelector(".backlinkList") as HTMLElement,
             data: null,
-            click(element: HTMLElement) {
-                openMobileFileById(app, element.getAttribute("data-node-id"), [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT]);
+            click: (element: HTMLElement) => {
+                const blockId = element.getAttribute("data-node-id");
+                const notebookId = this.targetNotebookIds.get(blockId);
+                if (!notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] mobile backlink target has no notebook", {blockId});
+                    return;
+                }
+                openMobileFileById(app, notebookId, blockId, [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT]);
             }
         });
         this.mTree = new Tree({
             element: this.element.querySelector(".backlinkMList") as HTMLElement,
             data: null,
             click: (element) => {
-                openMobileFileById(app, element.getAttribute("data-node-id"), [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT]);
+                const blockId = element.getAttribute("data-node-id");
+                const notebookId = this.targetNotebookIds.get(blockId);
+                if (!notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] mobile backmention target has no notebook", {blockId});
+                    return;
+                }
+                openMobileFileById(app, notebookId, blockId, [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT]);
             },
         });
         this.element.addEventListener("click", (event) => {
@@ -107,17 +121,48 @@ export class MobileBacklinks {
     }
 
     public update() {
+        const protyle = window.siyuan.mobile.editor.protyle;
+        const owner = {
+            notebookId: protyle.notebookId,
+            blockId: protyle.block.id,
+        };
+        const generation = ++this.requestGeneration;
         const param: IObject = {
-            id: window.siyuan.mobile.editor.protyle.block.id,
+            id: owner.blockId,
             beforeLen: this.beforeLen,
             k: "",
             mk: "",
         };
-        if (isEncryptedBox(window.siyuan.mobile.editor.protyle.notebookId)) {
-            param.notebook = window.siyuan.mobile.editor.protyle.notebookId;
+        if (isEncryptedBox(owner.notebookId)) {
+            param.notebook = owner.notebookId;
         }
         fetchPost("/api/ref/getBacklink", param, response => {
-            this.notebookId = response.data.box;
+            const currentProtyle = window.siyuan.mobile.editor?.protyle;
+            if (generation !== this.requestGeneration || currentProtyle?.notebookId !== owner.notebookId ||
+                currentProtyle.block.id !== owner.blockId) {
+                return;
+            }
+            this.notebookId = owner.notebookId;
+            this.targetNotebookIds.clear();
+            const indexBlocks = (blocks?: IBlock[]) => {
+                blocks?.forEach((block) => {
+                    if (block.id && block.box) {
+                        this.targetNotebookIds.set(block.id, block.box);
+                    }
+                    indexBlocks(block.children);
+                });
+            };
+            const indexTrees = (trees?: IBlockTree[]) => {
+                trees?.forEach((tree) => {
+                    if (tree.id && tree.box) {
+                        this.targetNotebookIds.set(tree.id, tree.box);
+                    }
+                    indexBlocks(tree.blocks);
+                    indexTrees(tree.children);
+                });
+            };
+            indexTrees(response.data.backlinks);
+            indexTrees(response.data.backmentions);
             this.tree.updateData(response.data.backlinks);
             this.mTree.updateData(response.data.backmentions);
 

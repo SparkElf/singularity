@@ -4,7 +4,7 @@ import {Wnd} from "../Wnd";
 import {Tab} from "../Tab";
 import {Files} from "./Files";
 import {Outline} from "./Outline";
-import {getAllModels, getAllTabs} from "../getAll";
+import {getAllTabs} from "../getAll";
 import {Bookmark} from "./Bookmark";
 import {Tag} from "./Tag";
 import {Graph} from "./Graph";
@@ -12,7 +12,6 @@ import {Model} from "../Model";
 import {adjustLayout, saveLayout, setPanelFocus} from "../util";
 import {getDockByType, resizeTabs, setTabPosition} from "../tabUtil";
 import {Inbox} from "./Inbox";
-import {Protyle} from "../../protyle";
 import {Backlink} from "./Backlink";
 import {AgentChat} from "./agent/AgentChat";
 import {adjustDockPadding, resetFloatDockSize} from "./util";
@@ -22,6 +21,8 @@ import {Plugin} from "../../plugin";
 import {Custom} from "./Custom";
 import {clearBeforeResizeTop, recordBeforeResizeTop} from "../../protyle/util/resize";
 import {Constants} from "../../constants";
+import {isEncryptedBox} from "../../util/pathName";
+import {showMessage} from "../../dialog/message";
 
 const TYPES = ["file", "outline", "inbox", "bookmark", "tag", "graph", "globalGraph", "backlink", "agentChat"];
 
@@ -502,15 +503,19 @@ export class Dock {
                 item.classList.remove("dock__item--active", "dock__item--activefocus");
             });
             target.classList.add("dock__item--active", "dock__item--activefocus");
+            const editor = this.app.protyleEditors.getActive();
+            if (type === "graph") {
+                if (!editor?.notebookId || !editor.block?.rootID) {
+                    target.classList.remove("dock__item--active", "dock__item--activefocus");
+                    return;
+                }
+                if (isEncryptedBox(editor.notebookId)) {
+                    target.classList.remove("dock__item--active", "dock__item--activefocus");
+                    showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+                    return;
+                }
+            }
             if (!target.getAttribute("data-id")) {
-                let editor: Protyle;
-                const models = getAllModels();
-                models.editor.find((item) => {
-                    if (item.parent.headElement.classList.contains("item--focus") && item.editor?.protyle?.path) {
-                        editor = item.editor;
-                        return true;
-                    }
-                });
                 let tab;
                 switch (type) {
                     case "file":
@@ -541,12 +546,12 @@ export class Dock {
                                     app: this.app,
                                     type: "pin",
                                     tab,
-                                    blockId: editor?.protyle?.block?.rootID,
-                                    notebookId: editor?.protyle?.notebookId,
-                                    isPreview: editor?.protyle?.preview ? !editor.protyle.preview.element.classList.contains("fn__none") : false
+                                    blockId: editor?.block?.rootID,
+                                    notebookId: editor?.notebookId,
+                                    isPreview: editor?.preview ? !editor.preview.element.classList.contains("fn__none") : false
                                 });
-                                if (editor?.protyle?.block?.rootID) {
-                                    outline.updateDocTitle(editor?.protyle?.background?.ial);
+                                if (editor?.block?.rootID) {
+                                    outline.updateDocTitle(editor.background?.ial);
                                 }
                                 tab.addModel(outline);
                             }
@@ -558,7 +563,8 @@ export class Dock {
                                 tab.addModel(new Graph({
                                     app: this.app,
                                     tab,
-                                    blockId: editor?.protyle?.block?.rootID,
+                                    blockId: editor.block.rootID,
+                                    notebookId: editor.notebookId,
                                     type: "pin"
                                 }));
                             }
@@ -582,8 +588,8 @@ export class Dock {
                                     app: this.app,
                                     type: "pin",
                                     tab,
-                                    blockId: editor?.protyle?.block?.rootID,
-                                    notebookId: editor?.protyle?.notebookId,
+                                    blockId: editor?.block?.rootID,
+                                    notebookId: editor?.notebookId,
                                 }));
                             }
                         });

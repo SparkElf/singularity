@@ -100,6 +100,7 @@ export const openMenuPanel = (options: {
     const ignoreRows = ["config", "properties", "sorts", "filters", "switcher"].includes(options.type);
     const fetchPayload = {
         id: avID,
+        notebook: options.protyle.notebookId,
         query: options.blockElement.querySelector('[data-type="av-search"]')?.textContent.trim() || "",
         pageSize: avPageSize.unGroupPageSize,
         groupPaging: avPageSize.groupPageSize,
@@ -1964,4 +1965,3 @@ ${hideHTML}
 </button>
 </div>`;
 };
-

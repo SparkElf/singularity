@@ -66,7 +66,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
             label: window.siyuan.languages.copy,
             type: "submenu",
             icon: "iconCopy",
-            submenu: copySubMenu(blockIDs).concat([{
+            submenu: copySubMenu(blockIDs, true, undefined, undefined, notebookId).concat([{
                 id: "duplicate",
                 iconHTML: "",
                 label: window.siyuan.languages.duplicate,
@@ -74,7 +74,8 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
                 click() {
                     blockIDs.forEach((id) => {
                         fetchPost("/api/filetree/duplicateDoc", {
-                            id
+                            id,
+                            notebook: notebookId,
                         });
                     });
                 }
@@ -154,7 +155,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
         }).element);
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
     }
-    openEditorTab(app, blockIDs);
+    openEditorTab(app, blockIDs, notebookId);
     window.siyuan.menus.menu.append(new MenuItem({
         id: "export",
         label: window.siyuan.languages.export,
@@ -169,6 +170,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
                     const msgId = showMessage(window.siyuan.languages.exporting, -1);
                     fetchPost("/api/export/exportSYs", {
                         ids: blockIDs,
+                        notebook: notebookId,
                     }, response => {
                         saveExportFile(response.data.zip, msgId);
                     });
@@ -179,7 +181,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
             label: "Markdown .zip",
             icon: "iconMarkdown",
             click: () => {
-                confirmEncryptedExport(notebookId, () => exportMarkdownZip({ids: blockIDs}));
+                confirmEncryptedExport(notebookId, () => exportMarkdownZip({ids: blockIDs, notebook: notebookId}));
             }
         }]
     }).element);
@@ -397,7 +399,7 @@ export const initNavigationMenu = (app: App, liElement: HTMLElement) => {
                 confirmEncryptedExport(notebookId, () => {
                     const msgId = showMessage(window.siyuan.languages.exporting, -1);
                     fetchPost("/api/export/exportNotebookSY", {
-                        id: notebookId,
+                        notebook: notebookId,
                     }, response => {
                         saveExportFile(response.data.zip, msgId);
                     });
@@ -492,14 +494,15 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
             label: window.siyuan.languages.copy,
             type: "submenu",
             icon: "iconCopy",
-            submenu: (copySubMenu([id]) as IMenu[]).concat([{
+            submenu: (copySubMenu([id], true, undefined, undefined, notebookId) as IMenu[]).concat([{
                 id: "duplicate",
                 iconHTML: "",
                 label: window.siyuan.languages.duplicate,
                 accelerator: window.siyuan.config.keymap.editor.general.duplicate.custom,
                 click() {
                     fetchPost("/api/filetree/duplicateDoc", {
-                        id
+                        id,
+                        notebook: notebookId,
                     });
                 }
             }])
@@ -545,7 +548,7 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
                     docInfoParam.notebook = notebookId;
                 }
                 fetchPost("/api/block/getDocInfo", docInfoParam, (response) => {
-                    openFileAttr(response.data.ial);
+                    openFileAttr(response.data.ial, "bookmark", undefined, notebookId);
                 });
             }
         }).element);
@@ -569,7 +572,8 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
                 label: window.siyuan.languages.manage,
                 click: () => {
                     fetchPost("/api/filetree/getHPathByID", {
-                        id
+                        id,
+                        notebook: notebookId,
                     }, (response) => {
                         viewCards(app, id, pathPosix().join(getNotebookName(notebookId), response.data), "Tree");
                     });
@@ -689,7 +693,7 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
         }).element);
     }
     genImportMenu(notebookId, pathString);
-    window.siyuan.menus.menu.append(exportMd(id));
+    window.siyuan.menus.menu.append(exportMd(id, notebookId));
     if (app.plugins) {
         emitOpenMenu({
             plugins: app.plugins,

@@ -19,7 +19,7 @@
     "test:browser-integration": "pnpm --filter @singularity/web test:browser-integration",
     "test:l0-governance": "node --test ../scripts/singularity/*.test.mjs",
     "test:s0-s3": "pnpm --filter @singularity/contracts test && pnpm --filter @singularity/database test:integration && pnpm --filter @singularity/api test && pnpm --filter @singularity/web test:space-access && pnpm --filter @singularity/web test:browser-integration",
-    "typecheck": "pnpm --filter @singularity/web typecheck",
+    "typecheck": "pnpm --filter @singularity/protyle-browser typecheck && pnpm --filter @singularity/web typecheck",
     "typecheck:s0-s3": "pnpm --filter @singularity/authorization typecheck && pnpm --filter @singularity/contracts typecheck && pnpm --filter @singularity/kernel-client typecheck && pnpm --filter @singularity/database typecheck && pnpm --filter @singularity/api typecheck && pnpm --filter @singularity/web typecheck",
     "verify:b4": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "verify:s0-s3": "pnpm lint:s0-s3 && pnpm typecheck:s0-s3 && pnpm test:s0-s3 && pnpm build:s0-s3",

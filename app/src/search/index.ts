@@ -1,7 +1,7 @@
 import {Model} from "../layout/Model";
 import {Tab} from "../layout/Tab";
-import {Protyle} from "../protyle";
 import {genSearch} from "./util";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {setPanelFocus} from "../layout/util";
 import {App} from "../index";
 import {clearOBG} from "../layout/dock/util";
@@ -9,7 +9,7 @@ import {clearOBG} from "../layout/dock/util";
 export class Search extends Model {
     public element: HTMLElement;
     public config: Config.IUILayoutTabSearchConfig;
-    public editors: { edit: Protyle, unRefEdit: Protyle };
+    public editors: { edit: EmbeddedProtyleOwner, unRefEdit: EmbeddedProtyleOwner };
 
     constructor(options: { tab: Tab, config: Config.IUILayoutTabSearchConfig, app: App }) {
         super({

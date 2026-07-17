@@ -1,15 +1,20 @@
 import {isMobile} from "../util/functions";
 import {Dialog} from "./index";
 import {Constants} from "../constants";
+import {ConfirmDialogLifecycle} from "./confirmDialogLifecycle";
 
 export const confirmDialog = (title: string, text: string,
                               confirm?: (dialog?: Dialog) => void,
                               cancel?: (dialog: Dialog) => void,
-                              isDelete = false) => {
+                              isDelete = false,
+                              signal?: AbortSignal) => {
     if (!text && !title) {
-        confirm();
+        if (!signal?.aborted) {
+            confirm();
+        }
         return;
     }
+    const lifecycle = new ConfirmDialogLifecycle(confirm, cancel);
     const dialog = new Dialog({
         title,
         content: `<div class="b3-dialog__content">
@@ -20,27 +25,40 @@ export const confirmDialog = (title: string, text: string,
     <button class="b3-button ${isDelete ? "b3-button--remove" : "b3-button--text"}" id="confirmDialogConfirmBtn">${window.siyuan.languages[isDelete ? "delete" : "confirm"]}</button>
 </div>`,
         width: isMobile() ? "92vw" : "520px",
+        beforeDestroyCallback() {
+            signal?.removeEventListener("abort", abort);
+            lifecycle.cancel(dialog);
+        },
     });
+    const abort = () => dialog.destroy();
 
     dialog.element.addEventListener("click", (event) => {
         let target = event.target as HTMLElement;
         const isDispatch = typeof event.detail === "string";
         while (target && target !== dialog.element || isDispatch) {
             if (target.id === "cancelDialogConfirmBtn" || (isDispatch && event.detail=== "Escape")) {
-                if (cancel) {
-                    cancel(dialog);
+                try {
+                    lifecycle.cancel(dialog);
+                } finally {
+                    dialog.destroy();
                 }
-                dialog.destroy();
                 break;
             } else if (target.id === "confirmDialogConfirmBtn" || (isDispatch && event.detail=== "Enter")) {
-                if (confirm) {
-                    confirm(dialog);
+                try {
+                    lifecycle.confirm(dialog);
+                } finally {
+                    dialog.destroy();
                 }
-                dialog.destroy();
                 break;
             }
             target = target.parentElement;
         }
     });
     dialog.element.setAttribute("data-key", Constants.DIALOG_CONFIRM);
+    if (signal?.aborted) {
+        abort();
+    } else {
+        signal?.addEventListener("abort", abort, {once: true});
+    }
+    return dialog;
 };

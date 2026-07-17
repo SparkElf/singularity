@@ -10,19 +10,12 @@ import {focusByRange} from "../protyle/util/selection";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {hideElements} from "../protyle/ui/hideElements";
 
-const renderRecentDocsContent = async (data: {
-    rootID: string,
-    icon: string,
-    title: string,
-    viewedAt?: number,
-    closedAt?: number,
-    openAt?: number,
-}[], element: Element, key?: string) => {
+const renderRecentDocsContent = async (data: IRecentDoc[], element: Element, key?: string) => {
     let tabHtml = "";
     let index = 0;
     data.forEach((item) => {
         if (!key || item.title.toLowerCase().includes(key.toLowerCase())) {
-            tabHtml += `<li data-index="${index}" data-node-id="${item.rootID}" class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}">
+            tabHtml += `<li data-index="${index}" data-node-id="${item.rootID}" data-notebook-id="${item.notebookId}" class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}">
     ${unicode2Emoji(item.icon || window.siyuan.storage[Constants.LOCAL_IMAGES].file, "b3-list-item__graphic", true)}
     <span class="b3-list-item__text">${escapeHtml(item.title)}</span>
 </li>`;

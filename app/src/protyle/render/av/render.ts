@@ -511,6 +511,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             const snapshot = protyle.options.history?.snapshot;
             const response = await fetchSyncPost(created ? "/api/av/renderHistoryAttributeView" : (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"), {
                 id: e.getAttribute("data-av-id"),
+                notebook: protyle.notebookId,
                 created,
                 snapshot,
                 pageSize: avPageSize.unGroupPageSize,

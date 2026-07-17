@@ -30,16 +30,26 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
         window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_TITLE);
         const popoverElement = hasTopClosestByClassName(protyle.element, "block__popover", true);
         window.siyuan.menus.menu.element.setAttribute("data-from", popoverElement ? popoverElement.dataset.level + "popover-" + from : "app-" + from);
-        const submenu = copySubMenu([protyle.block.rootID], true, undefined, protyle.block.showAll ? protyle.block.id : protyle.block.rootID);
+        const submenu = copySubMenu(
+            [protyle.block.rootID],
+            true,
+            undefined,
+            protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
+            protyle.notebookId
+        );
         submenu.push({
             iconHTML: "",
             label: window.siyuan.languages.copyDoc,
             accelerator: undefined,
             click: async () => {
                 const [responseHTML, responseText] = await Promise.all([
-                    fetchSyncPost("/api/block/getBlockDOM", {id: protyle.block.rootID}),
+                    fetchSyncPost("/api/block/getBlockDOM", {
+                        id: protyle.block.rootID,
+                        notebook: protyle.notebookId,
+                    }),
                     fetchSyncPost("/api/export/exportMdContent", {
                         id: protyle.block.rootID,
+                        notebook: protyle.notebookId,
                         refMode: 3,
                         embedMode: 1,
                         yfm: false,
@@ -264,7 +274,10 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 }
             }).element);
         }
-        window.siyuan.menus.menu.append(exportMd(protyle.block.showAll ? protyle.block.id : protyle.block.rootID));
+        window.siyuan.menus.menu.append(exportMd(
+            protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
+            protyle.notebookId
+        ));
 
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_4", type: "separator"}).element);
         emitProtylePluginMenu({

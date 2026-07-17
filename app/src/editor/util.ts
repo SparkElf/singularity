@@ -5,7 +5,13 @@ import {getInstanceById, getWndByLayout, pdfIsLoading, setPanelFocus} from "../l
 import {getDockByType} from "../layout/tabUtil";
 import {getAllModels, getAllTabs} from "../layout/getAll";
 import {highlightById, scrollCenter} from "../util/highlightById";
-import {getDisplayName, getDocDisplayName, isEncryptedBox, pathPosix} from "../util/pathName";
+import {
+    getDisplayName,
+    getDocDisplayName,
+    isEncryptedBox,
+    isSameNotebookContentDomain,
+    pathPosix
+} from "../util/pathName";
 import {Constants} from "../constants";
 import {Files} from "../layout/dock/Files";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
@@ -36,7 +42,7 @@ import {hideElements} from "../protyle/ui/hideElements";
 export const openFileById = async (options: {
     app: App,
     id: string,
-    notebookId?: string,
+    notebookId: string,
     position?: string,
     mode?: TEditorMode,
     action?: TProtyleAction[]
@@ -47,6 +53,12 @@ export const openFileById = async (options: {
     afterOpen?: (model: Model) => void,
     scrollPosition?: ScrollLogicalPosition
 }) => {
+    if (!options.notebookId) {
+        console.error("[Singularity/ProtyleIdentity] openFileById requires notebookId", {
+            blockId: options.id,
+        });
+        return;
+    }
     const blockInfoParam: IObject = {id: options.id};
     if (isEncryptedBox(options.notebookId)) {
         blockInfoParam.notebook = options.notebookId;
@@ -59,6 +71,14 @@ export const openFileById = async (options: {
         showMessage(response.msg);
         return;
     }
+    if (response.data?.box !== options.notebookId) {
+        console.error("[Singularity/ProtyleIdentity] block resolved to a different notebook", {
+            blockId: options.id,
+            expectedNotebookId: options.notebookId,
+            actualNotebookId: response.data?.box,
+        });
+        return;
+    }
 
     return openFile({
         app: options.app,
@@ -66,7 +86,7 @@ export const openFileById = async (options: {
         rootTitleEmpty: response.data.rootTitleEmpty,
         rootIcon: response.data.rootIcon,
         rootID: response.data.rootID,
-        notebookId: response.data.box,
+        notebookId: options.notebookId,
         id: options.id,
         position: options.position,
         mode: options.mode,
@@ -112,7 +132,8 @@ export const openFile = async (options: IOpenFileOptions) => {
     if (options.assetPath) {
         clearOBG();
         const asset = allModels.asset.find((item) => {
-            if (item.path == options.assetPath && item.notebookId === options.notebookId) {
+            if (item.path == options.assetPath &&
+                item.notebookId === options.notebookId) {
                 if (!pdfIsLoading(item.parent.parent.element)) {
                     item.parent.parent.switchTab(item.parent.headElement);
                     item.parent.parent.showHeading();
@@ -169,7 +190,8 @@ export const openFile = async (options: IOpenFileOptions) => {
         let editor: Editor;
         let activeEditor: Editor;
         allModels.editor.find((item) => {
-            if (item.editor.protyle.block.rootID === options.rootID) {
+            if (item.editor.protyle.block.rootID === options.rootID &&
+                item.editor.protyle.notebookId === options.notebookId) {
                 if (hasClosestByClassName(item.element, "layout__wnd--active")) {
                     activeEditor = item;
                 }
@@ -244,7 +266,9 @@ export const openFile = async (options: IOpenFileOptions) => {
                 }
                 // 在右侧/下侧打开已有页签将进行页签切换 https://github.com/siyuan-note/siyuan/issues/5366
                 let hasEditor = targetWnd.children.find(item => {
-                    if (item.model && item.model instanceof Editor && item.model.editor.protyle.block.rootID === options.rootID) {
+                    if (item.model && item.model instanceof Editor &&
+                        item.model.editor.protyle.block.rootID === options.rootID &&
+                        item.model.editor.protyle.notebookId === options.notebookId) {
                         switchEditor(item.model, options, allModels);
                         return true;
                     }
@@ -313,7 +337,8 @@ const getUnInitTab = (options: IOpenFileOptions) => {
         if (initData) {
             const initObj = JSON.parse(initData);
             if (initObj.instance === "Editor" &&
-                (initObj.rootId === options.rootID || initObj.blockId === options.rootID)) {
+                (initObj.rootId === options.rootID || initObj.blockId === options.rootID) &&
+                initObj.notebookId === options.notebookId) {
                 initObj.blockId = options.id;
                 initObj.mode = options.mode;
                 if (options.zoomIn) {
@@ -591,14 +616,15 @@ export const updatePanelByEditor = (options: {
     updateBacklinkGraph(models, options.protyle);
 };
 
-export const isCurrentEditor = (blockId: string) => {
+export const isCurrentEditor = (blockId: string, notebookId?: string) => {
     const activeElement = document.querySelector(".layout__wnd--active > .fn__flex > .layout-tab-bar > .item--focus");
     if (activeElement) {
         const tab = getInstanceById(activeElement.getAttribute("data-id"));
         if (tab instanceof Tab && tab.model instanceof Editor) {
-            if (tab.model.editor.protyle.block.rootID === blockId ||
+            if ((tab.model.editor.protyle.block.rootID === blockId ||
                 tab.model.editor.protyle.block.parentID === blockId ||  // updateBacklinkGraph 时会传入 parentID
-                tab.model.editor.protyle.block.id === blockId) {
+                tab.model.editor.protyle.block.id === blockId) &&
+                isSameNotebookContentDomain(tab.model.editor.protyle.notebookId, notebookId)) {
                 return true;
             }
         }
@@ -607,10 +633,12 @@ export const isCurrentEditor = (blockId: string) => {
 };
 
 export const updateOutline = (models: IModels, protyle: IProtyle, reload = false) => {
+    const notebookId = protyle?.notebookId;
     models.outline.find(item => {
         if (reload ||
             (item.type === "pin" &&
                 (!protyle || item.blockId !== protyle.block?.rootID ||
+                    !isSameNotebookContentDomain(item.notebookId, notebookId) ||
                     item.isPreview === protyle.preview.element.classList.contains("fn__none"))
             )
         ) {
@@ -621,7 +649,9 @@ export const updateOutline = (models: IModels, protyle: IProtyle, reload = false
                     blockId = item.blockId;
                 }
             }
-            if (blockId === item.blockId && !reload && item.isPreview !== protyle.preview.element.classList.contains("fn__none")) {
+            if (blockId === item.blockId &&
+                isSameNotebookContentDomain(item.notebookId, notebookId) &&
+                !reload && item.isPreview !== protyle.preview.element.classList.contains("fn__none")) {
                 return;
             }
 
@@ -629,16 +659,17 @@ export const updateOutline = (models: IModels, protyle: IProtyle, reload = false
                 id: blockId,
                 preview: !protyle.preview.element.classList.contains("fn__none")
             };
-            if (protyle && isEncryptedBox(protyle.notebookId)) {
-                outlineParam.notebook = protyle.notebookId;
+            if (isEncryptedBox(notebookId)) {
+                outlineParam.notebook = notebookId;
             }
             fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                if (!reload && (!isCurrentEditor(blockId) || item.blockId === blockId) &&
+                if (!reload && (!isCurrentEditor(blockId, notebookId) ||
+                    (item.blockId === blockId && isSameNotebookContentDomain(item.notebookId, notebookId))) &&
                     item.isPreview !== protyle.preview.element.classList.contains("fn__none")) {
                     return;
                 }
                 item.isPreview = !protyle.preview.element.classList.contains("fn__none");
-                item.update(response, blockId);
+                item.update(response, blockId, notebookId);
                 if (protyle) {
                     item.updateDocTitle(protyle.background.ial, response.data?.length || 0);
                     if (getSelection().rangeCount > 0) {
@@ -668,32 +699,41 @@ export const updateBacklinkGraph = (models: IModels, protyle: IProtyle) => {
         return;
     }
     models.graph.forEach(item => {
-        if (item.type !== "global" && (!protyle || item.blockId !== protyle.block?.id)) {
-            if (item.type === "local" && item.rootId !== protyle?.block?.rootID) {
-                return;
-            }
-            let blockId = "";
-            if (protyle && protyle.block) {
-                blockId = protyle.block.showAll ? protyle.block.id : protyle.block.parentID;
-            }
-            if (blockId === item.blockId) {
-                return;
-            }
-            item.searchGraph(true, blockId);
+        if (item.type === "global" || !protyle || isEncryptedBox(protyle.notebookId)) {
+            return;
         }
+        if (item.type === "local" && (item.rootId !== protyle.block?.rootID ||
+            !isSameNotebookContentDomain(item.notebookId, protyle.notebookId))) {
+            return;
+        }
+        const blockId = protyle.block?.showAll ? protyle.block.id : protyle.block?.parentID;
+        if (!blockId || (blockId === item.blockId &&
+            isSameNotebookContentDomain(item.notebookId, protyle.notebookId))) {
+            return;
+        }
+        item.searchGraph(true, {id: blockId, notebookId: protyle.notebookId});
     });
     models.backlink.forEach(item => {
-        if (item.type === "local" && item.rootId !== protyle?.block?.rootID) {
+        if (!protyle && isEncryptedBox(item.notebookId)) {
+            return;
+        }
+        if (item.type === "local" && (item.rootId !== protyle?.block?.rootID ||
+            !isSameNotebookContentDomain(item.notebookId, protyle?.notebookId))) {
             return;
         }
         let blockId = "";
         if (protyle && protyle.block) {
             blockId = protyle.block.showAll ? protyle.block.id : protyle.block.parentID;
         }
-        if (blockId === item.blockId) {
+        if (blockId === item.blockId &&
+            isSameNotebookContentDomain(item.notebookId, protyle?.notebookId)) {
             return;
         }
-        item.updateForCurrentEditor(blockId, () => isCurrentEditor(blockId), protyle?.notebookId);
+        item.updateForCurrentEditor(
+            blockId,
+            () => isCurrentEditor(blockId, protyle?.notebookId),
+            protyle?.notebookId
+        );
     });
 };
 

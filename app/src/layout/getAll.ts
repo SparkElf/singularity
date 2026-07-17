@@ -1,4 +1,5 @@
 import type {Protyle} from "../protyle";
+import type {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 /// #if !MOBILE
 import {Layout} from "./index";
 import {Tab} from "./Tab";
@@ -17,6 +18,12 @@ import {Wnd} from "./Wnd";
 
 export const getAllEditor = () => {
     const editors: Protyle[] = [];
+    const appendEditor = (editor: Protyle | EmbeddedProtyleOwner) => {
+        const currentEditor = "getCurrent" in editor ? editor.getCurrent() : editor;
+        if (currentEditor) {
+            editors.push(currentEditor);
+        }
+    };
     /// #if MOBILE
     if (window.siyuan.mobile.editor) {
         editors.push(window.siyuan.mobile.editor);
@@ -30,12 +37,12 @@ export const getAllEditor = () => {
         editors.push(item.editor);
     });
     models.search.forEach(item => {
-        editors.push(item.editors.edit);
-        editors.push(item.editors.unRefEdit);
+        appendEditor(item.editors.edit);
+        appendEditor(item.editors.unRefEdit);
     });
     models.custom.forEach(item => {
         item.editors?.forEach(eItem => {
-            editors.push(eItem);
+            appendEditor(eItem);
         });
     });
     models.backlink.forEach(item => {
@@ -46,7 +53,7 @@ export const getAllEditor = () => {
     window.siyuan.dialogs.forEach(item => {
         if (item.editors) {
             Object.keys(item.editors).forEach(key => {
-                editors.push(item.editors[key]);
+                appendEditor(item.editors[key]);
             });
         }
     });

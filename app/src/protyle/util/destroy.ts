@@ -9,6 +9,7 @@ export const destroy = (protyle: IProtyle) => {
         return;
     }
     protyle.destroyed = true;
+    protyle.uiEventController?.abort();
     protyle.editors.unregister(protyle);
     hideElements(["util"], protyle);
     if (isSupportCSSHL()) {

@@ -73,15 +73,23 @@ describe("createProtyleEditorRegistry", () => {
     expect(registry.find((editor) => editor === second)).toBeUndefined();
   });
 
-  it("disposes once, clears active state, and rejects late registration", () => {
+  it("seals registration before disposal while preserving current editors", () => {
     const registry = createProtyleEditorRegistry<object>();
-    registry.register({});
+    const editor = {};
+    registry.register(editor);
+
+    registry.seal();
+    registry.seal();
+
+    expect(registry.getActive()).toBe(editor);
+    expect(registry.find(() => true)).toBe(editor);
+    expect(() => registry.register({})).toThrowError(/after sealing/);
 
     registry.dispose();
     registry.dispose();
 
     expect(registry.getActive()).toBeUndefined();
     expect(registry.find(() => true)).toBeUndefined();
-    expect(() => registry.register({})).toThrowError(/\[protyle\.registry]/);
+    expect(() => registry.register({})).toThrowError(/after disposal/);
   });
 });

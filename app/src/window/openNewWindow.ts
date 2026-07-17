@@ -6,7 +6,7 @@ import {Constants} from "../constants";
 import {Tab} from "../layout/Tab";
 import {fetchSyncPost} from "../util/fetch";
 import {showMessage} from "../dialog/message";
-import {getDisplayName, pathPosix} from "../util/pathName";
+import {getDisplayName, isEncryptedBox, pathPosix} from "../util/pathName";
 import {getSearch} from "../util/functions";
 
 interface windowOptions {
@@ -17,6 +17,10 @@ interface windowOptions {
     width?: number,
     height?: number,
     alwaysOnTop?: boolean,
+}
+
+interface contentWindowOptions extends windowOptions {
+    notebookId: string,
 }
 
 export const openNewWindow = (tab: Tab, options: windowOptions = {}) => {
@@ -35,14 +39,18 @@ export const openNewWindow = (tab: Tab, options: windowOptions = {}) => {
     tab.parent.removeTab(tab.id);
 };
 
-export const openNewWindowById = async (id: string | string[], options: windowOptions = {}) => {
+export const openNewWindowById = async (id: string | string[], options: contentWindowOptions) => {
     let ids = id;
     if (typeof ids === "string") {
         ids = [ids];
     }
     const json = [];
     for (let i = 0; i < ids.length; i++) {
-        const response = await fetchSyncPost("/api/block/getBlockInfo", {id: ids[i]});
+        const blockInfoParam: IObject = {id: ids[i]};
+        if (isEncryptedBox(options.notebookId)) {
+            blockInfoParam.notebook = options.notebookId;
+        }
+        const response = await fetchSyncPost("/api/block/getBlockInfo", blockInfoParam);
         if (response.code === 3) {
             showMessage(response.msg);
             return;
@@ -55,7 +63,7 @@ export const openNewWindowById = async (id: string | string[], options: windowOp
             instance: "Tab",
             action: "Tab",
             children: {
-                notebookId: response.data.box,
+                notebookId: options.notebookId,
                 blockId: ids[i],
                 rootId: response.data.rootID,
                 mode: "wysiwyg",
@@ -75,7 +83,7 @@ export const openNewWindowById = async (id: string | string[], options: windowOp
     /// #endif
 };
 
-export const openAssetNewWindow = (assetPath: string, options: windowOptions = {}) => {
+export const openAssetNewWindow = (assetPath: string, options: contentWindowOptions) => {
     /// #if !BROWSER
     const suffix = pathPosix().extname(assetPath).split("?")[0];
     if (Constants.SIYUAN_ASSETS_EXTS.includes(suffix)) {
@@ -96,6 +104,7 @@ export const openAssetNewWindow = (assetPath: string, options: windowOptions = {
             action: "Tab",
             children: {
                 path: assetPath,
+                notebookId: options.notebookId,
                 page: parseInt(getSearch("page", assetPath)),
                 instance: "Asset",
             }

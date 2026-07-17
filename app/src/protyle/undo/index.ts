@@ -69,7 +69,7 @@ export class Undo implements IUndo {
     // 保留签名以兼容 transaction.ts 的调用点。
     public add(doOperations: IOperation[], undoOperations: IOperation[], protyle: IProtyle) {
         if (protyle.block?.rootID) {
-            markMirror(protyle.block.rootID, {canUndo: true});
+            markMirror(protyle.notebookId, protyle.block.rootID, {canUndo: true});
         }
         refreshUndoButtons(protyle);
     }

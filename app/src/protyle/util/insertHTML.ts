@@ -679,7 +679,10 @@ export const insertHTML = (html: string, protyle: IProtyle, isBlock = false,
     let foldData;
     if (blockElement.getAttribute("data-type") === "NodeHeading" &&
         blockElement.getAttribute("fold") === "1" && !insertBefore) {
-        fetchPost("/api/block/getHeadingChildrenIDs", {id: blockElement.getAttribute("data-node-id")}, (response) => {
+        fetchPost("/api/block/getHeadingChildrenIDs", {
+            id: blockElement.getAttribute("data-node-id"),
+            notebook: protyle.notebookId,
+        }, (response) => {
             const childrenIDs: string[] = response.data;
             const previousId = (childrenIDs && childrenIDs.length > 0) ? childrenIDs[childrenIDs.length - 1] : blockElement.getAttribute("data-node-id");
             foldData = setFold(protyle, blockElement, true, false, false, true);

@@ -232,6 +232,7 @@ export const renderGallery = async (options: {
         const avPageSize = getPageSize(options.blockElement);
         const response = await fetchSyncPost(created ? "/api/av/renderHistoryAttributeView" : (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"), {
             id: options.blockElement.getAttribute("data-av-id"),
+            notebook: options.protyle.notebookId,
             created,
             snapshot,
             pageSize: avPageSize.unGroupPageSize,

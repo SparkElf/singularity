@@ -53,7 +53,7 @@ import {reloadProtyle} from "../../protyle/util/reload";
 import {fullscreen} from "../../protyle/breadcrumb/action";
 import {openRecentDocs} from "../../business/openRecentDocs";
 import {App} from "../../index";
-import {openBacklink, openGraph, openOutline, toggleDockBar} from "../../layout/dock/util";
+import {openBacklink, openOutline, toggleDockBar} from "../../layout/dock/util";
 import {workspaceMenu} from "../../menus/workspace";
 import {resize} from "../../protyle/util/resize";
 import {Search} from "../../search";
@@ -143,9 +143,17 @@ const dialogArrow = (app: App, element: HTMLElement, event: KeyboardEvent) => {
                     getDockByType(currentType).toggleModel(currentType, true);
                 }
             } else {
+                const notebookId = currentLiElement.getAttribute("data-notebook-id");
+                if (!notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] recent document has no notebook", {
+                        documentId: currentLiElement.getAttribute("data-node-id"),
+                    });
+                    return;
+                }
                 openFileById({
                     app,
                     id: currentLiElement.getAttribute("data-node-id"),
+                    notebookId,
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                 });
             }
@@ -189,8 +197,9 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
         window.siyuan.dialogs.find(item => {
             if (item.editors) {
                 Object.keys(item.editors).find(key => {
-                    if (item.editors[key].protyle.element.contains(range.startContainer)) {
-                        protyle = item.editors[key].protyle;
+                    const editorProtyle = item.editors[key].protyle;
+                    if (editorProtyle?.element.contains(range.startContainer)) {
+                        protyle = editorProtyle;
                         // https://github.com/siyuan-note/siyuan/issues/9384
                         isFileFocus = false;
                         return true;
@@ -207,10 +216,10 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
         if (activeTab.model instanceof Editor) {
             protyle = activeTab.model.editor.protyle;
         } else if (activeTab.model instanceof Search) {
-            if (activeTab.model.element.querySelector("#searchUnRefPanel").classList.contains("fn__none")) {
-                protyle = activeTab.model.editors.edit.protyle;
-            } else {
-                protyle = activeTab.model.editors.unRefEdit.protyle;
+            const searchProtyle = activeTab.model.element.querySelector("#searchUnRefPanel").classList.contains("fn__none") ?
+                activeTab.model.editors.edit.protyle : activeTab.model.editors.unRefEdit.protyle;
+            if (searchProtyle) {
+                protyle = searchProtyle;
             }
         } else if (activeTab.model instanceof Custom && activeTab.model.editors?.length > 0) {
             if (range) {
@@ -320,8 +329,10 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
         return true;
     }
     if (!isFileFocus && matchHotKey(window.siyuan.config.keymap.editor.general.spaceRepetition.custom, event) && !window.siyuan.config.readonly) {
-        fetchPost("/api/riff/getTreeRiffDueCards", {rootID: protyle.block.rootID}, (response) => {
-            openCardByData(app, response.data, "doc", protyle.block.rootID, protyle.title?.editElement.textContent || window.siyuan.languages.untitled);
+        protyle.host.dispatch({
+            type: "open-card-review",
+            notebookId: protyle.notebookId,
+            documentId: protyle.block.rootID,
         });
         event.preventDefault();
         return true;
@@ -424,19 +435,20 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
         if (range) {
             const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
             if (refElement) {
-                openGraph({
-                    app: protyle.app,
-                    blockId: refElement.dataset.id,
+                protyle.host.dispatch({
+                    type: "open-graph",
+                    scope: "document",
+                    notebookId: protyle.notebookId,
+                    documentId: refElement.dataset.id,
                 });
                 return true;
             }
         }
-        openGraph({
-            app: protyle.app,
-            blockId: protyle.block.id,
-            rootId: protyle.block.rootID,
-            useBlockId: protyle.block.showAll,
-            title: protyle.title ? (protyle.title.editElement.textContent || window.siyuan.languages.untitled) : null,
+        protyle.host.dispatch({
+            type: "open-graph",
+            scope: "document",
+            notebookId: protyle.notebookId,
+            documentId: protyle.block.id,
         });
         return true;
     }
@@ -701,6 +713,7 @@ const fileTreeKeydown = (app: App, event: KeyboardEvent) => {
         ids.forEach(item => {
             fetchPost("/api/filetree/duplicateDoc", {
                 id: item,
+                notebook: notebookId,
             });
         });
         return true;
@@ -723,20 +736,20 @@ const fileTreeKeydown = (app: App, event: KeyboardEvent) => {
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocol.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "protocol");
+        copyTextByType(ids, "protocol", notebookId);
         return true;
     }
 
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "protocolMd");
+        copyTextByType(ids, "protocolMd", notebookId);
         return true;
     }
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyHPath.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "hPath");
+        copyTextByType(ids, "hPath", notebookId);
         return true;
     }
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyID.custom, event)) {
@@ -762,6 +775,7 @@ const fileTreeKeydown = (app: App, event: KeyboardEvent) => {
         openFileById({
             app,
             id: liElements[0].getAttribute("data-node-id"),
+            notebookId,
             action: [Constants.CB_GET_FOCUS],
             position: "right",
         });
@@ -962,7 +976,12 @@ const fileTreeKeydown = (app: App, event: KeyboardEvent) => {
         window.siyuan.menus.menu.remove();
         liElements.forEach(item => {
             if (item.getAttribute("data-type") === "navigation-file") {
-                openFileById({app, id: item.getAttribute("data-node-id"), action: [Constants.CB_GET_FOCUS]});
+                openFileById({
+                    app,
+                    id: item.getAttribute("data-node-id"),
+                    notebookId,
+                    action: [Constants.CB_GET_FOCUS]
+                });
             } else {
                 const itemTopULElement = hasTopClosestByTag(item, "UL");
                 if (itemTopULElement) {

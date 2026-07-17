@@ -6,6 +6,7 @@ import {hasClosestByClassName} from "./hasClosest";
 import {preventScroll} from "../scroll/preventScroll";
 import {isSupportCSSHL, searchMarkRender} from "../render/searchMarkRender";
 import {restoreLuteMarkdownSyntax} from "./paste";
+import {isEncryptedBox} from "../../util/pathName";
 
 export const reloadProtyle = (protyle: IProtyle, focus: boolean, updateReadonly?: boolean) => {
     if (!protyle.preview.element.classList.contains("fn__none")) {
@@ -44,12 +45,16 @@ export const reloadProtyle = (protyle: IProtyle, focus: boolean, updateReadonly?
         if (tabElement) {
             const inputsElement = tabElement.querySelectorAll(".b3-text-field") as NodeListOf<HTMLInputElement>;
             const keyword = isMention ? inputsElement[1].value : inputsElement[0].value;
-            fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", {
+            const params: IObject = {
                 defID: protyle.element.getAttribute("data-defid"),
                 refTreeID: protyle.block.rootID,
                 highlight: !isSupportCSSHL(),
                 keyword,
-            }, response => {
+            };
+            if (isEncryptedBox(protyle.notebookId)) {
+                params.notebook = protyle.notebookId;
+            }
+            fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", params, response => {
                 protyle.options.backlinkData = isMention ? response.data.backmentions : response.data.backlinks;
                 renderBacklink(protyle, protyle.options.backlinkData);
                 searchMarkRender(protyle, response.data.keywords);

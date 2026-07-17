@@ -41,6 +41,16 @@ export class Bookmark extends Model {
     <span data-type="min" class="block__icon ariaLabel" data-position="north" aria-label="${window.siyuan.languages.min}${updateHotkeyAfterTip(window.siyuan.config.keymap.general.closeTab.custom)}"><svg><use xlink:href='#iconMin'></use></svg></span>
 </div>
 <div class="fn__flex-1" style="margin-bottom: 8px"></div>`;
+        const getTargetNotebookId = (element: HTMLElement) => {
+            const notebookId = element.getAttribute("data-notebook-id");
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] bookmark target has no notebook", {
+                    blockId: element.getAttribute("data-node-id"),
+                });
+                return;
+            }
+            return notebookId;
+        };
         this.tree = new Tree({
             element: this.element.lastElementChild as HTMLElement,
             data: null,
@@ -53,10 +63,15 @@ export class Bookmark extends Model {
                     }
                 }
                 const id = element.getAttribute("data-node-id");
-                checkFold(id, (zoomIn, action: TProtyleAction[]) => {
+                const notebookId = getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
+                checkFold(id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                     openFileById({
                         app,
                         id,
+                        notebookId,
                         action,
                         zoomIn
                     });
@@ -67,10 +82,15 @@ export class Bookmark extends Model {
             },
             ctrlClick: (element: HTMLElement) => {
                 const id = element.getAttribute("data-node-id");
-                checkFold(id, (zoomIn) => {
+                const notebookId = getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
+                checkFold(id, notebookId, (zoomIn) => {
                     openFileById({
                         app,
                         id,
+                        notebookId,
                         keepCursor: true,
                         action: zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
                         zoomIn
@@ -79,10 +99,15 @@ export class Bookmark extends Model {
             },
             altClick: (element: HTMLElement,) => {
                 const id = element.getAttribute("data-node-id");
-                checkFold(id, (zoomIn, action: TProtyleAction[]) => {
+                const notebookId = getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
+                checkFold(id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                     openFileById({
                         app,
                         id,
+                        notebookId,
                         position: "bottom",
                         action,
                         zoomIn
@@ -91,10 +116,15 @@ export class Bookmark extends Model {
             },
             shiftClick: (element: HTMLElement) => {
                 const id = element.getAttribute("data-node-id");
-                checkFold(id, (zoomIn, action: TProtyleAction[]) => {
+                const notebookId = getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
+                checkFold(id, notebookId, (zoomIn, action: TProtyleAction[]) => {
                     openFileById({
                         app,
                         id,
+                        notebookId,
                         position: "bottom",
                         action,
                         zoomIn

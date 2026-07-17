@@ -25,7 +25,6 @@ import {
 import {fetchPost} from "../util/fetch";
 import {getDocDisplayName, isEncryptedBox} from "../util/pathName";
 import {initMirror, refreshUndoButtons, syncMirrorFromBroadcast} from "./undo/globalUndo";
-import {updatePanelByEditor} from "../editor/util";
 import {setPanelFocus} from "../layout/util";
 import {Title} from "./header/Title";
 import {Background} from "./header/Background";
@@ -40,42 +39,118 @@ import {avRender} from "./render/av/render";
 import {focusBlock, getEditorRange} from "./util/selection";
 import {hasClosestBlock} from "./util/hasClosest";
 import {setStorageVal} from "./util/compatibility";
-import {getAllModels} from "../layout/getAll";
 import {isSupportCSSHL} from "./render/searchMarkRender";
 import {renderAVAttribute} from "./render/av/blockAttr";
 import {setFoldById, zoomOut} from "../menus/protyle";
 import {setEditMode} from "./util/setEditMode";
 
+const dispatchWorkspaceOutlineRefresh = (protyle: IProtyle) => {
+    if (protyle.surface !== "workspace") {
+        return;
+    }
+    protyle.host.dispatch({
+        type: "refresh-outline",
+        notebookId: protyle.notebookId,
+        documentId: protyle.block.rootID,
+    });
+};
+
+const dispatchWorkspaceActivation = (protyle: IProtyle) => {
+    if (protyle.surface === "workspace") {
+        protyle.host.dispatch({
+            type: "activate-document",
+            documentId: protyle.block.rootID,
+        });
+    }
+};
+
+const getProtyleContentStore = (protyle: IProtyle) =>
+    isEncryptedBox(protyle.notebookId) ? protyle.notebookId : "";
+
 export class Protyle {
 
     public readonly version: string;
     public protyle: IProtyle;
+    private contentOwnerMouseover?: (event: MouseEvent & { contentNotebookId?: string }) => void;
+    private onBacklinkChange?: () => void;
 
     /**
      * @param id 要挂载 Protyle 的元素或者元素 ID。
      * @param options Protyle 参数
      */
-    constructor(app: App, id: HTMLElement, options: IProtyleOptions, lifecycle?: {
-        participateInSession?: boolean,
-    }) {
+    constructor(app: App, id: HTMLElement,
+                options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
+                lifecycle: TProtyleBoundLifecycle & { participation: "live" });
+    constructor(app: App, id: HTMLElement,
+                options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
+                lifecycle: TProtyleBoundLifecycle & { participation: "detached" });
+    constructor(app: App, id: HTMLElement,
+                options: Omit<IProtyleOptions, "blockId" | "notebookId"> & { blockId?: never },
+                lifecycle: TProtyleLocalOnlyLifecycle);
+    constructor(app: App, id: HTMLElement, options: Omit<IProtyleOptions, "notebookId">,
+                lifecycle: TProtyleBoundLifecycle | TProtyleLocalOnlyLifecycle) {
         this.version = Constants.SIYUAN_VERSION;
-        const participateInSession = lifecycle?.participateInSession !== false &&
-            !options.action?.includes(Constants.CB_GET_HISTORY);
+        this.onBacklinkChange = "onBacklinkChange" in lifecycle ? lifecycle.onBacklinkChange : undefined;
+        if (lifecycle.content.mode === "bound") {
+            if (!lifecycle.content.notebookId) {
+                throw new Error("[protyle.content] bound Protyle requires a notebookId");
+            }
+            if (!options.blockId) {
+                throw new Error("[protyle.content] bound Protyle requires a blockId");
+            }
+        } else if (options.blockId) {
+            throw new Error("[protyle.content] local-only Protyle cannot bind a blockId");
+        }
         const pluginsOptions = app.protylePlugins.extendOptions(options);
         const getOptions = new Options(pluginsOptions);
         const mergedOptions = getOptions.merge();
+        const host: TProtyleHostPort = {
+            dispatch: (event) => {
+                if (lifecycle.content.mode === "local-only") {
+                    if (event.type === "open-search" || event.type === "open-external" ||
+                        event.type === "notify" || (event.type === "open-graph" && event.scope === "space")) {
+                        app.protyleHost.dispatch(event);
+                        return;
+                    }
+                    throw new Error(`[protyle.content] local-only Protyle cannot dispatch ${event.type}`);
+                }
+                if (lifecycle.surface === "embedded" && [
+                    "close-document",
+                    "refresh-outline",
+                    "refresh-backlinks",
+                    "set-document-title",
+                    "set-document-icon",
+                    "activate-document",
+                    "toggle-document-fullscreen",
+                    "persist-workspace-layout",
+                    "update-document-statistics",
+                ].includes(event.type)) {
+                    throw new Error(`[protyle.surface] embedded Protyle cannot dispatch ${event.type}`);
+                }
+                app.protyleHost.dispatch(event);
+            },
+        };
         this.protyle = {
             getInstance: () => this,
             app,
             editors: app.protyleEditors,
-            host: app.protyleHost,
+            host,
             plugins: app.protylePlugins,
+            surface: lifecycle.surface,
+            participation: lifecycle.participation,
+            content: lifecycle.content,
+            ownerSignal: "signal" in lifecycle ? lifecycle.signal : undefined,
             id: genUUID(),
             disabled: false,
             lite: !!options.lite,
             updated: false,
             element: id,
-            notebookId: mergedOptions.notebookId,
+            get notebookId() {
+                if (lifecycle.content.mode === "local-only") {
+                    throw new Error("[protyle.content] local-only Protyle has no notebookId");
+                }
+                return lifecycle.content.notebookId;
+            },
             options: mergedOptions,
             block: {},
             highlight: {
@@ -86,6 +161,12 @@ export class Protyle {
                 styleElement: document.createElement("style"),
             }
         };
+        this.contentOwnerMouseover = (event) => {
+            if (lifecycle.content.mode === "bound" && !event.contentNotebookId) {
+                event.contentNotebookId = lifecycle.content.notebookId;
+            }
+        };
+        this.protyle.element.addEventListener("mouseover", this.contentOwnerMouseover);
 
         if (isSupportCSSHL()) {
             const styleId = genUUID();
@@ -127,7 +208,7 @@ export class Protyle {
         }
 
         this.init();
-        if (participateInSession) {
+        if (lifecycle.participation === "live") {
             this.protyle.editors.register(this.protyle);
             this.protyle.wysiwyg.element.addEventListener("focusin", () => {
                 this.protyle.editors.activate(this.protyle);
@@ -139,25 +220,18 @@ export class Protyle {
                 msgCallback: (data) => {
                     switch (data.cmd) {
                         case "reload":
-                            if (data.data === this.protyle.block.rootID) {
+                            if (data.data.rootID === this.protyle.block.rootID &&
+                                data.data.notebook === getProtyleContentStore(this.protyle)) {
                                 reloadProtyle(this.protyle, false);
-                                getAllModels().outline.forEach(item => {
-                                    if (item.blockId === data.data) {
-                                        const outlineParam: IObject = {
-                                            id: item.blockId,
-                                            preview: item.isPreview
-                                        };
-                                        if (isEncryptedBox(this.protyle.notebookId)) {
-                                            outlineParam.notebook = this.protyle.notebookId;
-                                        }
-                                        fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                                            item.update(response);
-                                        });
-                                    }
-                                });
+                                dispatchWorkspaceOutlineRefresh(this.protyle);
                             }
                             break;
                         case "refreshAttributeView":
+                            if (this.protyle.content.mode !== "bound" ||
+                                (data.data.boxID ? this.protyle.content.notebookId !== data.data.boxID :
+                                    isEncryptedBox(this.protyle.content.notebookId))) {
+                                break;
+                            }
                             Array.from(this.protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${data.data.id}"]`)).forEach((item: HTMLElement) => {
                                 item.removeAttribute("data-render");
                                 avRender(item, this.protyle);
@@ -197,13 +271,7 @@ export class Protyle {
                                 }
                                 if (data.cmd === "heading2doc") {
                                     // 文档标题互转后，需更新大纲
-                                    updatePanelByEditor({
-                                        protyle: this.protyle,
-                                        focus: false,
-                                        pushBackStack: false,
-                                        reload: true,
-                                        resize: false
-                                    });
+                                    dispatchWorkspaceOutlineRefresh(this.protyle);
                                 }
                             }
                             break;
@@ -244,7 +312,17 @@ export class Protyle {
                         case "moveDoc":
                             if (this.protyle.path === data.data.fromPath) {
                                 this.protyle.path = data.data.newPath;
-                                this.protyle.notebookId = data.data.toNotebook;
+                                this.protyle.host.dispatch({
+                                    type: "open-document",
+                                    notebookId: data.data.toNotebook,
+                                    documentId: this.protyle.block.rootID,
+                                    disposition: "current",
+                                    scope: "target",
+                                    attention: "none",
+                                    scroll: "auto",
+                                    restoreScroll: "never",
+                                    zoom: false,
+                                });
                             }
                             break;
                         case "closeBox":
@@ -282,8 +360,7 @@ export class Protyle {
                 this.protyle.wysiwyg.element.style.padding = "4px 16px 4px 24px";
                 return;
             }
-            if (!options.blockId) {
-                // 搜索页签需提前初始化
+            if (lifecycle.content.mode === "bound" && lifecycle.initialLoad === "owner") {
                 removeLoading(this.protyle);
                 return;
             }
@@ -299,12 +376,14 @@ export class Protyle {
                     protyle: this.protyle,
                     scrollAttr: window.siyuan.storage[Constants.LOCAL_FILEPOSITION][options.rootId],
                     mergedOptions,
+                    signal: lifecycle.signal,
+                    isCurrent: () => !this.protyle.destroyed && !lifecycle.signal?.aborted,
                     cb: () => {
                         this.afterOnGet(mergedOptions);
                     }
                 });
             } else {
-                this.getDoc(mergedOptions);
+                this.getDoc(mergedOptions, lifecycle.signal);
             }
         } else {
             this.protyle.contentElement.classList.add("protyle-content--transition");
@@ -312,9 +391,15 @@ export class Protyle {
     }
 
     private onTransaction(data: IWebSocketData) {
+        const contentStore = getProtyleContentStore(this.protyle);
+        const transactions = data.data.filter((transaction: { notebook: string }) =>
+            transaction.notebook === contentStore);
+        if (transactions.length === 0) {
+            return;
+        }
         // 多窗口/多端：用广播附带的撤销状态同步本地镜像
         if (data.context?.undoState) {
-            syncMirrorFromBroadcast(data.context.undoState);
+            syncMirrorFromBroadcast(this.protyle.notebookId, data.context.undoState);
         }
         if (!this.protyle.preview.element.classList.contains("fn__none") &&
             data.context?.rootIDs?.includes(this.protyle.block.rootID)) {
@@ -323,32 +408,31 @@ export class Protyle {
         }
         let needCreateAction = "";
         let hasDeleteOp = false;
-        data.data[0].doOperations.find((item: IOperation) => {
-            if (this.protyle.options.backlinkData && ["delete", "move"].includes(item.action)) {
-                // 只对特定情况刷新，否则展开、编辑等操作刷新会频繁
-                if (2 == data.data[0].doOperations.length && "insert" === data.data[0].doOperations[0].action && "delete" === data.data[0].doOperations[1].action) {
-                    // 从反链面板复制块到正文粘贴时不再自动刷新反链面板
-                    // The list in the backlink panel no longer collapses automatically https://github.com/siyuan-note/siyuan/issues/17362
-                    return true;
-                }
-
-                getAllModels().backlink.find(backlinkItem => {
-                    if (backlinkItem.element.contains(this.protyle.element)) {
-                        backlinkItem.refresh();
+        transactions.forEach((transaction: { doOperations: IOperation[] }) => {
+            transaction.doOperations.find((item: IOperation) => {
+                if (this.protyle.options.backlinkData && ["delete", "move"].includes(item.action)) {
+                    // 只对特定情况刷新，否则展开、编辑等操作刷新会频繁
+                    if (2 == transaction.doOperations.length && "insert" === transaction.doOperations[0].action &&
+                        "delete" === transaction.doOperations[1].action) {
+                        // 从反链面板复制块到正文粘贴时不再自动刷新反链面板
+                        // The list in the backlink panel no longer collapses automatically https://github.com/siyuan-note/siyuan/issues/17362
                         return true;
                     }
-                });
-                return true;
-            } else {
-                if (item.action === "delete") {
-                    hasDeleteOp = true;
+
+                    this.onBacklinkChange?.();
+                    return true;
+                } else {
+                    if (item.action === "delete") {
+                        hasDeleteOp = true;
+                    }
+                    onTransaction(this.protyle, [item], false);
+                    // 反链面板移除元素后，文档为空
+                    if (!(item.action === "delete" && typeof item.data?.createEmptyParagraph === "boolean" &&
+                        !item.data.createEmptyParagraph)) {
+                        needCreateAction = item.action;
+                    }
                 }
-                onTransaction(this.protyle, [item], false);
-                // 反链面板移除元素后，文档为空
-                if (!(item.action === "delete" && typeof item.data?.createEmptyParagraph === "boolean" && !item.data.createEmptyParagraph)) {
-                    needCreateAction = item.action;
-                }
-            }
+            });
         });
         // 聚焦块被分屏另一侧的删除操作连带删除时（容器块删除会级联删除其所有子孙块，如列表/超级块/引述等），当前页签的聚焦块已成为孤儿但仍显示，需退出聚焦
         // Improve editor state synchronization when deleting blocks https://github.com/siyuan-note/siyuan/issues/17742
@@ -386,7 +470,7 @@ export class Protyle {
         }
     }
 
-    private getDoc(mergedOptions: IProtyleOptions) {
+    private getDoc(mergedOptions: IProtyleOptions, signal?: AbortSignal) {
         const getDocParam: Record<string, any> = {
             id: mergedOptions.blockId,
             isBacklink: mergedOptions.action.includes(Constants.CB_GET_BACKLINK),
@@ -399,6 +483,9 @@ export class Protyle {
             getDocParam.notebook = this.protyle.notebookId;
         }
         fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+            if (this.protyle.destroyed || signal?.aborted) {
+                return;
+            }
             onGet({
                 data: getResponse,
                 protyle: this.protyle,
@@ -408,28 +495,22 @@ export class Protyle {
                     this.afterOnGet(mergedOptions);
                 }
             });
-        });
+        }, undefined, undefined, signal);
     }
 
     private afterOnGet(mergedOptions: IProtyleOptions) {
         // 文档加载完成后初始化撤销镜像（低频，不在 selectionchange 热路径）
         if (this.protyle.block?.rootID) {
-            initMirror(this.protyle.block.rootID);
+            initMirror(this.protyle);
         }
         if (this.protyle.model) {
             if (mergedOptions.action?.includes(Constants.CB_GET_FOCUS) || mergedOptions.action?.includes(Constants.CB_GET_OPENNEW)) {
                 setPanelFocus(this.protyle.model.element.parentElement.parentElement);
             }
-            updatePanelByEditor({
-                protyle: this.protyle,
-                focus: false,
-                pushBackStack: false,
-                reload: false,
-                resize: false
-            });
+            dispatchWorkspaceActivation(this.protyle);
         }
         resize(this.protyle);   // 需等待 fullwidth 获取后设定完毕再重新计算 padding 和元素
-        // 需等待 getDoc 完成后再执行，否则在无页签的时候 updatePanelByEditor 会执行2次
+        // 需等待 getDoc 完成后再绑定焦点同步，否则无页签时会重复刷新工作台面板
         // 只能用 focusin，否则点击表格无法执行
         this.protyle.wysiwyg.element.addEventListener("focusin", () => {
             if (this.protyle && this.protyle.model) {
@@ -441,13 +522,7 @@ export class Protyle {
                     return;
                 }
                 setPanelFocus(this.protyle.model.element.parentElement.parentElement);
-                updatePanelByEditor({
-                    protyle: this.protyle,
-                    focus: false,
-                    pushBackStack: false,
-                    reload: false,
-                    resize: false,
-                });
+                dispatchWorkspaceActivation(this.protyle);
             } else {
                 // 悬浮层应移除其余面板高亮，否则按键会被面板监听到
                 document.querySelectorAll(".layout__tab--active").forEach(item => {
@@ -497,6 +572,7 @@ export class Protyle {
 
     /** 销毁编辑器 */
     public destroy() {
+        this.protyle.element.removeEventListener("mouseover", this.contentOwnerMouseover);
         destroy(this.protyle);
     }
 

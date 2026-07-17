@@ -43,7 +43,8 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
     }
     if (matchHotKey(window.siyuan.config.keymap.editor.general.copyHPath.custom, event)) {
         fetchPost("/api/filetree/getHPathByID", {
-            id: protyle.block.rootID
+            id: protyle.block.rootID,
+            notebook: protyle.notebookId,
         }, (response) => {
             writeText(response.data);
         });
@@ -58,9 +59,9 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocolMd");
+            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocolMd", protyle.notebookId);
         } else {
-            copyTextByType([protyle.block.rootID], "protocolMd");
+            copyTextByType([protyle.block.rootID], "protocolMd", protyle.notebookId);
         }
         event.preventDefault();
         event.stopPropagation();
@@ -87,9 +88,9 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocol");
+            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocol", protyle.notebookId);
         } else {
-            copyTextByType([protyle.block.rootID], "protocol");
+            copyTextByType([protyle.block.rootID], "protocol", protyle.notebookId);
         }
         event.preventDefault();
         event.stopPropagation();
@@ -274,6 +275,7 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
             item.querySelector('[data-type="NodeHeading"][fold="1"]')) {
             const response = await fetchSyncPost("/api/block/getBlockDOM", {
                 id: item.getAttribute("data-node-id"),
+                notebook: protyle.notebookId,
             });
             const foldTempElement = document.createElement("template");
             foldTempElement.innerHTML = response.data.dom;
@@ -327,7 +329,10 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
         });
         if (item.getAttribute("data-type") === "NodeHeading" && item.getAttribute("fold") === "1") {
             foldHeadingIds.push({oldId: item.getAttribute("data-node-id"), newId});
-            const responseHTML = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {id: item.getAttribute("data-node-id")});
+            const responseHTML = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
+                id: item.getAttribute("data-node-id"),
+                notebook: protyle.notebookId,
+            });
             const foldElement = document.createElement("template");
             foldElement.innerHTML = responseHTML.data;
             Array.from(foldElement.content.children).reverse().forEach((childItem: HTMLElement, childIndex) => {

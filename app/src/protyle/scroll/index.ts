@@ -92,7 +92,11 @@ export class Scroll {
     }
 
     public updateIndex(protyle: IProtyle, id: string, cb?: (index: number) => void) {
-        fetchPost("/api/block/getBlockIndex", {id}, (response) => {
+        const request: IObject = {id};
+        if (isEncryptedBox(protyle.notebookId)) {
+            request.notebook = protyle.notebookId;
+        }
+        fetchPost("/api/block/getBlockIndex", request, (response) => {
             if (!response.data) {
                 return;
             }

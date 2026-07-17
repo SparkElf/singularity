@@ -34,9 +34,15 @@ import {
     toggleSearchHistory
 } from "../../search/toggleHistory";
 
+const resultNotebookIds = new Map<string, string>();
+
 const replace = (element: Element, config: Config.IUILayoutTabSearchConfig, isAll: boolean) => {
     if (config.method === 2) {
         showMessage(window.siyuan.languages._kernel[132]);
+        return;
+    }
+    if (isEncryptedBox(config.notebookId)) {
+        showMessage(window.siyuan.languages._kernel[313], 6000, "error");
         return;
     }
     const searchListElement = element.querySelector("#searchList");
@@ -168,6 +174,7 @@ const onRecentBlocks = (data: IBlock[], config: Config.IUILayoutTabSearchConfig,
     let resultHTML = "";
     let currentData;
     let newData;
+    resultNotebookIds.clear();
     data.forEach((item: IBlock) => {
         const title = getNotebookName(item.box) + getDisplayName(item.hPath, false);
         if (item.children) {
@@ -179,6 +186,9 @@ ${unicode2Emoji(getNotebookIcon(item.box) || window.siyuan.storage[Constants.LOC
 <span class="b3-list-item__text" style="color: var(--b3-theme-on-surface)">${escapeHtml(title)}</span>
 </div><div>`;
             item.children.forEach((childItem) => {
+                if (childItem.id && childItem.box) {
+                    resultNotebookIds.set(childItem.id, childItem.box);
+                }
                 if (focusId) {
                     if (childItem.id === focusId.currentId) {
                         currentData = childItem;
@@ -196,6 +206,9 @@ ${childItem.tag ? `<span class="b3-list-item__meta b3-list-item__meta--ellipsis"
             });
             resultHTML += "</div>";
         } else {
+            if (item.id && item.box) {
+                resultNotebookIds.set(item.id, item.box);
+            }
             if (focusId) {
                 if (item.id === focusId.currentId) {
                     currentData = item;
@@ -301,13 +314,8 @@ export const updateSearchResult = (config: Config.IUILayoutTabSearchConfig, elem
                 page: config.page,
                 pageSize: 32,
             };
-            // 限定在单个加密 box 内搜索时带 notebook，让内核走加密 db；跨 box 或全局搜索走原函数
-            const idPaths = config.idPath || [];
-            if (idPaths.length > 0) {
-                const box = idPaths[0].split("/")[0];
-                if (isEncryptedBox(box) && idPaths.every(p => p.split("/")[0] === box)) {
-                    searchParam.notebook = box;
-                }
+            if (isEncryptedBox(config.notebookId)) {
+                searchParam.notebook = config.notebookId;
             }
             fetchPost(endpoint, searchParam, (response) => {
                 onRecentBlocks(response.data.blocks, config, response, focusId);
@@ -447,6 +455,7 @@ const initSearchEvent = (app: App, element: Element, config: Config.IUILayoutTab
             } else if (type === "remove-path") {
                 config.idPath = [];
                 config.hPath = "";
+                config.notebookId = undefined;
                 element.querySelector("#searchPath").classList.add("fn__none");
                 config.page = 1;
                 updateSearchResult(config, element, true);
@@ -481,6 +490,7 @@ const initSearchEvent = (app: App, element: Element, config: Config.IUILayoutTab
                 fetchPost("/api/filetree/getHPathsByPaths", {paths: [editProtyle.path]}, (response) => {
                     config.idPath = [pathPosix().join(editProtyle.notebookId, editProtyle.path)];
                     config.hPath = response.data[0];
+                    config.notebookId = editProtyle.notebookId;
                     const searchPathElement = element.querySelector("#searchPath");
                     searchPathElement.classList.remove("fn__none");
                     searchPathElement.innerHTML = `<div class="b3-chip b3-chip--middle">${escapeHtml(config.hPath)}<svg data-type="remove-path" class="b3-chip__close"><use xlink:href="#iconClose"></use></svg></div>`;
@@ -499,6 +509,8 @@ const initSearchEvent = (app: App, element: Element, config: Config.IUILayoutTab
                     cb: (toPath, toNotebook) => {
                         fetchPost("/api/filetree/getHPathsByPaths", {paths: toPath}, (response) => {
                             config.idPath = [];
+                            config.notebookId = toNotebook.length > 0 &&
+                            toNotebook.every(item => item === toNotebook[0]) ? toNotebook[0] : undefined;
                             const hPathList: string[] = [];
                             let enableIncludeChild = false;
                             toPath.forEach((item, index) => {
@@ -683,11 +695,18 @@ const initSearchEvent = (app: App, element: Element, config: Config.IUILayoutTab
                 } else if (target.getAttribute("data-type") === "search-item") {
                     const id = target.getAttribute("data-node-id");
                     if (id) {
+                        const notebookId = resultNotebookIds.get(id);
+                        if (!notebookId) {
+                            console.error("[Singularity/ProtyleIdentity] mobile search target has no notebook", {blockId: id});
+                            closePanel();
+                            return;
+                        }
                         if (window.siyuan.mobile.editor?.protyle) {
                             preventScroll(window.siyuan.mobile.editor.protyle);
                         }
-                        checkFold(id, (zoomIn) => {
-                            openMobileFileById(app, id, zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+                        checkFold(id, notebookId, (zoomIn) => {
+                            openMobileFileById(app, notebookId, id,
+                                zoomIn ? [Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
                         });
                         closePanel();
                     } else {

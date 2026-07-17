@@ -10,28 +10,62 @@ import {disabledForeverProtyle, setReadonlyByConfig} from "../../protyle/util/on
 import {setStorageVal} from "../../protyle/util/compatibility";
 import {closePanel} from "./closePanel";
 import {showMessage} from "../../dialog/message";
-import {getCurrentEditor} from "../editor";
+import {getCurrentEditor, openMobileFileById} from "../editor";
 import {avRender} from "../../protyle/render/av/render";
 import {setTitle} from "../../util/processTitle";
 import {isEncryptedBox} from "../../util/pathName";
+import {mobileEditorOwner} from "./mobileEditorOwner";
 
-const forwardStack: IBackStack[] = [];
+const forwardStack: IMobileBackStack[] = [];
 
-const focusStack = (backStack: IBackStack) => {
-    const protyle = getCurrentEditor().protyle;
+const persistHistoryTarget = (backStack: IMobileBackStack) => {
+    window.siyuan.storage[Constants.LOCAL_DOCINFO] = {
+        id: backStack.id,
+        notebookId: backStack.data.notebookId,
+    };
+    setStorageVal(Constants.LOCAL_DOCINFO, window.siyuan.storage[Constants.LOCAL_DOCINFO]);
+};
+
+const focusStack = (backStack: IMobileBackStack, onLoaded: () => void) => {
+    const editor = getCurrentEditor();
+    const protyle = editor.protyle;
+    const ownerGeneration = mobileEditorOwner.begin();
+    protyle.ownerSignal = ownerGeneration.signal;
+    const isCurrent = () => mobileEditorOwner.isCurrent(ownerGeneration, !protyle.destroyed);
+    const data = backStack?.data;
+    if (!data || typeof data.notebookId !== "string" || typeof data.rootId !== "string") {
+        console.error("[Singularity/ProtyleIdentity] mobile history entry has no notebook", {blockId: backStack.id});
+        return;
+    }
+    const notebookId = data.notebookId;
+    if (protyle.notebookId !== notebookId) {
+        if (editor !== window.siyuan.mobile.editor) {
+            console.error("[Singularity/ProtyleIdentity] mobile pop editor cannot switch notebook from history", {
+                blockId: backStack.id,
+                notebookId,
+            });
+            return;
+        }
+        window.siyuan.storage[Constants.LOCAL_FILEPOSITION][backStack.data.rootId] = {
+            rootId: backStack.data.rootId,
+            startId: backStack.data.startId,
+            endId: backStack.data.endId,
+            scrollTop: backStack.scrollTop,
+            zoomInId: backStack.zoomId,
+        };
+        editor.destroy();
+        window.siyuan.mobile.editor = undefined;
+        openMobileFileById(protyle.app, notebookId, backStack.id, [Constants.CB_GET_SCROLL], undefined, onLoaded);
+        return;
+    }
     // 前进后快速后退会导致滚动错位 https://ld246.com/article/1734018624070
     protyle.observerLoad?.disconnect();
 
-    window.siyuan.storage[Constants.LOCAL_DOCINFO] = {
-        id: backStack.id,
-    };
-    setStorageVal(Constants.LOCAL_DOCINFO, window.siyuan.storage[Constants.LOCAL_DOCINFO]);
     hideElements(["toolbar", "hint", "util"], protyle);
     if (protyle.contentElement.classList.contains("fn__none")) {
         setEditMode(protyle, "wysiwyg");
     }
 
-    protyle.notebookId = backStack.data.notebookId;
     protyle.path = backStack.data.path;
 
     if (backStack.data.startId === protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id") &&
@@ -40,6 +74,8 @@ const focusStack = (backStack: IBackStack) => {
             top: backStack.scrollTop,
             behavior: "smooth"
         });
+        persistHistoryTarget(backStack);
+        onLoaded();
         return;
     }
 
@@ -47,33 +83,47 @@ const focusStack = (backStack: IBackStack) => {
         const docInfoParam: IObject = {
             id: backStack.id,
         };
-        if (isEncryptedBox(protyle.notebookId)) {
-            docInfoParam.notebook = protyle.notebookId;
+        if (isEncryptedBox(notebookId)) {
+            docInfoParam.notebook = notebookId;
         }
         fetchPost("/api/block/getDocInfo", docInfoParam, (response) => {
+            if (!isCurrent()) {
+                return;
+            }
             setTitle(response.data.name);
             protyle.title.setTitle(response.data.name, response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true");
             protyle.background.render(response.data.ial, protyle.block.rootID);
             protyle.wysiwyg.renderCustom(response.data.ial);
-        });
+        }, undefined, undefined, ownerGeneration.signal);
     }
     const exitFocusElement = protyle.breadcrumb.element.parentElement.querySelector('[data-type="exit-focus"]');
     if (backStack.zoomId) {
         if (backStack.zoomId !== protyle.block.id) {
-            fetchPost("/api/block/checkBlockExist", {id: backStack.id}, existResponse => {
-                if (existResponse.data) {
+            const existParam: IObject = {id: backStack.id};
+            if (isEncryptedBox(notebookId)) {
+                existParam.notebook = notebookId;
+            }
+            fetchPost("/api/block/checkBlockExist", existParam, existResponse => {
+                if (isCurrent() && existResponse.data) {
                     zoomOut({
                         protyle,
                         id: backStack.id,
                         isPushBack: false,
                         callback: () => {
+                            if (!isCurrent()) {
+                                return;
+                            }
                             protyle.contentElement.scrollTop = backStack.scrollTop;
+                            persistHistoryTarget(backStack);
+                            onLoaded();
                         }
                     });
                 }
-            });
+            }, undefined, undefined, ownerGeneration.signal);
         } else {
             protyle.contentElement.scrollTop = backStack.scrollTop;
+            persistHistoryTarget(backStack);
+            onLoaded();
         }
         exitFocusElement.classList.remove("fn__none");
         return;
@@ -84,10 +134,13 @@ const focusStack = (backStack: IBackStack) => {
         startID: backStack.data.startId,
         endID: backStack.data.endId,
     };
-    if (isEncryptedBox(protyle.notebookId)) {
-        getDocParam.notebook = protyle.notebookId;
+    if (isEncryptedBox(notebookId)) {
+        getDocParam.notebook = notebookId;
     }
     fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+        if (!isCurrent()) {
+            return;
+        }
         protyle.block.parentID = getResponse.data.parentID;
         protyle.block.parent2ID = getResponse.data.parent2ID;
         protyle.block.rootID = getResponse.data.rootID;
@@ -110,7 +163,9 @@ const focusStack = (backStack: IBackStack) => {
         protyle.contentElement.scrollTop = backStack.scrollTop;
         // 等待 av 等加载 https://ld246.com/article/1734018624070
         setTimeout(() => {
-            protyle.contentElement.scrollTop = backStack.scrollTop;
+            if (isCurrent()) {
+                protyle.contentElement.scrollTop = backStack.scrollTop;
+            }
         }, Constants.TIMEOUT_LOAD);
 
         protyle.app.plugins.forEach(item => {
@@ -118,7 +173,9 @@ const focusStack = (backStack: IBackStack) => {
             item.eventBus.emit("loaded-protyle-static", {protyle});
         });
         exitFocusElement.classList.add("fn__none");
-    });
+        persistHistoryTarget(backStack);
+        onLoaded();
+    }, undefined, undefined, ownerGeneration.signal);
 };
 
 export const pushBack = () => {
@@ -129,6 +186,7 @@ export const pushBack = () => {
             data: {
                 startId: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
                 endId: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
+                rootId: protyle.block.rootID,
                 notebookId: protyle.notebookId,
                 path: protyle.path,
             },
@@ -184,22 +242,31 @@ export const goBack = () => {
     if (window.siyuan.backStack.length < 1) {
         return;
     }
-    if (forwardStack.length === 0 && editor) {
+    const currentSnapshot = editor ? (() => {
         const protyle = editor.protyle;
-        forwardStack.push({
+        return {
             id: protyle.block.showAll ? protyle.block.id : protyle.block.rootID,
             data: {
                 startId: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
                 endId: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
+                rootId: protyle.block.rootID,
                 notebookId: protyle.notebookId,
                 path: protyle.path,
             },
             scrollTop: protyle.contentElement.scrollTop,
             callback: protyle.block.action,
             zoomId: protyle.block.showAll ? protyle.block.id : undefined
-        });
-    }
-    const item = window.siyuan.backStack.pop();
-    forwardStack.push(item);
-    focusStack(item);
+        } satisfies IMobileBackStack;
+    })() : undefined;
+    const item = window.siyuan.backStack[window.siyuan.backStack.length - 1] as IMobileBackStack;
+    focusStack(item, () => {
+        if (window.siyuan.backStack[window.siyuan.backStack.length - 1] !== item) {
+            return;
+        }
+        if (forwardStack.length === 0 && currentSnapshot) {
+            forwardStack.push(currentSnapshot);
+        }
+        window.siyuan.backStack.pop();
+        forwardStack.push(item);
+    });
 };

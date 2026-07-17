@@ -99,7 +99,13 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 }
                 break;
             case "openFileById":
-                openMobileFileById(app, data.data.id);
+                if (!data.data.notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] mobile open-file event has no notebook", {
+                        blockId: data.data.id,
+                    });
+                    break;
+                }
+                openMobileFileById(app, data.data.notebookId, data.data.id);
                 break;
             case"txerr":
                 transactionError(data.msg);

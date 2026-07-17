@@ -1,4 +1,4 @@
-import {isLocalPath, pathPosix} from "../util/pathName";
+import {isEncryptedBox, isLocalPath, pathPosix} from "../util/pathName";
 /// #if !BROWSER
 import {shell} from "electron";
 /// #endif
@@ -7,7 +7,7 @@ import {Constants} from "../constants";
 /// #if MOBILE
 import {processSiYuanUri} from "../util/uri";
 /// #else
-import {openAsset, openBy} from "./util";
+import {openBy} from "./util";
 /// #endif
 import {showMessage} from "../dialog/message";
 import {isInIOS, isInAndroid, isInHarmony} from "../protyle/util/compatibility";
@@ -37,21 +37,41 @@ export const openLink = (protyle: IProtyle, aLink: string, event?: MouseEvent, c
             )
         ) {
             if (event && event.altKey) {
-                openAsset(protyle.app, linkAddress, pdfParams);
+                protyle.host.dispatch({
+                    type: "open-asset",
+                    notebookId: protyle.notebookId,
+                    assetPath: linkAddress,
+                    page: pdfParams,
+                    disposition: "current",
+                });
             } else if (event && event.shiftKey) {
                 /// #if !BROWSER
-                openBy(linkAddress, "app");
+                if (isEncryptedBox(protyle.notebookId)) {
+                    showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+                } else {
+                    openBy(linkAddress, "app");
+                }
                 /// #else
                 openByMobile(linkAddress);
                 /// #endif
             } else if (ctrlIsPressed) {
                 /// #if !BROWSER
-                openBy(linkAddress, "folder");
+                if (isEncryptedBox(protyle.notebookId)) {
+                    showMessage(window.siyuan.languages._kernel[313], 6000, "error");
+                } else {
+                    openBy(linkAddress, "folder");
+                }
                 /// #else
                 openByMobile(linkAddress);
                 /// #endif
             } else {
-                openAsset(protyle.app, linkAddress, pdfParams, !window.siyuan.config.fileTree.noSplitScreenWhenOpenTab ? "right" : null);
+                protyle.host.dispatch({
+                    type: "open-asset",
+                    notebookId: protyle.notebookId,
+                    assetPath: linkAddress,
+                    page: pdfParams,
+                    disposition: window.siyuan.config.fileTree.noSplitScreenWhenOpenTab ? "current" : "split-right",
+                });
             }
         } else {
             /// #if !BROWSER

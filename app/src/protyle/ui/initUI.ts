@@ -184,6 +184,7 @@ export const initUI = (protyle: IProtyle) => {
         }
     });
     let overAttr = false;
+    protyle.uiEventController = new AbortController();
     protyle.element.addEventListener("mouseover", (event: KeyboardEvent & {
         target: HTMLElement
     }) => {
@@ -267,7 +268,7 @@ export const initUI = (protyle: IProtyle) => {
                 }
             }
         }
-    });
+    }, {signal: protyle.uiEventController.signal});
 };
 
 export const addLoading = (protyle: IProtyle, msg?: string) => {

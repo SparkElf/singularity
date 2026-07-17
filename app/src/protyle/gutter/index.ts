@@ -422,7 +422,7 @@ export class Gutter {
             }
             if (isOnlyMeta(event)) {
                 if (protyle.options.backlinkData) {
-                    checkFold(id, (zoomIn) => {
+                    checkFold(id, protyle.notebookId, (zoomIn) => {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: protyle.notebookId,
@@ -963,7 +963,13 @@ export class Gutter {
                 }
             }).element);
         }
-        const copyMenu: IMenu[] = (copySubMenu(Array.from(selectsElement).map(item => item.getAttribute("data-node-id")), true, selectsElement[0]) as IMenu[]).concat([{
+        const copyMenu: IMenu[] = (copySubMenu(
+            Array.from(selectsElement).map(item => item.getAttribute("data-node-id")),
+            true,
+            selectsElement[0],
+            undefined,
+            protyle.notebookId
+        ) as IMenu[]).concat([{
             id: "copyPlainText",
             iconHTML: "",
             label: window.siyuan.languages.copyPlainText,
@@ -1046,20 +1052,18 @@ export class Gutter {
                     addEditorToDatabase(protyle, getEditorRange(selectsElement[0]));
                 }
             }).element);
-            // 加密笔记本中的块不暴露该菜单：避免把受保护内容引入智能体会话。
-            if (!isEncryptedBox(protyle.notebookId)) {
-                window.siyuan.menus.menu.append(new MenuItem({
-                    id: "addToAgent",
-                    icon: "iconSend",
-                    label: window.siyuan.languages.addToAgent,
-                    click: () => {
-                        protyle.host.dispatch({
-                            type: "add-blocks-to-agent",
-                            blockIds: Array.from(selectsElement).map(item => item.getAttribute("data-node-id")!),
-                        });
-                    }
-                }).element);
-            }
+            window.siyuan.menus.menu.append(new MenuItem({
+                id: "addToAgent",
+                icon: "iconSend",
+                label: window.siyuan.languages.addToAgent,
+                click: () => {
+                    protyle.host.dispatch({
+                        type: "add-blocks-to-agent",
+                        notebookId: protyle.notebookId,
+                        blockIds: Array.from(selectsElement).map(item => item.getAttribute("data-node-id")!),
+                    });
+                }
+            }).element);
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "delete",
                 label: window.siyuan.languages.delete,
@@ -1550,7 +1554,7 @@ export class Gutter {
             }).element);
         }
 
-        const copyMenu = (copySubMenu([id], true, nodeElement) as IMenu[]).concat([{
+        const copyMenu = (copySubMenu([id], true, nodeElement, undefined, protyle.notebookId) as IMenu[]).concat([{
             id: "copyPlainText",
             iconHTML: "",
             label: window.siyuan.languages.copyPlainText,
@@ -1657,20 +1661,18 @@ export class Gutter {
                     addEditorToDatabase(protyle, getEditorRange(nodeElement));
                 }
             }).element);
-            // 加密笔记本中的块不暴露该菜单：避免把受保护内容引入智能体会话。
-            if (!isEncryptedBox(protyle.notebookId)) {
-                window.siyuan.menus.menu.append(new MenuItem({
-                    id: "addToAgent",
-                    icon: "iconSend",
-                    label: window.siyuan.languages.addToAgent,
-                    click: () => {
-                        protyle.host.dispatch({
-                            type: "add-blocks-to-agent",
-                            blockIds: [nodeElement.getAttribute("data-node-id")!],
-                        });
-                    }
-                }).element);
-            }
+            window.siyuan.menus.menu.append(new MenuItem({
+                id: "addToAgent",
+                icon: "iconSend",
+                label: window.siyuan.languages.addToAgent,
+                click: () => {
+                    protyle.host.dispatch({
+                        type: "add-blocks-to-agent",
+                        notebookId: protyle.notebookId,
+                        blockIds: [nodeElement.getAttribute("data-node-id")!],
+                    });
+                }
+            }).element);
             window.siyuan.menus.menu.append(new MenuItem({
                 id: "delete",
                 icon: "iconTrashcan",
@@ -1799,7 +1801,7 @@ export class Gutter {
                     label: window.siyuan.languages.saveCodeBlockAsFile,
                     click() {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
-                        fetchPost("/api/export/exportCodeBlock", {id}, (response) => {
+                        fetchPost("/api/export/exportCodeBlock", {id, notebook: protyle.notebookId}, (response) => {
                             saveExportFile(response.data.path, msgId);
                         });
                     }
@@ -1872,6 +1874,7 @@ export class Gutter {
                     fetchPost("/api/export/exportAttributeView", {
                         id: nodeElement.getAttribute("data-av-id"),
                         blockID: id,
+                        notebook: protyle.notebookId,
                     }, response => {
                         saveExportFile(response.data.zip);
                     });
@@ -2048,6 +2051,7 @@ export class Gutter {
                 click() {
                     fetchPost("/api/block/getHeadingChildrenDOM", {
                         id,
+                        notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
                     }, (response) => {
                         if (isInAndroid()) {
@@ -2067,6 +2071,7 @@ export class Gutter {
                 click() {
                     fetchPost("/api/block/getHeadingChildrenDOM", {
                         id,
+                        notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
                     }, (response) => {
                         if (isInAndroid()) {
@@ -2078,6 +2083,7 @@ export class Gutter {
                         }
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
+                            notebook: protyle.notebookId,
                         }, (deleteResponse) => {
                             deleteResponse.data.doOperations.forEach((operation: IOperation) => {
                                 protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -2112,6 +2118,7 @@ export class Gutter {
                 click() {
                     fetchPost("/api/block/getHeadingDeleteTransaction", {
                         id,
+                        notebook: protyle.notebookId,
                     }, (response) => {
                         response.data.doOperations.forEach((operation: IOperation) => {
                             protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
@@ -2166,7 +2173,7 @@ export class Gutter {
                 accelerator: `${updateHotkeyTip(window.siyuan.config.keymap.general.enter.custom)}/${updateHotkeyTip("⌘" + window.siyuan.languages.click)}`,
                 label: window.siyuan.languages.openBy,
                 click: () => {
-                    checkFold(id, (zoomIn) => {
+                    checkFold(id, protyle.notebookId, (zoomIn) => {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: protyle.notebookId,
@@ -2383,6 +2390,7 @@ export class Gutter {
             click() {
                 fetchPost("/api/block/getHeadingLevelTransaction", {
                     id,
+                    notebook: protyle.notebookId,
                     level
                 }, (response) => {
                     response.data.doOperations.forEach((operation: IOperation, index: number) => {

@@ -217,7 +217,12 @@ export class App {
                             }
                             break;
                         case "openFileById":
-                            openFileById({app: this, id: data.data.id, action: [Constants.CB_GET_FOCUS]});
+                            openFileById({
+                                app: this,
+                                id: data.data.id,
+                                notebookId: data.data.notebookId,
+                                action: [Constants.CB_GET_FOCUS]
+                            });
                             break;
                         case "exit":
                             if (isBrowser() && !isInMobileApp()) {
@@ -288,9 +293,16 @@ const siyuanApp = new App();
 window.openFileByURL = (openURL) => {
     const blockInfo = parseSiYuanUriInfo(openURL);
     if (blockInfo != null) {
+        if (!blockInfo.notebookId) {
+            console.error("[Singularity/ProtyleIdentity] SiYuan URI has no notebook", {
+                blockId: blockInfo.id,
+            });
+            return true;
+        }
         openFileById({
             app: siyuanApp,
             id: blockInfo.id,
+            notebookId: blockInfo.notebookId,
             action: blockInfo.focus ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL],
             zoomIn: blockInfo.focus
         });

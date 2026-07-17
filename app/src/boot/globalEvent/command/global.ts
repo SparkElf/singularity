@@ -236,6 +236,7 @@ export const globalCommand = (command: string, app: App) => {
                             openGraph({
                                 app,
                                 blockId: childData.blockId,
+                                notebookId: childData.notebookId,
                                 rootId: childData.rootId,
                                 title: closeData.title
                             });

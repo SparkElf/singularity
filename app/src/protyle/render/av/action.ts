@@ -33,6 +33,7 @@ import {openSearchAV} from "./relation";
 import {Constants} from "../../../constants";
 import {hideElements} from "../../ui/hideElements";
 import {fetchPost, fetchSyncPost} from "../../../util/fetch";
+import {buildSiYuanBlockUri} from "../../../util/siyuanUri";
 import {scrollCenter} from "../../../util/highlightById";
 import {escapeHtml} from "../../../util/escape";
 import {editGalleryItem, openGalleryItemMenu} from "./gallery/util";
@@ -386,13 +387,20 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     const rowElements = blockElement.querySelectorAll(".av__row--select:not(.av__row--header), .av__gallery-item--select");
     const keyCellElement = rowElements[0].querySelector('.av__cell[data-dtype="block"]') as HTMLElement;
     const ids = Array.from(rowElements).map(item => item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-id"));
+    const targetNotebookIds = Array.from(rowElements).map(item =>
+        item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-notebook-id"));
     if (rowElements.length === 1 && keyCellElement.getAttribute("data-detached") !== "true") {
         const blockId = ids[0];
         const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
-            checkFold(blockId, (zoomIn) => {
+            const notebookId = targetNotebookIds[0];
+            if (!notebookId) {
+                console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId});
+                return;
+            }
+            checkFold(blockId, notebookId, (zoomIn) => {
                 protyle.host.dispatch({
                     type: "open-document",
-                    notebookId: protyle.notebookId,
+                    notebookId,
                     documentId: blockId,
                     disposition,
                     scope: zoomIn ? "subtree" : "context",
@@ -519,6 +527,15 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             iconHTML: "",
             label: window.siyuan.languages.copyProtocol,
             click: () => {
+                const missingTargetIndex = ids.findIndex((_id, index) =>
+                    rowElements[index].querySelector(".av__cell[data-dtype='block']").getAttribute("data-detached") !== "true" &&
+                    !targetNotebookIds[index]);
+                if (missingTargetIndex !== -1) {
+                    console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {
+                        blockId: ids[missingTargetIndex],
+                    });
+                    return;
+                }
                 let text = "";
                 ids.forEach((id, index) => {
                     if (ids.length > 1) {
@@ -528,7 +545,8 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (cellElement.getAttribute("data-detached") === "true") {
                         text += cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        text += `siyuan://blocks/${id}`;
+                        const notebookId = targetNotebookIds[index];
+                        text += buildSiYuanBlockUri(id, notebookId);
                     }
                     if (ids.length > 1 && index !== ids.length - 1) {
                         text += "\n";
@@ -549,7 +567,12 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (cellElement.getAttribute("data-detached") === "true") {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](siyuan://blocks/${id})`;
+                        const notebookId = targetNotebookIds[i];
+                        if (!notebookId) {
+                            console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId: id});
+                            return;
+                        }
+                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](${buildSiYuanBlockUri(id, notebookId)})`;
                     }
                     if (ids.length > 1) {
                         text += "- ";
@@ -574,7 +597,15 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (cellElement.getAttribute("data-detached") === "true") {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        const response = await fetchSyncPost("/api/filetree/getHPathByID", {id});
+                        const notebookId = targetNotebookIds[i];
+                        if (!notebookId) {
+                            console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId: id});
+                            return;
+                        }
+                        const response = await fetchSyncPost("/api/filetree/getHPathByID", {
+                            id,
+                            notebook: notebookId,
+                        });
                         content = response.data;
                     }
 

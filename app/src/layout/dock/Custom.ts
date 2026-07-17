@@ -2,6 +2,7 @@ import {Tab} from "../Tab";
 import {Model} from "../Model";
 import {App} from "../../index";
 import {Protyle} from "../../protyle";
+import type {EmbeddedProtyleOwner} from "../../protyle/EmbeddedProtyleOwner";
 
 export class Custom extends Model {
     public element: Element;
@@ -13,7 +14,7 @@ export class Custom extends Model {
     public beforeDestroy: () => void;
     public resize: () => void;
     public update: () => void;
-    public editors: Protyle[] = [];
+    public editors: Array<Protyle | EmbeddedProtyleOwner> = [];
 
     constructor(options: {
         app: App,

@@ -11,7 +11,7 @@ import {Protyle} from "../../protyle";
 import {MenuItem} from "../../menus/Menu";
 import {App} from "../../index";
 import {isSupportCSSHL, searchMarkRender} from "../../protyle/render/searchMarkRender";
-import {getDocDisplayName, isEncryptedBox} from "../../util/pathName";
+import {getDocDisplayName, isEncryptedBox, isSameNotebookContentDomain} from "../../util/pathName";
 
 export class Backlink extends Model {
     public element: HTMLElement;
@@ -22,6 +22,8 @@ export class Backlink extends Model {
     public tree: Tree;
     public notebookId: string;
     private abortController = new AbortController();
+    private renderVersion = 0;
+    private requestVersion = 0;
     public mTree: Tree;
     public editors: Protyle[] = [];
     public status: {
@@ -136,29 +138,41 @@ export class Backlink extends Model {
                 this.mTree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
             ctrlClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     action: [Constants.CB_GET_CONTEXT]
                 });
                 this.mTree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
-            altClick(element) {
+            altClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     position: "right",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
                 this.mTree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
-            shiftClick(element) {
+            shiftClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     position: "bottom",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -178,30 +192,42 @@ export class Backlink extends Model {
                 this.setFocus();
                 this.tree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
-            ctrlClick(element) {
+            ctrlClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     action: [Constants.CB_GET_CONTEXT]
                 });
                 this.tree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
-            altClick(element) {
+            altClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     position: "right",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
                 this.tree.element.querySelector(".b3-list-item--focus")?.classList.remove("b3-list-item--focus");
             },
-            shiftClick(element) {
+            shiftClick: (element) => {
+                const notebookId = this.getTargetNotebookId(element);
+                if (!notebookId) {
+                    return;
+                }
                 openFileById({
                     app: options.app,
                     id: element.getAttribute("data-node-id"),
-                    notebookId: element.getAttribute("data-notebook-id"),
+                    notebookId,
                     position: "bottom",
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT]
                 });
@@ -479,9 +505,15 @@ export class Backlink extends Model {
             svgElement.removeAttribute("disabled");
         } else {
             const keyword = isMention ? this.inputsElement[1].value : this.inputsElement[0].value;
-            const notebookId = liElement.getAttribute("data-notebook-id");
+            const notebookId = this.getTargetNotebookId(liElement);
+            if (!notebookId) {
+                svgElement.removeAttribute("disabled");
+                return;
+            }
+            const blockId = this.blockId;
+            const renderVersion = this.renderVersion;
             const param: IObject = {
-                defID: this.blockId,
+                defID: blockId,
                 refTreeID: docId,
                 highlight: !isSupportCSSHL(),
                 keyword,
@@ -490,19 +522,19 @@ export class Backlink extends Model {
                 param.notebook = notebookId;
             }
             fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", param, (response) => {
-                if (this.abortController.signal.aborted || !liElement.isConnected) {
+                if (this.abortController.signal.aborted || renderVersion !== this.renderVersion ||
+                    blockId !== this.blockId || notebookId !== this.notebookId || !liElement.isConnected) {
                     return;
                 }
                 svgElement.removeAttribute("disabled");
                 svgElement.classList.add("b3-list-item__arrow--open");
                 const editorElement = document.createElement("div");
                 editorElement.style.minHeight = "auto";
-                editorElement.setAttribute("data-defid", this.blockId);
+                editorElement.setAttribute("data-defid", blockId);
                 editorElement.setAttribute("data-ismention", isMention ? "true" : "false");
                 liElement.after(editorElement);
                 const editor = new Protyle(this.app, editorElement, {
                     blockId: docId,
-                    notebookId,
                     click: {
                         preventInsetEmptyBlock: true
                     },
@@ -513,11 +545,32 @@ export class Backlink extends Model {
                         scroll: false,
                         breadcrumb: false,
                     }
+                }, {
+                    surface: "embedded",
+                    participation: "live",
+                    content: {mode: "bound", notebookId},
+                    initialLoad: "owner",
+                    onBacklinkChange: () => {
+                        if (!this.abortController.signal.aborted && renderVersion === this.renderVersion &&
+                            blockId === this.blockId && notebookId === this.notebookId && editorElement.isConnected) {
+                            this.searchBacklinks();
+                        }
+                    },
                 });
                 searchMarkRender(editor.protyle, response.data.keywords);
                 this.editors.push(editor);
             }, undefined, undefined, this.abortController.signal);
         }
+    }
+
+    private getTargetNotebookId(element: Element) {
+        const blockId = element.getAttribute("data-node-id");
+        const notebookId = element.getAttribute("data-notebook-id");
+        if (!notebookId) {
+            console.error("[Singularity/ProtyleIdentity] backlink target has no notebook", {blockId});
+            return;
+        }
+        return notebookId;
     }
 
     public refresh() {
@@ -526,11 +579,18 @@ export class Backlink extends Model {
             return;
         }
         element.classList.add("fn__rotate");
-        const refreshParam: IObject = {id: this.blockId};
-        if (isEncryptedBox(this.notebookId)) {
-            refreshParam.notebook = this.notebookId;
+        const blockId = this.blockId;
+        const notebookId = this.notebookId;
+        const requestVersion = ++this.requestVersion;
+        const refreshParam: IObject = {id: blockId};
+        if (isEncryptedBox(notebookId)) {
+            refreshParam.notebook = notebookId;
         }
         fetchPost("/api/ref/refreshBacklink", refreshParam, () => {
+            if (this.abortController.signal.aborted || requestVersion !== this.requestVersion ||
+                blockId !== this.blockId || notebookId !== this.notebookId) {
+                return;
+            }
             element.classList.remove("fn__rotate");
             this.searchBacklinks();
         }, undefined, undefined, this.abortController.signal);
@@ -542,17 +602,24 @@ export class Backlink extends Model {
             return;
         }
         element.classList.add("fn__rotate");
+        const blockId = this.blockId;
+        const notebookId = this.notebookId;
+        const requestVersion = ++this.requestVersion;
         const param: IObject = {
             sort: parseInt(this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').getAttribute("data-sort")).toString(),
             mSort: parseInt(this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').getAttribute("data-sort")).toString(),
             k: this.inputsElement[0].value,
             mk: this.inputsElement[1].value,
-            id: this.blockId,
+            id: blockId,
         };
-        if (isEncryptedBox(this.notebookId)) {
-            param.notebook = this.notebookId;
+        if (isEncryptedBox(notebookId)) {
+            param.notebook = notebookId;
         }
         fetchPost("/api/ref/getBacklink2", param, response => {
+            if (this.abortController.signal.aborted || requestVersion !== this.requestVersion ||
+                blockId !== this.blockId || notebookId !== this.notebookId) {
+                return;
+            }
             if (!init) {
                 this.saveStatus();
             }
@@ -561,11 +628,19 @@ export class Backlink extends Model {
     }
 
     public updateForCurrentEditor(blockId: string, isCurrent: () => boolean, notebookId: string) {
+        if (!blockId || !notebookId) {
+            console.error("[Singularity/ProtyleIdentity] backlink update requires blockId and notebookId", {
+                blockId,
+            });
+            return;
+        }
         const element = this.element.querySelector('.block__icon[data-type="refresh"] svg');
         element.classList.add("fn__rotate");
+        const statusKey = this.getStatusKey(blockId, notebookId);
+        const requestVersion = ++this.requestVersion;
         const param: IObject = {
-            sort: this.status[blockId] ? this.status[blockId].sort.toString() : window.siyuan.config.editor.backlinkSort.toString(),
-            mSort: this.status[blockId] ? this.status[blockId].mSort.toString() : window.siyuan.config.editor.backmentionSort.toString(),
+            sort: this.status[statusKey] ? this.status[statusKey].sort.toString() : window.siyuan.config.editor.backlinkSort.toString(),
+            mSort: this.status[statusKey] ? this.status[statusKey].mSort.toString() : window.siyuan.config.editor.backmentionSort.toString(),
             id: blockId,
             k: this.inputsElement[0].value,
             mk: this.inputsElement[1].value,
@@ -574,7 +649,11 @@ export class Backlink extends Model {
             param.notebook = notebookId;
         }
         fetchPost("/api/ref/getBacklink2", param, response => {
-            if (!isCurrent() || (this.blockId === blockId && this.notebookId === notebookId)) {
+            if (this.abortController.signal.aborted || requestVersion !== this.requestVersion) {
+                return;
+            }
+            if (!isCurrent() || (this.blockId === blockId &&
+                this.notebookId === notebookId)) {
                 element.classList.remove("fn__rotate");
                 return;
             }
@@ -585,8 +664,13 @@ export class Backlink extends Model {
         }, undefined, undefined, this.abortController.signal);
     }
 
+    private getStatusKey(blockId: string, notebookId: string) {
+        return `${notebookId}:${blockId}`;
+    }
+
     public saveStatus() {
-        this.status[this.blockId] = {
+        const statusKey = this.getStatusKey(this.blockId, this.notebookId);
+        this.status[statusKey] = {
             sort: parseInt(this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').getAttribute("data-sort")),
             mSort: parseInt(this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').getAttribute("data-sort")),
             scrollTop: this.tree.element.scrollTop,
@@ -596,22 +680,22 @@ export class Backlink extends Model {
             backlinkMStatus: 3 // 0 全展开，1 展开一半箭头向下，2 展开一半箭头向上，3 全收起
         };
         this.tree.element.querySelectorAll(".b3-list-item__arrow--open").forEach(item => {
-            this.status[this.blockId].backlinkOpenIds.push(item.parentElement.parentElement.getAttribute("data-node-id"));
+            this.status[statusKey].backlinkOpenIds.push(item.parentElement.parentElement.getAttribute("data-node-id"));
         });
         this.mTree.element.querySelectorAll(".b3-list-item__arrow--open").forEach(item => {
-            this.status[this.blockId].backlinkMOpenIds.push(item.parentElement.parentElement.getAttribute("data-node-id"));
+            this.status[statusKey].backlinkMOpenIds.push(item.parentElement.parentElement.getAttribute("data-node-id"));
         });
         if (this.mTree.element.style.flex) {
             if (this.mTree.element.style.height === "0px") {
-                this.status[this.blockId].backlinkMStatus = 3;
+                this.status[statusKey].backlinkMStatus = 3;
             } else {
-                this.status[this.blockId].backlinkMStatus = 0;
+                this.status[statusKey].backlinkMStatus = 0;
             }
         } else {
             if (this.mTree.element.previousElementSibling.querySelector('[data-type="layout"]').getAttribute("aria-label") === window.siyuan.languages.down) {
-                this.status[this.blockId].backlinkMStatus = 1;
+                this.status[statusKey].backlinkMStatus = 1;
             } else {
-                this.status[this.blockId].backlinkMStatus = 2;
+                this.status[statusKey].backlinkMStatus = 2;
             }
         }
     }
@@ -620,6 +704,8 @@ export class Backlink extends Model {
         if (this.abortController.signal.aborted) {
             return;
         }
+        this.requestVersion++;
+        this.renderVersion++;
         this.abortController.abort();
         this.editors.forEach(item => item.destroy());
         this.editors = [];
@@ -633,6 +719,7 @@ export class Backlink extends Model {
         k: string,
         mk: string
     }) {
+        this.renderVersion++;
         if (!data) {
             data = {
                 backlinks: [],
@@ -669,8 +756,9 @@ export class Backlink extends Model {
             mCountElement.textContent = data.mentionsCount.toString();
         }
 
-        if (!this.status[this.blockId]) {
-            this.status[this.blockId] = {
+        const statusKey = this.getStatusKey(this.blockId, this.notebookId);
+        if (!this.status[statusKey]) {
+            this.status[statusKey] = {
                 sort: window.siyuan.config.editor.backlinkSort,
                 mSort: window.siyuan.config.editor.backmentionSort,
                 scrollTop: 0,
@@ -680,40 +768,40 @@ export class Backlink extends Model {
                 backlinkMStatus: 3
             };
             if (data.mentionsCount === 0 || window.siyuan.config.editor.backmentionExpandCount === -1) {
-                this.status[this.blockId].backlinkMStatus = 3;
+                this.status[statusKey].backlinkMStatus = 3;
             } else {
                 Array.from({length: window.siyuan.config.editor.backmentionExpandCount}).forEach((item, index) => {
                     if (data.backmentions[index]) {
-                        this.status[this.blockId].backlinkMOpenIds.push(data.backmentions[index].id);
+                        this.status[statusKey].backlinkMOpenIds.push(data.backmentions[index].id);
                     }
                 });
                 if (data.mentionsCount === 0) {
-                    this.status[this.blockId].backlinkMStatus = 3;
+                    this.status[statusKey].backlinkMStatus = 3;
                 } else {
                     if (data.linkRefsCount === 0) {
-                        this.status[this.blockId].backlinkMStatus = 0;
+                        this.status[statusKey].backlinkMStatus = 0;
                     } else {
-                        this.status[this.blockId].backlinkMStatus = 1;
+                        this.status[statusKey].backlinkMStatus = 1;
                     }
                 }
             }
             if (data.linkRefsCount > 0) {
                 Array.from({length: window.siyuan.config.editor.backlinkExpandCount}).forEach((item, index) => {
                     if (data.backlinks[index]) {
-                        this.status[this.blockId].backlinkOpenIds.push(data.backlinks[index].id);
+                        this.status[statusKey].backlinkOpenIds.push(data.backlinks[index].id);
                     }
                 });
             }
         }
 
         // restore status
-        this.status[this.blockId].backlinkOpenIds.forEach(item => {
+        this.status[statusKey].backlinkOpenIds.forEach(item => {
             const liElement = this.tree.element.querySelector(`.b3-list-item[data-node-id="${item}"]`) as HTMLElement;
             if (liElement) {
                 this.toggleItem(liElement, false);
             }
         });
-        this.status[this.blockId].backlinkMOpenIds.forEach(item => {
+        this.status[statusKey].backlinkMOpenIds.forEach(item => {
             const liElement = this.mTree.element.querySelector(`.b3-list-item[data-node-id="${item}"]`) as HTMLElement;
             if (liElement) {
                 this.toggleItem(liElement, true);
@@ -721,17 +809,17 @@ export class Backlink extends Model {
         });
         // 0 全展开，1 展开一半箭头向下，2 展开一半箭头向上，3 全收起
         const layoutElement = this.mTree.element.previousElementSibling.querySelector('[data-type="layout"]');
-        if (this.status[this.blockId].backlinkMStatus === 2 || this.status[this.blockId].backlinkMStatus === 1) {
+        if (this.status[statusKey].backlinkMStatus === 2 || this.status[statusKey].backlinkMStatus === 1) {
             this.tree.element.classList.remove("fn__none");
             this.mTree.element.removeAttribute("style");
-            if (this.status[this.blockId].backlinkMStatus === 1) {
+            if (this.status[statusKey].backlinkMStatus === 1) {
                 layoutElement.setAttribute("aria-label", window.siyuan.languages.down);
                 layoutElement.querySelector("use").setAttribute("xlink:href", "#iconDown");
             } else {
                 layoutElement.setAttribute("aria-label", window.siyuan.languages.up);
                 layoutElement.querySelector("use").setAttribute("xlink:href", "#iconUp");
             }
-        } else if (this.status[this.blockId].backlinkMStatus === 3) {
+        } else if (this.status[statusKey].backlinkMStatus === 3) {
             this.tree.element.classList.remove("fn__none");
             this.mTree.element.setAttribute("style", "flex:none;height:0px");
             layoutElement.setAttribute("aria-label", window.siyuan.languages.up);
@@ -742,12 +830,12 @@ export class Backlink extends Model {
             layoutElement.setAttribute("aria-label", window.siyuan.languages.down);
             layoutElement.querySelector("use").setAttribute("xlink:href", "#iconDown");
         }
-        this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').setAttribute("data-sort", this.status[this.blockId].sort.toString());
-        this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').setAttribute("data-sort", this.status[this.blockId].mSort.toString());
+        this.tree.element.previousElementSibling.querySelector('[data-type="sort"]').setAttribute("data-sort", this.status[statusKey].sort.toString());
+        this.mTree.element.previousElementSibling.querySelector('[data-type="mSort"]').setAttribute("data-sort", this.status[statusKey].mSort.toString());
 
         setTimeout(() => {
-            this.tree.element.scrollTop = this.status[this.blockId].scrollTop;
-            this.mTree.element.scrollTop = this.status[this.blockId].mScrollTop;
+            this.tree.element.scrollTop = this.status[statusKey].scrollTop;
+            this.mTree.element.scrollTop = this.status[statusKey].mScrollTop;
         }, Constants.TIMEOUT_LOAD);
     }
 }

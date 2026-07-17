@@ -263,7 +263,7 @@ function createNewDocByHPath(request: NewDocRequest, target: NewDocTargetByHPath
         markdown: "",
         titleEmpty: !target.title,
     }, (response) => {
-        openCreatedDoc(request.app, response.data, request.onCreated, target.title);
+        openCreatedDoc(request.app, target.targetNotebookId, response.data, request.onCreated, target.title);
     });
 }
 
@@ -281,11 +281,11 @@ function createNewDocAsSubDoc(request: NewDocRequest, target: NewDocTargetSubDoc
         sorts: request.paths,
         listDocTree: request.listDocTree,
     }, () => {
-        openCreatedDoc(request.app, id, request.onCreated, target.title);
+        openCreatedDoc(request.app, target.targetNotebookId, id, request.onCreated, target.title);
     });
 }
 
-function openCreatedDoc(app: App, id: string, onCreated?: (id: string, title: string) => void, title?: string) {
+function openCreatedDoc(app: App, notebookId: string, id: string, onCreated?: (id: string, title: string) => void, title?: string) {
     if (onCreated) {
         onCreated(id, title || "");
     }
@@ -293,10 +293,11 @@ function openCreatedDoc(app: App, id: string, onCreated?: (id: string, title: st
     openFileById({
         app,
         id,
+        notebookId,
         action: [Constants.CB_GET_CONTEXT, Constants.CB_GET_OPENNEW]
     });
     /// #else
-    openMobileFileById(app, id, [Constants.CB_GET_CONTEXT, Constants.CB_GET_OPENNEW]);
+    openMobileFileById(app, notebookId, id, [Constants.CB_GET_CONTEXT, Constants.CB_GET_OPENNEW]);
     /// #endif
 }
 

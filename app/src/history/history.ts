@@ -280,11 +280,12 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
         title: string,
         hPath: string,
         path: string,
+        notebook: string,
         hSize: string,
         updated: number
     }) => {
         /// #if MOBILE
-        html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-snapshot="${item.indexID}" data-created="${item.updated}">
+        html += `<li class="b3-list-item" data-type="searchFileItem" data-id="${item.fileID}" data-notebook-id="${item.notebook || ""}" data-snapshot="${item.indexID}" data-created="${item.updated}">
     <div class="fn__flex-1">
         <div style="padding-top:8px" class="b3-list-item__text">${escapeHtml(item.title)}</div>
         <div class="b3-list-item__meta">
@@ -312,7 +313,7 @@ const renderRepoSearchResult = (response: IWebSocketData, element: Element) => {
     </div>
 </li>`;
         /// #else
-        html += `<li class="b3-list-item b3-list-item--hide-action" data-type="searchFileItem" data-id="${item.fileID}" data-snapshot="${item.indexID}" data-created="${item.updated}">
+        html += `<li class="b3-list-item b3-list-item--hide-action" data-type="searchFileItem" data-id="${item.fileID}" data-notebook-id="${item.notebook || ""}" data-snapshot="${item.indexID}" data-created="${item.updated}">
     <div class="fn__flex-1">
         <span class="b3-list-item__text">${escapeHtml(item.title)}</span>
         <div class="b3-list-item__meta">
@@ -596,6 +597,7 @@ export const openHistory = (app: App, tab: "doc" | "notebook" | "repo" = "doc") 
             height: "80vh",
             containerClassName: "b3-dialog__container--theme",
             destroyCallback() {
+                historyEditor?.destroy();
                 historyEditor = undefined;
             }
         });
@@ -631,7 +633,6 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
     const titleElement = firstPanelElement.querySelector(".protyle-title__input") as HTMLElement;
     renderDoc(firstPanelElement, 1);
     historyEditor = new Protyle(app, docElement, {
-        blockId: "",
         history: {
             created: ""
         },
@@ -643,6 +644,10 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
             breadcrumbDocName: false,
         },
         typewriterMode: false,
+    }, {
+        surface: "embedded",
+        participation: "detached",
+        content: {mode: "local-only"},
     });
     disabledProtyle(historyEditor.protyle);
     const repoElement = element.querySelector('#historyContainer [data-type="repo"]');
@@ -718,7 +723,8 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             });
                         } else if (dataType === "doc") {
                             fetchPost("/api/history/rollbackDocHistory", {
-                                historyPath: target.parentElement.getAttribute("data-path")
+                                historyPath: target.parentElement.getAttribute("data-path"),
+                                notebook: target.parentElement.getAttribute("data-notebook-id"),
                             });
                         } else if (dataType === "av") {
                             fetchPost("/api/history/rollbackAttributeViewHistory", {
@@ -730,7 +736,8 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             });
                         } else if (dataType === "searchFileItem") {
                             fetchPost("/api/repo/rollbackRepoSnapshotFile", {
-                                id: liElement.getAttribute("data-id")
+                                id: liElement.getAttribute("data-id"),
+                                notebook: liElement.dataset.notebookId || "",
                             });
                         } else {
                             fetchPost("/api/repo/checkoutRepo", {
@@ -753,12 +760,16 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
             } else if (type === "view") {
                 const liElement = target.closest(".b3-list-item");
                 const snapshotId = liElement.getAttribute("data-snapshot") || "";
+                let viewEditor: Protyle;
                 const dialog = new Dialog({
                     title: liElement.querySelector(".b3-list-item__text").textContent.trim(),
                     content: '<div class="b3-dialog__content"><div style="border-radius: var(--b3-border-radius-b);"></div></div>',
                     width: isMobile() ? "100vw" : "80vw",
                     height: isMobile() ? "100dvh" : "70vh",
                     disableAnimation: true,
+                    destroyCallback() {
+                        viewEditor?.destroy();
+                    },
                 });
                 const contentElement = dialog.element.querySelector(".b3-dialog__content");
                 fetchPost("/api/repo/openRepoSnapshotFile", {id: liElement.getAttribute("data-id")}, (response) => {
@@ -769,8 +780,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                         contentElement.innerHTML = '<textarea readonly class="b3-text-field fn__block" style="height: 100%"></textarea>';
                         (contentElement.firstElementChild as HTMLTextAreaElement).value = response.data.content || response.data.title;
                     } else {
-                        const viewEditor = new Protyle(app, contentElement.firstElementChild as HTMLElement, {
-                            blockId: "",
+                        viewEditor = new Protyle(app, contentElement.firstElementChild as HTMLElement, {
                             action: [Constants.CB_GET_HISTORY],
                             history: {
                                 snapshot: snapshotId
@@ -782,6 +792,10 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                                 breadcrumbDocName: false,
                             },
                             typewriterMode: false
+                        }, {
+                            surface: "embedded",
+                            participation: "detached",
+                            content: {mode: "local-only"},
                         });
                         disabledProtyle(viewEditor.protyle);
                         onGet({
@@ -920,6 +934,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                     const k = (firstPanelElement.querySelector(".b3-text-field") as HTMLInputElement).value;
                     fetchPost("/api/history/getDocHistoryContent", {
                         historyPath: dataPath,
+                        notebook: target.dataset.notebookId,
                         highlight: !isSupportCSSHL(),
                         k
                     }, (response) => {

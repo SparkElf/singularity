@@ -107,15 +107,19 @@ registerAction({
     name: "open_document",
     handler: async (args, app) => {
         const id = args.id as string | undefined;
+        const notebookId = args.notebookId as string | undefined;
         if (!id) {
             return {error: "missing required argument: id"};
+        }
+        if (!notebookId) {
+            return {error: "missing required argument: notebookId"};
         }
         try {
             const [{openFileById}, {Constants}] = await Promise.all([
                 import("../../../editor/util"),
                 import("../../../constants"),
             ]);
-            await openFileById({app, id, action: [Constants.CB_GET_FOCUS]});
+            await openFileById({app, id, notebookId, action: [Constants.CB_GET_FOCUS]});
             return {result: `Opened document ${id}.`};
         } catch (e) {
             return {error: `Failed to open document ${id}: ${(e as Error).message}`};

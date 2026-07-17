@@ -20,7 +20,7 @@ export class Editor extends Model {
         tab: Tab,
         blockId: string,
         rootId: string,
-        notebookId?: string,
+        notebookId: string,
         mode?: TEditorMode,
         action?: TProtyleAction[],
         afterInitProtyle?: (editor: Protyle) => void,
@@ -36,14 +36,17 @@ export class Editor extends Model {
         this.element = options.tab.panelElement;
         this.initProtyle(options);
         // 当文档第一次加载到页签时更新 openAt 时间
-        fetchPost("/api/storage/updateRecentDocOpenTime", {rootID: options.rootId});
+        fetchPost("/api/storage/updateRecentDocOpenTime", {
+            rootID: options.rootId,
+            notebookId: options.notebookId,
+        });
     }
 
     private initProtyle(options: {
         blockId: string,
         action?: TProtyleAction[]
         rootId: string,
-        notebookId?: string,
+        notebookId: string,
         mode?: TEditorMode,
         scrollPosition?: ScrollLogicalPosition,
         afterInitProtyle?: (editor: Protyle) => void,
@@ -52,7 +55,6 @@ export class Editor extends Model {
             action: options.action || [],
             blockId: options.blockId,
             rootId: options.rootId,
-            notebookId: options.notebookId,
             mode: options.mode,
             render: {
                 title: true,
@@ -74,6 +76,11 @@ export class Editor extends Model {
                     options.afterInitProtyle(editor);
                 }
             },
+        }, {
+            surface: "workspace",
+            participation: "live",
+            content: {mode: "bound", notebookId: options.notebookId},
+            initialLoad: "automatic",
         });
         // 需在 after 回调之前，否则不会聚焦 https://github.com/siyuan-note/siyuan/issues/5303
         this.editor.protyle.model = this;

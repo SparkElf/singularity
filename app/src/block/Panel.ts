@@ -18,6 +18,7 @@ import {resize} from "../protyle/util/resize";
 import {checkFold} from "../util/noRelyPCFunction";
 import {updateHotkeyAfterTip} from "../protyle/util/compatibility";
 import {getTopBarHeight} from "../layout/getTopBarHeight";
+import {isEncryptedBox} from "../util/pathName";
 
 export class BlockPanel {
     public element: HTMLElement;
@@ -28,18 +29,21 @@ export class BlockPanel {
     public x: number;
     public y: number;
     private isBacklink: boolean;
+    private notebookId: string;
     public editors: Protyle[] = [];
     private observerResize: ResizeObserver;
     private observerLoad: IntersectionObserver;
     private originalRefBlockIDs: IObject;
     private abortController = new AbortController();
     private destroyed = false;
+    private readonly targetNotebookIds = new Map<string, string>();
 
     // x,y 和 targetElement 二选一必传
     constructor(options: {
         app: App,
         targetElement?: HTMLElement,
         refDefs: IRefDefs[]
+        notebookId: string,
         isBacklink: boolean,
         originalRefBlockIDs?: IObject,  // isBacklink 为 true 时有效
         x?: number,
@@ -52,6 +56,7 @@ export class BlockPanel {
         this.x = options.x;
         this.y = options.y;
         this.isBacklink = options.isBacklink;
+        this.notebookId = options.notebookId;
         this.originalRefBlockIDs = options.originalRefBlockIDs;
 
         this.element = document.createElement("div");
@@ -122,14 +127,23 @@ export class BlockPanel {
                             this.element.setAttribute("data-pin", "true");
                         }
                     } else if (type === "open") {
+                        const notebookId = this.getTargetNotebookId(this.refDefs[0].refID);
+                        if (!notebookId) {
+                            return;
+                        }
                         /// #if !BROWSER
-                        openNewWindowById(this.refDefs[0].refID);
+                        openNewWindowById(this.refDefs[0].refID, {notebookId});
                         /// #endif
                     } else if (type === "stickTab") {
-                        checkFold(this.refDefs[0].refID, (zoomIn, action) => {
+                        const notebookId = this.getTargetNotebookId(this.refDefs[0].refID);
+                        if (!notebookId) {
+                            return;
+                        }
+                        checkFold(this.refDefs[0].refID, notebookId, (zoomIn, action) => {
                             openFileById({
                                 app: options.app,
                                 id: this.refDefs[0].refID,
+                                notebookId,
                                 action,
                                 zoomIn,
                                 openNewTab: true,
@@ -158,7 +172,11 @@ export class BlockPanel {
 
     private initProtyle(editorElement: HTMLElement, afterCB?: () => void) {
         const index = parseInt(editorElement.getAttribute("data-index"));
-        fetchPost("/api/block/getBlockInfo", {id: this.refDefs[index].refID}, (response) => {
+        const blockInfoParam: IObject = {id: this.refDefs[index].refID};
+        if (isEncryptedBox(this.notebookId)) {
+            blockInfoParam.notebook = this.notebookId;
+        }
+        fetchPost("/api/block/getBlockInfo", blockInfoParam, (response) => {
             if (this.destroyed || !editorElement.isConnected) {
                 return;
             }
@@ -166,6 +184,14 @@ export class BlockPanel {
                 showMessage(response.msg);
                 return;
             }
+            const targetNotebookId = response.data?.box;
+            if (!targetNotebookId) {
+                console.error("[Singularity/ProtyleIdentity] block popover target has no notebook", {
+                    blockId: this.refDefs[index].refID,
+                });
+                return;
+            }
+            this.targetNotebookIds.set(this.refDefs[index].refID, targetNotebookId);
             const action: TProtyleAction[] = [];
             if (response.data.rootID !== this.refDefs[index].refID) {
                 action.push(Constants.CB_GET_ALL);
@@ -207,9 +233,24 @@ export class BlockPanel {
                     // 49 = 16（上图标）+16（下图标）+8（padding）+9（底部距离）
                     editor.protyle.scroll.element.parentElement.setAttribute("style", `--b3-dynamicscroll-width:${Math.min(editor.protyle.contentElement.clientHeight - 49, 200)}px;`);
                 }
+            }, {
+                surface: "embedded",
+                participation: "live",
+                content: {mode: "bound", notebookId: targetNotebookId},
+                initialLoad: "automatic",
+                signal: this.abortController.signal,
             });
             this.editors.push(editor);
         }, undefined, undefined, this.abortController.signal);
+    }
+
+    private getTargetNotebookId(blockId: string) {
+        const notebookId = this.targetNotebookIds.get(blockId);
+        if (!notebookId) {
+            console.error("[Singularity/ProtyleIdentity] block popover target notebook is not loaded", {blockId});
+            return;
+        }
+        return notebookId;
     }
 
     public destroy() {

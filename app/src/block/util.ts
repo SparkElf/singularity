@@ -11,6 +11,7 @@ import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {openFileById} from "../editor/util";
 import {openMobileFileById} from "../mobile/editor";
 import {mathRender} from "../protyle/render/mathRender";
+import {isEncryptedBox} from "../util/pathName";
 
 export const cancelSB = async (protyle: IProtyle, nodeElement: Element, range?: Range) => {
     const doOperations: IOperation[] = [];
@@ -178,7 +179,11 @@ export const refreshSbAndPersistWidth = (sbElement: Element,
 };
 
 export const jumpToParent = (protyle: IProtyle, nodeElement: Element, type: "parent" | "next" | "previous") => {
-    fetchPost("/api/block/getBlockSiblingID", {id: nodeElement.getAttribute("data-node-id")}, (response) => {
+    const siblingParam: IObject = {id: nodeElement.getAttribute("data-node-id")};
+    if (isEncryptedBox(protyle.notebookId)) {
+        siblingParam.notebook = protyle.notebookId;
+    }
+    fetchPost("/api/block/getBlockSiblingID", siblingParam, (response) => {
         const targetId = response.data[type];
         if (!targetId) {
             return;
@@ -187,10 +192,12 @@ export const jumpToParent = (protyle: IProtyle, nodeElement: Element, type: "par
         openFileById({
             app: protyle.app,
             id: targetId,
+            notebookId: protyle.notebookId,
             action: targetId !== protyle.block.rootID && protyle.block.showAll ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS]
         });
         /// #else
-        openMobileFileById(protyle.app, targetId, targetId !== protyle.block.rootID && protyle.block.showAll ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS]);
+        openMobileFileById(protyle.app, protyle.notebookId, targetId,
+            targetId !== protyle.block.rootID && protyle.block.showAll ? [Constants.CB_GET_ALL, Constants.CB_GET_FOCUS] : [Constants.CB_GET_FOCUS]);
         /// #endif
     });
 };

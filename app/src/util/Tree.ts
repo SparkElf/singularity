@@ -145,10 +145,11 @@ ${item.label !== undefined && item.label !== null ? `data-label='${item.label}'`
             } else {
                 style = `padding-left: ${item.depth * 18 || 4}px;margin-right: 2px`;
             }
-            html += `<li class="b3-list-item${isM ? "" : " b3-list-item--hide-action"}"  
-style="--file-toggle-width:${item.depth === 0 ? 22 : ((item.depth + 1) * 18)}px" 
-data-node-id="${item.id}" 
-data-ref-text="${encodeURIComponent(item.refText)}" 
+            html += `<li class="b3-list-item${isM ? "" : " b3-list-item--hide-action"}"
+style="--file-toggle-width:${item.depth === 0 ? 22 : ((item.depth + 1) * 18)}px"
+data-node-id="${item.id}"
+${item.box ? 'data-notebook-id="' + item.box + '"' : ""}
+data-ref-text="${encodeURIComponent(item.refText)}"
 data-def-id="${item.defID}" 
 data-type="${item.type || ""}" 
 data-subtype="${item.subType || ""}" 

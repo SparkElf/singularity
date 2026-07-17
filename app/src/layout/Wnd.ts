@@ -240,15 +240,29 @@ export class Wnd {
             if (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_FILE)) {
                 // 文档树拖拽
                 setPanelFocus(it.parentElement);
-                event.dataTransfer.getData(Constants.SIYUAN_DROP_FILE).split(",").forEach(item => {
-                    if (item) {
+                const documentTargetsData = event.dataTransfer.getData(Constants.SIYUAN_DROP_NOTEBOOK);
+                let documentTargets: Array<{id: string, notebookId: string}>;
+                try {
+                    documentTargets = JSON.parse(documentTargetsData);
+                } catch {
+                    documentTargets = [];
+                }
+                if (!Array.isArray(documentTargets) || documentTargets.some(item =>
+                    !item || typeof item.id !== "string" || typeof item.notebookId !== "string")) {
+                    documentTargets = [];
+                }
+                if (documentTargets.length === 0) {
+                    console.error("[Singularity/ProtyleIdentity] document drop has no notebook payload");
+                } else {
+                    documentTargets.forEach(item => {
                         openFileById({
                             app,
-                            id: item,
+                            id: item.id,
+                            notebookId: item.notebookId,
                             action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                         });
-                    }
-                });
+                    });
+                }
                 window.siyuan.dragElement = undefined;
                 return;
             }
@@ -477,7 +491,10 @@ export class Wnd {
                             item.headElement.setAttribute("data-activetime", (new Date()).getTime().toString());
                             // 更新文档浏览时间
                             if (item.model instanceof Editor) {
-                                fetchPost("/api/storage/updateRecentDocViewTime", {rootID: item.model.editor.protyle.block.rootID});
+                                fetchPost("/api/storage/updateRecentDocViewTime", {
+                                    rootID: item.model.editor.protyle.block.rootID,
+                                    notebookId: item.model.editor.protyle.notebookId,
+                                });
                             }
                         }
                     }
@@ -540,6 +557,7 @@ export class Wnd {
                     openFileById({
                         app: this.app,
                         id: keepCursorId,
+                        notebookId: currentTab.model.editor.protyle.notebookId,
                         action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                     });
                 }
@@ -789,7 +807,10 @@ export class Wnd {
                 saveScroll(item.model.editor.protyle);
                 // 更新文档关闭时间（批量关闭页签时由 closeTabByType 批量处理，这里不单独调用）
                 if (!isBatchClose) {
-                    fetchPost("/api/storage/updateRecentDocCloseTime", {rootID: item.model.editor.protyle.block.rootID});
+                    fetchPost("/api/storage/updateRecentDocCloseTime", {
+                        rootID: item.model.editor.protyle.block.rootID,
+                        notebookId: item.model.editor.protyle.notebookId,
+                    });
                 }
             }
             if (this.children.length === 1) {

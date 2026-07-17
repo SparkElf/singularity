@@ -855,6 +855,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             click() {
                 fetchPost("/api/av/renderAttributeView", {
                     id: avID,
+                    notebook: protyle.notebookId,
                     viewID,
                     ignoreRows: true,
                 }, (response) => {
@@ -899,6 +900,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             click() {
                 fetchPost("/api/av/renderAttributeView", {
                     id: avID,
+                    notebook: protyle.notebookId,
                 }, (response) => {
                     transaction(protyle, [{
                         action: "setAttrViewSorts",
@@ -924,6 +926,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             click() {
                 fetchPost("/api/av/renderAttributeView", {
                     id: avID,
+                    notebook: protyle.notebookId,
                 }, (response) => {
                     transaction(protyle, [{
                         action: "setAttrViewSorts",
@@ -1070,6 +1073,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                 click() {
                     fetchPost("/api/av/renderAttributeView", {
                         id: avID,
+                        notebook: protyle.notebookId,
                     }, (response) => {
                         duplicateCol({
                             blockElement,

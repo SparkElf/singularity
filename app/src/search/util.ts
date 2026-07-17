@@ -10,7 +10,6 @@ import {showMessage} from "../dialog/message";
 import {reloadProtyle} from "../protyle/util/reload";
 import {MenuItem} from "../menus/Menu";
 import {getDisplayName, getNotebookIcon, getNotebookName, isEncryptedBox, movePathTo, pathPosix, useShell} from "../util/pathName";
-import {Protyle} from "../protyle";
 import {onGet} from "../protyle/util/onGet";
 import {addLoading} from "../protyle/ui/initUI";
 import {getIconByType} from "../editor/getIcon";
@@ -37,7 +36,6 @@ import {
     renderNextAssetMark,
     renderPreview,
 } from "./assets";
-import {resize} from "../protyle/util/resize";
 import {addClearButton} from "../util/addClearButton";
 import {checkFold} from "../util/noRelyPCFunction";
 import {getUnRefList, openSearchUnRef, unRefMoreMenu} from "./unRef";
@@ -47,6 +45,66 @@ import {saveKeyList, toggleAssetHistory, toggleReplaceHistory, toggleSearchHisto
 import {highlightById} from "../util/highlightById";
 import {getSelectionOffset} from "../protyle/util/selection";
 import {getContenteditableElement} from "../protyle/wysiwyg/getBlock";
+import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
+
+interface OwnerRequestState {
+    generation: number,
+    controller: AbortController,
+    timeout?: number,
+    releaseOwnerCleanup?: () => void,
+}
+
+const searchRequests = new WeakMap<EmbeddedProtyleOwner, OwnerRequestState>();
+
+const disposeOwnerRequest = (requests: WeakMap<EmbeddedProtyleOwner, OwnerRequestState>,
+                             owner: EmbeddedProtyleOwner, request: OwnerRequestState) => {
+    if (typeof request.timeout === "number") {
+        window.clearTimeout(request.timeout);
+        request.timeout = undefined;
+    }
+    request.controller.abort();
+    const releaseOwnerCleanup = request.releaseOwnerCleanup;
+    request.releaseOwnerCleanup = undefined;
+    releaseOwnerCleanup?.();
+    if (requests.get(owner) === request) {
+        requests.delete(owner);
+    }
+};
+
+const beginOwnerRequest = (requests: WeakMap<EmbeddedProtyleOwner, OwnerRequestState>,
+                           owner: EmbeddedProtyleOwner) => {
+    const previous = requests.get(owner);
+    if (previous) {
+        disposeOwnerRequest(requests, owner, previous);
+    }
+    if (owner.signal.aborted || !owner.element.isConnected) {
+        return;
+    }
+    const request: OwnerRequestState = {
+        generation: (previous?.generation || 0) + 1,
+        controller: new AbortController(),
+    };
+    requests.set(owner, request);
+    request.releaseOwnerCleanup = owner.addCleanup(() => {
+        if (typeof request.timeout === "number") {
+            window.clearTimeout(request.timeout);
+            request.timeout = undefined;
+        }
+        request.controller.abort();
+        request.releaseOwnerCleanup = undefined;
+        if (requests.get(owner) === request) {
+            requests.delete(owner);
+        }
+    });
+    return request;
+};
+
+const isCurrentOwnerRequest = (requests: WeakMap<EmbeddedProtyleOwner, OwnerRequestState>,
+                               owner: EmbeddedProtyleOwner, request: OwnerRequestState) => {
+    const current = requests.get(owner);
+    return current?.generation === request.generation && current.controller === request.controller &&
+        !request.controller.signal.aborted && !owner.signal.aborted && owner.element.isConnected;
+};
 
 export const openGlobalSearch = (app: App, text: string, replace: boolean, searchData?: Config.IUILayoutTabSearchConfig) => {
     text = text.trim();
@@ -237,8 +295,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
     const searchPanelElement = element.querySelector("#searchList");
     const searchInputElement = element.querySelector("#searchInput") as HTMLInputElement;
     const replaceInputElement = element.querySelector("#replaceInput") as HTMLInputElement;
-    const edit = new Protyle(app, element.querySelector("#searchPreview") as HTMLElement, {
-        blockId: "",
+    const edit = new EmbeddedProtyleOwner(app, element.querySelector("#searchPreview") as HTMLElement, {
         render: {
             background: true,
             gutter: true,
@@ -247,8 +304,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
         },
     });
     edit.resize();
-    const unRefEdit = new Protyle(app, element.querySelector("#searchUnRefPreview") as HTMLElement, {
-        blockId: "",
+    const unRefEdit = new EmbeddedProtyleOwner(app, element.querySelector("#searchUnRefPreview") as HTMLElement, {
         render: {
             gutter: true,
             breadcrumbDocName: true,
@@ -259,29 +315,36 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
     if (closeCB) {
         if (data.layout === 1) {
             if (data.col) {
-                edit.protyle.element.style.width = data.col;
-                edit.protyle.element.classList.remove("fn__flex-1");
+                edit.element.style.width = data.col;
+                edit.element.classList.remove("fn__flex-1");
             }
         } else {
             if (data.row) {
-                edit.protyle.element.classList.remove("fn__flex-1");
-                edit.protyle.element.style.height = data.row;
+                edit.element.classList.remove("fn__flex-1");
+                edit.element.style.height = data.row;
             }
         }
     } else {
         if (data.layoutTab === 1) {
             if (data.colTab) {
-                edit.protyle.element.style.width = data.colTab;
-                edit.protyle.element.classList.remove("fn__flex-1");
+                edit.element.style.width = data.colTab;
+                edit.element.classList.remove("fn__flex-1");
             }
         } else {
             if (data.rowTab) {
-                edit.protyle.element.classList.remove("fn__flex-1");
-                edit.protyle.element.style.height = data.rowTab;
+                edit.element.classList.remove("fn__flex-1");
+                edit.element.style.height = data.rowTab;
             }
         }
     }
     let clickTimeout: number;
+    let clickGeneration = 0;
+    const cancelPendingClick = () => {
+        clickGeneration++;
+        window.clearTimeout(clickTimeout);
+    };
+    edit.addCleanup(cancelPendingClick);
+    unRefEdit.addCleanup(cancelPendingClick);
     let lastClickTime = Date.now();
 
     searchInputElement.value = config.k || "";
@@ -322,18 +385,18 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
             window.siyuan.storage[Constants.LOCAL_SEARCHKEYS][direction === "lr" ? (closeCB ? "col" : "colTab") : (closeCB ? "row" : "rowTab")] = nextElement[direction === "lr" ? "clientWidth" : "clientHeight"] + "px";
             setStorageVal(Constants.LOCAL_SEARCHKEYS, window.siyuan.storage[Constants.LOCAL_SEARCHKEYS]);
             if (direction === "lr") {
-                resize(edit.protyle);
+                edit.resize();
             }
         };
     });
     dragElement.addEventListener("dblclick", () => {
-        edit.protyle.element.style[localSearch.layout === 1 ? "width" : "height"] = "";
-        edit.protyle.element.classList.add("fn__flex-1");
+        edit.element.style[localSearch.layout === 1 ? "width" : "height"] = "";
+        edit.element.classList.add("fn__flex-1");
         const direction = window.siyuan.storage[Constants.LOCAL_SEARCHKEYS][closeCB ? "layout" : "layoutTab"] === 1 ? "lr" : "tb";
         window.siyuan.storage[Constants.LOCAL_SEARCHKEYS][direction === "lr" ? (closeCB ? "col" : "colTab") : (closeCB ? "row" : "rowTab")] = "";
         setStorageVal(Constants.LOCAL_SEARCHKEYS, window.siyuan.storage[Constants.LOCAL_SEARCHKEYS]);
         if (direction === "lr") {
-            resize(edit.protyle);
+            edit.resize();
         }
     });
     const localSearch = window.siyuan.storage[Constants.LOCAL_SEARCHASSET] as ISearchAssetOption;
@@ -435,6 +498,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
             } else if (target.classList.contains("search__rmpath")) {
                 config.idPath = [];
                 config.hPath = "";
+                config.notebookId = undefined;
                 config.page = 1;
                 searchPathInputElement.textContent = "";
                 searchPathInputElement.setAttribute("aria-label", "");
@@ -470,6 +534,8 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                     cb: (toPath, toNotebook) => {
                         fetchPost("/api/filetree/getHPathsByPaths", {paths: toPath}, (response) => {
                             config.idPath = [];
+                            config.notebookId = toNotebook.length > 0 &&
+                            toNotebook.every(item => item === toNotebook[0]) ? toNotebook[0] : undefined;
                             const hPathList: string[] = [];
                             let enableIncludeChild = false;
                             toPath.forEach((item, index) => {
@@ -642,14 +708,14 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                             current: isPopover ? localData.layout === 0 : localData.layoutTab === 0,
                             click() {
                                 element.querySelector(".search__layout").classList.remove("search__layout--row");
-                                edit.protyle.element.style.width = "";
+                                edit.element.style.width = "";
                                 if ((isPopover && localData.row) || (!isPopover && localData.rowTab)) {
-                                    edit.protyle.element.style.height = isPopover ? localData.row : localData.rowTab;
-                                    edit.protyle.element.classList.remove("fn__flex-1");
+                                    edit.element.style.height = isPopover ? localData.row : localData.rowTab;
+                                    edit.element.classList.remove("fn__flex-1");
                                 } else {
-                                    edit.protyle.element.classList.add("fn__flex-1");
+                                    edit.element.classList.add("fn__flex-1");
                                 }
-                                resize(edit.protyle);
+                                edit.resize();
                                 if (isPopover) {
                                     localData.layout = 0;
                                 } else {
@@ -663,14 +729,14 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                             current: isPopover ? localData.layout === 1 : localData.layoutTab === 1,
                             click() {
                                 element.querySelector(".search__layout").classList.add("search__layout--row");
-                                edit.protyle.element.style.height = "";
+                                edit.element.style.height = "";
                                 if ((isPopover && localData.col) || (!isPopover && localData.colTab)) {
-                                    edit.protyle.element.style.width = isPopover ? localData.col : localData.colTab;
-                                    edit.protyle.element.classList.remove("fn__flex-1");
+                                    edit.element.style.width = isPopover ? localData.col : localData.colTab;
+                                    edit.element.classList.remove("fn__flex-1");
                                 } else {
-                                    edit.protyle.element.classList.add("fn__flex-1");
+                                    edit.element.classList.add("fn__flex-1");
                                 }
-                                resize(edit.protyle);
+                                edit.resize();
                                 if (isPopover) {
                                     localData.layout = 1;
                                 } else {
@@ -813,7 +879,13 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                     }
                     /// #endif
                     if (isClick) {
+                        const generation = ++clickGeneration;
+                        const previewOwner = searchType === "doc" ? edit : (searchType === "unRef" ? unRefEdit : undefined);
                         clickTimeout = window.setTimeout(() => {
+                            if (generation !== clickGeneration || !element.isConnected || !target.isConnected ||
+                                previewOwner?.signal.aborted) {
+                                return;
+                            }
                             if (searchType === "asset") {
                                 if (!target.classList.contains("b3-list-item--focus")) {
                                     assetsElement.querySelector(".b3-list-item--focus").classList.remove("b3-list-item--focus");
@@ -826,9 +898,14 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                                 }
                             } else {
                                 if (event.altKey) {
+                                    const protyle = (searchType === "doc" ? edit : unRefEdit).protyle;
+                                    if (!protyle) {
+                                        return;
+                                    }
                                     openSearchEditor({
                                         rootId: target.getAttribute("data-root-id"),
-                                        protyle: edit.protyle,
+                                        notebookId: target.getAttribute("data-notebook-id"),
+                                        protyle,
                                         id: target.getAttribute("data-node-id"),
                                         cb: closeCB,
                                         openPosition: "right",
@@ -839,6 +916,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                                     getArticle({
                                         edit: searchType === "doc" ? edit : unRefEdit,
                                         id: target.getAttribute("data-node-id"),
+                                        notebookId: target.getAttribute("data-notebook-id"),
                                         config: searchType === "doc" ? config : null,
                                         value: searchType === "doc" ? searchInputElement.value : null,
                                     });
@@ -854,15 +932,20 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
                             }
                         }, Constants.TIMEOUT_DBLCLICK);
                     } else if (isDblClick && isNotCtrl(event)) {
-                        clearTimeout(clickTimeout);
+                        cancelPendingClick();
                         if (searchType === "asset") {
                             /// #if !BROWSER
                             useShell("showItemInFolder", path.join(window.siyuan.config.system.dataDir, target.lastElementChild.getAttribute("aria-label")));
                             /// #endif
                         } else {
+                            const protyle = (searchType === "doc" ? edit : unRefEdit).protyle;
+                            if (!protyle) {
+                                return;
+                            }
                             openSearchEditor({
                                 rootId: target.getAttribute("data-root-id"),
-                                protyle: edit.protyle,
+                                notebookId: target.getAttribute("data-notebook-id"),
+                                protyle,
                                 id: target.getAttribute("data-node-id"),
                                 cb: closeCB
                             });
@@ -926,6 +1009,7 @@ export const openSearchEditor = (options: {
     openPosition?: string,
     id: string,
     rootId: string,
+    notebookId: string,
     cb: () => void
 }) => {
     let currentRange = (options.rootId === options.protyle.block.rootID && options.id === options.protyle.block.id) ?
@@ -953,10 +1037,11 @@ export const openSearchEditor = (options: {
             }
         }
     }
-    checkFold(options.id, (zoomIn) => {
+    checkFold(options.id, options.notebookId, (zoomIn) => {
         openFileById({
             app: options.protyle.app,
             id: options.id,
+            notebookId: options.notebookId,
             action: currentRange ?
                 (zoomIn ? [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL, Constants.CB_GET_SCROLL, Constants.CB_GET_SEARCH] : [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT, Constants.CB_GET_SCROLL, Constants.CB_GET_SEARCH]) :
                 (zoomIn ? [Constants.CB_GET_FOCUS, Constants.CB_GET_ALL, Constants.CB_GET_HL] : [Constants.CB_GET_FOCUS, Constants.CB_GET_CONTEXT, Constants.CB_GET_HL]),
@@ -1001,10 +1086,11 @@ export const genQueryHTML = (method: number, id: string) => {
 };
 
 export const updateConfig = (element: Element, item: Config.IUILayoutTabSearchConfig, config: Config.IUILayoutTabSearchConfig,
-                             edit: Protyle, clear = false) => {
+                             edit: EmbeddedProtyleOwner, clear = false) => {
     const dialogElement = hasClosestByClassName(element, "b3-dialog--open");
     if (dialogElement && dialogElement.getAttribute("data-key") === Constants.DIALOG_SEARCH) {
         // https://github.com/siyuan-note/siyuan/issues/6828
+        item.notebookId = config.notebookId;
         item.hPath = config.hPath;
         item.idPath = [...config.idPath];
     }
@@ -1082,37 +1168,41 @@ const scrollToCurrent = (contentElement: HTMLElement, currentRange: Range, conte
 
 const renderNextSearchMark = (options: {
     id: string,
-    edit: Protyle,
+    edit: EmbeddedProtyleOwner,
     target: Element,
 }) => {
-    const contentRect = options.edit.protyle.contentElement.getBoundingClientRect();
+    const protyle = options.edit.protyle;
+    if (!protyle) {
+        return;
+    }
+    const contentRect = protyle.contentElement.getBoundingClientRect();
     if (isSupportCSSHL()) {
-        options.edit.protyle.highlight.markHL.clear();
-        options.edit.protyle.highlight.mark.clear();
-        options.edit.protyle.highlight.rangeIndex++;
-        if (options.edit.protyle.highlight.rangeIndex >= options.edit.protyle.highlight.ranges.length) {
-            options.edit.protyle.highlight.rangeIndex = 0;
+        protyle.highlight.markHL.clear();
+        protyle.highlight.mark.clear();
+        protyle.highlight.rangeIndex++;
+        if (protyle.highlight.rangeIndex >= protyle.highlight.ranges.length) {
+            protyle.highlight.rangeIndex = 0;
         }
         let currentRange: Range;
-        options.edit.protyle.highlight.ranges.forEach((item, index) => {
-            if (options.edit.protyle.highlight.rangeIndex === index) {
-                options.edit.protyle.highlight.markHL.add(item);
+        protyle.highlight.ranges.forEach((item, index) => {
+            if (protyle.highlight.rangeIndex === index) {
+                protyle.highlight.markHL.add(item);
                 currentRange = item;
             } else {
-                options.edit.protyle.highlight.mark.add(item);
+                protyle.highlight.mark.add(item);
             }
         });
         if (currentRange) {
             if (!currentRange.toString()) {
-                highlightById(options.edit.protyle, options.id, "center");
+                highlightById(protyle, options.id, "center");
             } else {
-                scrollToCurrent(options.edit.protyle.contentElement, currentRange, contentRect);
+                scrollToCurrent(protyle.contentElement, currentRange, contentRect);
             }
         }
         return;
     }
     let matchElement;
-    const allMatchElements = Array.from(options.edit.protyle.wysiwyg.element.querySelectorAll('span[data-type~="search-mark"]'));
+    const allMatchElements = Array.from(protyle.wysiwyg.element.querySelectorAll('span[data-type~="search-mark"]'));
     allMatchElements.find((item, itemIndex) => {
         if (item.classList.contains("search-mark--hl")) {
             item.classList.remove("search-mark--hl");
@@ -1125,33 +1215,37 @@ const renderNextSearchMark = (options: {
     }
     if (matchElement) {
         matchElement.classList.add("search-mark--hl");
-        options.edit.protyle.contentElement.scrollTop = options.edit.protyle.contentElement.scrollTop + matchElement.getBoundingClientRect().top - contentRect.top - contentRect.height / 2;
+        protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + matchElement.getBoundingClientRect().top - contentRect.top - contentRect.height / 2;
     }
 };
 
-let articleId: string;
-
 export const getArticle = (options: {
     id: string,
+    notebookId: string,
     config?: Config.IUILayoutTabSearchConfig,
-    edit: Protyle
+    edit: EmbeddedProtyleOwner
     value?: string,
 }) => {
-    articleId = options.id;
-    checkFold(options.id, (zoomIn) => {
-        if (articleId !== options.id) {
+    if (options.edit.signal.aborted || !options.edit.element.isConnected) {
+        return;
+    }
+    const binding = options.edit.bind(options.notebookId, options.id);
+    const protyle = binding.protyle;
+    const isCurrent = () => options.edit.isCurrent(binding);
+    checkFold(options.id, options.notebookId, (zoomIn) => {
+        if (!isCurrent()) {
             return;
         }
-        options.edit.protyle.scroll.lastScrollTop = 0;
-        addLoading(options.edit.protyle);
+        protyle.scroll.lastScrollTop = 0;
+        addLoading(protyle);
         const docInfoParam: IObject = {
             id: options.id,
         };
-        if (isEncryptedBox(options.edit.protyle.notebookId)) {
-            docInfoParam.notebook = options.edit.protyle.notebookId;
+        if (isEncryptedBox(options.notebookId)) {
+            docInfoParam.notebook = options.notebookId;
         }
         fetchPost("/api/block/getDocInfo", docInfoParam, (response) => {
-            if (articleId !== options.id) {
+            if (!isCurrent()) {
                 return;
             }
             const getDocParam: Record<string, any> = {
@@ -1165,43 +1259,56 @@ export const getArticle = (options: {
                 zoom: zoomIn,
                 highlight: !isSupportCSSHL(),
             };
-            if (isEncryptedBox(options.edit.protyle.notebookId)) {
-                getDocParam.notebook = options.edit.protyle.notebookId;
+            if (isEncryptedBox(options.notebookId)) {
+                getDocParam.notebook = options.notebookId;
             }
             fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                if (articleId !== options.id) {
+                if (!isCurrent()) {
                     return;
                 }
-                options.edit.protyle.query = {
+                protyle.query = {
                     key: options.value || null,
                     method: options.config?.method || null,
                     types: options.config?.types || null,
                     subTypes: options.config?.subTypes || null,
                 };
                 // https://ld246.com/article/1770132984152
-                if (options.edit.protyle.options.render.title) {
-                    options.edit.protyle.wysiwyg.renderCustom(response.data.ial);
+                if (protyle.options.render.title) {
+                    protyle.wysiwyg.renderCustom(response.data.ial);
                 }
                 onGet({
                     updateReadonly: true,
                     data: getResponse,
-                    protyle: options.edit.protyle,
+                    protyle,
                     action: zoomIn ? [Constants.CB_GET_ALL, Constants.CB_GET_HTML] : [Constants.CB_GET_HTML],
                     afterCB() {
-                        const contentRect = options.edit.protyle.contentElement.getBoundingClientRect();
+                        if (!isCurrent()) {
+                            return;
+                        }
+                        const contentRect = protyle.contentElement.getBoundingClientRect();
                         if (isSupportCSSHL()) {
                             let observer: ResizeObserver;
-                            searchMarkRender(options.edit.protyle, getResponse.data.keywords, options.id, () => {
+                            let observerTimeout: number;
+                            const stopObserving = () => {
+                                observer?.disconnect();
+                                window.clearTimeout(observerTimeout);
+                            };
+                            binding.signal.addEventListener("abort", stopObserving, {once: true});
+                            searchMarkRender(protyle, getResponse.data.keywords, options.id, () => {
                                 const highlightKeys = () => {
-                                    const currentRange = options.edit.protyle.highlight.ranges[options.edit.protyle.highlight.rangeIndex];
-                                    if (options.edit.protyle.highlight.ranges.length > 0 && currentRange) {
+                                    if (!isCurrent()) {
+                                        observer?.disconnect();
+                                        return;
+                                    }
+                                    const currentRange = protyle.highlight.ranges[protyle.highlight.rangeIndex];
+                                    if (protyle.highlight.ranges.length > 0 && currentRange) {
                                         if (!currentRange.toString()) {
-                                            highlightById(options.edit.protyle, options.id, "center");
+                                            highlightById(protyle, options.id, "center");
                                         } else {
-                                            scrollToCurrent(options.edit.protyle.contentElement, currentRange, contentRect);
+                                            scrollToCurrent(protyle.contentElement, currentRange, contentRect);
                                         }
                                     } else {
-                                        highlightById(options.edit.protyle, options.id, "center");
+                                        highlightById(protyle, options.id, "center");
                                     }
                                 };
                                 if (observer) {
@@ -1211,33 +1318,37 @@ export const getArticle = (options: {
                                 observer = new ResizeObserver(() => {
                                     highlightKeys();
                                 });
-                                observer.observe(options.edit.protyle.wysiwyg.element);
-                                setTimeout(() => {
+                                observer.observe(protyle.wysiwyg.element);
+                                observerTimeout = window.setTimeout(() => {
                                     observer.disconnect();
                                 }, Constants.TIMEOUT_COUNT);
                             });
                         } else {
-                            const matchElements = options.edit.protyle.wysiwyg.element.querySelectorAll('span[data-type~="search-mark"]');
+                            const matchElements = protyle.wysiwyg.element.querySelectorAll('span[data-type~="search-mark"]');
                             if (matchElements.length === 0) {
                                 return;
                             }
                             matchElements[0].classList.add("search-mark--hl");
-                            options.edit.protyle.contentElement.scrollTop = options.edit.protyle.contentElement.scrollTop + matchElements[0].getBoundingClientRect().top - contentRect.top - contentRect.height / 2;
+                            protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + matchElements[0].getBoundingClientRect().top - contentRect.top - contentRect.height / 2;
                         }
                     }
                 });
                 // 只能放在 onGet 后，否则 title 不会更新 https://github.com/siyuan-note/siyuan/issues/16739
-                if (options.edit.protyle.options.render.title) {
-                    options.edit.protyle.title.render(options.edit.protyle, response);
+                if (protyle.options.render.title) {
+                    protyle.title.render(protyle, response);
                 }
-            });
-        });
+            }, undefined, undefined, binding.signal);
+        }, undefined, undefined, binding.signal);
     });
 };
 
-export const replace = (element: Element, config: Config.IUILayoutTabSearchConfig, edit: Protyle, isAll: boolean) => {
+export const replace = (element: Element, config: Config.IUILayoutTabSearchConfig, edit: EmbeddedProtyleOwner, isAll: boolean) => {
     if (config.method === 2 || config.method === 4) {
         showMessage(window.siyuan.languages._kernel[132]);
+        return;
+    }
+    if (isEncryptedBox(config.notebookId)) {
+        showMessage(window.siyuan.languages._kernel[313], 6000, "error");
         return;
     }
     const searchPanelElement = element.querySelector("#searchList");
@@ -1303,14 +1414,25 @@ export const replace = (element: Element, config: Config.IUILayoutTabSearchConfi
 };
 
 export const inputEvent = (element: Element, config: Config.IUILayoutTabSearchConfig,
-                           edit: Protyle, rmCurrentCriteria = false,
+                           edit: EmbeddedProtyleOwner, rmCurrentCriteria = false,
                            focusId?: {
                                currentId?: string,
                                newId?: string
                            }) => {
-    let inputTimeout = parseInt(element.getAttribute("data-timeout") || "0");
-    clearTimeout(inputTimeout);
-    inputTimeout = window.setTimeout(() => {
+    if (edit.signal.aborted || !element.isConnected || !edit.element.isConnected) {
+        return;
+    }
+    edit.invalidate();
+    const request = beginOwnerRequest(searchRequests, edit);
+    if (!request) {
+        return;
+    }
+    const isCurrent = () => isCurrentOwnerRequest(searchRequests, edit, request);
+    request.timeout = window.setTimeout(() => {
+        request.timeout = undefined;
+        if (!isCurrent() || !element.isConnected) {
+            return;
+        }
         if (rmCurrentCriteria) {
             element.querySelector("#criteria .b3-chip--current")?.classList.remove("b3-chip--current");
         }
@@ -1323,18 +1445,20 @@ export const inputEvent = (element: Element, config: Config.IUILayoutTabSearchCo
         listElement.scrollTo(0, 0);
         const previousElement = element.querySelector('[data-type="previous"]');
         const nextElement = element.querySelector('[data-type="next"]');
-        edit.protyle?.app.plugins.forEach(item => {
-            item.eventBus.emit("input-search", {
-                protyle: edit,
-                config,
-                searchElement: searchInputElement,
+        const currentEditor = edit.getCurrent();
+        if (currentEditor) {
+            edit.app.plugins.forEach(item => {
+                item.eventBus.emit("input-search", {
+                    protyle: currentEditor,
+                    config,
+                    searchElement: searchInputElement,
+                });
             });
-        });
+        }
         const searchResultElement = element.querySelector("#searchResult");
         if (config.query === "" && (!config.idPath || config.idPath.length === 0)) {
             fetchPost("/api/block/getRecentUpdatedBlocks", {}, (response) => {
-                if (window.siyuan.reqIds["/api/block/getRecentUpdatedBlocks"] && window.siyuan.reqIds["/api/search/fullTextSearchBlock"] &&
-                    window.siyuan.reqIds["/api/block/getRecentUpdatedBlocks"] < window.siyuan.reqIds["/api/search/fullTextSearchBlock"]) {
+                if (!isCurrent()) {
                     return;
                 }
                 onSearch(response.data, edit, element, config);
@@ -1342,7 +1466,7 @@ export const inputEvent = (element: Element, config: Config.IUILayoutTabSearchCo
                 searchResultElement.innerHTML = "";
                 previousElement.setAttribute("disabled", "true");
                 nextElement.setAttribute("disabled", "true");
-            });
+            }, undefined, undefined, request.controller.signal);
         } else {
             if (config.page > 1) {
                 previousElement.removeAttribute("disabled");
@@ -1361,20 +1485,11 @@ export const inputEvent = (element: Element, config: Config.IUILayoutTabSearchCo
                 page: config.page || 1,
                 pageSize: 32,
             };
-            // 限定在单个加密 box 内搜索时带 notebook，让内核走加密 db；跨 box 或全局搜索走原函数
-            const idPaths = config.idPath || [];
-            if (idPaths.length > 0) {
-                const box = idPaths[0].split("/")[0];
-                if (isEncryptedBox(box) && idPaths.every(p => p.split("/")[0] === box)) {
-                    searchParam.notebook = box;
-                }
+            if (isEncryptedBox(config.notebookId)) {
+                searchParam.notebook = config.notebookId;
             }
             fetchPost(endpoint, searchParam, (response) => {
-                const searchReqId = config.method === 4
-                    ? window.siyuan.reqIds["/api/search/semanticSearchBlock"]
-                    : window.siyuan.reqIds["/api/search/fullTextSearchBlock"];
-                if (window.siyuan.reqIds["/api/block/getRecentUpdatedBlocks"] && searchReqId &&
-                    window.siyuan.reqIds["/api/block/getRecentUpdatedBlocks"] > searchReqId) {
+                if (!isCurrent()) {
                     return;
                 }
                 if (!config.page) {
@@ -1398,10 +1513,9 @@ export const inputEvent = (element: Element, config: Config.IUILayoutTabSearchCo
                 }
                 loadingElement.classList.add("fn__none");
                 searchResultElement.setAttribute("data-pagecount", response.data.pageCount || 1);
-            });
+            }, undefined, undefined, request.controller.signal);
         }
     }, Constants.TIMEOUT_INPUT);
-    element.setAttribute("data-timeout", inputTimeout.toString());
 };
 
 export const getAttr = (block: IBlock) => {
@@ -1418,7 +1532,7 @@ export const getAttr = (block: IBlock) => {
     return attrHTML;
 };
 
-const onSearch = (data: IBlock[], edit: Protyle, element: Element, config: Config.IUILayoutTabSearchConfig,
+const onSearch = (data: IBlock[], edit: EmbeddedProtyleOwner, element: Element, config: Config.IUILayoutTabSearchConfig,
                   focusId?: {
                       currentId?: string,
                       newId?: string
@@ -1427,6 +1541,9 @@ const onSearch = (data: IBlock[], edit: Protyle, element: Element, config: Confi
     let currentData;
     let newData;
     data.forEach((item) => {
+        if (!item.box) {
+            throw new Error("[protyle.content] search result requires a notebookId");
+        }
         const title = escapeHtml(getNotebookName(item.box)) + getDisplayName(item.hPath, false);
         let countHTML = "";
         if (item.children) {
@@ -1438,6 +1555,9 @@ ${unicode2Emoji(getNotebookIcon(item.box) || window.siyuan.storage[Constants.LOC
 <span class="b3-list-item__text ariaLabel" style="color: var(--b3-theme-on-surface)" aria-label="${escapeAriaLabel(escapeHtml(title))}">${title}</span>
 </div><div>`;
             item.children.forEach((childItem) => {
+                if (!childItem.box) {
+                    throw new Error("[protyle.content] grouped search result requires a notebookId");
+                }
                 if (focusId) {
                     if (childItem.id === focusId.currentId) {
                         currentData = childItem;
@@ -1449,7 +1569,7 @@ ${unicode2Emoji(getNotebookIcon(item.box) || window.siyuan.storage[Constants.LOC
                 if (childItem.refCount) {
                     countHTML = `<span class="popover__block counter b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.ref}">${childItem.refCount}</span>`;
                 }
-                resultHTML += `<div style="padding-left: 36px" data-type="search-item" class="b3-list-item" data-node-id="${childItem.id}" data-root-id="${childItem.rootID}">
+                resultHTML += `<div style="padding-left: 36px" data-type="search-item" class="b3-list-item" data-node-id="${childItem.id}" data-root-id="${childItem.rootID}" data-notebook-id="${childItem.box}">
 <svg class="b3-list-item__graphic popover__block" data-id="${childItem.id}"><use xlink:href="#${getIconByType(childItem.type)}"></use></svg>
 ${unicode2Emoji(childItem.ial.icon, "b3-list-item__graphic", true)}
 <span class="b3-list-item__text">${childItem.content}</span>
@@ -1471,7 +1591,7 @@ ${countHTML}
             if (item.refCount) {
                 countHTML = `<span class="popover__block counter b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.ref}">${item.refCount}</span>`;
             }
-            resultHTML += `<div data-type="search-item" class="b3-list-item" data-node-id="${item.id}" data-root-id="${item.rootID}">
+            resultHTML += `<div data-type="search-item" class="b3-list-item" data-node-id="${item.id}" data-root-id="${item.rootID}" data-notebook-id="${item.box}">
 <svg class="b3-list-item__graphic popover__block" data-id="${item.id}"><use xlink:href="#${getIconByType(item.type)}"></use></svg>
 ${unicode2Emoji(item.ial.icon, "b3-list-item__graphic", true)}
 <span class="b3-list-item__text">${item.content}</span>
@@ -1493,16 +1613,18 @@ ${countHTML}
         }
     }
     if (currentData) {
-        edit.protyle.element.classList.remove("fn__none");
+        edit.element.classList.remove("fn__none");
         element.querySelector(".search__drag").classList.remove("fn__none");
         getArticle({
             edit,
             id: currentData.id,
+            notebookId: currentData.box,
             config,
             value: (element.querySelector("#searchInput") as HTMLInputElement).value,
         });
     } else {
-        edit.protyle.element.classList.add("fn__none");
+        edit.clear();
+        edit.element.classList.add("fn__none");
         element.querySelector(".search__drag").classList.add("fn__none");
     }
     element.querySelector("#searchList").innerHTML = resultHTML || (

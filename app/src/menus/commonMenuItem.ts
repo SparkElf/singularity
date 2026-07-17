@@ -21,7 +21,7 @@ import {hideMessage, showMessage} from "../dialog/message";
 import {Dialog} from "../dialog";
 import {focusBlock, focusByRange, getEditorRange} from "../protyle/util/selection";
 /// #if !MOBILE
-import {openAsset, openBy} from "../editor/util";
+import {openBy} from "../editor/util";
 /// #endif
 import {rename, replaceFileName} from "../editor/rename";
 import * as dayjs from "dayjs";
@@ -33,7 +33,6 @@ import {openAssetNewWindow} from "../window/openNewWindow";
 import {copyTextByType} from "../protyle/toolbar/util";
 import {hideElements} from "../protyle/ui/hideElements";
 import {Protyle} from "../protyle";
-import {getAllEditor} from "../layout/getAll";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 
 const bindAttrInput = (inputElement: HTMLInputElement, id: string) => {
@@ -170,26 +169,22 @@ export const openFileWechatNotify = (protyle: IProtyle) => {
     });
 };
 
-export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmark", protyle?: IProtyle) => {
+export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmark", protyle?: IProtyle,
+                             notebookId?: string) => {
     let customHTML = "";
     let notifyHTML = "";
     let hasAV = false;
     const range = getSelection().rangeCount > 0 ? getSelection().getRangeAt(0) : null;
     let ghostProtyle: Protyle;
-    if (!protyle) {
-        getAllEditor().find(item => {
-            if (attrs.id === item.protyle.block.rootID) {
-                protyle = item.protyle;
-                return true;
-            }
+    if (!protyle && notebookId) {
+        ghostProtyle = new Protyle(window.siyuan.ws.app, document.createElement("div"), {
+            blockId: attrs.id,
+        }, {
+            surface: "embedded",
+            participation: "detached",
+            content: {mode: "bound", notebookId},
+            initialLoad: "owner",
         });
-        if (!protyle) {
-            ghostProtyle = new Protyle(window.siyuan.ws.app, document.createElement("div"), {
-                blockId: attrs.id,
-            }, {
-                participateInSession: false,
-            });
-        }
     }
     Object.keys(attrs).forEach(item => {
         if (Constants.CUSTOM_RIFF_DECKS === item || item.startsWith("custom-sy-")) {
@@ -278,9 +273,8 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
             focusByRange(range);
             if (protyle) {
                 hideElements(["select"], protyle);
-            } else {
-                ghostProtyle.destroy();
             }
+            ghostProtyle?.destroy();
         }
     });
     dialog.element.setAttribute("data-key", Constants.DIALOG_ATTR);
@@ -304,7 +298,11 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
                 dialog.element.querySelectorAll(".custom-attr").forEach((item: HTMLElement) => {
                     if (item.dataset.type === target.dataset.type) {
                         if (item.dataset.type === "NodeAttributeView" && item.innerHTML === "") {
-                            renderAVAttribute(item, attrs.id, protyle || ghostProtyle.protyle);
+                            const attributeProtyle = protyle || ghostProtyle?.protyle;
+                            if (!attributeProtyle) {
+                                throw new Error("[protyle.content] attribute preview requires a source notebookId");
+                            }
+                            renderAVAttribute(item, attrs.id, attributeProtyle);
                         }
                         item.classList.remove("fn__none");
                     } else {
@@ -420,17 +418,18 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
     }
 };
 
-export const openAttr = (nodeElement: Element, focusName = "bookmark", protyle: IProtyle) => {
+export const openAttr = (nodeElement: Element, focusName = "bookmark", protyle?: IProtyle, notebookId?: string) => {
     if (nodeElement.getAttribute("data-type") === "NodeThematicBreak") {
         return;
     }
     const id = nodeElement.getAttribute("data-node-id");
     fetchPost("/api/attr/getBlockAttrs", {id}, (response) => {
-        openFileAttr(response.data, focusName, protyle);
+        openFileAttr(response.data, focusName, protyle, notebookId);
     });
 };
 
-export const copySubMenu = (ids: string[], accelerator = true, focusElement?: Element, stdMarkdownId?: string): IMenu[] => {
+export const copySubMenu = (ids: string[], accelerator = true, focusElement?: Element, stdMarkdownId?: string,
+                            notebookId?: string): IMenu[] => {
     const menuItems = [{
         id: "copyBlockRef",
         iconHTML: "",
@@ -459,7 +458,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         label: window.siyuan.languages.copyProtocol,
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyProtocol.custom : undefined,
         click: () => {
-            copyTextByType(ids, "protocol");
+            copyTextByType(ids, "protocol", notebookId);
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -470,7 +469,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         label: window.siyuan.languages.copyProtocolInMd,
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom : undefined,
         click: () => {
-            copyTextByType(ids, "protocolMd");
+            copyTextByType(ids, "protocolMd", notebookId);
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -482,7 +481,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             iconHTML: "",
             label: window.siyuan.languages.copyWebURL,
             click: () => {
-                copyTextByType(ids, "webURL");
+                copyTextByType(ids, "webURL", notebookId);
                 if (focusElement) {
                     focusBlock(focusElement);
                 }
@@ -495,7 +494,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             label: window.siyuan.languages.copyHPath,
             accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyHPath.custom : undefined,
             click: () => {
-                copyTextByType(ids, "hPath");
+                copyTextByType(ids, "hPath", notebookId);
                 if (focusElement) {
                     focusBlock(focusElement);
                 }
@@ -522,6 +521,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             click: async () => {
                 const response = await fetchSyncPost("/api/export/exportMdContent", {
                     id: stdMarkdownId,
+                    notebook: notebookId,
                     refMode: 3,
                     embedMode: 1,
                     yfm: false,
@@ -540,7 +540,7 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
     return menuItems;
 };
 
-export const exportMd = (id: string) => {
+export const exportMd = (id: string, notebookId: string) => {
     if (window.siyuan.isPublish) {
         return;
     }
@@ -627,6 +627,7 @@ export const exportMd = (id: string) => {
                 const msgId = showMessage(window.siyuan.languages.exporting, -1);
                 fetchPost("/api/export/exportSY", {
                     id,
+                    notebook: notebookId,
                 }, response => {
                     saveExportFile(response.data.zip, msgId);
                 });
@@ -636,14 +637,14 @@ export const exportMd = (id: string) => {
             label: "Markdown .zip",
             icon: "iconMarkdown",
             click: () => {
-                exportMarkdownZip({id});
+                exportMarkdownZip({id, notebook: notebookId});
             }
         }, {
             id: "exportImage",
             label: window.siyuan.languages.image,
             icon: "iconImage",
             click: () => {
-                exportImage(id);
+                exportImage(id, notebookId);
             }
         },
             /// #if !BROWSER
@@ -652,7 +653,7 @@ export const exportMd = (id: string) => {
                 label: "PDF",
                 icon: "iconPDF",
                 click: () => {
-                    saveExport({type: "pdf", id});
+                    saveExport({type: "pdf", id, notebookId});
                 }
             }, {
                 id: "exportHTML_SiYuan",
@@ -660,21 +661,21 @@ export const exportMd = (id: string) => {
                 iconClass: "ft__error",
                 icon: "iconHTML5",
                 click: () => {
-                    saveExport({type: "html", id});
+                    saveExport({type: "html", id, notebookId});
                 }
             }, {
                 id: "exportHTML_Markdown",
                 label: "HTML (Markdown)",
                 icon: "iconHTML5",
                 click: () => {
-                    saveExport({type: "htmlmd", id});
+                    saveExport({type: "htmlmd", id, notebookId});
                 }
             }, {
                 id: "exportWord",
                 label: "Word .docx",
                 icon: "iconDocx",
                 click: () => {
-                    saveExport({type: "word", id});
+                    saveExport({type: "word", id, notebookId});
                 }
             }, {
                 id: "exportMore",
@@ -689,6 +690,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportReStructuredText", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -701,6 +703,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportAsciiDoc", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -713,6 +716,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportTextile", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -725,6 +729,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportOPML", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -737,6 +742,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportOrgMode", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -749,6 +755,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportMediaWiki", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -761,6 +768,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportODT", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -773,6 +781,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportRTF", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -785,6 +794,7 @@ export const exportMd = (id: string) => {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportEPUB", {
                             id,
+                            notebook: notebookId,
                         }, response => {
                             saveExportFile(response.data.zip, msgId);
                         });
@@ -802,11 +812,12 @@ export const exportMd = (id: string) => {
                     const localData = window.siyuan.storage[Constants.LOCAL_EXPORTPDF];
                     fetchPost("/api/export/exportPreviewHTML", {
                         id,
+                        notebook: notebookId,
                         keepFold: localData.keepFold,
                         merge: localData.mergeSubdocs,
                     }, async response => {
                         const servePath = window.location.protocol + "//" + window.location.host + "/";
-                        const html = await onExport(response, undefined, servePath, {type: "pdf", id});
+                        const html = await onExport(response, undefined, servePath, {type: "pdf", id, notebookId});
                         if (isInAndroid()) {
                             window.JSAndroid.print(response.data.name, html);
                         } else if (isInHarmony()) {
@@ -826,14 +837,14 @@ export const exportMd = (id: string) => {
                 iconClass: "ft__error",
                 icon: "iconHTML5",
                 click: () => {
-                    saveExport({type: "html", id});
+                    saveExport({type: "html", id, notebookId});
                 }
             }, {
                 id: "exportHTML_Markdown",
                 label: "HTML (Markdown)",
                 icon: "iconHTML5",
                 click: () => {
-                    saveExport({type: "htmlmd", id});
+                    saveExport({type: "htmlmd", id, notebookId});
                 }
             },
             /// #endif
@@ -841,7 +852,7 @@ export const exportMd = (id: string) => {
     }).element;
 };
 
-export const openMenu = (app: App, src: string, onlyMenu: boolean, showAccelerator: boolean) => {
+export const openMenu = (app: App, src: string, notebookId: string, onlyMenu: boolean, showAccelerator: boolean) => {
     const submenu = [];
     /// #if MOBILE
     submenu.push({
@@ -864,7 +875,13 @@ export const openMenu = (app: App, src: string, onlyMenu: boolean, showAccelerat
                 label: window.siyuan.languages.insertRight,
                 accelerator: showAccelerator ? window.siyuan.languages.click : "",
                 click() {
-                    openAsset(app, src.trim(), parseInt(getSearch("page", src)), "right");
+                    app.protyleHost.dispatch({
+                        type: "open-asset",
+                        notebookId,
+                        assetPath: src.trim(),
+                        page: parseInt(getSearch("page", src)),
+                        disposition: "split-right",
+                    });
                 }
             });
             submenu.push({
@@ -873,7 +890,13 @@ export const openMenu = (app: App, src: string, onlyMenu: boolean, showAccelerat
                 icon: "iconOpen",
                 accelerator: showAccelerator ? "⌥" + window.siyuan.languages.click : "",
                 click() {
-                    openAsset(app, src.trim(), parseInt(getSearch("page", src)));
+                    app.protyleHost.dispatch({
+                        type: "open-asset",
+                        notebookId,
+                        assetPath: src.trim(),
+                        page: parseInt(getSearch("page", src)),
+                        disposition: "current",
+                    });
                 }
             });
             /// #if !BROWSER
@@ -882,7 +905,7 @@ export const openMenu = (app: App, src: string, onlyMenu: boolean, showAccelerat
                 label: window.siyuan.languages.openByNewWindow,
                 icon: "iconOpenWindow",
                 click() {
-                    openAssetNewWindow(src.trim());
+                    openAssetNewWindow(src.trim(), {notebookId});
                 }
             });
             submenu.push({

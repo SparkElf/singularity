@@ -46,7 +46,7 @@ export const isSiYuanUriProtocol = (uri: URL | string | null | undefined): boole
 };
 
 /**
- * Parse siyuan://blocks/20221031001313-rk7sd0e?focus=1&fullscreen=1
+ * Parse siyuan://blocks/20221031001313-rk7sd0e?notebook=20210808180117-czj9bvb&focus=1&fullscreen=1
  * @param uri - the siyuan block uri to parse
  * @returns the block id and other info, or null if the uri is not a valid siyuan block uri
  */
@@ -61,6 +61,7 @@ export const parseSiYuanUriInfo = (uri: URL | string | null | undefined): ISiYua
         if (uriObj.hostname === "blocks" && /^\/\d{14}-\w{7}/.test(uriObj.pathname)) {
             return {
                 id: uriObj.pathname.substring(1, 1 + 22),
+                notebookId: uriObj.searchParams.get("notebook") ?? "",
                 focus: uriObj.searchParams.get("focus") === "1",
                 fullscreen: uriObj.searchParams.get("fullscreen") === "1",
             };
@@ -94,6 +95,7 @@ export const parseUriInfo = (): ISiYuanUriBlockInfo => {
     window.siyuan.editorIsFullscreen = fullscreen;
     return {
         id: searchParams.get("id") ?? "",
+        notebookId: searchParams.get("notebook") ?? "",
         focus: searchParams.get("focus") === "1",
         fullscreen,
     };
@@ -776,11 +778,21 @@ export const setNoteBook = (cb?: (notebook: INotebook[]) => void, flashcard = fa
  * 用于前端在加密 box 上下文里给 getDoc / 反链 / 搜索请求带上 notebook 参数，
  * 让内核走 InBox 版（查加密 blocktree + content db）。
  */
-export const isEncryptedBox = (boxId: string): boolean => {
+export const isEncryptedBox = (boxId?: string): boolean => {
     if (!boxId) {
         return false;
     }
     return !!window.siyuan.notebooks?.find((item) => item.id === boxId && item.encrypted);
+};
+
+export const isSameNotebookContentDomain = (left?: string, right?: string): boolean => {
+    if (!left || !right) {
+        return false;
+    }
+    if (!isEncryptedBox(left) && !isEncryptedBox(right)) {
+        return true;
+    }
+    return left === right;
 };
 
 /**

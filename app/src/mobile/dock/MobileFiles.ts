@@ -26,6 +26,7 @@ export class MobileFiles extends Model {
     public element: HTMLElement;
     private actionsElement: HTMLElement;
     private closeElement: HTMLElement;
+    private readonly documentNotebookIds = new Map<string, string>();
     private touchDragState: {
         selectedElement: HTMLElement;
         startX: number;
@@ -208,7 +209,13 @@ export class MobileFiles extends Model {
                 } else if (target.tagName === "LI") {
                     this.setCurrent(target);
                     if (target.getAttribute("data-type") === "navigation-file") {
-                        openMobileFileById(app, target.getAttribute("data-node-id"), [Constants.CB_GET_SCROLL]);
+                        const documentId = target.getAttribute("data-node-id");
+                        const notebookId = this.documentNotebookIds.get(documentId);
+                        if (!notebookId) {
+                            console.error("[Singularity/ProtyleIdentity] mobile file target has no notebook", {documentId});
+                            break;
+                        }
+                        openMobileFileById(app, notebookId, documentId, [Constants.CB_GET_SCROLL]);
                     } else if (target.getAttribute("data-type") === "navigation-root") {
                         const ulElement = hasTopClosestByTag(target, "UL");
                         if (ulElement) {
@@ -656,6 +663,7 @@ export class MobileFiles extends Model {
     }
 
     public init(init = true) {
+        this.documentNotebookIds.clear();
         let html = "";
         let closeHtml = "";
         let closeCounter = 0;
@@ -700,11 +708,13 @@ export class MobileFiles extends Model {
     }
 
     private onMove(data: {
+        id: string,
         fromNotebook: string,
         toNotebook: string,
         fromPath: string
         toPath: string
     }) {
+        this.documentNotebookIds.set(data.id, data.toNotebook);
         const sourceElement = this.element.querySelector(`ul[data-url="${data.fromNotebook}"] li[data-path="${data.fromPath}"]`) as HTMLElement;
         if (sourceElement) {
             if (sourceElement.nextElementSibling && sourceElement.nextElementSibling.tagName === "UL") {
@@ -749,6 +759,11 @@ export class MobileFiles extends Model {
     private onRemove(data: IWebSocketData) {
         // "doc2heading" 后删除文件或挂载帮助文档前的 unmount
         if (data.cmd === "closeBox" || data.cmd === "removeBox") {
+            this.documentNotebookIds.forEach((notebookId, documentId) => {
+                if (notebookId === data.data.box) {
+                    this.documentNotebookIds.delete(documentId);
+                }
+            });
             setNoteBook((notebooks) => {
                 const targetElement = this.element.querySelector(`ul[data-url="${data.data.box}"] li[data-path="${"/"}"]`);
                 if (targetElement) {
@@ -781,6 +796,7 @@ export class MobileFiles extends Model {
             return;
         }
         data.data.ids.forEach((item: string) => {
+            this.documentNotebookIds.delete(item);
             const targetElement = this.element.querySelector(`li.b3-list-item[data-node-id="${item}"]`);
             if (targetElement) {
                 // 子节点展开则删除
@@ -870,6 +886,7 @@ export class MobileFiles extends Model {
         }
         let fileHTML = "";
         data.files.forEach((item: IFile) => {
+            this.documentNotebookIds.set(item.id, data.box);
             fileHTML += this.genFileHTML(item);
         });
         let nextElement = liElement.nextElementSibling;
@@ -918,6 +935,7 @@ export class MobileFiles extends Model {
     }, filePath: string, setStorage: boolean, isSetCurrent: boolean) {
         let fileHTML = "";
         data.files.forEach((item: IFile) => {
+            this.documentNotebookIds.set(item.id, data.box);
             fileHTML += this.genFileHTML(item);
         });
         if (fileHTML === "") {

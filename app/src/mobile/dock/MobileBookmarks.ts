@@ -11,6 +11,7 @@ export class MobileBookmarks {
     public element: HTMLElement;
     private tree: Tree;
     private openNodes: string[];
+    private readonly blockNotebookIds = new Map<string, string>();
 
     constructor(app: App) {
         this.element = document.querySelector('#sidebar [data-type="sidebar-bookmark"]');
@@ -39,8 +40,14 @@ export class MobileBookmarks {
                         return;
                     }
                 }
-                checkFold(id, (zoomIn) => {
-                    openMobileFileById(app, id, zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
+                const notebookId = this.blockNotebookIds.get(id);
+                if (!notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] mobile bookmark target has no notebook", {blockId: id});
+                    return;
+                }
+                checkFold(id, notebookId, (zoomIn) => {
+                    openMobileFileById(app, notebookId, id,
+                        zoomIn ? [Constants.CB_GET_HL, Constants.CB_GET_ALL] : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL]);
                 });
             },
             blockExtHTML: '<span class="b3-list-item__action"><svg><use xlink:href="#iconMore"></use></svg></span>',
@@ -72,6 +79,14 @@ export class MobileBookmarks {
             if (this.openNodes) {
                 this.openNodes = this.tree.getExpandIds();
             }
+            this.blockNotebookIds.clear();
+            response.data.forEach((bookmark: IBlockTree) => {
+                bookmark.blocks?.forEach((block) => {
+                    if (block.id && block.box) {
+                        this.blockNotebookIds.set(block.id, block.box);
+                    }
+                });
+            });
             this.tree.updateData(response.data);
             if (this.openNodes) {
                 this.tree.setExpandIds(this.openNodes);

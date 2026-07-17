@@ -1,48 +1,97 @@
 import {Constants} from "../../constants";
-import {fetchPost} from "../../util/fetch";
+import {fetchSyncPost} from "../../util/fetch";
 import {confirmDialog} from "../../dialog/confirmDialog";
 import {showMessage} from "../../dialog/message";
+import {GlobalUndoState, UndoDocumentIdentity} from "./globalUndoState";
 
-// 本地镜像：按 rootID 缓存 {canUndo, canRedo}，按钮态零 fetch 读取。
+// 本地镜像：按 notebook + rootID 缓存 {canUndo, canRedo}，按钮态零 fetch 读取。
 // 在编辑（add 落点）、撤销/重做响应、WS 广播（context.undoState）时更新。
-interface IUndoStateMirror {
-    canUndo: boolean;
-    canRedo: boolean;
-}
+const globalUndoState = new GlobalUndoState();
 
-const undoStateMirror = new Map<string, IUndoStateMirror>();
-let isUndoing = false; // 防重入：撤销/重做进行中忽略后续触发
+const documentIdentity = (notebookId: string, rootID: string): UndoDocumentIdentity => ({notebookId, rootID});
 
-export const markMirror = (rootID: string, state: Partial<IUndoStateMirror>) => {
-    const cur = undoStateMirror.get(rootID) || {canUndo: false, canRedo: false};
-    undoStateMirror.set(rootID, {...cur, ...state});
+const currentDocumentIdentity = (protyle: IProtyle): UndoDocumentIdentity | undefined => {
+    if (protyle.destroyed || !protyle.block?.rootID) {
+        return;
+    }
+    return documentIdentity(protyle.notebookId, protyle.block.rootID);
 };
 
-export const getMirror = (rootID: string): IUndoStateMirror => {
-    return undoStateMirror.get(rootID) || {canUndo: false, canRedo: false};
+interface UndoOwnerScope {
+    readonly signal: AbortSignal;
+    release: () => void;
+}
+
+const createOwnerScope = (protyle: IProtyle, identity: UndoDocumentIdentity): UndoOwnerScope => {
+    const controller = new AbortController();
+    const sourceSignals = Array.from(new Set([
+        protyle.ownerSignal,
+        protyle.uiEventController?.signal,
+    ].filter((signal): signal is AbortSignal => !!signal)));
+    const abort = () => controller.abort();
+    sourceSignals.forEach((signal) => {
+        if (signal.aborted) {
+            abort();
+        } else {
+            signal.addEventListener("abort", abort, {once: true});
+        }
+    });
+    if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
+        abort();
+    }
+    return {
+        signal: controller.signal,
+        release: () => sourceSignals.forEach((signal) => signal.removeEventListener("abort", abort)),
+    };
+};
+
+export const markMirror = (notebookId: string, rootID: string,
+                           state: Partial<{ canUndo: boolean; canRedo: boolean }>) => {
+    globalUndoState.mark(documentIdentity(notebookId, rootID), state);
+};
+
+export const getMirror = (notebookId: string, rootID: string) => {
+    return globalUndoState.get(documentIdentity(notebookId, rootID));
 };
 
 // 从 WS 广播 context.undoState 批量更新镜像（多窗口/多端同步）
-export const syncMirrorFromBroadcast = (undoState: { [rootID: string]: { canUndo: boolean; canRedo: boolean } }) => {
+export const syncMirrorFromBroadcast = (notebook: string,
+                                        undoState: { [rootID: string]: { canUndo: boolean; canRedo: boolean } }) => {
     if (!undoState) {
         return;
     }
-    Object.entries(undoState).forEach(([rootID, state]) => {
-        undoStateMirror.set(rootID, {canUndo: !!state.canUndo, canRedo: !!state.canRedo});
-    });
+    globalUndoState.sync(notebook, undoState);
 };
 
 // 文档打开时主动初始化镜像（低频，不在 selectionchange 热路径）
-export const initMirror = (rootID: string) => {
-    if (!rootID) {
+export const initMirror = async (protyle: IProtyle) => {
+    const identity = currentDocumentIdentity(protyle);
+    if (!identity) {
         return;
     }
-    fetchPost("/api/transactions/undoState", {rootID}, (response) => {
+    const initialization = globalUndoState.beginInitialization(identity);
+    const owner = createOwnerScope(protyle, identity);
+    try {
+        const response = await postUndoRequest("/api/transactions/undoState", {
+            notebook: identity.notebookId,
+            rootID: identity.rootID,
+        }, owner.signal);
         const data = response.data;
-        if (data) {
-            undoStateMirror.set(rootID, {canUndo: !!data.canUndo, canRedo: !!data.canRedo});
+        if (data && !owner.signal.aborted &&
+            globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
+            globalUndoState.applyInitialization(initialization, {
+                canUndo: !!data.canUndo,
+                canRedo: !!data.canRedo,
+            });
         }
-    });
+    } catch (error) {
+        if (!owner.signal.aborted) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[global-undo] mirror initialization failed: ${message}`);
+        }
+    } finally {
+        owner.release();
+    }
 };
 
 // 刷新指定 protyle 的撤销/重做按钮态（读镜像，零 fetch）
@@ -50,7 +99,7 @@ export const refreshUndoButtons = (protyle: IProtyle) => {
     if (!protyle.block?.rootID) {
         return;
     }
-    const state = getMirror(protyle.block.rootID);
+    const state = getMirror(protyle.notebookId, protyle.block.rootID);
     if (protyle.breadcrumb) {
         const parent = protyle.breadcrumb.element.parentElement;
         const undoElement = parent.querySelector('[data-type="undo"]') as HTMLElement;
@@ -73,27 +122,39 @@ export const refreshUndoButtons = (protyle: IProtyle) => {
 };
 
 // 解析 rootID 列表为文档名，用于跨文档撤销确认提示
-const resolveRootNames = async (rootIDs: string[]): Promise<string[]> => {
+const postUndoRequest = async (url: string, data: IObject, signal: AbortSignal): Promise<IWebSocketData> => {
+    const response = await fetchSyncPost(url, data, undefined, {processResponse: false, signal});
+    if (response.code !== 0) {
+        throw new Error(response.msg || `${url} failed with code ${response.code}`);
+    }
+    return response;
+};
+
+const reportRequestError = (action: "undo" | "redo", error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[global-undo] ${action} failed: ${message}`);
+    showMessage(message, 0, "error");
+};
+
+const resolveRootNames = async (identity: UndoDocumentIdentity, rootIDs: string[],
+                                signal: AbortSignal): Promise<string[]> => {
     const names: string[] = [];
     for (const id of rootIDs) {
-        await new Promise<void>((resolve) => {
-            fetchPost("/api/filetree/getHPathByID", {id}, (response: IWebSocketData) => {
-                if (response.code === 0 && response.data) {
-                    names.push(response.data as string);
-                } else {
-                    names.push(id);
-                }
-                resolve();
-            });
-        });
+        const response = await postUndoRequest("/api/filetree/getHPathByID", {
+            id,
+            notebook: identity.notebookId,
+        }, signal);
+        names.push(response.data ? response.data as string : id);
     }
     return names;
 };
 
-const focusRootIDs = (editors: TProtyleEditorRegistry, rootIDs: string[], focusBlockId?: string) => {
+const focusRootIDs = (editors: TProtyleEditorRegistry, identity: UndoDocumentIdentity,
+                      rootIDs: string[], focusBlockId?: string) => {
     // 只滚动发起窗口的焦点 protyle 到变更块；其它文档不强制重开（撤销物理结果在发起文档）
     const protyle = editors.getActive();
-    if (protyle && rootIDs.includes(protyle.block?.rootID) && focusBlockId) {
+    if (protyle && globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle)) &&
+        rootIDs.includes(identity.rootID) && focusBlockId) {
         const target = protyle.wysiwyg.element.querySelector(`[data-node-id="${focusBlockId}"]`);
         if (target) {
             const rect = target.getBoundingClientRect();
@@ -105,147 +166,144 @@ const focusRootIDs = (editors: TProtyleEditorRegistry, rootIDs: string[], focusB
     }
 };
 
-// 请求撤销：读镜像判可撤销 → 跨文档提示 → 调 kernel undo → 本地乐观应用 + 更新镜像
-export const requestUndo = async (protyle: IProtyle) => {
-    if (!protyle || isUndoing) {
+const applyReplayResponse = (action: "undo" | "redo", protyle: IProtyle,
+                             identity: UndoDocumentIdentity, response?: IWebSocketData) => {
+    const data = response?.data;
+    if (!data) {
         return;
     }
-    const rootID = protyle.block?.rootID;
-    if (!rootID) {
+    if (data.failed) {
+        showMessage(data.msg || `${action} failed`, 0, "error");
+        return;
+    }
+    const replayOperations: IOperation[] = data.doOperations || [];
+    markMirror(identity.notebookId, identity.rootID, {
+        canUndo: !!data.canUndo,
+        canRedo: !!data.canRedo,
+    });
+    if (replayOperations.length === 0) {
+        refreshUndoButtons(protyle);
+        return;
+    }
+    const mutatedRootIDs: string[] = data.mutatedRootIDs || [];
+    if (mutatedRootIDs.length > 1) {
+        // 跨文档重放由 kernel 广播刷新所有相关文档，不能在单个 Protyle 中乐观应用。
+        refreshUndoButtons(protyle);
+        return;
+    }
+    protyle.undo.renderLocal(protyle, replayOperations);
+    refreshUndoButtons(protyle);
+    const focusBlockId = replayOperations.find((operation) => operation.id)?.id;
+    focusRootIDs(protyle.editors, identity, mutatedRootIDs, focusBlockId);
+};
+
+// 请求撤销：读镜像判可撤销 → 跨文档提示 → 调 kernel undo → 本地乐观应用 + 更新镜像
+export const requestUndo = async (protyle: IProtyle) => {
+    if (!protyle) {
+        return;
+    }
+    const identity = currentDocumentIdentity(protyle);
+    if (!identity) {
         return;
     }
 
-    const state = getMirror(rootID);
+    const state = globalUndoState.get(identity);
     if (!state.canUndo) {
         return; // 语义 B：栈空不做事
     }
-
-    // 尽早置锁，阻止确认对话框期间触发新的撤销/重做（含 peek 与确认阶段）
-    isUndoing = true;
-
-    // 跨文档提示（标准①）：先 peek 栈顶的 mutatedRootIDs
-    let peekMutatedRootIDs: string[] = [];
-    await new Promise<void>((resolve) => {
-        fetchPost("/api/transactions/undoState", {rootID}, (response) => {
-            if (response.data?.peekMutatedRootIDs) {
-                peekMutatedRootIDs = response.data.peekMutatedRootIDs;
+    const session = protyle.id;
+    const owner = createOwnerScope(protyle, identity);
+    try {
+        await globalUndoState.runRequest(identity, async () => {
+            const stateResponse = await postUndoRequest("/api/transactions/undoState", {
+                notebook: identity.notebookId,
+                rootID: identity.rootID,
+            }, owner.signal);
+            const peekMutatedRootIDs: string[] = stateResponse.data?.peekMutatedRootIDs || [];
+            if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
+                return;
             }
-            resolve();
-        });
-    });
-
-    if (peekMutatedRootIDs.length > 1) {
-        const names = await resolveRootNames(peekMutatedRootIDs);
-        // 确认期间拦截当前编辑器的键盘输入（遮罩只挡鼠标点击，不挡键盘冒泡）
-        const blockInput = (e: Event) => {
-            e.stopImmediatePropagation();
-            e.preventDefault();
-        };
-        protyle.wysiwyg.element.addEventListener("keydown", blockInput, true);
-        protyle.wysiwyg.element.addEventListener("beforeinput", blockInput, true);
-        const confirmed = await new Promise<boolean>((resolve) => {
-            confirmDialog(`⚠️ ${window.siyuan.languages.undo}`,
-                `${window.siyuan.languages.undoCrossDocConfirm}<div style="margin-top: 8px;">${names.map(n => `• ${n}`).join("<br>")}</div>`,
-                () => resolve(true),
-                () => resolve(false));
-        });
-        protyle.wysiwyg.element.removeEventListener("keydown", blockInput, true);
-        protyle.wysiwyg.element.removeEventListener("beforeinput", blockInput, true);
-        if (!confirmed) {
-            isUndoing = false; // 拒绝，复位锁，栈与镜像不动
-            return;
+            if (peekMutatedRootIDs.length > 1) {
+                const names = await resolveRootNames(identity, peekMutatedRootIDs, owner.signal);
+                if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
+                    return;
+                }
+                const inputElement = protyle.wysiwyg.element;
+                const blockInput = (event: Event) => {
+                    event.stopImmediatePropagation();
+                    event.preventDefault();
+                };
+                inputElement.addEventListener("keydown", blockInput, true);
+                inputElement.addEventListener("beforeinput", blockInput, true);
+                let confirmed = false;
+                try {
+                    confirmed = await new Promise<boolean>((resolve) => {
+                        confirmDialog(`⚠️ ${window.siyuan.languages.undo}`,
+                            `${window.siyuan.languages.undoCrossDocConfirm}<div style="margin-top: 8px;">${names.map(name => `• ${name}`).join("<br>")}</div>`,
+                            () => resolve(true),
+                            () => resolve(false),
+                            false,
+                            owner.signal);
+                    });
+                } finally {
+                    inputElement.removeEventListener("keydown", blockInput, true);
+                    inputElement.removeEventListener("beforeinput", blockInput, true);
+                }
+                if (!confirmed || !globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
+                    return;
+                }
+            }
+            // Owner cancellation only detaches this UI from the response. A mutation already admitted by the
+            // kernel may still commit; its transaction broadcast is authoritative for later mirror convergence.
+            return postUndoRequest("/api/transactions/undo", {
+                notebook: identity.notebookId,
+                rootID: identity.rootID,
+                app: Constants.SIYUAN_APPID,
+                session,
+            }, owner.signal);
+        }, () => currentDocumentIdentity(protyle), response => {
+            applyReplayResponse("undo", protyle, identity, response);
+        }, owner.signal);
+    } catch (error) {
+        if (!owner.signal.aborted) {
+            reportRequestError("undo", error);
         }
+    } finally {
+        owner.release();
     }
-
-    fetchPost("/api/transactions/undo", {
-        rootID,
-        app: Constants.SIYUAN_APPID,
-        session: protyle.id,
-    }, (response) => {
-        isUndoing = false;
-        const data = response.data;
-        if (!data) {
-            return;
-        }
-        if (data.failed) {
-            // 撤销执行失败：kernel 已 Unpop 栈，镜像不动，提示用户
-            if (data.msg) {
-                showMessage(data.msg);
-            }
-            return;
-        }
-        if (!data.undoOperations || data.undoOperations.length === 0) {
-            // 栈空或无可撤销
-            markMirror(rootID, {canUndo: !!data.canUndo, canRedo: !!data.canRedo});
-            refreshUndoButtons(protyle);
-            return;
-        }
-        markMirror(rootID, {canUndo: !!data.canUndo, canRedo: !!data.canRedo});
-        const mutatedRootIDs: string[] = data.mutatedRootIDs || [];
-        if (mutatedRootIDs.length > 1) {
-            // 跨文档撤销：doOperations 的锚点分散在多个文档，当前 protyle 无法本地乐观应用。
-            // 改为靠 kernel 广播（含发起方）刷新所有涉及文档的 DOM。
-            // 这里不调 renderLocal，避免在错误 protyle 上应用跨文档 move 导致前后端不一致。
-            refreshUndoButtons(protyle);
-            // 广播会到达当前窗口（/undo 对跨文档用 PushModeBroadcast），触发 onTransaction 刷新 DOM
-        } else {
-            // 单文档撤销：发起窗口本地乐观应用 doOperations（kernel 实际执行的操作，如 insert 恢复块）
-            protyle.undo.renderLocal(protyle, data.doOperations);
-            refreshUndoButtons(protyle);
-            const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
-        }
-    });
 };
 
 // 请求重做：对称，redo 不提示（其逆已在 undo 中确认）
 export const requestRedo = async (protyle: IProtyle) => {
-    if (!protyle || isUndoing) {
+    if (!protyle) {
         return;
     }
-    const rootID = protyle.block?.rootID;
-    if (!rootID) {
+    const identity = currentDocumentIdentity(protyle);
+    if (!identity) {
         return;
     }
 
-    const state = getMirror(rootID);
+    const state = globalUndoState.get(identity);
     if (!state.canRedo) {
         return;
     }
-
-    isUndoing = true;
-    fetchPost("/api/transactions/redo", {
-        rootID,
-        app: Constants.SIYUAN_APPID,
-        session: protyle.id,
-    }, (response) => {
-        isUndoing = false;
-        const data = response.data;
-        if (!data) {
-            return;
+    const session = protyle.id;
+    const owner = createOwnerScope(protyle, identity);
+    try {
+        // As with undo, aborting the response wait cannot roll back a kernel mutation that was already admitted.
+        await globalUndoState.runRequest(identity, () => postUndoRequest("/api/transactions/redo", {
+            notebook: identity.notebookId,
+            rootID: identity.rootID,
+            app: Constants.SIYUAN_APPID,
+            session,
+        }, owner.signal), () => currentDocumentIdentity(protyle), response => {
+            applyReplayResponse("redo", protyle, identity, response);
+        }, owner.signal);
+    } catch (error) {
+        if (!owner.signal.aborted) {
+            reportRequestError("redo", error);
         }
-        if (data.failed) {
-            // 重做执行失败：kernel 已回滚栈，镜像不动，提示用户
-            if (data.msg) {
-                showMessage(data.msg);
-            }
-            return;
-        }
-        if (!data.doOperations || data.doOperations.length === 0) {
-            markMirror(rootID, {canUndo: !!data.canUndo, canRedo: !!data.canRedo});
-            refreshUndoButtons(protyle);
-            return;
-        }
-        markMirror(rootID, {canUndo: !!data.canUndo, canRedo: !!data.canRedo});
-        const mutatedRootIDs: string[] = data.mutatedRootIDs || [];
-        if (mutatedRootIDs.length > 1) {
-            // 跨文档重做：锚点分散在多个文档，靠 kernel 广播（含发起方）刷新
-            refreshUndoButtons(protyle);
-        } else {
-            protyle.undo.renderLocal(protyle, data.doOperations);
-            refreshUndoButtons(protyle);
-            const focusBlockId = data.doOperations?.find((op: IOperation) => op.id)?.id;
-            focusRootIDs(protyle.editors, mutatedRootIDs, focusBlockId);
-        }
-    });
+    } finally {
+        owner.release();
+    }
 };

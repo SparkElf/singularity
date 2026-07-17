@@ -49,7 +49,10 @@ module.exports = (env, argv) => {
                 },
                 {
                     test: /\.ts(x?)$/,
-                    include: [path.resolve(__dirname, "src")],
+                    include: [
+                        path.resolve(__dirname, "src"),
+                        path.resolve(__dirname, "../enterprise/packages/protyle-browser/src"),
+                    ],
                     use: [
                         {
                             loader: "esbuild-loader",

@@ -55,7 +55,6 @@ import {removeBlock} from "./remove";
 import {highlightRender} from "../render/highlightRender";
 import {openAttr} from "../../menus/commonMenuItem";
 import {blockRender} from "../render/blockRender";
-import {getAllModels} from "../../layout/getAll";
 import {pushBack} from "../../util/backForward";
 import {copyPlainText, encodeBase64, isInIOS, isMac, isOnlyMeta, readClipboard} from "../util/compatibility";
 import {MenuItem} from "../../menus/Menu";
@@ -97,7 +96,7 @@ import {updateCalloutType} from "./callout";
 import {nbsp2space, removeZWJ} from "../util/normalizeText";
 import {setFold} from "../util/blockFold";
 import {BlockPanel} from "../../block/Panel";
-import {isEncryptedBox} from "../../util/pathName";
+import {isEncryptedBox, parseSiYuanUriInfo} from "../../util/pathName";
 
 export class WYSIWYG {
     public lastHTMLs: { [key: string]: string } = {};
@@ -223,20 +222,12 @@ export class WYSIWYG {
         }
     }
 
-    private setEmptyOutline(protyle: IProtyle, element: HTMLElement) {
-        let nodeElement = element;
-        if (!element.getAttribute("data-node-id")) {
-            const tempElement = hasClosestBlock(element);
-            if (!tempElement) {
-                return;
-            }
-            nodeElement = tempElement;
-        }
-        if (protyle.model) {
-            getAllModels().outline.forEach(item => {
-                if (item.blockId === protyle.block.rootID) {
-                    item.setCurrent(nodeElement);
-                }
+    private refreshOutline(protyle: IProtyle) {
+        if (protyle.surface === "workspace") {
+            protyle.host.dispatch({
+                type: "refresh-outline",
+                notebookId: protyle.notebookId,
+                documentId: protyle.block.rootID,
             });
         }
     }
@@ -320,6 +311,7 @@ export class WYSIWYG {
                             needClipboardWrite = true;
                             const response = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
                                 id: item.getAttribute("data-node-id"),
+                                notebook: protyle.notebookId,
                                 removeFoldAttr: false
                             });
                             itemHTML = response.data;
@@ -327,6 +319,7 @@ export class WYSIWYG {
                             needClipboardWrite = true;
                             const response = await fetchSyncPost("/api/block/getBlockDOM", {
                                 id: item.getAttribute("data-node-id"),
+                                notebook: protyle.notebookId,
                             });
                             itemHTML = response.data.dom;
                         } else {
@@ -2131,6 +2124,7 @@ export class WYSIWYG {
                         needClipboardWrite = true;
                         const response = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
                             id: item.getAttribute("data-node-id"),
+                            notebook: protyle.notebookId,
                             removeFoldAttr: false
                         });
                         itemHTML = response.data;
@@ -2138,6 +2132,7 @@ export class WYSIWYG {
                         needClipboardWrite = true;
                         const response = await fetchSyncPost("/api/block/getBlockDOM", {
                             id: item.getAttribute("data-node-id"),
+                            notebook: protyle.notebookId,
                         });
                         itemHTML = response.data.dom;
                     } else {
@@ -2865,7 +2860,7 @@ export class WYSIWYG {
                 if (nodeElement && protyle.hint.element.classList.contains("fn__none") &&
                     window.siyuan.menus.menu.element.classList.contains("fn__none")) {
                     clearSelect(["img", "av"], protyle.wysiwyg.element);
-                    this.setEmptyOutline(protyle, nodeElement);
+                    this.refreshOutline(protyle);
                     if (range.toString() === "" && !nodeElement.classList.contains("protyle-wysiwyg--select")) {
                         countSelectWord(range, protyle.block.rootID);
                     }
@@ -2936,7 +2931,7 @@ export class WYSIWYG {
                 return;
             }
             if (target.tagName === "IMG" && !target.classList.contains("emoji")) {
-                previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID);
+                previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID, protyle.notebookId);
                 return;
             }
             // https://github.com/siyuan-note/siyuan/issues/12691
@@ -2965,7 +2960,7 @@ export class WYSIWYG {
                 const breadcrumbId = backlinkBreadcrumbItemElement.getAttribute("data-id");
                 if (breadcrumbId) {
                     if (ctrlIsPressed && !event.shiftKey && !event.altKey) {
-                        checkFold(breadcrumbId, (zoomIn) => {
+                        checkFold(breadcrumbId, protyle.notebookId, (zoomIn) => {
                             protyle.host.dispatch({
                                 type: "open-document",
                                 notebookId: protyle.notebookId,
@@ -2989,7 +2984,7 @@ export class WYSIWYG {
                 return;
             }
 
-            this.setEmptyOutline(protyle, event.target);
+            this.refreshOutline(protyle);
             const tableElement = hasClosestByClassName(event.target, "table");
             this.element.querySelectorAll(".table").forEach(item => {
                 if (item.tagName !== "DIV") {
@@ -3042,18 +3037,28 @@ export class WYSIWYG {
                 hideElements(["dialog", "toolbar"], protyle);
                 if (range.toString() === "" || event.shiftKey) {
                     let refBlockId: string;
+                    let refNotebookId: string;
                     if (blockRefElement) {
                         refBlockId = blockRefElement.getAttribute("data-id");
+                        refNotebookId = blockRefElement.getAttribute("data-notebook-id");
                     } else if (aElement) {
-                        refBlockId = aLink.substring(16, 38);
+                        const blockInfo = parseSiYuanUriInfo(aLink);
+                        refBlockId = blockInfo?.id;
+                        refNotebookId = blockInfo?.notebookId;
                     }
-                    checkFold(refBlockId, (zoomIn, _action, isRoot) => {
+                    if (!refBlockId || !refNotebookId) {
+                        console.error("[Singularity/ProtyleIdentity] block target has no notebook", {
+                            blockId: refBlockId,
+                        });
+                        return;
+                    }
+                    checkFold(refBlockId, refNotebookId, (zoomIn, _action, isRoot) => {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : (ctrlIsPressed ? "background-tab" : "current"));
                         const opensInBackground = disposition === "background-tab";
                         protyle.host.dispatch({
                             type: "open-document",
-                            notebookId: protyle.notebookId,
+                            notebookId: refNotebookId,
                             documentId: refBlockId,
                             disposition,
                             scope: zoomIn ? "subtree" : "context",
@@ -3145,20 +3150,7 @@ export class WYSIWYG {
                             showMessage(response.msg);
                         } else {
                             reloadProtyle(protyle, true);
-                            getAllModels().outline.forEach(item => {
-                                if (item.blockId === protyle.block.rootID) {
-                                    const outlineParam: IObject = {
-                                        id: item.blockId,
-                                        preview: item.isPreview
-                                    };
-                                    if (isEncryptedBox(protyle.notebookId)) {
-                                        outlineParam.notebook = protyle.notebookId;
-                                    }
-                                    fetchPost("/api/outline/getDocOutline", outlineParam, response => {
-                                        item.update(response);
-                                    });
-                                }
-                            });
+                            this.refreshOutline(protyle);
                         }
                     });
                     event.stopPropagation();
@@ -3170,7 +3162,7 @@ export class WYSIWYG {
             if (embedItemElement) {
                 if (event.shiftKey || event.altKey || ctrlIsPressed) {
                     const embedId = embedItemElement.getAttribute("data-id");
-                    checkFold(embedId, (zoomIn) => {
+                    checkFold(embedId, protyle.notebookId, (zoomIn) => {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : "background-tab");
                         const opensInBackground = disposition === "background-tab";
@@ -3216,6 +3208,7 @@ export class WYSIWYG {
                 window.siyuan.blockPanels.push(new BlockPanel({
                     app: protyle.app,
                     isBacklink: false,
+                    notebookId: protyle.notebookId,
                     targetElement: openFloatElement,
                     refDefs: [{refID: id}]
                 }));

@@ -53,10 +53,12 @@ openWindow = (options: {
     alwaysOnTop?: boolean,
     doc?: {
         id: string,     // 块 id
+        notebookId: string,
     },
 }) => {
     if (options.doc && options.doc.id) {
         openNewWindowById(options.doc.id, {
+            notebookId: options.doc.notebookId,
             alwaysOnTop: options.alwaysOnTop,
             position: options.position,
             width: options.width,
@@ -79,6 +81,7 @@ openTab = (options: {
     app: App,
     doc?: {
         id: string,     // 块 id
+        notebookId: string,
         action?: TProtyleAction [] // cb-get-all：获取所有内容；cb-get-focus：打开后光标定位在 id 所在的块；cb-get-hl: 打开后 id 块高亮
         zoomIn?: boolean // 是否缩放
         mode?: TEditorMode  // 文档打开模式，默认 "wysiwyg"
@@ -126,6 +129,7 @@ openTab = (options: {
             position: options.position,
             afterOpen: options.afterOpen,
             id: options.doc.id,
+            notebookId: options.doc.notebookId,
             action: options.doc.action,
             zoomIn: options.doc.zoomIn,
             scrollPosition: "start",
@@ -208,11 +212,12 @@ const openAttributePanel = (options: {
     nodeElement?: HTMLElement,  // 块元素
     focusName: "bookmark" | "name" | "alias" | "memo" | "av" | "custom",    // av 为数据库页签，custom 为自定义页签，其余为内置输入框
     protyle?: IProtyle, // 有数据库时需要传入 protyle
+    notebookId?: string,
 }) => {
     if (options.data) {
-        openFileAttr(options.data, options.focusName, options.protyle);
+        openFileAttr(options.data, options.focusName, options.protyle, options.notebookId);
     } else {
-        openAttr(options.nodeElement, options.focusName, options.protyle);
+        openAttr(options.nodeElement, options.focusName, options.protyle, options.notebookId);
     }
 };
 

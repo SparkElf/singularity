@@ -523,6 +523,7 @@ export class Plugin {
 
     public addFloatLayer = (options: {
         refDefs: IRefDefs[],
+        notebookId: string,
         x?: number,
         y?: number,
         targetElement?: HTMLElement,
@@ -534,6 +535,7 @@ export class Plugin {
             originalRefBlockIDs: options.originalRefBlockIDs,
             targetElement: options.targetElement,
             isBacklink: options.isBacklink,
+            notebookId: options.notebookId,
             x: options.x,
             y: options.y,
             refDefs: options.refDefs,

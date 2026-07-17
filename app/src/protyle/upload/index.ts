@@ -358,6 +358,7 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
         formData.append("assetsDirPath", "/assets/");
     } else {
         formData.append("id", protyle.block?.rootID);
+        formData.append("notebook", protyle.notebookId);
     }
     confirmDialog(msg ? window.siyuan.languages.upload : "", msg, () => {
         const xhr = new XMLHttpRequest();

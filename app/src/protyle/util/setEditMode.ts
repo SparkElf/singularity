@@ -1,7 +1,15 @@
 import {hideElements} from "../ui/hideElements";
-import {getAllModels} from "../../layout/getAll";
-import {updateOutline} from "../../editor/util";
 import {resize} from "./resize";
+
+const refreshWorkspaceOutline = (protyle: IProtyle) => {
+    if (protyle.surface === "workspace") {
+        protyle.host.dispatch({
+            type: "refresh-outline",
+            notebookId: protyle.notebookId,
+            documentId: protyle.block.rootID,
+        });
+    }
+};
 
 export const setEditMode = (protyle: IProtyle, type: TEditorMode) => {
     if (type === "preview") {
@@ -16,7 +24,7 @@ export const setEditMode = (protyle: IProtyle, type: TEditorMode) => {
             protyle.breadcrumb.toggleExit(true);
         }
         protyle.preview.render(protyle);
-        updateOutline(getAllModels(), protyle, true);
+        refreshWorkspaceOutline(protyle);
     } else if (type === "wysiwyg") {
         if (!protyle.contentElement.classList.contains("fn__none")) {
             return;
@@ -30,7 +38,7 @@ export const setEditMode = (protyle: IProtyle, type: TEditorMode) => {
             protyle.breadcrumb?.element.classList.remove("fn__none");
             protyle.breadcrumb.toggleExit(!protyle.block.showAll);
         }
-        updateOutline(getAllModels(), protyle, true);
+        refreshWorkspaceOutline(protyle);
         resize(protyle);
     }
     hideElements(["gutterOnly", "toolbar", "select", "hint", "util"], protyle);

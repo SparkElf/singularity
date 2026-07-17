@@ -4,6 +4,23 @@ import {Constants} from "../../constants";
 import {getDefaultSubType, getDefaultType} from "../../search/getDefault";
 import {hideMessage, showMessage} from "../../dialog/message";
 
+const DOCUMENT_ID_PATTERN = /^\d{14}-\w{7}$/;
+
+export const parseStoredDocumentIdentity = (value: unknown): ILocalDocInfo | undefined => {
+    if (!value || typeof value !== "object") {
+        return;
+    }
+    const identity = value as Partial<ILocalDocInfo>;
+    if (identity.id === "" && identity.notebookId === "") {
+        return identity as ILocalDocInfo;
+    }
+    if (typeof identity.id !== "string" || typeof identity.notebookId !== "string" ||
+        !DOCUMENT_ID_PATTERN.test(identity.id) || !DOCUMENT_ID_PATTERN.test(identity.notebookId)) {
+        return;
+    }
+    return identity as ILocalDocInfo;
+};
+
 export const isPhablet = () => {
     return /Android|webOS|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(navigator.userAgent) || isIPhone() || isIPad();
 };
@@ -464,6 +481,7 @@ export const getLocalStorage = (cb: () => void) => {
         };
         defaultStorage[Constants.LOCAL_DOCINFO] = {
             id: "",
+            notebookId: "",
         };
         defaultStorage[Constants.LOCAL_IMAGES] = {
             file: "1f4c4",
@@ -519,6 +537,13 @@ export const getLocalStorage = (cb: () => void) => {
                 window.siyuan.storage[key] = defaultStorage[key];
             }
         });
+        const localDoc = parseStoredDocumentIdentity(window.siyuan.storage[Constants.LOCAL_DOCINFO]);
+        if (!localDoc) {
+            window.siyuan.storage[Constants.LOCAL_DOCINFO] = {id: "", notebookId: ""};
+            setStorageVal(Constants.LOCAL_DOCINFO, window.siyuan.storage[Constants.LOCAL_DOCINFO]);
+        } else {
+            window.siyuan.storage[Constants.LOCAL_DOCINFO] = localDoc;
+        }
         // 搜索数据添加 replaceTypes 兼容
         if (!window.siyuan.storage[Constants.LOCAL_SEARCHDATA].replaceTypes ||
             Object.keys(window.siyuan.storage[Constants.LOCAL_SEARCHDATA].replaceTypes).length === 0) {

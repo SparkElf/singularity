@@ -97,6 +97,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
             if (topElement.getAttribute("data-type") === "NodeHeading" && topElement.getAttribute("fold") === "1") {
                 const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
                     id: topElement.getAttribute("data-node-id"),
+                    notebook: protyle.notebookId,
                 });
                 deletes.push(...foldTransaction.data.doOperations.slice(1));
                 foldTransaction.data.undoOperations.forEach((operationItem: IOperation, index: number) => {
@@ -115,6 +116,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     if (!unfoldData[foldId]) {
                         const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
+                            notebook: protyle.notebookId,
                         });
                         unfoldData[foldId] = {
                             element: foldPreviousBlockElement,
@@ -140,6 +142,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     if (!unfoldData[foldId]) {
                         const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
+                            notebook: protyle.notebookId,
                         });
                         unfoldData[foldId] = {
                             element: previousBlockElement,

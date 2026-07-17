@@ -217,75 +217,75 @@ export const initWindow = async (app: App) => {
         setStorageVal(Constants.LOCAL_EXPORTPDF, window.siyuan.storage[Constants.LOCAL_EXPORTPDF]);
         try {
             if (window.siyuan.config.export.pdfFooter.trim()) {
-                const response = await fetchSyncPost("/api/template/renderSprig", {template: window.siyuan.config.export.pdfFooter});
+                const response = await fetchSyncPost("/api/template/renderSprig", {
+                    template: window.siyuan.config.export.pdfFooter,
+                }, undefined, {processResponse: false});
+                if (response.code !== 0) {
+                    throw new Error(response.msg);
+                }
                 ipcData.pdfOptions.displayHeaderFooter = true;
                 ipcData.pdfOptions.headerTemplate = "<span></span>";
                 ipcData.pdfOptions.footerTemplate = `<div style="text-align:center;width:100%;font-size:10px;line-height:12px;">
 ${response.data.replace("%pages", "<span class=totalPages></span>").replace("%page", "<span class=pageNumber></span>")}
 </div>`;
             }
-            const pdfData = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
-                cmd: "printToPDF",
-                pdfOptions: ipcData.pdfOptions,
-                webContentsId: ipcData.webContentsId
-            });
+            let pdfData;
+            try {
+                pdfData = await ipcRenderer.invoke(Constants.SIYUAN_GET, {
+                    cmd: "printToPDF",
+                    pdfOptions: ipcData.pdfOptions,
+                    webContentsId: ipcData.webContentsId
+                });
+            } catch (error) {
+                console.error(error);
+                showMessage(window.siyuan.languages.exportPDFLowMemory, 0, "error", msgId);
+                ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "destroy", webContentsId: ipcData.webContentsId});
+                return;
+            }
             const savePath = ipcData.filePaths[0];
             let pdfFilePath = path.join(savePath, replaceLocalPath(ipcData.rootTitle) + ".pdf");
-            const responseUnique = await fetchSyncPost("/api/file/getUniqueFilename", {path: pdfFilePath});
+            const responseUnique = await fetchSyncPost("/api/file/getUniqueFilename", {
+                path: pdfFilePath,
+            }, undefined, {processResponse: false});
+            if (responseUnique.code !== 0) {
+                throw new Error(responseUnique.msg);
+            }
             pdfFilePath = responseUnique.data.path;
-            fetchPost("/api/export/exportHTML", {
+            const exportResponse = await fetchSyncPost("/api/export/exportHTML", {
                 id: ipcData.rootId,
+                notebook: ipcData.notebookId,
                 pdf: true,
                 removeAssets: ipcData.removeAssets,
                 merge: ipcData.mergeSubdocs,
                 savePath,
-            }, () => {
-                fs.writeFileSync(pdfFilePath, pdfData);
-                ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "destroy", webContentsId: ipcData.webContentsId});
-                fetchPost("/api/export/processPDF", {
-                    id: ipcData.rootId,
-                    merge: ipcData.mergeSubdocs,
-                    path: pdfFilePath,
-                    removeAssets: ipcData.removeAssets,
-                    watermark: ipcData.watermark
-                }, async () => {
-                    afterExport(pdfFilePath, msgId);
-                    if (ipcData.removeAssets) {
-                        const removePromise = (dir: string) => {
-                            return new Promise(function (resolve) {
-                                fs.stat(dir, function (err, stat) {
-                                    if (!stat) {
-                                        return;
-                                    }
-
-                                    if (stat.isDirectory()) {
-                                        fs.readdir(dir, function (err, files) {
-                                            files = files.map(file => path.join(dir, file)); // a/b  a/m
-                                            Promise.all(files.map(file => removePromise(file))).then(function () {
-                                                fs.rm(dir, resolve);
-                                            });
-                                        });
-                                    } else {
-                                        fs.unlink(dir, resolve);
-                                    }
-                                });
-                            });
-                        };
-
-                        const assetsDir = path.join(savePath, "assets");
-                        await removePromise(assetsDir);
-                        if (1 > fs.readdirSync(assetsDir).length) {
-                            fs.rmdirSync(assetsDir);
-                        }
-                    }
-                });
-            });
+            }, undefined, {processResponse: false});
+            if (exportResponse.code !== 0) {
+                throw new Error(exportResponse.msg);
+            }
+            fs.writeFileSync(pdfFilePath, pdfData);
+            ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "destroy", webContentsId: ipcData.webContentsId});
+            const processResponse = await fetchSyncPost("/api/export/processPDF", {
+                id: ipcData.rootId,
+                notebook: ipcData.notebookId,
+                merge: ipcData.mergeSubdocs,
+                path: pdfFilePath,
+                removeAssets: ipcData.removeAssets,
+                watermark: ipcData.watermark
+            }, undefined, {processResponse: false});
+            if (processResponse.code !== 0) {
+                throw new Error(processResponse.msg);
+            }
+            afterExport(pdfFilePath, msgId);
+            if (ipcData.removeAssets) {
+                await fs.promises.rm(path.join(savePath, "assets"), {recursive: true, force: true});
+            }
         } catch (e) {
             console.error(e);
-            showMessage(window.siyuan.languages.exportPDFLowMemory, 0, "error", msgId);
+            showMessage(e instanceof Error ? e.message : String(e), 0, "error", msgId);
             ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "destroy", webContentsId: ipcData.webContentsId});
+        } finally {
+            ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "hide", webContentsId: ipcData.webContentsId});
         }
-        ipcRenderer.send(Constants.SIYUAN_CMD, {cmd: "hide", webContentsId: ipcData.webContentsId});
     });
 
     if (isWindow()) {

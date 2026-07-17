@@ -55,8 +55,8 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
     });
 };
 
-export const previewDocImage = (currentSrc: string, id: string) => {
-    fetchPost("/api/asset/getDocImageAssets", {id}, (response) => {
+export const previewDocImage = (currentSrc: string, id: string, notebookId: string) => {
+    fetchPost("/api/asset/getDocImageAssets", {id, notebook: notebookId}, (response) => {
         previewImages(response.data, currentSrc);
     });
 };

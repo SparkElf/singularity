@@ -303,7 +303,10 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         let rowCalcOperator: string;
         let avData = panelData?.data;
         if (!avData) {
-            const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {id: avId});
+            const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {
+                id: avId,
+                notebook: protyle.notebookId,
+            });
             avData = avResponse.data;
         }
 
@@ -446,7 +449,10 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         const colData = getFieldsByData(panelData.data).find((item) => item.id === colId);
         currentTemplate = colData?.calc?.template || "";
     } else {
-        const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {id: avId});
+        const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {
+            id: avId,
+            notebook: protyle.notebookId,
+        });
         const colData = getFieldsByData(avResponse.data).find((item) => item.id === colId);
         currentTemplate = colData?.calc?.template || "";
     }

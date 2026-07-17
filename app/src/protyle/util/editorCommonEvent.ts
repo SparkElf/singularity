@@ -29,7 +29,6 @@ import {transaction, turnsIntoOneTransaction} from "../wysiwyg/transaction";
 import {updateListOrder} from "../wysiwyg/list";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {onGet} from "./onGet";
-import {updatePanelByEditor} from "../../editor/util";
 import {blockRender} from "../render/blockRender";
 import {uploadFiles} from "../upload";
 import {insertHTML} from "./insertHTML";
@@ -379,7 +378,10 @@ const moveTo = async (protyle: IProtyle, sourceProtyle: IProtyle, sourceElements
     undoOperations.reverse();
     for (let j = 0; j < copyFoldHeadingIds.length; j++) {
         const childrenItem = copyFoldHeadingIds[j];
-        const responseTransaction = await fetchSyncPost("/api/block/getHeadingInsertTransaction", {id: childrenItem.oldId});
+        const responseTransaction = await fetchSyncPost("/api/block/getHeadingInsertTransaction", {
+            id: childrenItem.oldId,
+            notebook: sourceProtyle.notebookId,
+        });
         responseTransaction.data.doOperations.splice(0, 1);
         responseTransaction.data.doOperations[0].previousID = childrenItem.newId;
         responseTransaction.data.undoOperations.splice(0, 1);
@@ -1422,14 +1424,13 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     }
                     fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
                         onGet({data: getResponse, protyle});
-                        // 文档标题互转后，需更新大纲
-                        updatePanelByEditor({
-                            protyle,
-                            focus: false,
-                            pushBackStack: false,
-                            reload: true,
-                            resize: false,
-                        });
+                        if (protyle.surface === "workspace") {
+                            protyle.host.dispatch({
+                                type: "refresh-outline",
+                                notebookId: protyle.notebookId,
+                                documentId: protyle.block.rootID,
+                            });
+                        }
                         // 文档标题互转后，编辑区会跳转到开头 https://github.com/siyuan-note/siyuan/issues/2939
                         setTimeout(() => {
                             protyle.contentElement.scrollTop = scrollTop;

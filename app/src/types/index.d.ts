@@ -132,6 +132,17 @@ type TAVFilterOperator =
     | "Is false"
 
 type TRecentDocsSort = "viewedAt" | "closedAt" | "openAt" | "updated"
+
+interface IRecentDoc {
+    rootID: string
+    notebookId: string
+    icon: string
+    title: string
+    viewedAt?: number
+    closedAt?: number
+    openAt?: number
+}
+
 type TPublishAccessLevel = "public" | "protected" | "hidden" | "private" | "forbidden";
 
 /**
@@ -391,6 +402,7 @@ interface ICard {
     deckID: string;
     cardID: string;
     blockID: string;
+    notebookId: string;
     nextDues: Record<string, string>;
     lapses: number;  // 遗忘次数
     lastReview: number;  // 最后复习时间
@@ -477,6 +489,7 @@ interface IBackStack {
     data?: {
         startId: string,
         endId: string
+        rootId: string
         path: string
         notebookId: string
     },
@@ -489,6 +502,15 @@ interface IBackStack {
     // 仅桌面端
     protyle?: IProtyle,
     zoomId?: string
+}
+
+interface IMobileBackStack extends IBackStack {
+    data: NonNullable<IBackStack["data"]>
+}
+
+interface ILocalDocInfo {
+    id: string
+    notebookId: string
 }
 
 interface IEmojiItem {
@@ -734,8 +756,9 @@ interface IPluginDockTab {
 }
 
 interface IExportOptions {
-    type: string,
+    type: "pdf" | "word" | "html" | "htmlmd",
     id: string,
+    notebookId: string,
 }
 
 interface IOpenFileOptions {
@@ -1139,6 +1162,7 @@ interface IAVCellValue {
     block?: {
         content: string,
         id?: string,
+        notebookId?: string,
         icon?: string
     }
     url?: {
@@ -1326,6 +1350,11 @@ interface ISiYuanUriBlockInfo {
      * 块 ID
      */
     id: string;
+
+    /**
+     * 笔记本 ID
+     */
+    notebookId: string;
 
     /**
      * 是否聚焦该块

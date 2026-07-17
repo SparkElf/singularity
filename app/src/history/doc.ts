@@ -9,7 +9,6 @@ import {isMobile} from "../util/functions";
 import {App} from "../index";
 import {resizeSide} from "./resizeSide";
 import {escapeHtml} from "../util/escape";
-import {isEncryptedBox} from "../util/pathName";
 
 let historyEditor: Protyle;
 let isLoading = false;
@@ -31,11 +30,9 @@ const renderDoc = (element: HTMLElement, currentPage: number, id: string, notebo
         query: id,
         page: currentPage,
         op: opElement.value,
-        type: 3
+        type: 3,
+        notebook: notebookId,
     };
-    if (isEncryptedBox(notebookId)) {
-        searchHistoryParam.notebook = notebookId;
-    }
     fetchPost("/api/history/searchHistory", searchHistoryParam, (response) => {
         if (currentPage < response.data.pageCount) {
             nextElement.removeAttribute("disabled");
@@ -114,6 +111,7 @@ export const openDocHistory = (options: {
         height: isMobile() ? "100dvh" : "80vh",
         containerClassName: "b3-dialog__container--theme",
         destroyCallback() {
+            historyEditor?.destroy();
             historyEditor = undefined;
         }
     });
@@ -127,8 +125,7 @@ export const openDocHistory = (options: {
     const mdElement = dialog.element.querySelector('.history__text[data-type="mdPanel"]') as HTMLTextAreaElement;
     renderDoc(dialog.element, 1, options.id, options.notebookId);
     historyEditor = new Protyle(options.app, docElement, {
-        blockId: "",
-        notebookId: options.notebookId,
+        blockId: options.id,
         history: {
             created: ""
         },
@@ -140,6 +137,11 @@ export const openDocHistory = (options: {
             breadcrumbDocName: false,
         },
         typewriterMode: false,
+    }, {
+        surface: "embedded",
+        participation: "detached",
+        content: {mode: "bound", notebookId: options.notebookId},
+        initialLoad: "owner",
     });
     disabledProtyle(historyEditor.protyle);
     const pageNumElement = dialog.element.querySelector('[data-type="jumpRepoPage"]');
@@ -156,11 +158,9 @@ export const openDocHistory = (options: {
                         .replace("${time}", target.previousElementSibling.previousElementSibling.textContent.trim());
                     confirmDialog("⚠️ " + window.siyuan.languages.rollback, confirmTip, () => {
                         const rollbackParam: IObject = {
-                            historyPath: dataPath
+                            historyPath: dataPath,
+                            notebook: options.notebookId,
                         };
-                        if (isEncryptedBox(options.notebookId)) {
-                            rollbackParam.notebook = options.notebookId;
-                        }
                         fetchPost("/api/history/rollbackDocHistory", rollbackParam);
                     });
                 });
@@ -172,10 +172,8 @@ export const openDocHistory = (options: {
                     const dataPath = item.path;
                     const historyContentParam: IObject = {
                         historyPath: dataPath,
+                        notebook: options.notebookId,
                     };
-                    if (isEncryptedBox(options.notebookId)) {
-                        historyContentParam.notebook = options.notebookId;
-                    }
                     fetchPost("/api/history/getDocHistoryContent", historyContentParam, (response) => {
                         if (response.data.isLargeDoc) {
                             mdElement.value = response.data.content;
@@ -240,11 +238,9 @@ const getHistoryPath = (target: Element, op: string, id: string, notebookId: str
         query: id,
         op,
         type: 3,
-        created
+        created,
+        notebook: notebookId,
     };
-    if (isEncryptedBox(notebookId)) {
-        historyItemsParam.notebook = notebookId;
-    }
     fetchPost("/api/history/getHistoryItems", historyItemsParam, (response) => {
         cb(response.data.items[0]);
     });

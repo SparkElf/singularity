@@ -305,6 +305,7 @@ const promiseTransaction = (options: {
         session: protyle.id,
         app: Constants.SIYUAN_APPID,
         transactions: [{
+            notebook: isEncryptedBox(protyle.notebookId) ? protyle.notebookId : "",
             doOperations: options.doOperations,
             undoOperations: options.undoOperations,// 目前用于 ws 推送更新大纲
         }]
@@ -725,6 +726,7 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                 updateElements.push(tempEl);
                 fetchPost("/api/block/getBlockDOM", {
                     id: operation.id,
+                    notebook: protyle.notebookId,
                 }, (response) => {
                     document.querySelectorAll(`.protyle-wysiwyg [data-node-id="${response.data.id}"]`).forEach(item => {
                         if (item.getAttribute("data-protyle-id")) {
@@ -1353,6 +1355,7 @@ export const turnsOneInto = async (options: {
                 session: options.protyle.id,
                 app: Constants.SIYUAN_APPID,
                 transactions: [{
+                    notebook: isEncryptedBox(options.protyle.notebookId) ? options.protyle.notebookId : "",
                     doOperations: [{
                         action: "unfoldHeading",
                         id: itemId,
@@ -1447,6 +1450,7 @@ export const transaction = (protyle: IProtyle, doOperations: IOperation[], undoO
             session: Constants.SIYUAN_APPID,
             app: Constants.SIYUAN_APPID,
             transactions: [{
+                notebook: "",
                 doOperations
             }]
         });

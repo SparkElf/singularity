@@ -202,8 +202,9 @@ export const execByCommand = async (options: {
             window.siyuan.dialogs.find(item => {
                 if (item.editors) {
                     Object.keys(item.editors).find(key => {
-                        if (item.editors[key].protyle.element.contains(range.startContainer)) {
-                            protyle = item.editors[key].protyle;
+                        const editor = item.editors[key].protyle;
+                        if (editor?.element.contains(range.startContainer)) {
+                            protyle = editor;
                             return true;
                         }
                     });
@@ -226,7 +227,7 @@ export const execByCommand = async (options: {
             } else if (activeTab.model instanceof Custom && activeTab.model.editors?.length > 0) {
                 if (range) {
                     activeTab.model.editors.find(item => {
-                        if (item.protyle.element.contains(range.startContainer)) {
+                        if (item.protyle?.element.contains(range.startContainer)) {
                             protyle = item.protyle;
                             return true;
                         }

@@ -45,10 +45,11 @@ export const onlyProtyleCommand = (options: {
         const id = topNodeElement.getAttribute("data-node-id");
         if (options.protyle.options.backlinkData) {
             /// #if !MOBILE
-            checkFold(id, (zoomIn, action) => {
+            checkFold(id, options.protyle.notebookId, (zoomIn, action) => {
                 openFileById({
                     app: options.protyle.app,
                     id,
+                    notebookId: options.protyle.notebookId,
                     action,
                     zoomIn
                 });

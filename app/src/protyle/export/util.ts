@@ -11,7 +11,7 @@ import {isIPhone, isSafari, saveExportFile, setStorageVal} from "../util/compati
 export const afterExport = (exportPath: string, msgId: string) => {
 };
 
-export const exportImage = (id: string) => {
+export const exportImage = (id: string, notebookId: string) => {
     const exportDialog = new Dialog({
         disableAnimation: true,
         title: window.siyuan.languages.exportAsImage,
@@ -84,6 +84,7 @@ export const exportImage = (id: string) => {
                 const formData = new FormData();
                 formData.append("file", blob, btnsElement[1].getAttribute("data-title"));
                 formData.append("type", "image/png");
+                formData.append("notebook", notebookId);
                 fetchPost("/api/export/exportAsFile", formData, (response) => {
                     saveExportFile(response.data.file, msgId);
                 });
@@ -100,6 +101,7 @@ export const exportImage = (id: string) => {
         window.siyuan.storage[Constants.LOCAL_EXPORTIMG].keepFold = foldElement.checked;
         fetchPost("/api/export/exportPreviewHTML", {
             id,
+            notebook: notebookId,
             keepFold: foldElement.checked,
             image: true,
         }, (response) => {
@@ -161,6 +163,7 @@ export const exportImage = (id: string) => {
     };
     fetchPost("/api/export/exportPreviewHTML", {
         id,
+        notebook: notebookId,
         keepFold: foldElement.checked,
         image: true,
     }, (response) => {
