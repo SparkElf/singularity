@@ -3,7 +3,7 @@ title: "企业空间Session组合根与Kernel Gateway启动方案"
 description: "定义真实spaceId的权威来源、NestJS启动切片、浏览器Session装配和Protyle迁移前置门禁"
 author: "Codex"
 date: "2026-07-14"
-version: "1.5.0"
+version: "1.5.1"
 status: "approved"
 tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 ---
@@ -28,6 +28,7 @@ tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 | 1.4.1 | 2026-07-14 | Codex | 架构、安全、Schema与测试治理复评通过，批准进入S1实现 |
 | 1.4.2 | 2026-07-14 | Codex | 按配置registry复核依赖元数据，修正限流库许可证为ISC |
 | 1.5.0 | 2026-07-15 | Codex | 按实现复评闭合精确OpenAPI、相关行锁、登录代次、授权重验、限流冷却与原始浏览器诊断 |
+| 1.5.1 | 2026-07-17 | Codex | 对齐总方案1.4.8，明确S0-S3/B4属于L1而非L0完成前置条件 |
 
 ## Table of Contents
 
@@ -645,7 +646,7 @@ Browser integration允许拦截外部身份/空间HTTP，配置只启动Vite Web
 | P3/P4 | 临时浏览器探索脚本、重复fixture/page object、绕过正式PluginPort的测试插件路径 | Browser owner | 对应browser integration config |
 | P5 | 旧Webpack Web入口与文件、旧浏览器runner、旧壳Host/Plugin Adapter、退出生产闭包的旧所有者及重复E2E | 集成owner | 真实P5 E2E、AST闭包和文件不存在断言 |
 
-批次之间不保留新旧请求双路径。S0至S2完成后，S3只建立无Core的真实Session组合；B4再原子接通Host与Core。S0至S3未完成前不得继续把旧App创建点机械改为Session，也不得宣称P1-B4或L0完成。
+批次之间不保留新旧请求双路径。S0至S2完成后，S3只建立无Core的真实Session组合；B4再原子接通Host与Core。S0至S3未完成前不得继续把旧App创建点机械改为Session，也不得宣称P1-B4或L1生产Protyle迁移完成；这不影响按完整方案第8.3节已经独立完成的L0基础工程状态。
 
 ## 11. 架构审查
 

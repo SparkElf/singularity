@@ -3,7 +3,7 @@ title: "ADR-014: Fork治理、供应链与上游同步门禁"
 description: "定义奇点独立仓库的工作流隔离、品牌法律入口、制品扫描与可重复上游merge流程"
 author: "Codex"
 date: "2026-07-15"
-version: "1.2.1"
+version: "1.3.0"
 status: "accepted"
 tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 ---
@@ -20,6 +20,7 @@ tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 | 1.1.0 | 2026-07-15 | Codex | 增补缺失许可证正文的Go历史源码发布证明合同 |
 | 1.2.0 | 2026-07-15 | Codex | 固定离线来源证据、生产运行图闭包、非空漏洞报告与22路径上游冲突事实 |
 | 1.2.1 | 2026-07-15 | Codex | 限定exp-html完整来源证据替换Trivy源码头BSD-2-Clause误判 |
+| 1.3.0 | 2026-07-17 | Codex | 记录首个候选完成显式merge并晋升为SiYuan 3.7.2上游基线 |
 
 ## Table of Contents
 
@@ -42,7 +43,9 @@ Accepted
 
 根README、贡献、安全、Issue模板、赞助、行为准则和GitHub仓库元数据仍把思源或B3log当作当前产品与维护方。L0方案同时要求Docker构建、SBOM、漏洞与许可证扫描，以及一次可审计的上游merge演练，现有`singularity-l0.yml`尚未提供这些证据。
 
-本地已将`upstream/master`更新到`c8dcdd0860ef000a14552c619fe19c0dcb5175f5`并执行无工作树写入的`git merge-tree --write-tree HEAD upstream/master`。演练真实发现22个冲突路径，其中10个属于Fork治理、品牌和工作流路径，12个属于Editor/Protyle路径，因此L0当前不能声明完成；冲突解决和完整回归必须形成后续独立merge提交。
+首次同步前，本地将`upstream/master`更新到`c8dcdd0860ef000a14552c619fe19c0dcb5175f5`并执行无工作树写入的`git merge-tree --write-tree HEAD upstream/master`。演练真实发现22个冲突路径，其中10个属于Fork治理、品牌和工作流路径，12个属于Editor/Protyle路径；该报告当时只证明冲突范围，不构成成功merge。
+
+候选随后通过双父提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`显式合入，22个冲突均在该merge中解决。该提交已进入`master`与`origin/master`，候选已晋升为SiYuan 3.7.2当前基线；Git历史、机器基线、NOTICE和多语言README共同记录这次晋升。
 
 本决策只使用仓库源码、Git历史、GitHub仓库元数据和相关Action的官方`action.yml`。没有进行泛化网页搜索。
 
@@ -59,7 +62,7 @@ Accepted
 7. 漏洞门禁扫描企业源码及两个企业镜像，三份报告都必须包含至少一个具有非空`Target`和`Type`的真实扫描结果。存在已有修复版本的High或Critical漏洞时阻断；未修复发现仍进入JSON报告并在后续版本治理，不把空报告、“尚无修复”或未识别目标误写为不存在漏洞。
 8. `config/upstream-baseline.json`继续拥有当前已集成上游提交、版本、工具链与许可证。校验器增加根`LICENSE`、`NOTICE`、仓库身份、只读upstream push URL和架构文档检查，不能只证明提交是HEAD祖先。
 9. 上游同步分两阶段。`report-upstream-impact.mjs`对固定候选提交生成机器JSON与可读Markdown，记录基线、候选、受影响模块和冲突路径；正式同步使用`git merge --no-ff`，禁止rebase。冲突解决后在merge结果上运行Node 24全门禁、Go Kernel测试、企业镜像构建和供应链扫描，再把候选提升为新基线。
-10. 当前`c8dcdd0860ef000a14552c619fe19c0dcb5175f5`作为首个真实候选。S1复评修复先形成稳定提交，随后创建独立上游merge提交并解决已报告冲突；只有该merge通过完整回归、基线提升且CI重放成功后，L0才可标记完成。
+10. `c8dcdd0860ef000a14552c619fe19c0dcb5175f5`是首个真实候选，已由独立merge提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`合入并晋升为SiYuan 3.7.2基线。在固定下一候选前，机器配置中的基线与候选指向同一上游提交；后续同步继续重复“固定候选、影响报告、显式merge、完整回归、基线晋升”的合同。
 11. L0 workflow的路径触发覆盖`.github/**`、`README*.md`、`LICENSE`、`NOTICE`、`Dockerfile*`、`config/**`、`scripts/singularity/**`、`docs/**`、`plans/**`、`output/md/**`、`enterprise/**`、`app/**`和`kernel/**`。路径过滤只决定何时运行，真实元数据、法律、工作流允许列表和供应链校验仍由命令执行。
 12. Go模块归档存在真实许可证正文时，只接受精确模块坐标、归档内许可证路径与SHA-256组成的`go-module-file`证据。仅当归档缺失正文且来源链可逐文件确认时，才接受`go-source-release`：策略必须锁定模块坐标、归档内来源声明文件及哈希、官方源提交和标签、官方源目录、仓库内保留的历史许可证正文及哈希；校验器必须离线重验这些字段后才能写入SBOM。该特例当前只允许`exp-html`，不形成按名称或模糊许可证放行。运行时代码、Go依赖图和构建路径保持不变。
 
@@ -121,7 +124,7 @@ upstream baseline + pinned candidate + fork HEAD
 - README变短并聚焦奇点现状；思源完整产品说明通过明确上游链接保留，不复制成两套易漂移文档。
 - CI时间和网络用量增加，但SBOM、漏洞、许可证和镜像追溯证据成为L0的真实交付门禁。
 - 仓库新增一个历史第三方许可证正文；CI只做低频离线哈希和模块坐标验证，不增加产品运行时校验、网络请求或依赖Fork。
-- 最新上游候选当前仍有22个冲突路径。S1修复可以继续，但L0状态保持未完成，直到独立merge提交和自动回归完成。
+- 首个上游候选报告的22个冲突路径已在独立merge提交中解决并完成基线晋升；后续候选仍须重新生成影响报告并通过相同门禁，不能沿用本次结论。
 
 ## References
 

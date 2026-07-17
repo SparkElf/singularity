@@ -1,5 +1,5 @@
 SINGULARITY NOTICE
-Updated: 2026-07-15
+Updated: 2026-07-17
 
 1. PROJECT
 
@@ -10,8 +10,8 @@ Singularity repository: https://github.com/SparkElf/singularity
 
 Upstream project: SiYuan
 Upstream repository: https://github.com/siyuan-note/siyuan.git
-Upstream version: 3.7.1
-Upstream commit: 41f2861c87575ff5ac4b50a0520b1a4fe55b4a70
+Upstream version: 3.7.2
+Upstream commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
 
 Changes made after this baseline are maintained in the Singularity repository and its history. Upstream copyright notices remain attributable to their respective authors and copyright holders.
 

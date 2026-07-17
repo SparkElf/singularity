@@ -3,8 +3,8 @@ title: "S1 Identity Space Startup Plan"
 description: "奇点S1身份、空间授权与启动切片之可恢复执行计划"
 author: "Codex"
 date: "2026-07-14"
-version: "1.7.2"
-status: "active"
+version: "1.7.3"
+status: "completed"
 tags: ["plan", "s1", "identity", "space", "authorization"]
 ---
 
@@ -26,6 +26,7 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 | 1.7.0 | 2026-07-15 | Codex | API/Web与L0复评阻断清零，固定真实供应链证据并进入最终验证前文档收口 |
 | 1.7.1 | 2026-07-15 | Codex | 本地最终verification通过，拆分稳定提交、PostgreSQL CI和正式上游merge后续状态 |
 | 1.7.2 | 2026-07-15 | Codex | 稳定提交与GitHub Actions全绿，收口PostgreSQL 17和CI供应链证据 |
+| 1.7.3 | 2026-07-17 | Codex | 记录固定上游候选显式merge、基线晋升与L0完成状态 |
 
 ## Objective
 
@@ -76,13 +77,13 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - [x] API/Web、上游治理与供应链代码复评通过；Node 24 L0标准入口`84/84`。
 - [x] 完成本地最终verification，覆盖static、unit、component、build、browser integration、镜像、供应链与Git门禁。
 - [x] 稳定S1/L0提交`8f7ed852a`已推送；GitHub Actions run `29410946297`的PostgreSQL 17与供应链门禁全绿。
-- [ ] 以独立`--no-ff`提交合并固定上游候选，解决22个冲突路径并提升基线。
+- [x] 以双父显式merge提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`合并固定上游候选，解决22个冲突路径并提升基线。
 
-## Next Steps
+## Completion Record
 
-1. 提交并推送本次证据收口文档，确认对应GitHub Actions保持全绿。
-2. 以独立`git merge --no-ff c8dcdd0860ef000a14552c619fe19c0dcb5175f5`提交解决22个冲突路径并重跑全门禁。
-3. merge结果GitHub Actions全绿后提升上游基线并再次更新本计划和总方案；只有正式merge、完整回归与CI重放完成后才标记L0完成。
+1. 证据收口文档、稳定提交与GitHub Actions run `29410946297`已经通过。
+2. 固定候选`c8dcdd0860ef000a14552c619fe19c0dcb5175f5`已经由双父显式merge提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`合入并推送。
+3. `config/upstream-baseline.json`已晋升到SiYuan 3.7.2候选，总方案1.4.8已经记录L0完成；后续S0-S3/B4与企业能力均按L1跟踪。
 
 ## Risks
 
@@ -102,7 +103,7 @@ tags: ["plan", "s1", "identity", "space", "authorization"]
 - PostgreSQL：本机服务按方案未启动；GitHub Actions run `29410946297`的`space-session`在PostgreSQL 17 service上完成迁移回放、真实HTTP、运维与并发集成并通过。
 - Web证据：修复后的Playwright browser integration在desktop、390x844 mobile与320x568三项目共`21/21`通过；诊断按原始Request保留并发请求、响应、失败和pending，不在共享support内预判业务结果。
 - L0证据：标准Node runner `84/84`；API raw SBOM与只读断网运行图均为115个唯一npm PURL且双向差集为零，Web运行镜像npm组件为零；本地许可证为源码`2005 allowed / 0 denied / 0 unknown`、总计`2293 allowed / 0 denied / 0 unknown`，run `29410946297`为源码`2006 / 0 / 0`、总计`2294 / 0 / 0`；CI raw SBOM保留`exp-html`的scanner `BSD-2-Clause`，canonical SBOM以完整历史来源链证明`BSD-3-Clause`并记录原值；三份非空漏洞报告合计`0 fixable / 0 unfixed / 0 total`。
-- 上游证据：真实基线校验全项通过；固定候选影响报告覆盖451个变更路径并发现22个冲突路径。该报告不是成功merge；稳定提交与CI前置条件已经满足，正式`--no-ff`合并仍须独立执行。
+- 上游证据：真实基线校验全项通过；固定候选影响报告覆盖451个变更路径并发现22个冲突路径。双父显式merge提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`已完成冲突解决、进入`master`与`origin/master`并晋升为当前基线。
 - Git：`git diff --check`、工作树审计；提交后`origin/master`与HEAD同。
 
 ## Resume Guide
