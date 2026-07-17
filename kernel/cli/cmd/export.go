@@ -17,10 +17,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io"
+	"strings"
 
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/util"
 
 	"github.com/spf13/cobra"
 )
@@ -28,6 +31,34 @@ import (
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export documents",
+}
+
+func finishExportFile(downloadPath, output string, stdout io.Writer) error {
+	if output != "" {
+		var err error
+		output, err = model.ValidatePlaintextExportDestination(output)
+		if err != nil {
+			return err
+		}
+	}
+	opened, err := util.OpenLocalExportDownload(downloadPath)
+	if err != nil {
+		return err
+	}
+	if output == "" {
+		closeErr := opened.Close()
+		if closeErr != nil {
+			return closeErr
+		}
+		_, err = fmt.Fprintln(stdout, opened.Path)
+		return err
+	}
+	err = util.PublishFile(opened.File, opened.Info.Mode(), output)
+	err = errors.Join(err, opened.Close())
+	if err != nil {
+		return fmt.Errorf("copy export from %q to %q: %w", opened.Path, output, err)
+	}
+	return nil
 }
 
 var exportMdCmd = &cobra.Command{
@@ -40,14 +71,24 @@ var exportMdCmd = &cobra.Command{
 		}
 
 		output, _ := cmd.Flags().GetString("output")
+		if output != "" {
+			var err error
+			output, err = model.ValidatePlaintextExportDestination(output)
+			if err != nil {
+				return err
+			}
+		}
 		if dryRun && output != "" {
 			fmt.Printf("[dry-run] Would export markdown for document %s to %s\n", id, output)
 			return nil
 		}
 
-		_, content := model.ExportMarkdownContent(id, 4, 0, true, false, false, false, false)
+		_, content, err := model.ExportMarkdownContentInBox(id, 4, 0, true, false, false, false, false, "")
+		if err != nil {
+			return err
+		}
 		if output != "" {
-			return os.WriteFile(output, []byte(content), 0644)
+			return util.PublishFile(strings.NewReader(content), 0644, output)
 		}
 		fmt.Print(content)
 		return nil
@@ -64,14 +105,24 @@ var exportHTMLCmd = &cobra.Command{
 		}
 
 		output, _ := cmd.Flags().GetString("output")
+		if output != "" {
+			var err error
+			output, err = model.ValidatePlaintextExportDestination(output)
+			if err != nil {
+				return err
+			}
+		}
 		if dryRun && output != "" {
 			fmt.Printf("[dry-run] Would export HTML for document %s to %s\n", id, output)
 			return nil
 		}
 
-		_, dom, _ := model.ExportHTML(id, "", false, false, false)
+		_, dom, _, err := model.ExportHTMLInBox(id, "", false, false, false, "")
+		if err != nil {
+			return err
+		}
 		if output != "" {
-			return os.WriteFile(output, []byte(dom), 0644)
+			return util.PublishFile(strings.NewReader(dom), 0644, output)
 		}
 		fmt.Print(dom)
 		return nil
@@ -88,14 +139,24 @@ var exportPreviewCmd = &cobra.Command{
 		}
 
 		output, _ := cmd.Flags().GetString("output")
+		if output != "" {
+			var err error
+			output, err = model.ValidatePlaintextExportDestination(output)
+			if err != nil {
+				return err
+			}
+		}
 		if dryRun && output != "" {
 			fmt.Printf("[dry-run] Would export preview HTML for document %s to %s\n", id, output)
 			return nil
 		}
 
-		html := model.ExportPreview(id, false)
+		html, err := model.ExportPreviewInBox(id, false, "")
+		if err != nil {
+			return err
+		}
 		if output != "" {
-			return os.WriteFile(output, []byte(html), 0644)
+			return util.PublishFile(strings.NewReader(html), 0644, output)
 		}
 		fmt.Print(html)
 		return nil
@@ -103,7 +164,7 @@ var exportPreviewCmd = &cobra.Command{
 }
 
 var exportDocxCmd = &cobra.Command{
-	Use:   "docx --id <id> --output <file>",
+	Use:   "docx --id <id> --output <dir>",
 	Short: "Export as Word (.docx)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, _ := cmd.Flags().GetString("id")
@@ -114,13 +175,17 @@ var exportDocxCmd = &cobra.Command{
 		if output == "" {
 			return fmt.Errorf("--output is required for docx")
 		}
+		output, err := model.ValidatePlaintextExportDestination(output)
+		if err != nil {
+			return err
+		}
 
 		if dryRun {
 			fmt.Printf("[dry-run] Would export docx for document %s to %s\n", id, output)
 			return nil
 		}
 
-		fullPath, err := model.ExportDocx(id, output, false, false)
+		fullPath, err := model.ExportDocxInBox(id, output, false, false, "")
 		if err != nil {
 			return err
 		}
@@ -130,7 +195,7 @@ var exportDocxCmd = &cobra.Command{
 }
 
 var exportSYCmd = &cobra.Command{
-	Use:   "sy --id <id> [--output <dir>]",
+	Use:   "sy --id <id> [--output <file>]",
 	Short: "Export as .sy.zip",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, _ := cmd.Flags().GetString("id")
@@ -148,16 +213,11 @@ var exportSYCmd = &cobra.Command{
 			return nil
 		}
 
-		_, zipPath := model.ExportPandocConvertZip([]string{id}, "", ".sy")
-		if output == "" {
-			fmt.Println(zipPath)
-			return nil
-		}
-		data, err := os.ReadFile(zipPath)
+		zipPath, err := model.ExportSYsInBox([]string{id}, "")
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(output, data, 0644)
+		return finishExportFile(zipPath, output, cmd.OutOrStdout())
 	},
 }
 
@@ -180,16 +240,11 @@ var exportMdZipCmd = &cobra.Command{
 			return nil
 		}
 
-		_, zipPath := model.ExportPandocConvertZip([]string{id}, "", ".md")
-		if output == "" {
-			fmt.Println(zipPath)
-			return nil
-		}
-		data, err := os.ReadFile(zipPath)
+		_, zipPath, err := model.ExportPandocConvertZipInBox([]string{id}, "", ".md", "")
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(output, data, 0644)
+		return finishExportFile(zipPath, output, cmd.OutOrStdout())
 	},
 }
 
@@ -211,15 +266,7 @@ var exportDataCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if output == "" {
-			fmt.Println(zipPath)
-			return nil
-		}
-		data, err := os.ReadFile(zipPath)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(output, data, 0644)
+		return finishExportFile(zipPath, output, cmd.OutOrStdout())
 	},
 }
 
@@ -234,7 +281,7 @@ func init() {
 	exportPreviewCmd.Flags().String("output", "", "output file path (default: stdout)")
 
 	exportDocxCmd.Flags().String("id", "", "block ID")
-	exportDocxCmd.Flags().String("output", "", "output file path (required)")
+	exportDocxCmd.Flags().String("output", "", "output directory (required)")
 
 	exportSYCmd.Flags().String("id", "", "block ID")
 	exportSYCmd.Flags().String("output", "", "output file path (default: print temp path)")

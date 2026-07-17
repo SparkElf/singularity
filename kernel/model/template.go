@@ -183,10 +183,14 @@ func SearchTemplate(keyword string) (ret []*TemplateSearchResult) {
 func DocSaveAsTemplate(id, name string, overwrite bool) (code int, err error) {
 	bt := treenode.GetBlockTree(id)
 	if nil == bt {
+		err = fmt.Errorf("%w: %s", ErrBlockNotFound, id)
 		return
 	}
 
-	tree := prepareExportTree(bt)
+	tree, err := prepareExportTreeWithContext(&exportReadContext{}, bt)
+	if err != nil {
+		return 0, err
+	}
 	addBlockIALNodes(tree, true)
 
 	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {

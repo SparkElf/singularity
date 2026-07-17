@@ -36,9 +36,11 @@ import (
 
 func NodeHash(node *ast.Node, tree *parse.Tree, luteEngine *lute.Lute) string {
 	ialArray := node.KramdownIAL
-	sort.Slice(ialArray, func(i, j int) bool {
-		return ialArray[i][0] < ialArray[j][0]
-	})
+	less := func(i, j int) bool { return ialArray[i][0] < ialArray[j][0] }
+	if !sort.SliceIsSorted(ialArray, less) {
+		ialArray = append([][]string(nil), ialArray...)
+		sort.Slice(ialArray, less)
+	}
 	ial := parse.IAL2Tokens(ialArray)
 	var md string
 	if ast.NodeDocument != node.Type {
@@ -91,15 +93,11 @@ func IALStr(n *ast.Node) string {
 }
 
 func RootChildIDs(rootID string) (ret []string) {
-	root := GetBlockTree(rootID)
-	if nil == root {
-		for _, encBoxID := range GetOpenedEncryptedBoxIDs() {
-			if encRoot := GetBlockTreeInBox(rootID, encBoxID); nil != encRoot {
-				root = encRoot
-				break
-			}
-		}
-	}
+	return RootChildIDsInBox(rootID, "")
+}
+
+func RootChildIDsInBox(rootID, boxID string) (ret []string) {
+	root := GetBlockTreeInBox(rootID, boxID)
 	if nil == root {
 		return
 	}

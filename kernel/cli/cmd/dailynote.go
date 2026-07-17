@@ -38,6 +38,9 @@ var dailynoteCreateCmd = &cobra.Command{
 		if notebook == "" {
 			return fmt.Errorf("--notebook is required")
 		}
+		if err := rejectEncryptedNotebookCLI(cmd, args); err != nil {
+			return err
+		}
 
 		if dryRun {
 			fmt.Printf("[dry-run] Would create daily note in notebook %s\n", notebook)
@@ -66,6 +69,9 @@ var dailynoteAppendCmd = &cobra.Command{
 		if notebook == "" {
 			return fmt.Errorf("--notebook is required")
 		}
+		if err := rejectEncryptedNotebookCLI(cmd, args); err != nil {
+			return err
+		}
 
 		if dryRun {
 			fmt.Printf("[dry-run] Would ensure daily note in notebook %s and append block\n", notebook)
@@ -85,6 +91,7 @@ var dailynoteAppendCmd = &cobra.Command{
 		parentID := util.GetTreeID(p)
 		dom := markdownToBlockDOM(data)
 		transactions := []*model.Transaction{{
+			Notebook: model.TransactionNotebookForBox(notebook),
 			DoOperations: []*model.Operation{{
 				Action:   "appendInsert",
 				Data:     dom,
@@ -93,7 +100,7 @@ var dailynoteAppendCmd = &cobra.Command{
 		}}
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
-		model.AppendPushReloadProtyleEntry(parentID)
+		model.AppendPushReloadProtyleEntry(parentID, model.TransactionNotebookForBox(notebook))
 		fmt.Println(parentID)
 		return nil
 	},
@@ -106,6 +113,9 @@ var dailynotePrependCmd = &cobra.Command{
 		notebook, _ := cmd.Flags().GetString("notebook")
 		if notebook == "" {
 			return fmt.Errorf("--notebook is required")
+		}
+		if err := rejectEncryptedNotebookCLI(cmd, args); err != nil {
+			return err
 		}
 
 		if dryRun {
@@ -126,6 +136,7 @@ var dailynotePrependCmd = &cobra.Command{
 		parentID := util.GetTreeID(p)
 		dom := markdownToBlockDOM(data)
 		transactions := []*model.Transaction{{
+			Notebook: model.TransactionNotebookForBox(notebook),
 			DoOperations: []*model.Operation{{
 				Action:   "prependInsert",
 				Data:     dom,
@@ -134,7 +145,7 @@ var dailynotePrependCmd = &cobra.Command{
 		}}
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
-		model.AppendPushReloadProtyleEntry(parentID)
+		model.AppendPushReloadProtyleEntry(parentID, model.TransactionNotebookForBox(notebook))
 		fmt.Println(parentID)
 		return nil
 	},

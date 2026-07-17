@@ -35,14 +35,12 @@ func GetBlockInBox(id, boxID string) (ret *Block) {
 	if nil != ret {
 		return
 	}
+	queryEpoch := blockCacheQueryEpoch()
 	row := queryRowForBox(boxID, "SELECT * FROM blocks WHERE id = ?", id)
 	if row == nil {
 		return
 	}
-	ret = scanBlockRow(row)
-	if nil != ret {
-		putBlockCache(ret)
-	}
+	ret = scanBlockRow(row, queryEpoch)
 	return
 }
 
@@ -52,6 +50,7 @@ func GetBlocksInBox(ids []string, boxID string) (ret []*Block) {
 		return
 	}
 	sqlStmt := "SELECT * FROM blocks WHERE id IN ('" + strings.Join(ids, "','") + "')"
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := queryForBox(boxID, sqlStmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -59,7 +58,7 @@ func GetBlocksInBox(ids []string, boxID string) (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		b := scanBlockRows(rows)
+		b := scanBlockRows(rows, queryEpoch)
 		if b != nil {
 			ret = append(ret, b)
 		}
@@ -139,6 +138,7 @@ func SelectBlocksRawStmtInBox(stmt string, page, limit int, boxID string) (ret [
 	if 0 < limit && !strings.Contains(strings.ToLower(stmt), " limit ") {
 		stmt += " LIMIT " + itoa(limit) + " OFFSET " + itoa(offset)
 	}
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := queryForBox(boxID, stmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", stmt, err)
@@ -146,7 +146,7 @@ func SelectBlocksRawStmtInBox(stmt string, page, limit int, boxID string) (ret [
 	}
 	defer rows.Close()
 	for rows.Next() {
-		b := scanBlockRows(rows)
+		b := scanBlockRows(rows, queryEpoch)
 		if b != nil {
 			ret = append(ret, b)
 		}
@@ -192,6 +192,7 @@ func QueryNoLimitArgsInBox(stmt, boxID string, args ...any) (ret []map[string]an
 // SelectBlocksRawStmtArgsInBox 在指定 box 的 db 里执行参数化原始 SQL 查询 blocks。
 // 与 SelectBlocksRawStmtArgs 对应，绕开 sqlparser 对 "?" 占位的改写。
 func SelectBlocksRawStmtArgsInBox(stmt string, args []any, limit int, boxID string) (ret []*Block) {
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := queryForBox(boxID, stmt, args...)
 	if err != nil {
 		if strings.Contains(err.Error(), "syntax error") {
@@ -206,7 +207,7 @@ func SelectBlocksRawStmtArgsInBox(stmt string, args []any, limit int, boxID stri
 	var count, errCount int
 	for rows.Next() {
 		count++
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		} else {
 			logging.LogWarnf("raw sql query [%s] failed", stmt)
@@ -456,6 +457,7 @@ func QueryRefIDsByDefIDInBox(defID string, containChildren bool, boxID string) (
 
 // SelectBlocksRawStmtNoParseInBox 与 SelectBlocksRawStmtNoParse 一致，但按 boxID 路由。
 func SelectBlocksRawStmtNoParseInBox(stmt string, limit int, boxID string) (ret []*Block) {
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := queryForBox(boxID, stmt)
 	if err != nil {
 		if strings.Contains(err.Error(), "syntax error") {
@@ -469,7 +471,7 @@ func SelectBlocksRawStmtNoParseInBox(stmt string, limit int, boxID string) (ret 
 	var count, errCount int
 	for rows.Next() {
 		count++
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		} else {
 			logging.LogWarnf("raw sql query [%s] failed", stmt)
@@ -497,6 +499,7 @@ func GetChildBlocksInBox(parentID, condition string, limit int, boxID string) (r
 		sqlStmt += " AND " + condition
 	}
 	sqlStmt += " LIMIT " + itoa(limit)
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := queryForBox(boxID, sqlStmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -504,7 +507,7 @@ func GetChildBlocksInBox(parentID, condition string, limit int, boxID string) (r
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}

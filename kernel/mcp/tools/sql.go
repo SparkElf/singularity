@@ -41,7 +41,7 @@ func init() {
 	register(SQLTool)
 }
 
-func sqlHandler(args map[string]any) (CallToolResult, error) {
+func sqlHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	if action != "query" {
 		if stmt, ok := args["stmt"].(string); ok && stmt != "" {

@@ -54,14 +54,22 @@ func StartKernel(container, appDir, workspaceBaseDir, timezoneID, localIPs, lang
 	go server.Serve(false, model.Conf.CookieKey)
 	go func() {
 		model.InitAppearance()
-		sql.InitDatabase(false)
+		if err := sql.InitDatabase(false); err != nil {
+			logging.LogErrorf("initialize database failed: %s", err)
+			util.PushErrMsg(err.Error(), 0)
+			return
+		}
 		sql.InitHistoryDatabase(false)
 		sql.InitAssetContentDatabase(false)
 		sql.SetCaseSensitive(model.Conf.Search.CaseSensitive)
 		sql.SetIndexAssetPath(model.Conf.Search.IndexAssetPath)
 
 		model.BootSyncData()
-		model.InitBoxes()
+		if err := model.InitBoxes(); err != nil {
+			logging.LogErrorf("initialize notebooks failed: %s", err)
+			util.PushErrMsg(err.Error(), 0)
+			return
+		}
 		model.LoadFlashcards()
 		util.LoadAssetsTexts()
 
@@ -175,12 +183,8 @@ func GetExportFilePath(exportPath *C.char) *C.char {
 		}
 		// 加密导出受控路径（<boxID>/<kind>/<file>）：必须经注册表校验且 box 已解锁，否则 fail-closed
 		if model.IsManagedEncryptedExportPath(fileName) {
-			artifact, ok := model.ResolveManagedExportForMobile(fileName)
-			if !ok {
-				logging.LogWarnf("get export file path [%s] blocked: managed export not available or box locked", pathStr)
-				return nil
-			}
-			return C.CString(artifact)
+			logging.LogWarnf("get export file path [%s] blocked: encrypted exports require a lock-scoped HTTP download", pathStr)
+			return nil
 		}
 		absPath = filepath.Join(util.TempDir, "export", fileName)
 		exportBaseDir := filepath.Join(util.TempDir, "export")

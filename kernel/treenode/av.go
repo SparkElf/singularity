@@ -17,16 +17,36 @@
 package treenode
 
 import (
+	"fmt"
+
+	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/av"
 )
 
-// GetMirrorAttrViewBlockIDs 返回引用了该 AV 的所有块 ID（仅含块树仍存在的）。
-// 通过 av.GetBlockRels 获取镜像索引，已合并全局 + 所有已打开加密笔记本的镜像数据（加密感知）。
 func GetMirrorAttrViewBlockIDs(avID string) (ret []string) {
+	return GetMirrorAttrViewBlockIDsInBox(avID, "")
+}
+
+// GetMirrorAttrViewBlockIDsInBox 返回指定内容库中引用该 AV 且仍存在的块 ID。
+func GetMirrorAttrViewBlockIDsInBox(avID, boxID string) (ret []string) {
+	ret, err := GetMirrorAttrViewBlockIDsInBoxStrict(avID, boxID)
+	if err != nil {
+		logging.LogErrorf("read attribute view mirror block IDs [%s/%s] failed: %s", boxID, avID, err)
+	}
+	return ret
+}
+
+func GetMirrorAttrViewBlockIDsInBoxStrict(avID, boxID string) (ret []string, err error) {
 	ret = []string{}
-	avBlocks := av.GetBlockRels()
+	avBlocks, err := av.GetBlockRelsInBoxStrict(boxID)
+	if err != nil {
+		return nil, fmt.Errorf("read attribute view mirror relations [%s/%s]: %w", boxID, avID, err)
+	}
 	blockIDs := avBlocks[avID]
-	bts := GetBlockTrees(blockIDs)
+	bts, err := GetBlockTreesInBoxStrict(blockIDs, boxID)
+	if err != nil {
+		return nil, fmt.Errorf("read attribute view mirror blocktrees [%s/%s]: %w", boxID, avID, err)
+	}
 	for blockID := range bts {
 		ret = append(ret, blockID)
 	}

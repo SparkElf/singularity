@@ -36,6 +36,7 @@ import (
 
 func QueryEmptyContentEmbedBlocks() (ret []*Block) {
 	stmt := "SELECT * FROM blocks WHERE type = 'query_embed' AND content = ''"
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(stmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", stmt, err)
@@ -43,7 +44,7 @@ func QueryEmptyContentEmbedBlocks() (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -288,6 +289,7 @@ func QueryBlockNamesByRootID(rootID string) (ret []string) {
 
 func QueryBookmarkBlocks() (ret []*Block) {
 	sqlStmt := "SELECT * FROM blocks WHERE ial LIKE ?"
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(sqlStmt, "%bookmark=%")
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -295,7 +297,7 @@ func QueryBookmarkBlocks() (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -305,6 +307,7 @@ func QueryBookmarkBlocks() (ret []*Block) {
 func QueryBookmarkLabels() (ret []string) {
 	ret = []string{}
 	sqlStmt := "SELECT * FROM blocks WHERE ial LIKE ?"
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(sqlStmt, "%bookmark=%")
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -313,7 +316,7 @@ func QueryBookmarkLabels() (ret []string) {
 	defer rows.Close()
 	labels := map[string]bool{}
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			if v := ialAttr(block.IAL, "bookmark"); "" != v {
 				labels[v] = true
 			}
@@ -566,6 +569,7 @@ func SelectBlocksRawStmtNoParse(stmt string, limit int) (ret []*Block) {
 // SelectBlocksRawStmtArgs 与 selectBlocksRawStmt 行为一致，但通过绑定参数执行，
 // 绕开 sqlparser 解析（vitess 会把 "?" 改写为 ":vN" 导致占位失效），用于含用户可控参数的搜索语句。
 func SelectBlocksRawStmtArgs(stmt string, args []any, limit int) (ret []*Block) {
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(stmt, args...)
 	if err != nil {
 		if strings.Contains(err.Error(), "syntax error") {
@@ -580,7 +584,7 @@ func SelectBlocksRawStmtArgs(stmt string, args []any, limit int) (ret []*Block) 
 	var count, errCount int
 	for rows.Next() {
 		count++
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		} else {
 			logging.LogWarnf("raw sql query [%s] failed", stmt)
@@ -673,6 +677,7 @@ func SelectBlocksRawStmt(stmt string, page, limit int) (ret []*Block) {
 	stmt = strings.ReplaceAll(stmt, "\\\"", "\"")
 	stmt = strings.ReplaceAll(stmt, "\\\\*", "\\*")
 	stmt = strings.ReplaceAll(stmt, "from dual", "")
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(stmt)
 	if err != nil {
 		if strings.Contains(err.Error(), "syntax error") {
@@ -683,7 +688,7 @@ func SelectBlocksRawStmt(stmt string, page, limit int) (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -795,6 +800,7 @@ func SelectBlocksRegexArgs(stmt string, exp *regexp.Regexp, name, alias, memo, i
 }
 
 func selectBlocksRawStmt(stmt string, limit int) (ret []*Block) {
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(stmt)
 	if err != nil {
 		if strings.Contains(err.Error(), "syntax error") {
@@ -808,7 +814,7 @@ func selectBlocksRawStmt(stmt string, limit int) (ret []*Block) {
 	var count, errCount int
 	for rows.Next() {
 		count++
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		} else {
 			logging.LogWarnf("raw sql query [%s] failed", stmt)
@@ -822,18 +828,21 @@ func selectBlocksRawStmt(stmt string, limit int) (ret []*Block) {
 	return
 }
 
-func scanBlockRows(rows *sql.Rows) (ret *Block) {
+func scanBlockRows(rows *sql.Rows, queryEpoch uint64) (ret *Block) {
 	var block Block
 	if err := rows.Scan(&block.ID, &block.ParentID, &block.RootID, &block.Hash, &block.Box, &block.Path, &block.HPath, &block.Name, &block.Alias, &block.Memo, &block.Tag, &block.Content, &block.FContent, &block.Markdown, &block.Length, &block.Type, &block.SubType, &block.IAL, &block.Sort, &block.Created, &block.Updated); err != nil {
 		logging.LogErrorf("query scan field failed: %s\n%s", err, logging.ShortStack())
 		return
 	}
 	ret = &block
-	putBlockCache(ret)
+	if blockCacheAfterQueryHook != nil {
+		blockCacheAfterQueryHook(ret.ID)
+	}
+	putBlockCacheFromQuery(ret, queryEpoch)
 	return
 }
 
-func scanBlockRow(row *sql.Row) (ret *Block) {
+func scanBlockRow(row *sql.Row, queryEpoch uint64) (ret *Block) {
 	var block Block
 	if err := row.Scan(&block.ID, &block.ParentID, &block.RootID, &block.Hash, &block.Box, &block.Path, &block.HPath, &block.Name, &block.Alias, &block.Memo, &block.Tag, &block.Content, &block.FContent, &block.Markdown, &block.Length, &block.Type, &block.SubType, &block.IAL, &block.Sort, &block.Created, &block.Updated); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -842,7 +851,10 @@ func scanBlockRow(row *sql.Row) (ret *Block) {
 		return
 	}
 	ret = &block
-	putBlockCache(ret)
+	if blockCacheAfterQueryHook != nil {
+		blockCacheAfterQueryHook(ret.ID)
+	}
+	putBlockCacheFromQuery(ret, queryEpoch)
 	return
 }
 
@@ -859,6 +871,7 @@ func GetChildBlocks(parentID, condition string, limit int) (ret []*Block) {
 		sqlStmt += " AND " + condition
 	}
 	sqlStmt += " LIMIT " + strconv.Itoa(limit)
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(sqlStmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -866,7 +879,7 @@ func GetChildBlocks(parentID, condition string, limit int) (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -880,6 +893,7 @@ func GetAllChildBlocks(rootIDs []string, condition string, limit int) (ret []*Bl
 		sqlStmt += " AND " + condition
 	}
 	sqlStmt += " LIMIT " + strconv.Itoa(limit)
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(sqlStmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -887,7 +901,7 @@ func GetAllChildBlocks(rootIDs []string, condition string, limit int) (ret []*Bl
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -899,19 +913,22 @@ func GetBlock(id string) (ret *Block) {
 	if nil != ret {
 		return
 	}
+	queryEpoch := blockCacheQueryEpoch()
 	row := queryRow("SELECT * FROM blocks WHERE id = ?", id)
 	if nil == row {
 		return
 	}
-	ret = scanBlockRow(row)
-	if nil != ret {
-		putBlockCache(ret)
-	}
+	ret = scanBlockRow(row, queryEpoch)
 	return
 }
 
 func GetRootUpdated() (ret map[string]string, err error) {
-	rows, err := query("SELECT root_id, updated FROM `blocks` WHERE type = 'd'")
+	return GetRootUpdatedInBox("")
+}
+
+// GetRootUpdatedInBox returns document update times from one content store.
+func GetRootUpdatedInBox(boxID string) (ret map[string]string, err error) {
+	rows, err := queryForBox(boxID, "SELECT root_id, updated FROM `blocks` WHERE type = 'd'")
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -928,7 +945,12 @@ func GetRootUpdated() (ret map[string]string, err error) {
 }
 
 func GetDuplicatedRootIDs(blocksTable string) (ret []string) {
-	rows, err := query("SELECT DISTINCT root_id FROM `" + blocksTable + "` GROUP BY id HAVING COUNT(*) > 1")
+	return GetDuplicatedRootIDsInBox(blocksTable, "")
+}
+
+// GetDuplicatedRootIDsInBox finds duplicate block IDs in one content store.
+func GetDuplicatedRootIDsInBox(blocksTable, boxID string) (ret []string) {
+	rows, err := queryForBox(boxID, "SELECT DISTINCT root_id FROM `"+blocksTable+"` GROUP BY id HAVING COUNT(*) > 1")
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -944,6 +966,7 @@ func GetDuplicatedRootIDs(blocksTable string) (ret []string) {
 
 func GetAllRootBlocks() (ret []*Block) {
 	stmt := "SELECT * FROM blocks WHERE type = 'd'"
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(stmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", stmt, err)
@@ -951,7 +974,7 @@ func GetAllRootBlocks() (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			ret = append(ret, block)
 		}
 	}
@@ -990,6 +1013,7 @@ func GetBlocks(ids []string) (ret []*Block) {
 	}
 	stmtBuilder.WriteString(")")
 	sqlStmt := stmtBuilder.String()
+	queryEpoch := blockCacheQueryEpoch()
 	rows, err := query(sqlStmt, args...)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
@@ -997,8 +1021,7 @@ func GetBlocks(ids []string) (ret []*Block) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if block := scanBlockRows(rows); nil != block {
-			putBlockCache(block)
+		if block := scanBlockRows(rows, queryEpoch); nil != block {
 			cached[block.ID] = block
 		}
 	}

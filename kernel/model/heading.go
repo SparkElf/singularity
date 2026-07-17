@@ -68,7 +68,9 @@ func (tx *Transaction) doFoldHeading(operation *Operation) (ret *TxErr) {
 	for _, child := range children {
 		cache.PutBlockIALInBox(child.ID, tree.Box, parse.IAL2Map(child.KramdownIAL))
 	}
-	sql.UpsertTreeQueue(tree)
+	if err := sql.UpsertTreeQueue(tree); err != nil {
+		return &TxErr{code: TxErrCodeWriteTree, msg: err.Error(), id: tree.ID}
+	}
 	operation.RetData = childrenIDs
 	return
 }
@@ -104,10 +106,11 @@ func (tx *Transaction) doUnfoldHeading(operation *Operation) (ret *TxErr) {
 		}
 		parentFoldedHeading.RemoveIALAttr("fold")
 		parentFoldedHeading.RemoveIALAttr("heading-fold")
-		go func() {
+		notebook := tx.Notebook
+		go func(notebook string) {
 			tx.WaitForCommit()
-			ReloadProtyle(tree.ID)
-		}()
+			ReloadProtyle(tree.ID, notebook)
+		}(notebook)
 	}
 
 	children := treenode.HeadingChildren(heading)
@@ -132,7 +135,9 @@ func (tx *Transaction) doUnfoldHeading(operation *Operation) (ret *TxErr) {
 	for _, child := range children {
 		cache.PutBlockIALInBox(child.ID, tree.Box, parse.IAL2Map(child.KramdownIAL))
 	}
-	sql.UpsertTreeQueue(tree)
+	if err := sql.UpsertTreeQueue(tree); err != nil {
+		return &TxErr{code: TxErrCodeWriteTree, msg: err.Error(), id: tree.ID}
+	}
 
 	// 展开折叠的标题后显示块引用计数 Display reference counts after unfolding headings https://github.com/siyuan-note/siyuan/issues/13618
 	fillBlockRefCount(children)
@@ -194,8 +199,12 @@ func Doc2Heading(srcID, targetID string, after bool) (srcTreeBox, srcTreePath st
 	generateOpTypeHistory(srcTree, HistoryOpUpdate)
 
 	// 移动前先删除引用 https://github.com/siyuan-note/siyuan/issues/7819
-	sql.DeleteRefsTreeQueue(srcTree)
-	sql.DeleteRefsTreeQueue(targetTree)
+	if err = sql.DeleteRefsTreeQueue(srcTree); err != nil {
+		return
+	}
+	if err = sql.DeleteRefsTreeQueue(targetTree); err != nil {
+		return
+	}
 
 	if ast.NodeListItem == pivot.Type {
 		pivot = pivot.LastChild
@@ -293,8 +302,12 @@ func Doc2Heading(srcID, targetID string, after bool) (srcTreeBox, srcTreePath st
 
 	srcTreeBox, srcTreePath = srcTree.Box, srcTree.Path // 返回旧的文档块位置，前端后续会删除旧的文档块
 	targetTree.Root.SetIALAttr("updated", util.CurrentTimeSecondsStr())
-	treenode.RemoveBlockTreesByRootID(srcTree.Box, srcTree.ID)
-	treenode.RemoveBlockTreesByRootID(targetTree.Box, targetTree.ID)
+	if err = treenode.RemoveBlockTreesByRootID(srcTree.Box, srcTree.ID); err != nil {
+		return
+	}
+	if err = treenode.RemoveBlockTreesByRootID(targetTree.Box, targetTree.ID); err != nil {
+		return
+	}
 	err = indexWriteTreeUpsertQueue(targetTree)
 	IncSync()
 	go func() {
@@ -418,7 +431,9 @@ func Heading2Doc(srcHeadingID, targetBoxID, targetPath, previousPath string, toT
 	if nil == srcTree.Root.FirstChild {
 		srcTree.Root.AppendChild(treenode.NewParagraph(""))
 	}
-	treenode.RemoveBlockTreesByRootID(srcTree.Box, srcTree.ID)
+	if err = treenode.RemoveBlockTreesByRootID(srcTree.Box, srcTree.ID); err != nil {
+		return "", "", err
+	}
 	if err = indexWriteTreeUpsertQueue(srcTree); err != nil {
 		return "", "", err
 	}

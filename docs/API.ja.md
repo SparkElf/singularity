@@ -638,6 +638,13 @@
 
 ## ブロック
 
+一般的なブロック変更エンドポイント（`insertBlock`、`batchInsertBlock`、`appendBlock`、`batchAppendBlock`、`prependBlock`、
+`batchPrependBlock`、`updateBlock`、`batchUpdateBlock`、`deleteBlock`、`moveBlock`、`moveOutlineHeading`、`foldBlock`、
+`unfoldBlock`、`updateTaskListItemMarker`、`batchUpdateTaskListItemMarker`）は、任意のトップレベル `notebook` ID を受け取ります。
+省略した場合は通常のグローバルコンテンツストアを使用し、暗号化ノートブックを操作する場合は指定が必要です。
+バッチ API ではバッチ全体で 1 つのトップレベル `notebook` を使用します。返されるトランザクションの `notebook` は正規化されたコンテンツストア ID で、
+暗号化ノートブックではその ID、通常のグローバルストアでは空文字列です。
+
 ### ブロックを挿入
 
 * `/api/block/insertBlock`
@@ -649,7 +656,8 @@
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "nextID": "",
     "previousID": "20211229114650-vrek5x6",
-    "parentID": ""
+    "parentID": "",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
@@ -658,6 +666,7 @@
     * `nextID`: 次のブロックのID、挿入位置を固定するために使用
     * `previousID`: 前のブロックのID、挿入位置を固定するために使用
     * `parentID`: 親ブロックのID、挿入位置を固定するために使用
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 
   `nextID`、`previousID`、`parentID`のうち少なくとも1つは値が必要、優先順位: `nextID` > `previousID` > `parentID`
 * 戻り値
@@ -696,13 +705,15 @@
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: 挿入するデータ型、`markdown`または`dom`
     * `data`: 挿入するデータ
     * `parentID`: 親ブロックのID、挿入位置を固定するために使用
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -739,13 +750,15 @@
   {
     "data": "foo**bar**{: style=\"color: var(--b3-font-color8);\"}baz",
     "dataType": "markdown",
-    "parentID": "20220107173950-7f9m1nb"
+    "parentID": "20220107173950-7f9m1nb",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: 挿入するデータ型、`markdown`または`dom`
     * `data`: 挿入するデータ
     * `parentID`: 親ブロックのID、挿入位置を固定するために使用
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -782,13 +795,15 @@
   {
     "dataType": "markdown",
     "data": "foobarbaz",
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `dataType`: 更新するデータ型、`markdown`または`dom`
     * `data`: 更新するデータ
     * `id`: 更新するブロックのID
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -822,11 +837,13 @@
 
   ```json
   {
-    "id": "20211230161520-querkps"
+    "id": "20211230161520-querkps",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: 削除するブロックのID
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -860,13 +877,15 @@
   {
     "id": "20230406180530-3o1rqkc",
     "previousID": "20230406152734-if5kyx6",
-    "parentID": "20230404183855-woe52ko"
+    "parentID": "20230404183855-woe52ko",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: 移動するブロックID
     * `previousID`: 前のブロックのID、挿入位置を固定するために使用
     * `parentID`: 親ブロックのID、挿入位置を固定するために使用、`previousID`と`parentID`は同時に空にできない、両方存在する場合は`previousID`が優先
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -902,11 +921,13 @@
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: 折りたたむブロックID
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json
@@ -924,11 +945,13 @@
 
   ```json
   {
-    "id": "20231224160424-2f5680o"
+    "id": "20231224160424-2f5680o",
+    "notebook": "20210808180117-czj9bvb"
   }
   ```
 
     * `id`: 展開するブロックID
+    * `notebook`: 対象コンテンツストアを宣言する任意のノートブック ID
 * 戻り値
 
   ```json

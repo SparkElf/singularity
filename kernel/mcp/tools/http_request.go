@@ -56,7 +56,7 @@ func init() {
 	register(HTTPRequestTool)
 }
 
-func httpRequestHandler(args map[string]any) (CallToolResult, error) {
+func httpRequestHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	rawURL, _ := args["url"].(string)
 

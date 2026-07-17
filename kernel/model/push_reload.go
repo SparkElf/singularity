@@ -18,6 +18,7 @@ package model
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -103,18 +104,19 @@ func refreshDocInfoWithSize(tree *parse.Tree, size uint64) {
 	}
 
 	refreshDocInfo0(tree, size)
-	go func() {
-		time.Sleep(128 * time.Millisecond)
-		refreshParentDocInfo(tree)
-	}()
-}
-
-func refreshParentDocInfo(tree *parse.Tree) {
-	if nil == tree {
+	boxID, treePath := tree.Box, tree.Path
+	parentDir := path.Dir(treePath)
+	if parentDir == "/" || parentDir == filepath.Join(util.DataDir, boxID) {
 		return
 	}
+	go func(boxID, treePath string) {
+		time.Sleep(128 * time.Millisecond)
+		refreshParentDocInfo(boxID, treePath)
+	}(boxID, treePath)
+}
 
-	parentTree := loadParentTree(tree)
+func refreshParentDocInfo(boxID, treePath string) {
+	parentTree := loadParentTree(boxID, treePath)
 	if nil == parentTree {
 		return
 	}
@@ -181,11 +183,15 @@ func ReloadTag() {
 	task.AppendAsyncTaskWithDelay(task.ReloadTag, 200*time.Millisecond, util.PushReloadTag)
 }
 
-func ReloadProtyle(rootID string) {
+func ReloadProtyle(rootID, notebook string) {
 	// 刷新关联的引用
-	defTree, _ := LoadTreeByBlockID(rootID)
+	defTree, _ := loadTreeByBlockIDInBox(rootID, notebook)
 	if nil != defTree {
-		defIDs := sql.QueryChildDefIDsByRootDefID(rootID)
+		var defIDs []string
+		for _, ref := range sql.QueryRefsByDefIDInBox(rootID, true, notebook) {
+			defIDs = append(defIDs, ref.DefBlockID)
+		}
+		defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
 
 		var defNodes []*ast.Node
 		ast.Walk(defTree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
@@ -200,79 +206,153 @@ func ReloadProtyle(rootID string) {
 		})
 
 		for _, def := range defNodes {
-			refreshDynamicRefText(def, defTree)
+			if err := refreshDynamicRefText(def, defTree); err != nil {
+				logging.LogErrorf("refresh dynamic reference text for tree [%s/%s] failed: %s", defTree.Box, defTree.Path, err)
+				return
+			}
 		}
 	}
 
 	// 刷新关联的嵌入块
-	refIDs := sql.QueryRefIDsByDefID(rootID, true)
+	refIDs := sql.QueryRefIDsByDefIDInBox(rootID, true, notebook)
 	var rootIDs []string
-	bts := treenode.GetBlockTrees(refIDs)
+	bts := treenode.GetBlockTreesInBox(refIDs, notebook)
 	for _, bt := range bts {
 		rootIDs = append(rootIDs, bt.RootID)
 	}
 	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
 	for _, id := range rootIDs {
-		task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, id)
+		task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, id, notebook)
 	}
 
-	task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, rootID)
+	task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, rootID, notebook)
 }
 
 // refreshRefCount 用于刷新定义块处的引用计数。
-func refreshRefCount(blockID string) {
-	sql.FlushQueue()
-
-	bt := treenode.GetBlockTree(blockID)
-	if nil == bt {
+func refreshRefCount(blockID, boxID string) {
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before refreshing reference count [box=%s, block=%s] failed: %s", boxID, blockID, err)
 		return
+	}
+	refCount := loadRefCountSnapshot(blockID, boxID)
+	if refCount == nil {
+		return
+	}
+	util.PushSetDefRefCount(refCount.rootID, blockID, refCount.defIDs, refCount.refCount, refCount.rootRefCount, refCount.boxID)
+}
+
+type refCountSnapshot struct {
+	boxID        string
+	rootID       string
+	defIDs       []string
+	refCount     int
+	rootRefCount int
+}
+
+func loadRefCountSnapshot(blockID, boxID string) *refCountSnapshot {
+	boxID = attributeViewStoreBoxID(boxID)
+	bt := treenode.GetBlockTreeInBox(blockID, boxID)
+	if nil == bt {
+		return nil
 	}
 
 	isDoc := bt.ID == bt.RootID
-	var rootRefIDs []string
-	var refCount, rootRefCount int
-	refIDs := sql.QueryRefIDsByDefID(bt.ID, isDoc)
-	if isDoc {
+	var refIDs, rootRefIDs, defIDs []string
+	if boxID == "" {
+		refIDs = sql.QueryRefIDsByDefID(bt.ID, isDoc)
+		if isDoc {
+			rootRefIDs = refIDs
+			defIDs = sql.QueryChildDefIDsByRootDefID(bt.ID)
+		} else {
+			rootRefIDs = sql.QueryRefIDsByDefID(bt.RootID, true)
+			defIDs = append(defIDs, bt.ID)
+		}
+	} else {
+		refIDs = sql.QueryRefIDsByDefIDInBox(bt.ID, isDoc, boxID)
 		rootRefIDs = refIDs
-	} else {
-		rootRefIDs = sql.QueryRefIDsByDefID(bt.RootID, true)
-	}
-	refCount = len(refIDs)
-	rootRefCount = len(rootRefIDs)
-	var defIDs []string
-	if isDoc {
-		defIDs = sql.QueryChildDefIDsByRootDefID(bt.ID)
-	} else {
-		defIDs = append(defIDs, bt.ID)
+		if isDoc {
+			for _, ref := range sql.QueryRefsByDefIDInBox(bt.ID, true, boxID) {
+				defIDs = append(defIDs, ref.DefBlockID)
+			}
+			defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
+		} else {
+			rootRefIDs = sql.QueryRefIDsByDefIDInBox(bt.RootID, true, boxID)
+			defIDs = append(defIDs, bt.ID)
+		}
 	}
 
-	util.PushSetDefRefCount(bt.RootID, blockID, defIDs, refCount, rootRefCount)
+	return &refCountSnapshot{
+		boxID:        boxID,
+		rootID:       bt.RootID,
+		defIDs:       defIDs,
+		refCount:     len(refIDs),
+		rootRefCount: len(rootRefIDs),
+	}
+}
+
+type derivedObjectIdentity struct {
+	boxID    string
+	objectID string
+}
+
+func newDerivedObjectIdentity(boxID, objectID string) derivedObjectIdentity {
+	return derivedObjectIdentity{boxID: attributeViewStoreBoxID(boxID), objectID: objectID}
 }
 
 // refreshDynamicRefText 用于刷新块引用的动态锚文本。
 // 该实现依赖了数据库缓存，导致外部调用时可能需要阻塞等待数据库写入后才能获取到 refs
-func refreshDynamicRefText(updatedDefNode *ast.Node, updatedTree *parse.Tree) {
+func refreshDynamicRefText(updatedDefNode *ast.Node, updatedTree *parse.Tree) error {
 	changedDefs := map[string]*ast.Node{updatedDefNode.ID: updatedDefNode}
 	changedTrees := map[string]*parse.Tree{updatedTree.ID: updatedTree}
-	refreshDynamicRefTexts(changedDefs, changedTrees)
+	_, err := refreshDynamicRefTexts(changedDefs, changedTrees, updatedTree.Box)
+	return err
 }
 
 // refreshDynamicRefTexts 用于批量刷新块引用的动态锚文本。
 // 该实现依赖了数据库缓存，导致外部调用时可能需要阻塞等待数据库写入后才能获取到 refs
-func refreshDynamicRefTexts(updatedDefNodes map[string]*ast.Node, updatedTrees map[string]*parse.Tree) (changedRootIDs []string) {
-	for t := range updatedTrees {
-		changedRootIDs = append(changedRootIDs, t)
+func refreshDynamicRefTexts(updatedDefNodes map[string]*ast.Node, updatedTrees map[string]*parse.Tree, boxID string) (changedRootIDs []string, err error) {
+	changedRootIDs, changedTrees, err := collectDynamicRefTextChanges(updatedDefNodes, updatedTrees, boxID)
+	if err != nil {
+		return nil, err
 	}
+	for _, tree := range changedTrees {
+		if err = indexWriteTreeUpsertQueue(tree); err != nil {
+			return nil, err
+		}
+	}
+	return changedRootIDs, nil
+}
+
+// collectDynamicRefTextChanges mutates the affected trees in memory without
+// publishing files, blocktrees, or SQL queue entries. Transaction commit uses
+// this boundary to publish primary and derived tree changes as one batch.
+func collectDynamicRefTextChanges(updatedDefNodes map[string]*ast.Node, updatedTrees map[string]*parse.Tree, boxID string) (changedRootIDs []string, changedTrees map[derivedObjectIdentity]*parse.Tree, err error) {
+	contentStore := attributeViewStoreBoxID(boxID)
+	derivedDefNodes := make(map[derivedObjectIdentity]*ast.Node, len(updatedDefNodes))
+	for id, node := range updatedDefNodes {
+		derivedDefNodes[derivedObjectIdentity{boxID: contentStore, objectID: id}] = node
+	}
+	derivedTrees := make(map[derivedObjectIdentity]*parse.Tree, len(updatedTrees))
+	for id, tree := range updatedTrees {
+		identity := derivedObjectIdentity{boxID: contentStore, objectID: id}
+		derivedTrees[identity] = tree
+		changedRootIDs = append(changedRootIDs, identity.objectID)
+	}
+	changedTrees = map[derivedObjectIdentity]*parse.Tree{}
 
 	for range 7 {
-		updatedRefNodes, updatedRefTrees := refreshDynamicRefTexts0(updatedDefNodes, updatedTrees)
+		updatedRefNodes, updatedRefTrees, refreshErr := refreshDynamicRefTexts0(derivedDefNodes, derivedTrees)
+		if refreshErr != nil {
+			return nil, nil, refreshErr
+		}
 		if 1 > len(updatedRefNodes) {
 			break
 		}
-		updatedDefNodes, updatedTrees = updatedRefNodes, updatedRefTrees
+		derivedDefNodes, derivedTrees = updatedRefNodes, updatedRefTrees
 
-		for t := range updatedTrees {
-			changedRootIDs = append(changedRootIDs, t)
+		for identity, tree := range derivedTrees {
+			changedRootIDs = append(changedRootIDs, identity.objectID)
+			changedTrees[identity] = tree
 		}
 	}
 
@@ -280,37 +360,38 @@ func refreshDynamicRefTexts(updatedDefNodes map[string]*ast.Node, updatedTrees m
 	return
 }
 
-func refreshDynamicRefTexts0(updatedDefNodes map[string]*ast.Node, updatedTrees map[string]*parse.Tree) (updatedRefNodes map[string]*ast.Node, updatedRefTrees map[string]*parse.Tree) {
-	updatedRefNodes = map[string]*ast.Node{}
-	updatedRefTrees = map[string]*parse.Tree{}
+func refreshDynamicRefTexts0(updatedDefNodes map[derivedObjectIdentity]*ast.Node, updatedTrees map[derivedObjectIdentity]*parse.Tree) (updatedRefNodes map[derivedObjectIdentity]*ast.Node, updatedRefTrees map[derivedObjectIdentity]*parse.Tree, err error) {
+	updatedRefNodes = map[derivedObjectIdentity]*ast.Node{}
+	updatedRefTrees = map[derivedObjectIdentity]*parse.Tree{}
 
 	// 1. 更新引用的动态锚文本
-	treeRefNodeIDs := map[string]*hashset.Set{}
-	var changedNodes []*ast.Node
-	var refs []*sql.Ref
-	for _, updateNode := range updatedDefNodes {
-		refs, changedNodes = getRefsCacheByDefNode(updateNode)
+	treeRefNodeIDs := map[derivedObjectIdentity]*hashset.Set{}
+	changedDefNodes := map[derivedObjectIdentity]*ast.Node{}
+	for identity, updateNode := range updatedDefNodes {
+		refs, changedNodes := getRefsCacheByDefNodeInBox(updateNode, identity.boxID)
 		for _, ref := range refs {
-			if refIDs, ok := treeRefNodeIDs[ref.RootID]; !ok {
+			refTreeIdentity := derivedObjectIdentity{boxID: identity.boxID, objectID: ref.RootID}
+			if refIDs, ok := treeRefNodeIDs[refTreeIdentity]; !ok {
 				refIDs = hashset.New()
 				refIDs.Add(ref.BlockID)
-				treeRefNodeIDs[ref.RootID] = refIDs
+				treeRefNodeIDs[refTreeIdentity] = refIDs
 			} else {
 				refIDs.Add(ref.BlockID)
 			}
 		}
+		for _, node := range changedNodes {
+			changedDefNodes[derivedObjectIdentity{boxID: identity.boxID, objectID: node.ID}] = node
+		}
 	}
-	for _, n := range changedNodes {
-		updatedDefNodes[n.ID] = n
+	for identity, node := range changedDefNodes {
+		updatedDefNodes[identity] = node
 	}
 
-	changedRefTree := map[string]*parse.Tree{}
-
-	for refTreeID, refNodeIDs := range treeRefNodeIDs {
-		refTree, ok := updatedTrees[refTreeID]
+	for refTreeIdentity, refNodeIDs := range treeRefNodeIDs {
+		refTree, ok := updatedTrees[refTreeIdentity]
 		if !ok {
 			var err error
-			refTree, err = LoadTreeByBlockID(refTreeID)
+			refTree, err = loadTreeByBlockIDInBox(refTreeIdentity.objectID, refTreeIdentity.boxID)
 			if err != nil {
 				continue
 			}
@@ -323,18 +404,18 @@ func refreshDynamicRefTexts0(updatedDefNodes map[string]*ast.Node, updatedTrees 
 			}
 
 			if n.IsBlock() && refNodeIDs.Contains(n.ID) {
-				changed, changedDefNodes := updateRefText(n, updatedDefNodes)
+				changed, changedDefNodes := updateRefText(n, updatedDefNodes, refTreeIdentity.boxID)
 				if !refTreeChanged && changed {
 					refTreeChanged = true
-					updatedRefNodes[n.ID] = n
-					updatedRefTrees[refTreeID] = refTree
+					updatedRefNodes[derivedObjectIdentity{boxID: refTreeIdentity.boxID, objectID: n.ID}] = n
+					updatedRefTrees[refTreeIdentity] = refTree
 				}
 
 				// 推送动态锚文本节点刷新
 				for _, defNode := range changedDefNodes {
 					switch defNode.refType {
 					case "ref-d":
-						task.AppendAsyncTaskWithDelay(task.SetRefDynamicText, 200*time.Millisecond, util.PushSetRefDynamicText, refTreeID, n.ID, defNode.id, defNode.refText, refTree.Box)
+						task.AppendAsyncTaskWithDelay(task.SetRefDynamicText, 200*time.Millisecond, util.PushSetRefDynamicText, refTreeIdentity.objectID, n.ID, defNode.id, defNode.refText, refTreeIdentity.boxID)
 					}
 				}
 				return ast.WalkContinue
@@ -343,33 +424,36 @@ func refreshDynamicRefTexts0(updatedDefNodes map[string]*ast.Node, updatedTrees 
 		})
 
 		if refTreeChanged {
-			changedRefTree[refTreeID] = refTree
-			sql.UpdateRefsTreeQueue(refTree)
+			updatedRefTrees[refTreeIdentity] = refTree
 		}
 	}
 
 	// 2. 更新属性视图主键内容
-	updateAttributeViewBlockText(updatedDefNodes)
+	updateAttributeViewBlockTextByIdentity(updatedDefNodes)
 
-	// 3. 保存变更
-	for _, tree := range changedRefTree {
-		indexWriteTreeUpsertQueue(tree)
-	}
 	return
 }
 
 func updateAttributeViewBlockText(updatedDefNodes map[string]*ast.Node) {
-	var parents []*ast.Node
-	for _, updatedDefNode := range updatedDefNodes {
+	derivedDefNodes := make(map[derivedObjectIdentity]*ast.Node, len(updatedDefNodes))
+	for id, node := range updatedDefNodes {
+		derivedDefNodes[newDerivedObjectIdentity(node.Box, id)] = node
+	}
+	updateAttributeViewBlockTextByIdentity(derivedDefNodes)
+}
+
+func updateAttributeViewBlockTextByIdentity(updatedDefNodes map[derivedObjectIdentity]*ast.Node) {
+	parents := map[derivedObjectIdentity]*ast.Node{}
+	for identity, updatedDefNode := range updatedDefNodes {
 		for parent := updatedDefNode.Parent; nil != parent && ast.NodeDocument != parent.Type; parent = parent.Parent {
-			parents = append(parents, parent)
+			parents[derivedObjectIdentity{boxID: identity.boxID, objectID: parent.ID}] = parent
 		}
 	}
-	for _, parent := range parents {
-		updatedDefNodes[parent.ID] = parent
+	for identity, parent := range parents {
+		updatedDefNodes[identity] = parent
 	}
 
-	for _, updatedDefNode := range updatedDefNodes {
+	for identity, updatedDefNode := range updatedDefNodes {
 		avs := updatedDefNode.IALAttr(av.NodeAttrNameAvs)
 		if "" == avs {
 			continue
@@ -377,7 +461,7 @@ func updateAttributeViewBlockText(updatedDefNodes map[string]*ast.Node) {
 
 		avIDs := strings.SplitSeq(avs, ",")
 		for avID := range avIDs {
-			attrView, parseErr := av.ParseAttributeView(avID)
+			attrView, parseErr := av.ParseAttributeViewInBox(avID, identity.boxID)
 			if nil != parseErr {
 				continue
 			}
@@ -403,10 +487,10 @@ func updateAttributeViewBlockText(updatedDefNodes map[string]*ast.Node) {
 				}
 			}
 			if changedAv {
-				av.SaveAttributeView(attrView)
-				ReloadAttrView(avID)
+				av.SaveAttributeViewInBox(attrView, identity.boxID)
+				ReloadAttrViewInBox(avID, identity.boxID)
 
-				refreshRelatedSrcAvs(avID, nil)
+				refreshRelatedSrcAvs(avID, nil, identity.boxID)
 			}
 		}
 	}
@@ -414,11 +498,19 @@ func updateAttributeViewBlockText(updatedDefNodes map[string]*ast.Node) {
 
 // ReloadAttrView 用于重新加载属性视图。
 func ReloadAttrView(avID string) {
-	task.AppendAsyncTaskWithDelay(task.ReloadAttributeView, 200*time.Millisecond, pushReloadAttrView, avID)
+	ReloadAttrViewInBox(avID, "")
 }
 
-func pushReloadAttrView(avID string) {
-	util.BroadcastByType("protyle", "refreshAttributeView", 0, "", map[string]any{"id": avID})
+// ReloadAttrViewInBox 将属性视图重载限定在指定内容库。
+func ReloadAttrViewInBox(avID, boxID string) {
+	boxID = attributeViewStoreBoxID(boxID)
+	task.AppendAsyncTaskWithDelay(task.ReloadAttributeView, 200*time.Millisecond, pushReloadAttrView, avID, boxID)
+}
+
+func pushReloadAttrView(avID, boxID string) {
+	util.ExecuteContentStoreBroadcast(boxID, func() {
+		util.BroadcastByType("protyle", "refreshAttributeView", 0, "", map[string]any{"id": avID, "boxID": boxID})
+	})
 }
 
 func PushCreate(box *Box, p string, arg map[string]any) {

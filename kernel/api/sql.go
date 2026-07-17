@@ -32,7 +32,10 @@ func flushTransaction(c *gin.Context) {
 	defer c.JSON(http.StatusOK, ret)
 
 	model.FlushTxQueue()
-	sql.FlushQueue()
+	if err := sql.FlushQueue(); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+	}
 }
 
 func SQL(c *gin.Context) {

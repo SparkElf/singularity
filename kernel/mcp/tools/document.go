@@ -28,7 +28,7 @@ import (
 
 var DocumentTool = &Tool{
 	Name:        "document",
-	Description: "Document operations. Actions: get(id), create(notebook, path=hPath, title, markdown?), list(notebook, path=hPath default /), delete(id), rename(id, title), move(id, notebook, path=target hPath), duplicate(id), search_docs(keyword), info(id).",
+	Description: "Document operations. Actions: get(id), create(notebook, path=hPath, title, markdown?), list(notebook, path=hPath default /), delete(id), rename(id, title), move(id, notebook, path=target hPath), duplicate(id, notebook), search_docs(keyword), info(id).",
 	InputSchema: ToolSchema{
 		Type: "object",
 		Properties: map[string]Property{
@@ -38,7 +38,7 @@ var DocumentTool = &Tool{
 			"path":     {Type: "string", Description: "Document hPath, the human-readable path shown in the document tree (e.g. /folder/doc). Used for create, list, move."},
 			"markdown": {Type: "string", Description: "Initial markdown content (for create)"},
 			"keyword":  {Type: "string", Description: "Search keyword (for search_docs)"},
-			"notebook": {Type: "string", Description: "Notebook ID (required for create, list, move)"},
+			"notebook": {Type: "string", Description: "Notebook ID (required for create, list, move, duplicate)"},
 		},
 		Required: []string{"action"},
 	},
@@ -49,7 +49,7 @@ func init() {
 	register(DocumentTool)
 }
 
-func documentHandler(args map[string]any) (CallToolResult, error) {
+func documentHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "get":
@@ -147,8 +147,11 @@ func parentDir(p string) string {
 }
 
 func documentList(args map[string]any) (CallToolResult, error) {
-	notebook, _ := args["notebook"].(string)
-	if notebook == "" {
+	notebook, provided, err := NotebookArg(args)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "list docs failed: " + err.Error()}}, IsError: true}, nil
+	}
+	if !provided {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "notebook is required"}}, IsError: true}, nil
 	}
 	hPath, _ := args["path"].(string)
@@ -246,13 +249,26 @@ func documentDuplicate(args map[string]any) (CallToolResult, error) {
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
+	notebook, provided, err := NotebookArg(args)
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "duplicate doc failed: " + err.Error()}}, IsError: true}, nil
+	}
+	if !provided {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "notebook is required"}}, IsError: true}, nil
+	}
 
-	tree, err := model.LoadTreeByBlockID(id)
+	transactionNotebook := model.TransactionNotebookForBox(notebook)
+	tree, err := model.LoadTreeByBlockIDInBox(id, transactionNotebook)
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("load doc failed: %s", err)}}, IsError: true}, nil
 	}
+	if tree.Box != notebook {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("duplicate doc failed: %s: document [%s] in notebook [%s]", model.ErrBlockNotFound, id, notebook)}}, IsError: true}, nil
+	}
 
-	model.DuplicateDoc(tree)
+	if err = model.DuplicateDoc(tree, transactionNotebook); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "duplicate doc failed: " + err.Error()}}, IsError: true}, nil
+	}
 	util.PushReloadFiletree()
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "document duplicated: " + id}}}, nil
 }

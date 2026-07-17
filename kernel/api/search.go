@@ -197,6 +197,22 @@ func searchAsset(c *gin.Context) {
 		}
 	}
 
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if boxID != "" {
+		assets, err := model.SearchAssetsByNameInBoxLocked(k, exts, boxID)
+		if err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
+		ret.Data = assets
+		return
+	}
 	ret.Data = model.SearchAssetsByName(k, exts)
 	return
 }
@@ -282,6 +298,12 @@ func getEmbedBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	embedBlockID := arg["embedBlockID"].(string)
 	includeIDsArg := arg["includeIDs"].([]any)
@@ -300,7 +322,12 @@ func getEmbedBlock(c *gin.Context) {
 		breadcrumb = breadcrumbArg.(bool)
 	}
 
-	blocks := model.GetEmbedBlock(embedBlockID, includeIDs, headingMode, breadcrumb)
+	blocks, err := model.GetEmbedBlockInBox(embedBlockID, includeIDs, headingMode, breadcrumb, boxID)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		blocks = model.FilterEmbedBlocksByPublishAccess(c, publishAccess, blocks)
@@ -342,6 +369,12 @@ func searchEmbedBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	embedBlockID := arg["embedBlockID"].(string)
 	stmt := arg["stmt"].(string)
@@ -364,12 +397,11 @@ func searchEmbedBlock(c *gin.Context) {
 		breadcrumb = breadcrumbArg.(bool)
 	}
 
-	// 加密笔记本的嵌入块查询走 InBox 版（查加密 content db，全局库不含加密数据）
-	var blocks []*model.EmbedBlock
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		blocks = model.SearchEmbedBlockInBox(embedBlockID, stmt, excludeIDs, headingMode, breadcrumb, notebook)
-	} else {
-		blocks = model.SearchEmbedBlock(embedBlockID, stmt, excludeIDs, headingMode, breadcrumb)
+	blocks, err := model.SearchEmbedBlockInBox(embedBlockID, stmt, excludeIDs, headingMode, breadcrumb, boxID)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
 	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
@@ -386,6 +418,12 @@ func searchRefBlock(c *gin.Context) {
 
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
+		return
+	}
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
@@ -409,11 +447,10 @@ func searchRefBlock(c *gin.Context) {
 	id := arg["id"].(string)
 	keyword := arg["k"].(string)
 	beforeLen := int(arg["beforeLen"].(float64))
-	// 加密笔记本内的块引搜索走 InBox 版（只搜该 box 自己的加密 db，阻止跨加密边界引用）
 	var blocks []*model.Block
 	var newDoc bool
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		blocks, newDoc = model.SearchRefBlockInBox(id, rootID, keyword, beforeLen, isSquareBrackets, isDatabase, notebook)
+	if boxID != "" {
+		blocks, newDoc = model.SearchRefBlockInBox(id, rootID, keyword, beforeLen, isSquareBrackets, isDatabase, boxID)
 	} else {
 		blocks, newDoc = model.SearchRefBlock(id, rootID, keyword, beforeLen, isSquareBrackets, isDatabase)
 	}
@@ -437,6 +474,12 @@ func fullTextSearchBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 
 	page, pageSize, query, paths, boxes, types, subTypes, method, orderBy, groupBy := parseSearchBlockArgs(arg)
 
@@ -450,9 +493,8 @@ func fullTextSearchBlock(c *gin.Context) {
 	var blocks []*model.Block
 	var matchedBlockCount, matchedRootCount, pageCount int
 	var docMode bool
-	// 加密笔记本的全文搜索走 InBox 版（查加密 content db + blocks_fts）
-	if notebook, ok := arg["notebook"].(string); ok && notebook != "" && model.IsEncryptedBox(notebook) {
-		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlockInBox(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize, notebook)
+	if boxID != "" {
+		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlockInBox(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize, boxID)
 	} else {
 		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlock(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize)
 	}

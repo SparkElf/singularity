@@ -49,7 +49,10 @@ func autoOCRAssets() {
 	util.NodeOCRQueueLock.Lock()
 	defer util.NodeOCRQueueLock.Unlock()
 	for _, id := range util.NodeOCRQueue {
-		sql.IndexNodeQueue(id)
+		if err := sql.IndexNodeQueue(id, ""); err != nil {
+			logging.LogErrorf("persist OCR index queue entry for block [%s] failed: %s", id, err)
+			return
+		}
 	}
 	util.NodeOCRQueue = nil
 }

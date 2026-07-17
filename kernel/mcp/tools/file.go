@@ -57,7 +57,7 @@ func init() {
 	register(FileTool)
 }
 
-func fileHandler(args map[string]any) (CallToolResult, error) {
+func fileHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":

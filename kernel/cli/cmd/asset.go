@@ -118,7 +118,10 @@ var assetCleanCmd = &cobra.Command{
 				fmt.Printf("[dry-run] Would remove unused asset: %s\n", singlePath)
 				return nil
 			}
-			ret := model.RemoveUnusedAsset(singlePath)
+			ret, err := model.RemoveUnusedAsset(singlePath)
+			if err != nil {
+				return err
+			}
 			fmt.Println(ret)
 			return nil
 		}
@@ -128,7 +131,10 @@ var assetCleanCmd = &cobra.Command{
 			return nil
 		}
 
-		removed := model.RemoveUnusedAssets()
+		removed, err := model.RemoveUnusedAssets()
+		if err != nil {
+			return err
+		}
 		if len(removed) == 0 {
 			fmt.Println("No unused assets to clean.")
 			return nil

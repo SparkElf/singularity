@@ -167,7 +167,7 @@ var databaseKeyAddCmd = &cobra.Command{
 		if err := model.AddAttributeViewKey(avID, keyID, name, keyType, icon, prev); err != nil {
 			return err
 		}
-		model.AppendPushReloadAttrViewEntry(avID)
+		model.AppendPushReloadAttrViewEntry(avID, "")
 		fmt.Println(keyID)
 		return nil
 	},
@@ -192,7 +192,7 @@ var databaseKeyRemoveCmd = &cobra.Command{
 		if err := model.RemoveAttributeViewKey(avID, keyID, removeRelation); err != nil {
 			return err
 		}
-		model.AppendPushReloadAttrViewEntry(avID)
+		model.AppendPushReloadAttrViewEntry(avID, "")
 		fmt.Println("ok")
 		return nil
 	},
@@ -283,7 +283,7 @@ var databaseItemAddCmd = &cobra.Command{
 		if err := model.AddAttributeViewBlock(nil, srcs, avID, blockID, viewID, groupID, previousID, ignoreFill); err != nil {
 			return err
 		}
-		model.AppendPushReloadAttrViewEntry(avID)
+		model.AppendPushReloadAttrViewEntry(avID, "")
 		fmt.Println("ok")
 		return nil
 	},
@@ -311,7 +311,7 @@ var databaseItemRemoveCmd = &cobra.Command{
 		if err := model.RemoveAttributeViewBlock(ids, avID); err != nil {
 			return err
 		}
-		model.AppendPushReloadAttrViewEntry(avID)
+		model.AppendPushReloadAttrViewEntry(avID, "")
 		fmt.Println("ok")
 		return nil
 	},
@@ -341,7 +341,7 @@ var databaseItemUpdateCmd = &cobra.Command{
 		if _, err := model.UpdateAttributeViewCell(nil, avID, keyID, itemID, valueData); err != nil {
 			return err
 		}
-		model.AppendPushReloadAttrViewEntry(avID)
+		model.AppendPushReloadAttrViewEntry(avID, "")
 		fmt.Println("ok")
 		return nil
 	},

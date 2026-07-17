@@ -20,9 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/88250/lute/ast"
 	"github.com/siyuan-note/siyuan/kernel/model"
-	"github.com/siyuan-note/siyuan/kernel/treenode"
-	"github.com/siyuan-note/siyuan/kernel/util"
 
 	"github.com/spf13/cobra"
 )
@@ -58,7 +57,10 @@ func runHistoryQuery(query string, cmd *cobra.Command) error {
 		page = 1
 	}
 
-	timestamps, pageCount, totalCount := model.FullTextSearchHistory(query, box, op, typ, page)
+	timestamps, pageCount, totalCount, err := model.FullTextSearchHistory(query, box, op, typ, page)
+	if err != nil {
+		return err
+	}
 
 	switch outputFormat {
 	case "json":
@@ -75,7 +77,10 @@ func runHistoryQuery(query string, cmd *cobra.Command) error {
 			return nil
 		}
 		for _, ts := range timestamps {
-			items := model.FullTextSearchHistoryItems(ts, query, box, op, typ)
+			items, queryErr := model.FullTextSearchHistoryItems(ts, query, box, op, typ)
+			if queryErr != nil {
+				return queryErr
+			}
 			fmt.Printf("[%s] %d item(s)\n", ts, len(items))
 			for _, item := range items {
 				fmt.Printf("  %-8s %s  %s\n", item.Op, truncate(item.Title, 60), item.Path)
@@ -94,8 +99,15 @@ var historyGetCmd = &cobra.Command{
 		if historyPath == "" {
 			return fmt.Errorf("--path is required")
 		}
+		notebook, _ := cmd.Flags().GetString("notebook")
+		if notebook == "" {
+			return fmt.Errorf("--notebook is required")
+		}
+		if !ast.IsNodeIDPattern(notebook) {
+			return fmt.Errorf("%w: notebook", model.ErrInvalidID)
+		}
 
-		_, _, content, _, err := model.GetDocHistoryContent(historyPath, "", false)
+		_, _, content, _, err := model.GetDocHistoryContent(notebook, historyPath, "", false)
 		if err != nil {
 			return err
 		}
@@ -112,18 +124,21 @@ var historyRollbackCmd = &cobra.Command{
 		if historyPath == "" {
 			return fmt.Errorf("--path is required")
 		}
+		notebook, _ := cmd.Flags().GetString("notebook")
+		if notebook == "" {
+			return fmt.Errorf("--notebook is required")
+		}
+		if !ast.IsNodeIDPattern(notebook) {
+			return fmt.Errorf("%w: notebook", model.ErrInvalidID)
+		}
 
 		if dryRun {
 			fmt.Printf("[dry-run] Would rollback to history version: %s\n", historyPath)
 			return nil
 		}
 
-		if err := model.RollbackDocHistory(historyPath); err != nil {
+		if err := model.RollbackDocHistory(historyPath, notebook); err != nil {
 			return err
-		}
-		docID := util.GetTreeID(historyPath)
-		if bt := treenode.GetBlockTree(docID); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
 		}
 		model.AppendPushReloadFiletreeEntry()
 		fmt.Println("ok")
@@ -160,8 +175,10 @@ func init() {
 	historySearchCmd.Flags().IntP("page", "p", 1, "page number")
 
 	historyGetCmd.Flags().String("path", "", "history file path")
+	historyGetCmd.Flags().String("notebook", "", "notebook ID owning the history file")
 
 	historyRollbackCmd.Flags().String("path", "", "history file path")
+	historyRollbackCmd.Flags().String("notebook", "", "notebook ID owning the history file")
 
 	rootCmd.AddCommand(historyCmd)
 	historyCmd.AddCommand(historyListCmd)

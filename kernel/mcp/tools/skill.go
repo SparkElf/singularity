@@ -45,7 +45,7 @@ func init() {
 	register(SkillTool)
 }
 
-func skillHandler(args map[string]any) (CallToolResult, error) {
+func skillHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "load", "":

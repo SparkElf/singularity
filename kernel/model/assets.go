@@ -51,6 +51,8 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
+var ErrEncryptedAssetCleanupUnsupported = errors.New("unused-asset cleanup is not supported for encrypted notebook assets")
+
 func GetAssetImgSize(assetPath string) (width, height int) {
 	return GetAssetImgSizeInBox(assetPath, "")
 }
@@ -93,6 +95,7 @@ func ReadAssetBytesInBox(boxID, relativePath string) ([]byte, error) {
 			ReleaseBoxReadLock(effectiveBoxID)
 			return nil, dekErr
 		}
+		defer zeroAndClear(dek)
 		defer ReleaseBoxReadLock(effectiveBoxID)
 		diskName := filepath.Base(AssetPathWithoutQuery(relativePath))
 		plain, decErr := DecryptAsset(effectiveBoxID, diskName, dek, data)
@@ -252,7 +255,11 @@ func GenerateAssetsThumbnail(sourceImgPath, resizedImgPath string) (err error) {
 }
 
 func DocImageAssets(rootID string) (ret []string, err error) {
-	tree, err := LoadTreeByBlockID(rootID)
+	return DocImageAssetsInBox(rootID, "")
+}
+
+func DocImageAssetsInBox(rootID, boxID string) (ret []string, err error) {
+	tree, err := loadTreeByBlockIDInBox(rootID, boxID)
 	if err != nil {
 		return
 	}
@@ -275,7 +282,11 @@ func DocImageAssets(rootID string) (ret []string, err error) {
 }
 
 func DocAssets(rootID string, retainQueryStr bool) (ret []string, err error) {
-	tree, err := LoadTreeByBlockID(rootID)
+	return DocAssetsInBox(rootID, retainQueryStr, "")
+}
+
+func DocAssetsInBox(rootID string, retainQueryStr bool, boxID string) (ret []string, err error) {
+	tree, err := loadTreeByBlockIDInBox(rootID, boxID)
 	if err != nil {
 		return
 	}
@@ -309,10 +320,11 @@ func NetAssets2LocalAssets(rootID string, onlyImg bool, originalURL string) (err
 	}
 
 	err = netAssets2LocalAssets0(tree, onlyImg, originalURL, assetsDirPath, true)
-	go func() {
+	notebook := TransactionNotebookForBox(tree.Box)
+	go func(notebook string) {
 		time.Sleep(128 * time.Microsecond)
-		util.PushReloadProtyle(rootID)
-	}()
+		util.PushReloadProtyle(rootID, notebook)
+	}(notebook)
 	return
 }
 
@@ -368,18 +380,12 @@ func netAssets2LocalAssets0(tree *parse.Tree, onlyImg bool, originalURL string, 
 						logging.LogErrorf("open [%s] failed: %s", u, openErr)
 						continue
 					}
-					if err = writeAssetFile(writePath, f, tree.Box); err != nil {
+					if err = writeAssetFile(writePath, f, tree.Box, name); err != nil {
 						logging.LogErrorf("write encrypted asset [%s] failed: %s", writePath, err)
 						f.Close()
 						continue
 					}
 					f.Close()
-					// 映射写失败则回滚已写的 asset 密文，避免产出"孤儿密文 asset 无映射"（详见设计文档 §7）
-					if mapErr := writeAssetNameMapping(tree.Box, diskName, name); mapErr != nil {
-						logging.LogErrorf("write asset name mapping for [%s] failed: %s", name, mapErr)
-						_ = filelock.Remove(writePath)
-						continue
-					}
 					name = diskName
 				} else {
 					name = util.AssetName(name, ast.NewNodeID())
@@ -502,14 +508,8 @@ func netAssets2LocalAssets0(tree *parse.Tree, onlyImg bool, originalURL string, 
 					name = "network-asset-" + name
 					diskName := encryptedAssetName(util.Ext(name), ast.NewNodeID())
 					writePath := filepath.Join(assetsDirPath, diskName)
-					if err = writeAssetFile(writePath, bytes.NewReader(data), tree.Box); err != nil {
+					if err = writeAssetFile(writePath, bytes.NewReader(data), tree.Box, name); err != nil {
 						logging.LogErrorf("write encrypted network asset [%s] failed: %s", writePath, err)
-						continue
-					}
-					// 映射写失败则回滚已写的 asset 密文，避免产出"孤儿密文 asset 无映射"（详见设计文档 §7）
-					if mapErr := writeAssetNameMapping(tree.Box, diskName, name); mapErr != nil {
-						logging.LogErrorf("write asset name mapping for [%s] failed: %s", name, mapErr)
-						_ = filelock.Remove(writePath)
 						continue
 					}
 					name = diskName
@@ -567,63 +567,135 @@ func DownloadNetAssets2LocalAssets(tree *parse.Tree, onlyImg bool, originalURL s
 }
 
 func SearchAssetsByName(keyword string, exts []string) (ret []*cache.Asset) {
-	ret = []*cache.Asset{}
-	var keywords []string
-	keywords = append(keywords, keyword)
-	if "" != keyword {
-		keywords = append(keywords, strings.Split(keyword, " ")...)
-	}
+	keywords := assetNameSearchKeywords(keyword)
 	pathHitCount := map[string]int{}
-	filterByExt := 0 < len(exts)
 	matchedAssets := cache.FilterAssets(func(path string, asset *cache.Asset) bool {
-
-		// 扩展名过滤
-		if filterByExt {
-			ext := filepath.Ext(asset.HName)
-			includeExt := false
-			for _, e := range exts {
-				if strings.ToLower(ext) == strings.ToLower(e) {
-					includeExt = true
-					break
-				}
-			}
-			if !includeExt {
-				return false
-			}
-		}
-
-		// 关键字匹配
-		lowerHName := strings.ToLower(asset.HName)
-		lowerPath := strings.ToLower(asset.Path)
-		var hitNameCount, hitPathCount int
-		for i, k := range keywords {
-			lowerKeyword := strings.ToLower(k)
-			if 0 == i {
-				// 第一个是完全匹配，权重最高
-				if strings.Contains(lowerHName, lowerKeyword) {
-					hitNameCount += 64
-				}
-				if strings.Contains(lowerPath, lowerKeyword) {
-					hitPathCount += 64
-				}
-			}
-
-			hitNameCount += strings.Count(lowerHName, lowerKeyword)
-			hitPathCount += strings.Count(lowerPath, lowerKeyword)
-			if 1 > hitNameCount && 1 > hitPathCount {
-				continue
-			}
-		}
-
-		// 只返回有匹配的资源
-		if 1 > hitNameCount+hitPathCount {
+		hitCount := assetNameSearchHitCount(asset.HName, asset.Path, keywords, exts)
+		if 1 > hitCount {
 			return false
 		}
-
-		// 记录命中次数用于排序
-		pathHitCount[asset.Path] = hitNameCount + hitPathCount
+		pathHitCount[asset.Path] = hitCount
 		return true
 	})
+	return buildAssetNameSearchResults(matchedAssets, pathHitCount, keywords)
+}
+
+// SearchAssetsByNameInBoxLocked 搜索已解锁加密笔记本的资源原始名。
+// API 调用方必须持有 box 响应读锁直到返回值完成序列化；非响应调用方必须持有生命周期读锁。
+func SearchAssetsByNameInBoxLocked(keyword string, exts []string, boxID string) (ret []*cache.Asset, err error) {
+	ret = []*cache.Asset{}
+	dek, err := GetDEKIfUnlocked(boxID)
+	if err != nil {
+		return ret, fmt.Errorf("search assets in encrypted notebook [%s] failed: %w", boxID, err)
+	}
+	defer zeroAndClear(dek)
+
+	gate := assetNameMappingLock(boxID)
+	gate.lock(func() {
+		if encryptedAssetSearchBlockedHook != nil {
+			encryptedAssetSearchBlockedHook(boxID)
+		}
+	})
+	defer gate.unlock()
+	mapping, err := readAssetNameMappingLocked(boxID, dek)
+	if err != nil {
+		return ret, err
+	}
+
+	assetsDir := filepath.Join(util.DataDir, boxID, "assets")
+	entries, err := os.ReadDir(assetsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ret, nil
+		}
+		return ret, fmt.Errorf("read encrypted asset directory for notebook [%s] failed: %w", boxID, err)
+	}
+
+	keywords := assetNameSearchKeywords(keyword)
+	pathHitCount := map[string]int{}
+	matchedAssets := map[string]*cache.Asset{}
+	for _, entry := range entries {
+		diskName := entry.Name()
+		assetAbsPath := filepath.Join(assetsDir, diskName)
+		if entry.IsDir() || strings.HasPrefix(diskName, ".") || strings.HasSuffix(diskName, ".sya") ||
+			filelock.IsHidden(assetAbsPath) || util.IsOfficeTempFile(assetAbsPath) {
+			continue
+		}
+
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return ret, fmt.Errorf("read encrypted asset [%s] metadata failed: %w", diskName, infoErr)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		originalName, ok := mapping[diskName]
+		if !ok || originalName == "" {
+			return ret, fmt.Errorf("encrypted asset name mapping for notebook [%s] has no original name for [%s]", boxID, diskName)
+		}
+
+		assetPath := "assets/" + diskName + "?box=" + url.QueryEscape(boxID)
+		asset := &cache.Asset{
+			HName:   originalName,
+			Path:    assetPath,
+			Updated: info.ModTime().Unix(),
+		}
+		// 加密磁盘名是随机值，不参与用户关键字匹配；原始名同时承担现有路径匹配语义。
+		hitCount := assetNameSearchHitCount(asset.HName, "assets/"+originalName, keywords, exts)
+		if 1 > hitCount {
+			continue
+		}
+		pathHitCount[assetPath] = hitCount
+		matchedAssets[assetPath] = asset
+	}
+	return buildAssetNameSearchResults(matchedAssets, pathHitCount, keywords), nil
+}
+
+func assetNameSearchKeywords(keyword string) (ret []string) {
+	ret = append(ret, keyword)
+	if keyword != "" {
+		ret = append(ret, strings.Split(keyword, " ")...)
+	}
+	return
+}
+
+func assetNameSearchHitCount(hName, assetPath string, keywords, exts []string) int {
+	if 0 < len(exts) {
+		ext := filepath.Ext(hName)
+		includeExt := false
+		for _, e := range exts {
+			if strings.ToLower(ext) == strings.ToLower(e) {
+				includeExt = true
+				break
+			}
+		}
+		if !includeExt {
+			return 0
+		}
+	}
+
+	lowerHName := strings.ToLower(hName)
+	lowerPath := strings.ToLower(assetPath)
+	var hitNameCount, hitPathCount int
+	for i, k := range keywords {
+		lowerKeyword := strings.ToLower(k)
+		if 0 == i {
+			// 第一个是完全匹配，权重最高
+			if strings.Contains(lowerHName, lowerKeyword) {
+				hitNameCount += 64
+			}
+			if strings.Contains(lowerPath, lowerKeyword) {
+				hitPathCount += 64
+			}
+		}
+		hitNameCount += strings.Count(lowerHName, lowerKeyword)
+		hitPathCount += strings.Count(lowerPath, lowerKeyword)
+	}
+	return hitNameCount + hitPathCount
+}
+
+func buildAssetNameSearchResults(matchedAssets map[string]*cache.Asset, pathHitCount map[string]int, keywords []string) (ret []*cache.Asset) {
+	ret = []*cache.Asset{}
 
 	// 添加高亮
 	for _, asset := range matchedAssets {
@@ -674,15 +746,21 @@ func assetPathAndBox(relativePath, defaultBoxID string) (cleanPath, boxID string
 	if idx := strings.Index(relativePath, "?"); idx >= 0 {
 		query := relativePath[idx+1:]
 		relativePath = relativePath[:idx]
-		if values, parseErr := url.ParseQuery(query); parseErr == nil {
-			if queryBoxID := strings.TrimSpace(values.Get("box")); queryBoxID != "" {
-				if defaultBoxID != "" && defaultBoxID != queryBoxID {
-					// 调用方指定了 boxID 但 URL 里是另一个 box：拒绝，防止解析到错误 box
-					err = fmt.Errorf("box mismatch: caller specified [%s] but URL has [%s]", defaultBoxID, queryBoxID)
-					return
-				}
-				boxID = queryBoxID
+		values, parseErr := url.ParseQuery(query)
+		if parseErr != nil {
+			return "", "", fmt.Errorf("parse asset query: %w", parseErr)
+		}
+		if queryBoxes, found := values["box"]; found {
+			if len(queryBoxes) != 1 || strings.TrimSpace(queryBoxes[0]) == "" {
+				return "", "", errors.New("asset query must contain exactly one non-empty box")
 			}
+			queryBoxID := strings.TrimSpace(queryBoxes[0])
+			if defaultBoxID != "" && defaultBoxID != queryBoxID {
+				// 调用方指定了 boxID 但 URL 里是另一个 box：拒绝，防止解析到错误 box
+				err = fmt.Errorf("box mismatch: caller specified [%s] but URL has [%s]", defaultBoxID, queryBoxID)
+				return
+			}
+			boxID = queryBoxID
 		}
 	}
 	cleanPath = filepath.ToSlash(relativePath)
@@ -983,12 +1061,16 @@ func uploadAssets2Cloud(assetPaths []string, bizType string, ignorePushMsg bool)
 	return
 }
 
-func RemoveUnusedAssets() (ret []string) {
+func RemoveUnusedAssets() (ret []string, err error) {
 	ret = []string{}
 	var size int64
 
 	msgId := util.PushMsg(Conf.Language(100), 30*1000)
 	defer func() {
+		if err != nil {
+			util.PushClearMsg(msgId)
+			return
+		}
 		msg := fmt.Sprintf(Conf.Language(91), len(ret), humanize.BytesCustomCeil(uint64(size), 2))
 		util.PushUpdateMsg(msgId, msg, 7000)
 	}()
@@ -1011,16 +1093,25 @@ func RemoveUnusedAssets() (ret []string) {
 			}
 
 			if err = filelock.Copy(p, historyPath); err != nil {
+				err = fmt.Errorf("copy unused asset [%s] to history: %w", p, err)
 				return
 			}
 
-			hash, _ := util.GetEtag(p)
+			hash, hashErr := util.GetEtag(p)
+			if hashErr != nil {
+				err = fmt.Errorf("calculate unused asset [%s] hash: %w", p, hashErr)
+				return
+			}
 			hashes = append(hashes, hash)
-			cache.RemoveAssetHash(hash)
 		}
 	}
 
-	sql.BatchRemoveAssetsQueue(hashes)
+	if err = sql.BatchRemoveAssetsQueue(hashes); err != nil {
+		logging.LogErrorf("persist unused assets removal queue failed: %s", err)
+		err = fmt.Errorf("persist unused assets removal queue: %w", err)
+		return
+	}
+	defer cache.LoadAssets()
 
 	for _, unusedAsset := range unusedAssets {
 		p := unusedAsset.Item
@@ -1043,6 +1134,7 @@ func RemoveUnusedAssets() (ret []string) {
 			if removeErr := filelock.RemoveWithoutFatal(absPath); removeErr != nil {
 				logging.LogErrorf("remove unused asset [%s] failed: %s", absPath, removeErr)
 				util.PushErrMsg(fmt.Sprintf("%s", removeErr), 7000)
+				err = fmt.Errorf("remove unused asset [%s]: %w", absPath, removeErr)
 				return
 			}
 
@@ -1055,21 +1147,15 @@ func RemoveUnusedAssets() (ret []string) {
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
-	cache.LoadAssets()
 	return
 }
 
-func RemoveUnusedAsset(p string) (ret string) {
-	absPath := filepath.Join(util.DataDir, p)
-	if !filelock.IsExist(absPath) {
-		return absPath
+func RemoveUnusedAsset(p string) (ret string, err error) {
+	absPath, err := resolveUnusedAssetCleanupPath(p)
+	if err != nil {
+		return "", err
 	}
-
-	// 加密笔记本的资源不参与未引用清理（与批量版 RemoveUnusedAssets 经 UnusedAssets 的排除一致），
-	// 否则未解锁时 admin 可删加密 box 的资源，破坏可用性且留下悬空的文件名映射。
-	if IsEncryptedAssetPath(absPath) {
-		return absPath
-	}
+	p = filepath.ToSlash(strings.TrimPrefix(absPath, util.DataDir+string(os.PathSeparator)))
 
 	historyDir, err := getHistoryDir(HistoryOpClean)
 	if err != nil {
@@ -1079,14 +1165,22 @@ func RemoveUnusedAsset(p string) (ret string) {
 
 	newP := strings.TrimPrefix(absPath, util.DataDir)
 	historyPath := filepath.Join(historyDir, newP)
+	var hash string
 	if filelock.IsExist(absPath) {
 		if err = filelock.Copy(absPath, historyPath); err != nil {
+			err = fmt.Errorf("copy unused asset [%s] to history: %w", absPath, err)
 			return
 		}
 
-		hash, _ := util.GetEtag(absPath)
-		sql.BatchRemoveAssetsQueue([]string{hash})
-		cache.RemoveAssetHash(hash)
+		if hash, err = util.GetEtag(absPath); err != nil {
+			err = fmt.Errorf("calculate unused asset [%s] hash: %w", absPath, err)
+			return
+		}
+		if err = sql.BatchRemoveAssetsQueue([]string{hash}); err != nil {
+			logging.LogErrorf("persist unused asset removal queue [%s] failed: %s", p, err)
+			err = fmt.Errorf("persist unused asset removal queue [%s]: %w", p, err)
+			return
+		}
 	}
 
 	if util.IsMobileContainer() {
@@ -1096,8 +1190,10 @@ func RemoveUnusedAsset(p string) (ret string) {
 	if err = filelock.RemoveWithoutFatal(absPath); err != nil {
 		logging.LogErrorf("remove unused asset [%s] failed: %s", absPath, err)
 		util.PushErrMsg(fmt.Sprintf("%s", err), 7000)
+		err = fmt.Errorf("remove unused asset [%s]: %w", absPath, err)
 		return
 	}
+	cache.RemoveAssetHash(hash)
 	ret = absPath
 
 	util.RemoveAssetText(p)
@@ -1107,6 +1203,55 @@ func RemoveUnusedAsset(p string) (ret string) {
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
 	cache.RemoveAsset(p)
 	return
+}
+
+func resolveUnusedAssetCleanupPath(assetPath string) (absPath string, err error) {
+	cleanPath, boxID, err := assetPathAndBox(assetPath, "")
+	if err != nil {
+		return "", err
+	}
+	cleanPath = strings.TrimPrefix(filepath.ToSlash(cleanPath), "/")
+	if boxID == "" {
+		candidateBox, relativePath, found := strings.Cut(cleanPath, "/")
+		if found && ast.IsNodeIDPattern(candidateBox) && strings.HasPrefix(relativePath, "assets/") {
+			boxID = candidateBox
+			cleanPath = relativePath
+		}
+	}
+	if boxID != "" && IsEncryptedBox(boxID) {
+		return "", ErrEncryptedAssetCleanupUnsupported
+	}
+	cleanPath = path.Clean(cleanPath)
+	if cleanPath == "." || path.IsAbs(cleanPath) || strings.HasPrefix(cleanPath, "../") || cleanPath == ".." || !strings.HasPrefix(cleanPath, "assets/") {
+		return "", fmt.Errorf("[%s] is not an asset path", cleanPath)
+	}
+	if boxID != "" {
+		if !ast.IsNodeIDPattern(boxID) {
+			return "", fmt.Errorf("[%s] is not a box id", boxID)
+		}
+		expectedRoot := filepath.Join(util.DataDir, boxID, "assets")
+		candidate := filepath.Join(util.DataDir, boxID, filepath.FromSlash(cleanPath))
+		if !filelock.IsExist(candidate) {
+			return candidate, nil
+		}
+		absPath, err = GetAssetAbsPathInBox(cleanPath, boxID)
+		if err != nil {
+			return "", fmt.Errorf("resolve unused asset cleanup path [%s]: %w", assetPath, err)
+		}
+		if !gulu.File.IsSubPath(expectedRoot, absPath) {
+			return "", fmt.Errorf("unused asset cleanup path [%s] resolved outside notebook assets", assetPath)
+		}
+		return absPath, nil
+	}
+	absPath, err = GetAssetAbsPathInBox(cleanPath, boxID)
+	if err != nil {
+		candidate := filepath.Join(util.DataDir, filepath.FromSlash(cleanPath))
+		if gulu.File.IsSubPath(filepath.Join(util.DataDir, "assets"), candidate) {
+			return candidate, nil
+		}
+		return "", fmt.Errorf("resolve unused asset cleanup path [%s]: %w", assetPath, err)
+	}
+	return absPath, nil
 }
 
 func RenameAsset(oldPath, newName string) (newPath string, err error) {
@@ -1220,8 +1365,12 @@ func RenameAsset(oldPath, newName string) (newPath string, err error) {
 				}
 
 				generateTreeHistory(tree, historyDir)
-				treenode.UpsertBlockTree(tree)
-				sql.UpsertTreeQueue(tree)
+				if err = treenode.UpsertBlockTree(tree); err != nil {
+					return
+				}
+				if err = sql.UpsertTreeQueue(tree); err != nil {
+					return
+				}
 
 				util.PushEndlessProgress(fmt.Sprintf(Conf.Language(111), util.EscapeHTML(tree.Root.IALAttr("title"))))
 			}

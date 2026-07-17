@@ -44,7 +44,7 @@ func init() {
 	register(TagTool)
 }
 
-func tagHandler(args map[string]any) (CallToolResult, error) {
+func tagHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":

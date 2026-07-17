@@ -42,6 +42,7 @@ var DEKLockRelease func(boxID string)
 // 由 filesys、model 历史查看/回滚、import 等所有 .sy 加解密路径共同使用，保证 AAD 一致。
 func SyObjectBase(relativePath string) (string, error) {
 	p := filepath.ToSlash(relativePath)
+	p = strings.ReplaceAll(p, "\\", "/")
 	p = strings.TrimPrefix(p, "/")
 	base := p
 	if idx := strings.LastIndex(p, "/"); idx >= 0 {
@@ -67,9 +68,9 @@ func SyAAD(boxID, relativePath string) (string, error) {
 	return "siyuan:v1:file:" + boxID + ":" + base, nil
 }
 
-// encryptedBox 判断 boxID 是否为已解锁的加密 box，供 filesys 内部分流（如静默修正禁用）。
-// 通过 DEKProvider 探测：返回非 nil dek 即加密且已解锁。
-func encryptedBox(boxID string) bool {
+// boxUsesEncryption 判断 boxID 是否属于加密内容库。加密库已锁定时
+// DEKProvider 返回错误，仍应视为加密并 fail-closed。
+func boxUsesEncryption(boxID string) bool {
 	if DEKProvider == nil {
 		return false
 	}
@@ -77,8 +78,17 @@ func encryptedBox(boxID string) bool {
 		DEKLockAcquire(boxID)
 		defer DEKLockRelease(boxID)
 	}
+	return boxUsesEncryptionInBoxLocked(boxID)
+}
+
+// boxUsesEncryptionInBoxLocked 供已经持有 box 生命周期读锁的调用方使用。
+func boxUsesEncryptionInBoxLocked(boxID string) bool {
+	if DEKProvider == nil {
+		return false
+	}
 	dek, err := DEKProvider(boxID)
-	return err == nil && dek != nil
+	defer clear(dek)
+	return err != nil || dek != nil
 }
 
 // encryptData 若 boxID 是已解锁的加密 box，用 fileKey（DEK 派生子密钥）加密 data，
@@ -91,14 +101,23 @@ func encryptData(boxID, relativePath string, data []byte) ([]byte, error) {
 		DEKLockAcquire(boxID)
 		defer DEKLockRelease(boxID)
 	}
+	return encryptDataInBoxLocked(boxID, relativePath, data)
+}
+
+func encryptDataInBoxLocked(boxID, relativePath string, data []byte) ([]byte, error) {
+	if DEKProvider == nil {
+		return data, nil
+	}
 	dek, err := DEKProvider(boxID)
 	if err != nil {
 		return nil, err
 	}
+	defer clear(dek)
 	if dek == nil {
 		return data, nil // 非加密 box
 	}
 	fileKey := util.DeriveSubKey(dek, "siyuan/file")
+	defer clear(fileKey)
 	aad, err := SyAAD(boxID, relativePath)
 	if err != nil {
 		return nil, err
@@ -115,14 +134,25 @@ func decryptData(boxID, relativePath string, data []byte) ([]byte, error) {
 		DEKLockAcquire(boxID)
 		defer DEKLockRelease(boxID)
 	}
+	return decryptDataInBoxLocked(boxID, relativePath, data)
+}
+
+// decryptDataInBoxLocked 供已经持有 box 生命周期读锁的调用方使用。
+// 它绝不再次获取 DEKLock，避免有 writer 等待时递归 RLock 自锁。
+func decryptDataInBoxLocked(boxID, relativePath string, data []byte) ([]byte, error) {
+	if DEKProvider == nil {
+		return data, nil
+	}
 	dek, err := DEKProvider(boxID)
 	if err != nil {
 		return nil, err
 	}
+	defer clear(dek)
 	if dek == nil {
 		return data, nil // 非加密 box
 	}
 	fileKey := util.DeriveSubKey(dek, "siyuan/file")
+	defer clear(fileKey)
 	aad, err := SyAAD(boxID, relativePath)
 	if err != nil {
 		return nil, err

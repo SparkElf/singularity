@@ -425,12 +425,14 @@ func NewAttributeView(id string) (ret *AttributeView) {
 }
 
 func GetAttributeViewName(avID string) (ret string, err error) {
-	// 通过 fallback 查找 AV 定义的真实路径（普通 box 全局，加密笔记本笔记本级）
-	avJSONPath, boxID := FindAttributeViewPath(avID)
-	if avJSONPath == "" {
-		avJSONPath = GetAttributeViewDataPath(avID)
-		boxID = ""
-	}
+	return GetAttributeViewNameInBox(avID, "")
+}
+
+// GetAttributeViewNameInBox 只读取指定内容库中的 AV 名称。
+func GetAttributeViewNameInBox(avID, boxID string) (ret string, err error) {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
+	avJSONPath := attributeViewDataPathByBox(avID, boxID)
 	if !filelock.IsExist(avJSONPath) {
 		return
 	}
@@ -446,7 +448,7 @@ func getAttributeViewNameByPathInBox(avJSONPath, boxID string) (ret string, err 
 	}
 	if boxID != "" {
 		avID := strings.TrimSuffix(filepath.Base(avJSONPath), filepath.Ext(avJSONPath))
-		plain, decErr := decryptAVData(boxID, avID, data)
+		plain, decErr := decryptAVDataLocked(boxID, avID, data)
 		if decErr != nil {
 			logging.LogErrorf("decrypt attribute view [%s] failed: %s", avJSONPath, decErr)
 			return "", decErr
@@ -514,44 +516,31 @@ func getAttributeViewContent0(attrView *AttributeView) (content string) {
 }
 
 func IsAttributeViewExist(avID string) bool {
-	// 通过 fallback 查找（普通 box 全局，加密笔记本笔记本级）
-	avJSONPath, _ := FindAttributeViewPath(avID)
-	if avJSONPath == "" {
-		avJSONPath = GetAttributeViewDataPath(avID)
-	}
-	return filelock.IsExist(avJSONPath)
+	return IsAttributeViewExistInBox(avID, "")
+}
+
+// IsAttributeViewExistInBox 只检查指定内容库中的 AV 定义。
+func IsAttributeViewExistInBox(avID, boxID string) bool {
+	return filelock.IsExist(attributeViewDataPathByBox(avID, boxID))
 }
 
 func ParseAttributeView(avID string) (ret *AttributeView, err error) {
-	// 加密笔记本的 AV 定义存笔记本级路径，通过 fallback 自动查找并解密
-	avJSONPath, boxID := FindAttributeViewPath(avID)
-	if avJSONPath == "" {
-		// 文件不存在，可能是首次创建，按全局路径返回（由调用方处理）
-		avJSONPath = GetAttributeViewDataPath(avID)
-		return parseAttributeViewByPathInBox(avJSONPath, "")
-	}
-	if boxID != "" {
-		SetAVBoxID(avID, boxID)
-	}
-	return parseAttributeViewByPathInBox(avJSONPath, boxID)
+	return ParseAttributeViewInBox(avID, "")
 }
 
 func ParseAttributeViewInBox(avID, boxID string) (ret *AttributeView, err error) {
-	avJSONPath, avBoxID := FindAttributeViewPathInBox(avID, boxID)
-	if avJSONPath == "" {
-		avJSONPath = attributeViewDataPathByBox(avID, boxID)
-		avBoxID = boxID
-	} else {
-		// 只在文件确实存在于该 box 内时才设置映射，避免错误 boxID 污染后续路由
-		if boxID != "" {
-			SetAVBoxID(avID, boxID)
-		}
-	}
-	return parseAttributeViewByPathInBox(avJSONPath, avBoxID)
+	release := holdAVStoreReadLock(boxID)
+	defer release()
+	return ParseAttributeViewInBoxLocked(avID, boxID)
+}
+
+// ParseAttributeViewInBoxLocked 与 ParseAttributeViewInBox 相同，但调用方必须已持有 box 生命周期读锁。
+func ParseAttributeViewInBoxLocked(avID, boxID string) (ret *AttributeView, err error) {
+	return parseAttributeViewByPathInBox(attributeViewDataPathByBox(avID, boxID), boxID)
 }
 
 func ParseAttributeViewByPath(avJSONPath string) (ret *AttributeView, err error) {
-	return parseAttributeViewByPathInBox(avJSONPath, avBoxIDFromPath(avJSONPath))
+	return parseAttributeViewByPathInBox(avJSONPath, "")
 }
 
 func parseAttributeViewByPathInBox(avJSONPath, boxID string) (ret *AttributeView, err error) {
@@ -575,14 +564,13 @@ func parseAttributeViewByPathInBox(avJSONPath, boxID string) (ret *AttributeView
 		}
 		// 加密笔记本的 AV 定义是密文，按路径反查 boxID 后解密
 		if boxID != "" {
-			data, readErr = decryptAVData(boxID, avID, data)
+			data, readErr = decryptAVDataLocked(boxID, avID, data)
 			if readErr != nil {
 				logging.LogErrorf("decrypt attribute view [%s] failed: %s", avID, readErr)
 				return
 			}
 		} else if util.IsCiphertext(data) {
-			// 历史等无法取得 boxID/DEK 的全局路径上读到密文：无法解密，返回空内容而非按 JSON 解析报错。
-			// 这会在加密笔记本的 AV 因路径迁移（同步、导入、历史布局）落到全局位置时发生。
+			err = ErrAttributeViewIdentityRequired
 			return
 		}
 		cache.SetAVDataInBox(avID, boxID, data)
@@ -651,18 +639,29 @@ func parseAttributeViewByPathInBox(avJSONPath, boxID string) (ret *AttributeView
 	return
 }
 
-func SaveAttributeView(av *AttributeView) (err error) {
-	if "" == av.ID {
+func SaveAttributeView(attrView *AttributeView) error {
+	return saveAttributeViewInBox(attrView, "")
+}
+
+// SaveAttributeViewInBox 只把 AV 定义写入指定内容库。
+func SaveAttributeViewInBox(attrView *AttributeView, boxID string) error {
+	release := holdAVStoreReadLock(boxID)
+	defer release()
+	return saveAttributeViewInBox(attrView, boxID)
+}
+
+func saveAttributeViewInBox(attrView *AttributeView, boxID string) (err error) {
+	if "" == attrView.ID {
 		err = errors.New("av id is empty")
 		logging.LogErrorf("save attribute view failed: %s", err)
 		return
 	}
 
 	// 做一些数据兼容和订正处理
-	UpgradeSpec(av)
+	UpgradeSpec(attrView)
 
 	// 值去重
-	blockValues := av.GetBlockKeyValues()
+	blockValues := attrView.GetBlockKeyValues()
 	if nil != blockValues {
 		blockIDs := map[string]bool{}
 		var duplicatedValueIDs []string
@@ -683,7 +682,7 @@ func SaveAttributeView(av *AttributeView) (err error) {
 	}
 
 	// 视图值去重
-	for _, view := range av.Views {
+	for _, view := range attrView.Views {
 		// 项目自定义排序去重
 		view.ItemIDs = gulu.Str.RemoveDuplicatedElem(view.ItemIDs)
 
@@ -694,7 +693,7 @@ func SaveAttributeView(av *AttributeView) (err error) {
 	}
 
 	// 清理渲染回填值
-	for _, kv := range av.KeyValues {
+	for _, kv := range attrView.KeyValues {
 		for i := len(kv.Values) - 1; i >= 0; i-- {
 			if kv.Values[i].IsRenderAutoFill {
 				kv.Values = append(kv.Values[:i], kv.Values[i+1:]...)
@@ -704,46 +703,42 @@ func SaveAttributeView(av *AttributeView) (err error) {
 
 	var data []byte
 	if util.UseSingleLineSave {
-		data, err = gulu.JSON.MarshalJSON(av)
+		data, err = gulu.JSON.MarshalJSON(attrView)
 	} else {
-		data, err = gulu.JSON.MarshalIndentJSON(av, "", "\t")
+		data, err = gulu.JSON.MarshalIndentJSON(attrView, "", "\t")
 	}
 	if err != nil {
-		logging.LogErrorf("marshal attribute view [%s] failed: %s", av.ID, err)
+		logging.LogErrorf("marshal attribute view [%s] failed: %s", attrView.ID, err)
 		return
 	}
 
-	// 缓存与待写入数据一致时跳过落盘；缓存未命中时再读盘比对，避免无变更的重复写入
-	// 通过 fallback 查找 AV 定义的实际路径（普通 box 全局，加密笔记本笔记本级）
-	avJSONPath, avBoxID := FindAttributeViewPath(av.ID)
-	if avJSONPath == "" {
-		// 文件不存在（首次创建），使用全局路径，boxID 为空（普通 box）
-		// 加密笔记本的首次创建由 handler 层通过 SetAVBoxID 预设路径
-		avJSONPath = GetAttributeViewDataPath(av.ID)
-	}
-	if cachedData, ok := cache.GetAVDataInBox(av.ID, avBoxID); ok {
-		if len(cachedData) == len(data) && bytes.Equal(cachedData, data) {
-			return
-		}
-	} else {
-		if diskData, readErr := filelock.ReadFile(avJSONPath); nil == readErr {
-			// 加密笔记本的磁盘数据是密文，需先解密再比对
-			if avBoxID != "" {
-				diskData, _ = decryptAVData(avBoxID, av.ID, diskData)
-			}
-			if len(diskData) == len(data) && bytes.Equal(diskData, data) {
-				cache.SetAVDataInBox(av.ID, avBoxID, data)
+	// 磁盘内容与待写入数据一致时跳过落盘。缓存只加速读取，不能作为磁盘一致性证据。
+	avJSONPath := attributeViewDataPathByBox(attrView.ID, boxID)
+	if diskData, readErr := filelock.ReadFile(avJSONPath); readErr == nil {
+		if boxID != "" {
+			diskData, readErr = decryptAVDataLocked(boxID, attrView.ID, diskData)
+			if readErr != nil {
+				err = readErr
+				logging.LogErrorf("decrypt attribute view [%s] failed: %s", attrView.ID, err)
 				return
 			}
 		}
+		if len(diskData) == len(data) && bytes.Equal(diskData, data) {
+			cache.SetAVDataInBox(attrView.ID, boxID, data)
+			return
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		err = readErr
+		logging.LogErrorf("read attribute view [%s] failed: %s", attrView.ID, err)
+		return
 	}
 
 	// 加密笔记本的数据需加密后再写盘
 	writeData := data
-	if avBoxID != "" {
-		writeData, err = encryptAVData(avBoxID, av.ID, data)
+	if boxID != "" {
+		writeData, err = encryptAVDataLocked(boxID, attrView.ID, data)
 		if err != nil {
-			logging.LogErrorf("encrypt attribute view [%s] failed: %s", av.ID, err)
+			logging.LogErrorf("encrypt attribute view [%s] failed: %s", attrView.ID, err)
 			return
 		}
 	}
@@ -754,15 +749,15 @@ func SaveAttributeView(av *AttributeView) (err error) {
 	}
 	if err = util.WriteFileByMmap(avJSONPath, writeData); nil != err {
 		if err = filelock.WriteFile(avJSONPath, writeData); nil != err {
-			logging.LogErrorf("save attribute view [%s] failed: %s", av.ID, err)
+			logging.LogErrorf("save attribute view [%s] failed: %s", attrView.ID, err)
 			return
 		}
 	}
 
-	cache.SetAVDataInBox(av.ID, avBoxID, data)
+	cache.SetAVDataInBox(attrView.ID, boxID, data)
 
 	if util.ExceedLargeFileWarningSize(len(data)) {
-		msg := fmt.Sprintf(util.Langs[util.Lang][268], av.Name+" "+filepath.Base(avJSONPath), util.LargeFileWarningSize)
+		msg := fmt.Sprintf(util.Langs[util.Lang][268], attrView.Name+" "+filepath.Base(avJSONPath), util.LargeFileWarningSize)
 		util.PushErrMsg(msg, 7000)
 	}
 	return
@@ -995,12 +990,13 @@ func GetAttributeViewI18n(key string) string {
 }
 
 var (
-	ErrAttributeViewNotFound = errors.New("attribute view not found")
-	ErrViewNotFound          = errors.New("view not found")
-	ErrKeyNotFound           = errors.New("key not found")
-	ErrWrongLayoutType       = errors.New("wrong layout type")
-	ErrSpecTooNew            = errors.New("attribute view spec is too new")
-	ErrFilterTooDeep         = errors.New("filter nesting depth exceeds the maximum allowed")
+	ErrAttributeViewNotFound         = errors.New("attribute view not found")
+	ErrAttributeViewIdentityRequired = errors.New("encrypted attribute view requires an explicit notebook")
+	ErrViewNotFound                  = errors.New("view not found")
+	ErrKeyNotFound                   = errors.New("key not found")
+	ErrWrongLayoutType               = errors.New("wrong layout type")
+	ErrSpecTooNew                    = errors.New("attribute view spec is too new")
+	ErrFilterTooDeep                 = errors.New("filter nesting depth exceeds the maximum allowed")
 )
 
 const (

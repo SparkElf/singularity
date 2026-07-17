@@ -86,7 +86,9 @@ func RemoveBookmark(bookmark string) (err error) {
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		return
+	}
 
 	util.ReloadUI()
 	return
@@ -158,7 +160,9 @@ func RenameBookmark(oldBookmark, newBookmark string) (err error) {
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
-	sql.FlushQueue()
+	if err = sql.FlushQueue(); err != nil {
+		return
+	}
 
 	util.ReloadUI()
 	return
@@ -188,9 +192,12 @@ func BookmarkLabels() (ret []string) {
 
 func BuildBookmark() (ret *Bookmarks) {
 	FlushTxQueue()
-	sql.FlushQueue()
-
 	ret = &Bookmarks{}
+	if err := sql.FlushQueue(); err != nil {
+		logging.LogErrorf("flush database queue before building bookmarks failed: %s", err)
+		return
+	}
+
 	sqlBlocks := sql.QueryBookmarkBlocks()
 
 	labelBlocks := map[BookmarkLabel]BookmarkBlocks{}

@@ -43,7 +43,7 @@ func init() {
 	register(BookmarkTool)
 }
 
-func bookmarkHandler(args map[string]any) (CallToolResult, error) {
+func bookmarkHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":

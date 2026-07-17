@@ -29,6 +29,7 @@ import (
 	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/araddon/dateparse"
+	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/av"
 	"github.com/siyuan-note/siyuan/kernel/cache"
 	"github.com/siyuan-note/siyuan/kernel/filesys"
@@ -167,7 +168,7 @@ func BatchSetBlockAttrs(blockAttrs []map[string]any) (err error) {
 		}
 
 		cache.PutBlockIALInBox(node.ID, tree.Box, parse.IAL2Map(node.KramdownIAL))
-		pushBlockAttrs(oldAttrs, node)
+		pushBlockAttrs(oldAttrs, node, "")
 		nodes = append(nodes, node)
 	}
 
@@ -216,7 +217,7 @@ func setNodeAttrs(node *ast.Node, tree *parse.Tree, nameValues map[string]string
 	IncSync()
 	cache.PutBlockIALInBox(node.ID, tree.Box, parse.IAL2Map(node.KramdownIAL))
 
-	pushBlockAttrs(oldAttrs, node)
+	pushBlockAttrs(oldAttrs, node, "")
 
 	if ("true" == oldAttrs[DocHiddenAttr]) != ("true" == nameValues[DocHiddenAttr]) {
 		ReloadFiletree()
@@ -224,8 +225,13 @@ func setNodeAttrs(node *ast.Node, tree *parse.Tree, nameValues map[string]string
 
 	if attrsAffectRefText(nameValues) {
 		go func() {
-			sql.FlushQueue()
-			refreshDynamicRefText(node, tree)
+			if flushErr := sql.FlushQueue(); flushErr != nil {
+				logging.LogErrorf("flush database queue before refreshing dynamic reference text for tree [%s/%s] failed: %s", tree.Box, tree.Path, flushErr)
+				return
+			}
+			if refreshErr := refreshDynamicRefText(node, tree); refreshErr != nil {
+				logging.LogErrorf("refresh dynamic reference text for tree [%s/%s] failed: %s", tree.Box, tree.Path, refreshErr)
+			}
 		}()
 	}
 	if attrsAffectAvBlock(nameValues) {
@@ -286,7 +292,7 @@ func setNodeAttrsWithTx(tx *Transaction, node *ast.Node, tree *parse.Tree, nameV
 
 	IncSync()
 	cache.PutBlockIALInBox(node.ID, tree.Box, parse.IAL2Map(node.KramdownIAL))
-	pushBlockAttrs(oldAttrs, node)
+	pushBlockAttrs(oldAttrs, node, tx.Notebook)
 	return
 }
 
@@ -435,7 +441,7 @@ func normalizeIconValue(value string) string {
 	return strings.Join(parts, "-")
 }
 
-func pushBlockAttrs(oldAttrs map[string]string, node *ast.Node) {
+func pushBlockAttrs(oldAttrs map[string]string, node *ast.Node, transactionNotebook string) {
 	newAttrs := parse.IAL2Map(node.KramdownIAL)
 	data := map[string]any{"old": oldAttrs, "new": newAttrs}
 	if "" != node.AttributeViewType {
@@ -444,6 +450,7 @@ func pushBlockAttrs(oldAttrs map[string]string, node *ast.Node) {
 	doOp := &Operation{Action: "updateAttrs", Data: data, ID: node.ID, RootID: treenode.TreeRoot(node).ID}
 	evt := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)
 	evt.Data = []*Transaction{{
+		Notebook:       transactionNotebook,
 		DoOperations:   []*Operation{doOp},
 		UndoOperations: []*Operation{},
 	}}

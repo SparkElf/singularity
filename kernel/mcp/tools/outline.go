@@ -41,7 +41,7 @@ func init() {
 	register(OutlineTool)
 }
 
-func outlineHandler(args map[string]any) (CallToolResult, error) {
+func outlineHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "get":

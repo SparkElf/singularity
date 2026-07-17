@@ -21,25 +21,25 @@ import (
 	"strings"
 
 	"github.com/siyuan-note/siyuan/kernel/model"
-	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 var RepoTool = &Tool{
 	Name:        "repo",
-	Description: "Repository (data snapshot) operations. Actions: list(tag?, page=1), create(memo?), tag(id, name), untag(name), checkout(id), diff(left, right), search(keyword, page?), purge(), file_get(id), file_rollback(id), file_open(id), file_export(id).",
+	Description: "Repository (data snapshot) operations. Actions: list(tag?, page=1), create(memo?), tag(id, name), untag(name), checkout(id), diff(left, right), search(keyword, page?), purge(), file_get(id), file_rollback(id, notebook), file_open(id), file_export(id).",
 	InputSchema: ToolSchema{
 		Type: "object",
 		Properties: map[string]Property{
-			"action":  {Type: "string", Description: "Operation", Enum: []string{"list", "create", "tag", "untag", "checkout", "diff", "search", "purge", "file_get", "file_rollback", "file_open", "file_export"}},
-			"id":      {Type: "string", Description: "Snapshot ID (for tag, checkout, file_get, file_rollback, file_open, file_export)"},
-			"name":    {Type: "string", Description: "Tag name (for tag, untag)"},
-			"memo":    {Type: "string", Description: "Snapshot memo (for create, optional)"},
-			"keyword": {Type: "string", Description: "Search keyword (for search)"},
-			"left":    {Type: "string", Description: "Left snapshot ID (for diff)"},
-			"right":   {Type: "string", Description: "Right snapshot ID (for diff)"},
-			"tag":     {Type: "boolean", Description: "List tagged snapshots only (for list, optional)"},
-			"page":    {Type: "number", Description: "Page number (for list, search; default 1)"},
+			"action":   {Type: "string", Description: "Operation", Enum: []string{"list", "create", "tag", "untag", "checkout", "diff", "search", "purge", "file_get", "file_rollback", "file_open", "file_export"}},
+			"id":       {Type: "string", Description: "Snapshot ID (for tag, checkout, file_get, file_rollback, file_open, file_export)"},
+			"notebook": {Type: "string", Description: "Owner notebook ID for file_rollback; use an empty string only for a workspace-global file"},
+			"name":     {Type: "string", Description: "Tag name (for tag, untag)"},
+			"memo":     {Type: "string", Description: "Snapshot memo (for create, optional)"},
+			"keyword":  {Type: "string", Description: "Search keyword (for search)"},
+			"left":     {Type: "string", Description: "Left snapshot ID (for diff)"},
+			"right":    {Type: "string", Description: "Right snapshot ID (for diff)"},
+			"tag":      {Type: "boolean", Description: "List tagged snapshots only (for list, optional)"},
+			"page":     {Type: "number", Description: "Page number (for list, search; default 1)"},
 		},
 		Required: []string{"action"},
 	},
@@ -50,7 +50,7 @@ func init() {
 	register(RepoTool)
 }
 
-func repoHandler(args map[string]any) (CallToolResult, error) {
+func repoHandler(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "list":
@@ -64,19 +64,19 @@ func repoHandler(args map[string]any) (CallToolResult, error) {
 	case "checkout":
 		return repoCheckout(args)
 	case "diff":
-		return repoDiff(args)
+		return repoDiff(callContext, args)
 	case "search":
-		return repoSearch(args)
+		return repoSearch(callContext, args)
 	case "purge":
 		return repoPurge(args)
 	case "file_get":
 		return repoFileGet(args)
 	case "file_rollback":
-		return repoFileRollback(args)
+		return repoFileRollback(callContext, args)
 	case "file_open":
-		return repoFileOpen(args)
+		return repoFileOpen(callContext, args)
 	case "file_export":
-		return repoFileExport(args)
+		return repoFileExport(callContext, args)
 	}
 	return CallToolResult{
 		Content: []ContentItem{{Type: "text", Text: "unknown action '" + action + "', expected one of: [list, create, tag, untag, checkout, diff, search, purge, file_get, file_rollback, file_open, file_export]"}},
@@ -171,13 +171,19 @@ func repoCheckout(args map[string]any) (CallToolResult, error) {
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "checkout to snapshot: " + id}}}, nil
 }
 
-func repoDiff(args map[string]any) (CallToolResult, error) {
+func repoDiff(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	left, _ := args["left"].(string)
 	right, _ := args["right"].(string)
 	if left == "" || right == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "left and right are required"}}, IsError: true}, nil
 	}
-	diff, err := model.DiffRepoSnapshots(left, right)
+	var diff *model.LeftRightDiff
+	var err error
+	if callContext.RegisterEncryptedResponses == nil {
+		diff, err = model.DiffRepoSnapshots(left, right)
+	} else {
+		diff, err = model.DiffRepoSnapshotsForResponse(left, right, callContext.RegisterEncryptedResponses)
+	}
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "diff failed: " + err.Error()}}, IsError: true}, nil
 	}
@@ -186,19 +192,19 @@ func repoDiff(args map[string]any) (CallToolResult, error) {
 	if len(diff.AddsLeft) > 0 {
 		sb.WriteString(fmt.Sprintf("Adds (%d):\n", len(diff.AddsLeft)))
 		for _, f := range diff.AddsLeft {
-			sb.WriteString(fmt.Sprintf("- [%s] %s (%s)\n", f.FileID, f.Title, f.Path))
+			sb.WriteString(fmt.Sprintf("- [%s] %s (path: %s, notebook: %q)\n", f.FileID, f.Title, f.Path, f.Notebook))
 		}
 	}
 	if len(diff.UpdatesLeft) > 0 {
 		sb.WriteString(fmt.Sprintf("\nUpdates (%d):\n", len(diff.UpdatesLeft)))
 		for _, f := range diff.UpdatesLeft {
-			sb.WriteString(fmt.Sprintf("- [%s] %s (%s)\n", f.FileID, f.Title, f.Path))
+			sb.WriteString(fmt.Sprintf("- [%s] %s (path: %s, notebook: %q)\n", f.FileID, f.Title, f.Path, f.Notebook))
 		}
 	}
 	if len(diff.RemovesRight) > 0 {
 		sb.WriteString(fmt.Sprintf("\nRemoves (%d):\n", len(diff.RemovesRight)))
 		for _, f := range diff.RemovesRight {
-			sb.WriteString(fmt.Sprintf("- [%s] %s (%s)\n", f.FileID, f.Title, f.Path))
+			sb.WriteString(fmt.Sprintf("- [%s] %s (path: %s, notebook: %q)\n", f.FileID, f.Title, f.Path, f.Notebook))
 		}
 	}
 	if len(diff.AddsLeft) == 0 && len(diff.UpdatesLeft) == 0 && len(diff.RemovesRight) == 0 {
@@ -207,7 +213,7 @@ func repoDiff(args map[string]any) (CallToolResult, error) {
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
 
-func repoSearch(args map[string]any) (CallToolResult, error) {
+func repoSearch(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	keyword, _ := args["keyword"].(string)
 	if keyword == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "keyword is required"}}, IsError: true}, nil
@@ -219,7 +225,14 @@ func repoSearch(args map[string]any) (CallToolResult, error) {
 	if page < 1 {
 		page = 1
 	}
-	files, pageCount, totalCount, err := model.SearchRepoFile(keyword, page)
+	var files []*model.DiffFile
+	var pageCount, totalCount int
+	var err error
+	if callContext.RegisterEncryptedResponses == nil {
+		files, pageCount, totalCount, err = model.SearchRepoFile(keyword, page)
+	} else {
+		files, pageCount, totalCount, err = model.SearchRepoFileForResponse(keyword, page, callContext.RegisterEncryptedResponses)
+	}
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "search repo failed: " + err.Error()}}, IsError: true}, nil
 	}
@@ -229,7 +242,7 @@ func repoSearch(args map[string]any) (CallToolResult, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Files matching '%s' (page %d/%d, %d total):\n\n", keyword, page, pageCount, totalCount))
 	for _, f := range files {
-		sb.WriteString(fmt.Sprintf("- [%s] %s (%s)\n", f.FileID, f.Title, f.Path))
+		sb.WriteString(fmt.Sprintf("- [%s] %s (path: %s, notebook: %q)\n", f.FileID, f.Title, f.Path, f.Notebook))
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
@@ -253,38 +266,56 @@ func repoFileGet(args map[string]any) (CallToolResult, error) {
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Path: %s\nSize: %d\n---\n%s", path, len(data), string(data))}}}, nil
 }
 
-func repoFileRollback(args map[string]any) (CallToolResult, error) {
+func repoFileRollback(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
-	if err := model.RollbackRepoSnapshotFile(id); err != nil {
+	notebook, err := HistoricalNotebookArg(args, true)
+	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback repo file failed: " + err.Error()}}, IsError: true}, nil
 	}
-	if bt := treenode.GetBlockTree(id); bt != nil {
-		util.PushReloadProtyle(bt.RootID)
+	if notebook != "" && model.IsEncryptedBox(notebook) && callContext.RegisterEncryptedResponses != nil {
+		if err = callContext.RegisterEncryptedResponses([]string{notebook}); err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback repo file failed: " + err.Error()}}, IsError: true}, nil
+		}
+	}
+	if err = model.RollbackRepoSnapshotFile(id, notebook); err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "rollback repo file failed: " + err.Error()}}, IsError: true}, nil
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: "file rolled back: " + id}}}, nil
 }
 
-func repoFileOpen(args map[string]any) (CallToolResult, error) {
+func repoFileOpen(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
-	title, content, _, _, err := model.OpenRepoSnapshotFile(id)
+	var title, content string
+	var err error
+	if callContext.RegisterEncryptedResponses == nil {
+		title, content, _, _, err = model.OpenRepoSnapshotFile(id)
+	} else {
+		title, content, _, _, err = model.OpenRepoSnapshotFileForResponse(id, callContext.RegisterEncryptedResponses)
+	}
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "open repo file failed: " + err.Error()}}, IsError: true}, nil
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Title: %s\n---\n%s", title, content)}}}, nil
 }
 
-func repoFileExport(args map[string]any) (CallToolResult, error) {
+func repoFileExport(callContext CallContext, args map[string]any) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "id is required"}}, IsError: true}, nil
 	}
-	exportPath, err := model.ExportRepoFile(id)
+	var exportPath string
+	var err error
+	if callContext.RegisterEncryptedResponses == nil {
+		exportPath, err = model.ExportRepoFile(id)
+	} else {
+		exportPath, err = model.ExportRepoFileForResponse(id, callContext.RegisterEncryptedResponses)
+	}
 	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "export repo file failed: " + err.Error()}}, IsError: true}, nil
 	}

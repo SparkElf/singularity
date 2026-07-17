@@ -218,7 +218,7 @@ func setAttrViewGroup(c *gin.Context) {
 		return
 	}
 
-	ret = renderAttrView(blockID, avID, "", "", 1, -1, nil, false, false)
+	ret = renderAttrView("", blockID, avID, "", "", 1, -1, nil, false, false)
 	if ret.Code == 0 && model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		retDataMap := ret.Data.(map[string]any)
@@ -283,11 +283,24 @@ func changeAttrViewLayout(c *gin.Context) {
 		c.JSON(http.StatusOK, ret)
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		c.JSON(http.StatusOK, ret)
+		return
+	}
+	if model.IsEncryptedBox(notebook) {
+		ret.Code = -1
+		ret.Msg = model.ErrEncryptedAttributeViewUnsupported.Error()
+		c.JSON(http.StatusOK, ret)
+		return
+	}
 
 	blockID := arg["blockID"].(string)
 	avID := arg["avID"].(string)
 	layoutType := arg["layoutType"].(string)
-	err := model.ChangeAttrViewLayout(blockID, avID, av.LayoutType(layoutType))
+	err = model.ChangeAttrViewLayout(blockID, avID, av.LayoutType(layoutType))
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -295,7 +308,7 @@ func changeAttrViewLayout(c *gin.Context) {
 		return
 	}
 
-	ret = renderAttrView(blockID, avID, "", "", 1, -1, nil, false, false)
+	ret = renderAttrView("", blockID, avID, "", "", 1, -1, nil, false, false)
 	if ret.Code == 0 && model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		retDataMap := ret.Data.(map[string]any)
@@ -365,9 +378,24 @@ func getMirrorDatabaseBlocks(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	storeBoxID := ""
+	if model.IsEncryptedBox(notebook) {
+		storeBoxID = notebook
+	}
 
 	avID := arg["avID"].(string)
-	blockIDs := treenode.GetMirrorAttrViewBlockIDs(avID)
+	blockIDs, err := treenode.GetMirrorAttrViewBlockIDsInBoxStrict(avID, storeBoxID)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	var retRefDefs []model.RefDefs
 	for _, blockID := range blockIDs {
 		retRefDefs = append(retRefDefs, model.RefDefs{RefID: blockID, DefIDs: []string{}})
@@ -389,12 +417,23 @@ func setDatabaseBlockView(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.IsEncryptedBox(notebook) {
+		ret.Code = -1
+		ret.Msg = model.ErrEncryptedAttributeViewUnsupported.Error()
+		return
+	}
 
 	blockID := arg["id"].(string)
 	viewID := arg["viewID"].(string)
 	avID := arg["avID"].(string)
 
-	err := model.SetDatabaseBlockView(blockID, avID, viewID)
+	err = model.SetDatabaseBlockView(blockID, avID, viewID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -408,6 +447,17 @@ func getAttributeViewPrimaryKeyValues(c *gin.Context) {
 
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
+		return
+	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.IsEncryptedBox(notebook) {
+		ret.Code = -1
+		ret.Msg = model.ErrEncryptedAttributeViewUnsupported.Error()
 		return
 	}
 
@@ -759,6 +809,22 @@ func renderSnapshotAttributeView(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook).Error()
+		return
+	}
+	if model.IsEncryptedBox(notebook) {
+		ret.Code = -1
+		ret.Msg = model.ErrEncryptedAttributeViewUnsupported.Error()
+		return
+	}
 
 	index := arg["snapshot"].(string)
 	id := arg["id"].(string)
@@ -801,6 +867,17 @@ func renderHistoryAttributeView(c *gin.Context) {
 	if !ok {
 		return
 	}
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook).Error()
+		return
+	}
 
 	id := arg["id"].(string)
 	created := arg["created"].(string)
@@ -838,7 +915,7 @@ func renderHistoryAttributeView(c *gin.Context) {
 		groupPaging = groupPagingArg.(map[string]any)
 	}
 
-	view, attrView, err := model.RenderHistoryAttributeView(blockID, id, viewID, query, page, pageSize, groupPaging, created)
+	view, attrView, err := model.RenderHistoryAttributeViewInBox(notebook, blockID, id, viewID, query, page, pageSize, groupPaging, created)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -873,6 +950,19 @@ func renderAttributeView(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	arg, ok := util.JsonArg(c, ret)
 	if !ok {
+		c.JSON(http.StatusOK, ret)
+		return
+	}
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		c.JSON(http.StatusOK, ret)
+		return
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook).Error()
 		c.JSON(http.StatusOK, ret)
 		return
 	}
@@ -924,7 +1014,7 @@ func renderAttributeView(c *gin.Context) {
 		ignoreRows = ignoreRowsArg.(bool)
 	}
 
-	ret = renderAttrView(blockID, id, viewID, query, page, pageSize, groupPaging, createIfNotExist, ignoreRows)
+	ret = renderAttrView(notebook, blockID, id, viewID, query, page, pageSize, groupPaging, createIfNotExist, ignoreRows)
 	if ret.Code == 0 && model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		retDataMap := ret.Data.(map[string]any)
@@ -940,9 +1030,18 @@ func renderAttributeView(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json; charset=utf-8", marshalBytes)
 }
 
-func renderAttrView(blockID, avID, viewID, query string, page, pageSize int, groupPaging map[string]any, createIfNotExist, ignoreRows bool) (ret *gulu.Result) {
+func renderAttrView(notebook, blockID, avID, viewID, query string, page, pageSize int, groupPaging map[string]any, createIfNotExist, ignoreRows bool) (ret *gulu.Result) {
 	ret = gulu.Ret.NewResult()
-	view, attrView, err := model.RenderAttributeView(blockID, avID, viewID, query, page, pageSize, groupPaging, createIfNotExist, ignoreRows)
+	var view av.Viewable
+	var attrView *av.AttributeView
+	var err error
+	if notebook == "" {
+		// Only server-internal legacy handlers use the explicit global AV store.
+		// The public renderAttributeView handler rejects a missing notebook above.
+		view, attrView, err = model.RenderAttributeView(blockID, avID, viewID, query, page, pageSize, groupPaging, createIfNotExist, ignoreRows)
+	} else {
+		view, attrView, err = model.RenderAttributeViewInBox(notebook, blockID, avID, viewID, query, page, pageSize, groupPaging, createIfNotExist, ignoreRows)
+	}
 	if err != nil {
 		ret.Code = -1
 		if errors.Is(err, av.ErrSpecTooNew) {

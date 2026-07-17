@@ -18,9 +18,12 @@ package util
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"mime"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,6 +38,253 @@ import (
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/logging"
 )
+
+var ErrUnsafeExportFile = errors.New("unsafe export file")
+
+// CanonicalExportRelativePath validates a decoded URL path using URL rather
+// than host-platform path semantics.
+func CanonicalExportRelativePath(relativePath string) (string, error) {
+	if relativePath == "" || strings.Contains(relativePath, `\`) || strings.HasPrefix(relativePath, "/") {
+		return "", fmt.Errorf("%w: invalid export path %q", ErrUnsafeExportFile, relativePath)
+	}
+	cleaned := path.Clean(relativePath)
+	if cleaned == "." || cleaned == ".." || cleaned != relativePath || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("%w: invalid export path %q", ErrUnsafeExportFile, relativePath)
+	}
+	return cleaned, nil
+}
+
+// ResolveLocalExportFilePath converts a single-file /export download URL into
+// the corresponding physical file under the workspace export directory.
+func ResolveLocalExportFilePath(downloadPath string) (string, error) {
+	relativePath, err := localExportDownloadRelativePath(downloadPath)
+	if err != nil {
+		return "", err
+	}
+	localPath, err := filepath.Abs(filepath.Join(TempDir, "export", filepath.FromSlash(relativePath)))
+	if err != nil {
+		return "", fmt.Errorf("resolve export download path %q: %w", downloadPath, err)
+	}
+	return localPath, nil
+}
+
+func localExportDownloadRelativePath(downloadPath string) (string, error) {
+	const prefix = "/export/"
+	if !strings.HasPrefix(downloadPath, prefix) {
+		return "", fmt.Errorf("invalid export download path %q", downloadPath)
+	}
+	decoded, err := url.PathUnescape(strings.TrimPrefix(downloadPath, prefix))
+	if err != nil {
+		return "", fmt.Errorf("decode export download path %q: %w", downloadPath, err)
+	}
+	if decoded, err = CanonicalExportRelativePath(decoded); err != nil {
+		return "", fmt.Errorf("invalid export download path %q: %w", downloadPath, err)
+	}
+	return decoded, nil
+}
+
+type LocalExportFile struct {
+	Path string
+	File *os.File
+	Info os.FileInfo
+	root *os.Root
+}
+
+func OpenLocalExportDownload(downloadPath string) (*LocalExportFile, error) {
+	relativePath, err := localExportDownloadRelativePath(downloadPath)
+	if err != nil {
+		return nil, err
+	}
+	return OpenLocalExportFile(relativePath)
+}
+
+// OpenLocalExportFile opens one ordinary export without following symbolic
+// links in any path component.
+func OpenLocalExportFile(relativePath string) (*LocalExportFile, error) {
+	relativePath, err := CanonicalExportRelativePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	exportRoot, err := filepath.Abs(filepath.Join(TempDir, "export"))
+	if err != nil {
+		return nil, err
+	}
+	expectedRoot, err := os.Lstat(exportRoot)
+	if err != nil || !expectedRoot.IsDir() || expectedRoot.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.Join(err, ErrUnsafeExportFile)
+	}
+	root, err := os.OpenRoot(exportRoot)
+	if err != nil {
+		return nil, err
+	}
+	actualRoot, statErr := root.Stat(".")
+	if statErr != nil || !os.SameFile(expectedRoot, actualRoot) {
+		return nil, errors.Join(statErr, ErrUnsafeExportFile, root.Close())
+	}
+	file, err := OpenRegularFileInRoot(root, filepath.FromSlash(relativePath))
+	if err != nil {
+		return nil, errors.Join(err, root.Close())
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, errors.Join(err, file.Close(), root.Close())
+	}
+	return &LocalExportFile{
+		Path: filepath.Join(exportRoot, filepath.FromSlash(relativePath)),
+		File: file,
+		Info: info,
+		root: root,
+	}, nil
+}
+
+func (opened *LocalExportFile) Close() error {
+	if opened == nil {
+		return nil
+	}
+	var fileErr, rootErr error
+	if opened.File != nil {
+		fileErr = opened.File.Close()
+		opened.File = nil
+	}
+	if opened.root != nil {
+		rootErr = opened.root.Close()
+		opened.root = nil
+	}
+	return errors.Join(fileErr, rootErr)
+}
+
+// OpenRegularFileInRoot rejects traversal, symbolic links, directories, and
+// path replacement between validation and open.
+func OpenRegularFileInRoot(root *os.Root, name string) (*os.File, error) {
+	cleanName := filepath.Clean(name)
+	if cleanName == "." || filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return nil, ErrUnsafeExportFile
+	}
+	parts := strings.Split(cleanName, string(os.PathSeparator))
+	current := ""
+	var expected os.FileInfo
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return nil, ErrUnsafeExportFile
+		}
+		current = filepath.Join(current, part)
+		info, statErr := root.Lstat(current)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, ErrUnsafeExportFile
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return nil, ErrUnsafeExportFile
+		}
+		expected = info
+	}
+	if expected == nil || !expected.Mode().IsRegular() {
+		return nil, ErrUnsafeExportFile
+	}
+	file, err := root.Open(cleanName)
+	if err != nil {
+		return nil, err
+	}
+	actual, err := file.Stat()
+	if err != nil || !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+		_ = file.Close()
+		return nil, errors.Join(err, ErrUnsafeExportFile)
+	}
+	return file, nil
+}
+
+// IsPathAtOrBelowResolved checks both lexical paths and their longest existing
+// parents so a symlink cannot redirect a new destination into a controlled root.
+func IsPathAtOrBelowResolved(root, candidate string) bool {
+	root = filepath.Clean(root)
+	candidate = filepath.Clean(candidate)
+	if candidate == root || gulu.File.IsSubPath(root, candidate) {
+		return true
+	}
+	resolvedRoot := ResolveLongestExistingParent(root)
+	resolvedCandidate := ResolveLongestExistingParent(candidate)
+	return resolvedCandidate == resolvedRoot || gulu.File.IsSubPath(resolvedRoot, resolvedCandidate)
+}
+
+// PublishFile writes source to a same-directory temporary file and replaces
+// destination only after the new file is complete and synced. On Windows the
+// final replacement is not guaranteed to be atomic by the operating system.
+func PublishFile(source io.Reader, mode fs.FileMode, destination string) (err error) {
+	destinationDir := filepath.Dir(destination)
+	if err = os.MkdirAll(destinationDir, 0755); err != nil {
+		return err
+	}
+
+	partial, err := os.CreateTemp(destinationDir, ".siyuan-export-partial-*")
+	if err != nil {
+		return err
+	}
+	partialPath := partial.Name()
+	published := false
+	defer func() {
+		if partial != nil {
+			err = errors.Join(err, partial.Close())
+		}
+		if !published {
+			if removeErr := os.Remove(partialPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				err = errors.Join(err, removeErr)
+			}
+		}
+	}()
+
+	if _, err = io.Copy(partial, source); err != nil {
+		return err
+	}
+	if err = partial.Chmod(mode.Perm()); err != nil {
+		return err
+	}
+	if err = partial.Sync(); err != nil {
+		return err
+	}
+	if err = partial.Close(); err != nil {
+		partial = nil
+		return err
+	}
+	partial = nil
+	if err = os.Rename(partialPath, destination); err != nil {
+		return err
+	}
+	published = true
+	return nil
+}
+
+// PublishFilePath publishes a regular source file without truncating an
+// existing destination before the replacement is ready.
+func PublishFilePath(sourcePath, destination string) (err error) {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, source.Close())
+	}()
+
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if !sourceInfo.Mode().IsRegular() {
+		return fmt.Errorf("publish source %q is not a regular file", sourcePath)
+	}
+	if destinationInfo, statErr := os.Stat(destination); statErr == nil {
+		if os.SameFile(sourceInfo, destinationInfo) {
+			return errors.New("publish source and destination refer to the same file")
+		}
+		if destinationInfo.IsDir() {
+			return fmt.Errorf("publish destination %q is a directory", destination)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	return PublishFile(source, sourceInfo.Mode(), destination)
+}
 
 // IsOfficeTempFile 判断是否为 Office（Word/Excel/PowerPoint/WPS）打开文档时生成的临时文件。
 // 这些文件名以 `~$` 开头，且被宿主程序独占，尝试读取会触发 filelock 的致命错误，需跳过。

@@ -46,7 +46,7 @@ func init() {
 	register(AssetTool)
 }
 
-func assetHandler(args map[string]any) (CallToolResult, error) {
+func assetHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "upload":
@@ -111,10 +111,16 @@ func assetUnused(args map[string]any) (CallToolResult, error) {
 func assetClean(args map[string]any) (CallToolResult, error) {
 	singlePath, _ := args["path"].(string)
 	if singlePath != "" {
-		ret := model.RemoveUnusedAsset(singlePath)
+		ret, err := model.RemoveUnusedAsset(singlePath)
+		if err != nil {
+			return CallToolResult{Content: []ContentItem{{Type: "text", Text: "clean unused asset failed: " + err.Error()}}, IsError: true}, nil
+		}
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("removed: %v", ret)}}}, nil
 	}
-	removed := model.RemoveUnusedAssets()
+	removed, err := model.RemoveUnusedAssets()
+	if err != nil {
+		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "clean unused assets failed: " + err.Error()}}, IsError: true}, nil
+	}
 	if len(removed) == 0 {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: "no unused assets to clean"}}}, nil
 	}

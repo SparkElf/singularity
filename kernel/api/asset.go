@@ -157,7 +157,11 @@ func setImageOCRText(c *gin.Context) {
 	util.NodeOCRQueueLock.Lock()
 	defer util.NodeOCRQueueLock.Unlock()
 	for _, id := range util.NodeOCRQueue {
-		sql.IndexNodeQueue(id)
+		if err := sql.IndexNodeQueue(id, ""); err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
 	}
 	util.NodeOCRQueue = nil
 }
@@ -228,7 +232,13 @@ func getDocImageAssets(c *gin.Context) {
 	}
 
 	id := arg["id"].(string)
-	assets, err := model.DocImageAssets(id)
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	assets, err := model.DocImageAssetsInBox(id, boxID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -260,7 +270,13 @@ func getDocAssets(c *gin.Context) {
 		retainQueryStr = arg["retainQueryStr"].(bool)
 	}
 
-	assets, err := model.DocAssets(id, retainQueryStr)
+	boxID, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	assets, err := model.DocAssetsInBox(id, retainQueryStr, boxID)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -295,40 +311,10 @@ func setFileAnnotation(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
-	if "{}" == data {
-		if err = filelock.Remove(writePath); err != nil {
-			ret.Code = -1
-			ret.Msg = err.Error()
-			return
-		}
-	} else {
-		// 加密笔记本的 .sya 写盘前必须加密；加密笔记本未解锁时拒绝写入（fail-closed，避免明文落盘）
-		writeData := []byte(data)
-		if boxID := model.ExtractBoxIDFromAssetsPath(writePath); boxID != "" && model.IsEncryptedBox(boxID) {
-			model.HoldBoxReadLock(boxID)
-			defer model.ReleaseBoxReadLock(boxID)
-			dek, dekErr := model.GetDEKIfUnlocked(boxID)
-			if dekErr != nil {
-				ret.Code = -1
-				ret.Msg = dekErr.Error()
-				return
-			}
-			enc, encErr := model.EncryptAsset(boxID, filepath.Base(writePath), dek, writeData)
-			if encErr != nil {
-				ret.Code = -1
-				ret.Msg = encErr.Error()
-				return
-			}
-			writeData = enc
-		}
-		if err = filelock.WriteFile(writePath, writeData); err != nil {
-			ret.Code = -1
-			ret.Msg = err.Error()
-			return
-		}
+	if err = model.CommitFileAnnotation(writePath, []byte(data), data == "{}"); err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 	}
-
-	model.IncSync()
 }
 
 func getFileAnnotation(c *gin.Context) {
@@ -362,14 +348,18 @@ func getFileAnnotation(c *gin.Context) {
 	}
 	// 加密笔记本的 .sya 读盘后必须解密；未解锁时拒绝返回（fail-closed，避免返回密文或误判）
 	if boxID := model.ExtractBoxIDFromAssetsPath(readPath); boxID != "" && model.IsEncryptedBox(boxID) {
-		model.HoldBoxReadLock(boxID)
-		defer model.ReleaseBoxReadLock(boxID)
+		if err = RegisterEncryptedResponse(c, boxID); err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
 		dek, dekErr := model.GetDEKIfUnlocked(boxID)
 		if dekErr != nil {
 			ret.Code = -1
 			ret.Msg = dekErr.Error()
 			return
 		}
+		defer clear(dek)
 		plain, decErr := model.DecryptAsset(boxID, filepath.Base(readPath), dek, data)
 		if decErr != nil {
 			ret.Code = -1
@@ -405,7 +395,12 @@ func removeUnusedAsset(c *gin.Context) {
 	}
 
 	p := arg["path"].(string)
-	asset := model.RemoveUnusedAsset(p)
+	asset, err := model.RemoveUnusedAsset(p)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	ret.Data = map[string]any{
 		"path": asset,
 	}
@@ -415,7 +410,12 @@ func removeUnusedAssets(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
 
-	paths := model.RemoveUnusedAssets()
+	paths, err := model.RemoveUnusedAssets()
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	ret.Data = map[string]any{
 		"paths": paths,
 	}

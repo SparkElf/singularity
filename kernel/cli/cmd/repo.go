@@ -23,8 +23,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/88250/lute/ast"
 	"github.com/siyuan-note/siyuan/kernel/model"
-	"github.com/siyuan-note/siyuan/kernel/treenode"
 
 	"github.com/spf13/cobra"
 )
@@ -274,17 +274,21 @@ var repoFileRollbackCmd = &cobra.Command{
 		if id == "" {
 			return fmt.Errorf("--id is required")
 		}
+		notebook, _ := cmd.Flags().GetString("notebook")
+		if !cmd.Flags().Changed("notebook") {
+			return fmt.Errorf("--notebook is required; use an empty value only for a workspace-global file")
+		}
+		if notebook != "" && !ast.IsNodeIDPattern(notebook) {
+			return fmt.Errorf("%w: notebook", model.ErrInvalidID)
+		}
 
 		if dryRun {
 			fmt.Printf("[dry-run] Would rollback file %s from snapshot\n", id)
 			return nil
 		}
 
-		if err := model.RollbackRepoSnapshotFile(id); err != nil {
+		if err := model.RollbackRepoSnapshotFile(id, notebook); err != nil {
 			return err
-		}
-		if bt := treenode.GetBlockTree(id); bt != nil {
-			model.AppendPushReloadProtyleEntry(bt.RootID)
 		}
 		fmt.Println("ok")
 		return nil
@@ -350,9 +354,9 @@ func printDiffFileTable(files []*model.DiffFile) {
 		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "FILE\tTITLE\tPATH\tHSIZE\tUPDATED")
+	fmt.Fprintln(w, "FILE\tNOTEBOOK\tTITLE\tPATH\tHSIZE\tUPDATED")
 	for _, f := range files {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", f.FileID, f.Title, f.Path, f.HSize, f.Updated)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\n", f.FileID, f.Notebook, f.Title, f.Path, f.HSize, f.Updated)
 	}
 	w.Flush()
 }
@@ -377,6 +381,7 @@ func init() {
 
 	repoFileGetCmd.Flags().String("id", "", "file ID (content hash)")
 	repoFileGetCmd.Flags().String("output", "", "output file path (default: stdout)")
+	repoFileRollbackCmd.Flags().String("notebook", "", "owner notebook ID (explicit empty value for a workspace-global file)")
 
 	repoFileRollbackCmd.Flags().String("id", "", "file ID to rollback")
 

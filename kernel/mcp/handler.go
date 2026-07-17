@@ -27,7 +27,7 @@ var supportedProtocolVersions = map[string]bool{
 	"2026-07-28": true,
 }
 
-func processRequest(req *JsonRpcRequest, session *Session, protocolVersion string) any {
+func processRequest(req *JsonRpcRequest, session *Session, protocolVersion string, callContext tools.CallContext) any {
 	isNotification := req.ID == nil
 
 	switch req.Method {
@@ -61,7 +61,7 @@ func processRequest(req *JsonRpcRequest, session *Session, protocolVersion strin
 		if isNotification {
 			return nil
 		}
-		return handleToolsCall(req)
+		return handleToolsCall(req, callContext)
 
 	default:
 		if isNotification {
@@ -75,7 +75,7 @@ func processRequest(req *JsonRpcRequest, session *Session, protocolVersion strin
 	}
 }
 
-func processRequest2026(req *JsonRpcRequest) any {
+func processRequest2026(req *JsonRpcRequest, callContext tools.CallContext) any {
 	isNotification := req.ID == nil
 
 	switch req.Method {
@@ -105,7 +105,7 @@ func processRequest2026(req *JsonRpcRequest) any {
 		if isNotification {
 			return nil
 		}
-		return handleToolsCall(req)
+		return handleToolsCall(req, callContext)
 
 	default:
 		if isNotification {
@@ -156,7 +156,7 @@ func handleToolsList(id any) *JsonRpcResponse {
 	}
 }
 
-func handleToolsCall(req *JsonRpcRequest) any {
+func handleToolsCall(req *JsonRpcRequest, callContext tools.CallContext) any {
 	params, ok := req.Params.(map[string]any)
 	if !ok {
 		return &JsonRpcErrorResponse{
@@ -192,7 +192,7 @@ func handleToolsCall(req *JsonRpcRequest) any {
 		toolArgs = map[string]any{}
 	}
 
-	result, err := t.Handler(toolArgs)
+	result, err := t.Handler(callContext, toolArgs)
 	if err != nil {
 		return &JsonRpcResponse{
 			JsonRpc: "2.0",

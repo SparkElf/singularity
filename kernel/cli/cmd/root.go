@@ -54,7 +54,9 @@ var rootCmd = &cobra.Command{
 			return nil
 		}
 		model.FlushTxQueue()
-		sql.FlushQueue()
+		if err := sql.FlushQueue(); err != nil {
+			return fmt.Errorf("flush database queue: %w", err)
+		}
 		return nil
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -107,7 +109,9 @@ var rootCmd = &cobra.Command{
 		util.CLILogLevel = effectiveLevel
 
 		model.InitConf()
-		sql.InitDatabase(false)
+		if err := sql.InitDatabase(false); err != nil {
+			return fmt.Errorf("initialize database: %w", err)
+		}
 		sql.InitHistoryDatabase(false)
 		sql.InitAssetContentDatabase(false)
 		sql.SetCaseSensitive(model.Conf.Search.CaseSensitive)

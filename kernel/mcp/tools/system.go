@@ -40,7 +40,7 @@ func init() {
 	register(SystemTool)
 }
 
-func systemHandler(args map[string]any) (CallToolResult, error) {
+func systemHandler(_ CallContext, args map[string]any) (CallToolResult, error) {
 	action, _ := args["action"].(string)
 	switch action {
 	case "version":

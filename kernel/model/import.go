@@ -345,7 +345,9 @@ func ImportSY(zipPath, boxID, toPath string) (err error) {
 
 			// 关联数据库和块
 			avNodes := tree.Root.ChildrenByType(ast.NodeAttributeView)
-			av.BatchUpsertBlockRel(avNodes)
+			if err = av.BatchUpsertBlockRelInBox(avNodes, attributeViewStoreBoxID(boxID)); err != nil {
+				return fmt.Errorf("persist imported attribute view mirror index for notebook [%s]: %w", boxID, err)
+			}
 		}
 
 		// 如果数据库中绑定的块不在导入的文档中，则需要单独更新这些绑定块的属性
@@ -353,12 +355,14 @@ func ImportSY(zipPath, boxID, toPath string) (err error) {
 		for _, avID := range avIDs {
 			attrViewIDs = append(attrViewIDs, avID)
 		}
-		updateBoundBlockAvsAttribute(attrViewIDs)
+		if err = updateBoundBlockAvsAttribute(attrViewIDs, boxID); err != nil {
+			return fmt.Errorf("update imported attribute view bindings for notebook [%s]: %w", boxID, err)
+		}
 
 		// 插入关联关系 https://github.com/siyuan-note/siyuan/issues/11628
 		relationAvs := map[string]string{}
 		for _, avID := range avIDs {
-			attrView, _ := av.ParseAttributeView(avID)
+			attrView, _ := av.ParseAttributeViewInBox(avID, attributeViewStoreBoxID(boxID))
 			if nil == attrView {
 				continue
 			}
@@ -371,7 +375,9 @@ func ImportSY(zipPath, boxID, toPath string) (err error) {
 		}
 
 		for srcAvID, destAvID := range relationAvs {
-			av.UpsertAvBackRel(srcAvID, destAvID)
+			if err = av.UpsertAvBackRelInBox(srcAvID, destAvID, attributeViewStoreBoxID(boxID)); err != nil {
+				return fmt.Errorf("persist imported attribute view relation index for notebook [%s]: %w", boxID, err)
+			}
 		}
 	}
 
@@ -610,19 +616,15 @@ func ImportSY(zipPath, boxID, toPath string) (err error) {
 					ext := filepath.Ext(originalName)
 					blockID := ast.NewNodeID()
 					diskName := encryptedAssetName(ext, blockID)
-					// 映射写入失败则不写 asset，避免产出"孤儿密文 asset 无映射"（详见设计文档 §7）
-					if mapErr := writeAssetNameMapping(boxID, diskName, originalName); mapErr != nil {
-						return mapErr
-					}
-					assetNameMap[originalName] = diskName
 					// 读取明文内容 → 加密 → 写入脱敏文件名
 					src, readErr := filelock.ReadFile(path)
 					if readErr != nil {
 						return readErr
 					}
-					if err = writeAssetFile(filepath.Join(boxAssetsDir, diskName), bytes.NewReader(src), boxID); err != nil {
+					if err = writeAssetFile(filepath.Join(boxAssetsDir, diskName), bytes.NewReader(src), boxID, originalName); err != nil {
 						return err
 					}
+					assetNameMap[originalName] = diskName
 					return nil
 				})
 				if err != nil {
@@ -743,20 +745,26 @@ func ImportSY(zipPath, boxID, toPath string) (err error) {
 		absPath := filepath.Join(targetDir, treePath)
 		p := strings.TrimPrefix(absPath, boxAbsPath)
 		p = filepath.ToSlash(p)
-		tree, err := filesys.LoadTree(boxID, p, luteEngine)
-		if err != nil {
-			logging.LogErrorf("load tree [%s] failed: %s", treePath, err)
+		tree, loadErr := filesys.LoadTree(boxID, p, luteEngine)
+		if loadErr != nil {
+			logging.LogErrorf("load tree [%s] failed: %s", treePath, loadErr)
 			continue
 		}
 
 		// 加密笔记本：更新文档内的 assets 引用路径（原始名 → 脱敏名）
 		if IsEncryptedBox(boxID) && 0 < len(assetNameMap) {
 			updateImportedAssetRefs(tree, assetNameMap)
-			indexWriteTreeIndexQueue(tree)
+			if err = indexWriteTreeIndexQueue(tree); err != nil {
+				return
+			}
 		}
 
-		treenode.IndexBlockTree(tree)
-		sql.IndexTreeQueue(tree)
+		if err = treenode.IndexBlockTree(tree); err != nil {
+			return fmt.Errorf("persist imported blocktree index for tree [%s/%s]: %w", tree.Box, tree.Path, err)
+		}
+		if err = sql.IndexTreeQueue(tree); err != nil {
+			return
+		}
 		util.PushEndlessProgress(Conf.language(73) + " " + fmt.Sprintf(Conf.language(70), tree.Root.IALAttr("title")))
 	}
 
@@ -775,6 +783,7 @@ func writeImportedTree(boxID, syPath, newSyPath, relPath string, data []byte) er
 		if err != nil {
 			return errors.New(Conf.Language(314))
 		}
+		defer zeroAndClear(dek)
 		data, err = EncryptFile(boxID, relPath, dek, data)
 		if err != nil {
 			return err
@@ -1161,18 +1170,13 @@ func ImportFromLocalPath(boxID, localPath string, toPath string) (err error) {
 						ext := filepath.Ext(baseName)
 						blockID := ast.NewNodeID()
 						name = encryptedAssetName(ext, blockID)
-						// 映射写入失败则不写 asset，避免产出"孤儿密文 asset 无映射"（详见设计文档 §7）
-						if mapErr := writeAssetNameMapping(boxID, name, baseName); mapErr != nil {
-							logging.LogErrorf("write asset name mapping for [%s] failed: %s", baseName, mapErr)
-							return ast.WalkContinue
-						}
 						assetTargetPath := filepath.Join(assetDirPath, name)
 						src, readErr := filelock.ReadFile(absolutePath)
 						if readErr != nil {
 							logging.LogErrorf("read asset [%s] failed: %s", absolutePath, readErr)
 							return ast.WalkContinue
 						}
-						if err = writeAssetFile(assetTargetPath, bytes.NewReader(src), boxID); err != nil {
+						if err = writeAssetFile(assetTargetPath, bytes.NewReader(src), boxID, baseName); err != nil {
 							logging.LogErrorf("write encrypted asset [%s] failed: %s", assetTargetPath, err)
 							return ast.WalkContinue
 						}
@@ -1318,18 +1322,13 @@ func ImportFromLocalPath(boxID, localPath string, toPath string) (err error) {
 					ext := filepath.Ext(baseName)
 					blockID := ast.NewNodeID()
 					name = encryptedAssetName(ext, blockID)
-					// 映射写入失败则不写 asset，避免产出"孤儿密文 asset 无映射"（详见设计文档 §7）
-					if mapErr := writeAssetNameMapping(boxID, name, baseName); mapErr != nil {
-						logging.LogErrorf("write asset name mapping for [%s] failed: %s", baseName, mapErr)
-						return ast.WalkContinue
-					}
 					assetTargetPath := filepath.Join(assetDirPath, name)
 					src, readErr := filelock.ReadFile(absolutePath)
 					if readErr != nil {
 						logging.LogErrorf("read asset [%s] failed: %s", absolutePath, readErr)
 						return ast.WalkContinue
 					}
-					if err = writeAssetFile(assetTargetPath, bytes.NewReader(src), boxID); err != nil {
+					if err = writeAssetFile(assetTargetPath, bytes.NewReader(src), boxID, baseName); err != nil {
 						logging.LogErrorf("write encrypted asset [%s] failed: %s", assetTargetPath, err)
 						return ast.WalkContinue
 					}
@@ -1588,7 +1587,6 @@ func processBase64Img(n *ast.Node, dest string, assetDirPath, boxID string) {
 }
 
 // encryptBoxAVFiles 把临时目录中的 AV 定义文件加密写入加密笔记本级目录。
-// 写入后通过 SetAVBoxID 建立 AV 归属映射，确保后续 mirror/relation 操作正确路由。
 func encryptBoxAVFiles(boxID, storageAvDir string) error {
 	if !IsEncryptedBox(boxID) || !gulu.File.IsExist(storageAvDir) {
 		return nil
@@ -1609,8 +1607,6 @@ func encryptBoxAVFiles(boxID, storageAvDir string) error {
 			return readErr
 		}
 		avID := strings.TrimSuffix(d.Name(), ".json")
-		// 加密写入前建立 box 映射，mirror/relation 操作即可正确路由
-		av.SetAVBoxID(avID, boxID)
 		enc, encErr := av.EncryptAVData(boxID, avID, src)
 		if encErr != nil {
 			return encErr

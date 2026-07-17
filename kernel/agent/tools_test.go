@@ -18,10 +18,27 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/siyuan-note/siyuan/kernel/mcp/tools"
 )
+
+func TestConvertFrontendSchemaIncludesOpenDocumentNotebookIdentity(t *testing.T) {
+	out := convertSchema(tools.FrontendTool.InputSchema).(map[string]any)
+	props := out["properties"].(map[string]any)
+	notebook, ok := props["notebookId"].(map[string]any)
+	if !ok {
+		t.Fatalf("frontend schema properties = %#v, want notebookId", props)
+	}
+	if notebook["type"] != "string" {
+		t.Fatalf("frontend notebookId schema = %#v, want string", notebook)
+	}
+	description, _ := notebook["description"].(string)
+	if !strings.Contains(description, "required for open_document") {
+		t.Fatalf("frontend notebookId description = %q, want open_document requirement", description)
+	}
+}
 
 func TestConvertSchemaZodOptionalFields(t *testing.T) {
 	schema := tools.ToolSchema{

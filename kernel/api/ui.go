@@ -17,6 +17,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/88250/gulu"
@@ -48,8 +49,19 @@ func reloadProtyle(c *gin.Context) {
 		return
 	}
 
+	if _, provided := arg["notebook"]; !provided {
+		ret.Code = -1
+		ret.Msg = fmt.Errorf("%w: notebook", model.ErrInvalidID).Error()
+		return
+	}
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
 	id := arg["id"].(string)
-	model.ReloadProtyle(id)
+	model.ReloadProtyle(id, model.TransactionNotebookForBox(notebook))
 }
 
 func reloadAttributeView(c *gin.Context) {
@@ -61,8 +73,17 @@ func reloadAttributeView(c *gin.Context) {
 		return
 	}
 
-	id := arg["id"].(string)
-	model.ReloadAttrView(id)
+	var id string
+	if !util.ParseJsonArgs(arg, ret, util.BindJsonArg("id", &id, true, true)) {
+		return
+	}
+	notebook, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	model.ReloadAttrViewInBox(id, notebook)
 }
 
 func reloadUI(c *gin.Context) {

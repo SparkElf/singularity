@@ -128,7 +128,7 @@ func updateRootContent(tx *sql.Tx, content, updated, ialContent, id string) (err
 	if err = execStmtTx(tx, stmt, content, content, updated, ialContent, id); err != nil {
 		return
 	}
-	removeBlockCache(id)
+	registerBlockCacheInvalidation(tx, id)
 	cache.RemoveBlockIAL(id)
 	return
 }
@@ -136,21 +136,18 @@ func updateRootContent(tx *sql.Tx, content, updated, ialContent, id string) (err
 func updateBlockContent(tx *sql.Tx, block *Block) (err error) {
 	var rowID int64
 	if rowID, err = blockRowIDByBlockID(tx, block.ID); err != nil {
-		tx.Rollback()
 		return
 	}
 	stmt := "UPDATE blocks_fts SET content = ? WHERE rowid = ?"
 	if err = execStmtTx(tx, stmt, block.Content, rowID); err != nil {
-		tx.Rollback()
 		return
 	}
 	stmt = "UPDATE blocks SET content = ? WHERE id = ?"
 	if err = execStmtTx(tx, stmt, block.Content, block.ID); err != nil {
-		tx.Rollback()
 		return
 	}
 
-	putBlockCache(block)
+	registerBlockCacheInvalidation(tx, block.ID)
 	return
 }
 
@@ -160,9 +157,12 @@ func indexNode(tx *sql.Tx, id, boxID string) (err error) {
 		return
 	}
 
-	tree, _ := filesys.LoadTree(bt.BoxID, bt.Path, luteEngine)
+	tree, err := filesys.LoadTree(bt.BoxID, bt.Path, luteEngine)
+	if err != nil {
+		return fmt.Errorf("load index node tree [%s/%s]: %w", bt.BoxID, bt.Path, err)
+	}
 	if nil == tree {
-		return
+		return fmt.Errorf("load index node tree [%s/%s]: tree is nil", bt.BoxID, bt.Path)
 	}
 
 	node := treenode.GetNodeInTree(tree, id)
@@ -174,19 +174,17 @@ func indexNode(tx *sql.Tx, id, boxID string) (err error) {
 	content = strings.ReplaceAll(content, editor.Zwsp, "")
 	var rowID int64
 	if rowID, err = blockRowIDByBlockID(tx, id); err != nil {
-		tx.Rollback()
 		return
 	}
 	stmt := "UPDATE blocks_fts SET content = ? WHERE rowid = ?"
 	if err = execStmtTx(tx, stmt, content, rowID); err != nil {
-		tx.Rollback()
 		return
 	}
 	stmt = "UPDATE blocks SET content = ? WHERE id = ?"
 	if err = execStmtTx(tx, stmt, content, id); err != nil {
-		tx.Rollback()
 		return
 	}
+	registerBlockCacheInvalidation(tx, id)
 	return
 }
 

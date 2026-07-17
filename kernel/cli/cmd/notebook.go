@@ -160,7 +160,9 @@ var notebookOpenCmd = &cobra.Command{
 			util.PushEvent(evt)
 		}
 		time.Sleep(1 * time.Second)
-		sql.FlushQueue()
+		if err = sql.FlushQueue(); err != nil {
+			return err
+		}
 		fmt.Println(id)
 		return nil
 	},
@@ -180,9 +182,13 @@ var notebookCloseCmd = &cobra.Command{
 			return nil
 		}
 
-		model.Unmount(id)
+		if err := model.Unmount(id); err != nil {
+			return err
+		}
 		time.Sleep(1 * time.Second)
-		sql.FlushQueue()
+		if err := sql.FlushQueue(); err != nil {
+			return err
+		}
 		fmt.Println(id)
 		return nil
 	},
