@@ -1,4 +1,5 @@
 import {isSupportCSSHL} from "../render/searchMarkRender";
+import {disposeTooltip} from "../ui/tooltip";
 
 const hideProtyleUtility = (protyle: IProtyle) => {
     const toolbar = protyle.toolbar;
@@ -26,6 +27,7 @@ export const destroy = (protyle: IProtyle) => {
     protyle.destroyed = true;
     protyle.uiEventController?.abort();
     protyle.editors.unregister(protyle);
+    disposeTooltip(protyle);
     hideProtyleUtility(protyle);
     protyle.toolbar?.destroy();
     if (isSupportCSSHL()) {

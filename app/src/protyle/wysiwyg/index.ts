@@ -87,7 +87,7 @@ import {mathRender} from "../render/mathRender";
 import {editAssetItem} from "../render/av/asset";
 import {img3115} from "../../boot/compatibleVersion";
 import {globalClickHideMenu} from "../../boot/globalEvent/click";
-import {hideTooltip} from "../../dialog/tooltip";
+import {hideTooltip} from "../ui/tooltip";
 import {openGalleryItemMenu} from "../render/av/gallery/util";
 import {clearSelect} from "../util/clear";
 import {chartRender} from "../render/chartRender";
@@ -2617,7 +2617,7 @@ export class WYSIWYG {
 
         let preventGetTopHTML = false;
         this.element.addEventListener("mousewheel", (event: WheelEvent) => {
-            hideTooltip();
+            hideTooltip(protyle);
             // https://ld246.com/article/1648865235549
             // 不能使用上一版本的 timeStamp，否则一直滚动将导致间隔不够 https://ld246.com/article/1662852664926
             if (!preventGetTopHTML && !protyle.scroll.element.classList.contains("fn__none")) {

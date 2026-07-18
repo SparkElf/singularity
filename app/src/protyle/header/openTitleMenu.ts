@@ -9,7 +9,7 @@ import {isEncryptedBox} from "../../util/pathName";
 import {quickMakeCard} from "../../card/makeCard";
 import {emitProtylePluginMenu} from "../util/plugin";
 import * as dayjs from "dayjs";
-import {hideTooltip} from "../../dialog/tooltip";
+import {hideTooltip} from "../ui/tooltip";
 import {transferBlockRef} from "../../menus/block";
 import {addEditorToDatabase} from "../render/av/addToDatabase";
 import {hasTopClosestByClassName} from "../util/hasClosest";
@@ -17,7 +17,7 @@ import {showMessage} from "../../dialog/message";
 import {removeZWJ} from "../util/normalizeText";
 
 export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: string) => {
-    hideTooltip();
+    hideTooltip(protyle);
     if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
         window.siyuan.menus.menu.element.getAttribute("data-name") === Constants.MENU_TITLE) {
         window.siyuan.menus.menu.remove();
