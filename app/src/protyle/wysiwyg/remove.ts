@@ -20,18 +20,15 @@ import {preventScroll} from "../scroll/preventScroll";
 import {hideElements} from "../ui/hideElements";
 import {Constants} from "../../constants";
 import {scrollCenter} from "../util/highlightById";
-import {isMobile} from "../../util/functions";
+import {isNarrowViewport} from "../util/browserPlatform";
 import {mathRender} from "../render/mathRender";
 import {hasClosestBlock, hasClosestByClassName, isInEmbedBlock} from "../util/hasClosest";
-import {getInstanceById} from "../../layout/util";
-import {Tab} from "../../layout/Tab";
-import {Backlink} from "../../layout/dock/Backlink";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {onGet} from "../util/onGet";
 import {setFold} from "../util/blockFold";
-import {isEncryptedBox} from "../../util/pathName";
+import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "../util/contentLoad";
 
 export const removeBlock = async (protyle: IProtyle, blockElement: Element, range: Range, type: "Delete" | "Backspace" | "remove") => {
+    const identity = protyleContentIdentity(protyle);
     protyle.observerLoad?.disconnect();
     // 删除后，防止滚动条滚动后调用 get 请求，因为返回的请求已查找不到内容块了
     preventScroll(protyle);
@@ -95,9 +92,13 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 sideIsNext = false;
             }
             if (topElement.getAttribute("data-type") === "NodeHeading" && topElement.getAttribute("fold") === "1") {
-                const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
+                const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                     id: topElement.getAttribute("data-node-id"),
                     notebook: protyle.notebookId,
+                }, {
+                    identity,
+                    intent: "read",
+                    signal: protyle.requestSignal,
                 });
                 deletes.push(...foldTransaction.data.doOperations.slice(1));
                 foldTransaction.data.undoOperations.forEach((operationItem: IOperation, index: number) => {
@@ -114,9 +115,13 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     foldPreviousBlockElement.getAttribute("fold") === "1") {
                     const foldId = foldPreviousBlockElement.getAttribute("data-node-id");
                     if (!unfoldData[foldId]) {
-                        const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
+                        const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
                             notebook: protyle.notebookId,
+                        }, {
+                            identity,
+                            intent: "read",
+                            signal: protyle.requestSignal,
                         });
                         unfoldData[foldId] = {
                             element: foldPreviousBlockElement,
@@ -140,9 +145,13 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     previousBlockElement.getAttribute("fold") === "1") {
                     const foldId = previousBlockElement.getAttribute("data-node-id");
                     if (!unfoldData[foldId]) {
-                        const foldTransaction = await fetchSyncPost("/api/block/getHeadingDeleteTransaction", {
+                        const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
                             notebook: protyle.notebookId,
+                        }, {
+                            identity,
+                            intent: "read",
+                            signal: protyle.requestSignal,
                         });
                         unfoldData[foldId] = {
                             element: previousBlockElement,
@@ -274,24 +283,6 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
         }
 
         hideElements(["util"], protyle);
-        if (!sideElement) {
-            const backlinkElement = hasClosestByClassName(protyle.element, "sy__backlink", true);
-            if (backlinkElement) {
-                const backLinkTab = getInstanceById(backlinkElement.getAttribute("data-id"), window.siyuan.layout.layout);
-                if (backLinkTab instanceof Tab && backLinkTab.model instanceof Backlink) {
-                    const editors = backLinkTab.model.editors;
-                    editors.find((item, index) => {
-                        if (item.protyle.element === protyle.element) {
-                            item.destroy();
-                            editors.splice(index, 1);
-                            item.protyle.element.previousElementSibling.remove();
-                            item.protyle.element.remove();
-                            return true;
-                        }
-                    });
-                }
-            }
-        }
         // https://github.com/siyuan-note/siyuan/issues/16767
         setTimeout(() => {
             if (!document.contains(protyle.element)) {
@@ -304,18 +295,23 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 const getDocParam: IObject = {
                     id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                     mode: 2,
+                    notebook: protyle.notebookId,
                     size: protyle.settings.editor.dynamicLoadBlocks,
                 };
-                if (isEncryptedBox(protyle.notebookId)) {
-                    getDocParam.notebook = protyle.notebookId;
-                }
-                fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                    onGet({
-                        data: getResponse,
-                        protyle,
-                        action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
-                    });
-                });
+                const load = beginProtyleContentLoad(protyle);
+                void requestProtyleContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam, load)
+                    .then((getResponse) => {
+                        if (!load.isCurrent()) {
+                            return;
+                        }
+                        onGet({
+                            data: getResponse,
+                            protyle,
+                            action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
+                            load,
+                        });
+                    })
+                    .catch((error) => console.error("[protyle.transport] post-delete content load failed", error));
             }
         }, Constants.TIMEOUT_COUNT);// 需等待滚动阻塞、后台处理完成。否则会加载已删除的内容
         return;
@@ -483,7 +479,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
     const parentElement = hasClosestBlock(getParentBlock(blockElement));
     const editableElement = getContenteditableElement(blockElement);
     let previousLastElement = getLastBlock(previousElement) as HTMLElement;
-    if (range.toString() === "" && isMobile() && previousLastElement && previousLastElement.classList.contains("hr") && getSelectionOffset(editableElement).start === 0) {
+    if (range.toString() === "" && isNarrowViewport() && previousLastElement && previousLastElement.classList.contains("hr") && getSelectionOffset(editableElement).start === 0) {
         transaction(protyle, [{
             action: "delete",
             id: previousLastElement.getAttribute("data-node-id"),
