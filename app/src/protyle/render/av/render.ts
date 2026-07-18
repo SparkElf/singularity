@@ -135,6 +135,7 @@ const getTableHTMLs = (
     virtualData: IAVVirtualData,
     fileIcon: string,
     localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
     let calcHTML = "";
     let contentHTML = '<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div></div>';
@@ -215,7 +216,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column, localization) |
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon, localization});
+        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon, localization, protyle});
     });
     return `${contentHTML}<div class="av__row--util${data.rowCount > data.rows.length ? " av__readonly--show" : ""}">
     <div class="av__colsticky">
@@ -270,7 +271,7 @@ const renderGroupTable = (options: ITableOptions) => {
     options.data.view.groups.forEach((group: IAVTable) => {
         if (group.groupHidden === 0) {
             avBodyHTML += `${getGroupTitleHTML(group, group.rowCount, options.protyle.localization)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>`;
         }
     });
     if (options.renderAll) {
@@ -582,7 +583,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             continue;
         }
         const avBodyHTML = `<div class="av__body" data-group-id="" data-page-size="${view.pageSize}" style="float: left">
-    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file, protyle.localization)}
+    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file, protyle.localization, protyle)}
 </div>`;
         if (renderAll) {
             e.firstElementChild.outerHTML = `<div class="av__container">

@@ -5,6 +5,8 @@ import {Menu} from "../../plugin/Menu";
 import {isMobile} from "../../util/functions";
 import {Constants} from "../../constants";
 import {openEmojiPanel, unicode2Emoji} from "../../emoji";
+import {escapeAttr} from "../../util/escape";
+import {resolveProtyleEmojiPath} from "../util/emojiPath";
 
 export const updateCalloutType = (blockElements: HTMLElement[], protyle: IProtyle) => {
     if (blockElements.length === 0) {
@@ -121,7 +123,7 @@ export const updateCalloutType = (blockElements: HTMLElement[], protyle: IProtyl
             if (unicode.startsWith("api/icon/getDynamicIcon")) {
                 emojiHTML = `<img class="callout-img" src="${unicode}"/>`;
             } else if (unicode.indexOf(".") > -1) {
-                emojiHTML = `<img class="callout-img" src="/emojis/${unicode}">`;
+                emojiHTML = `<img class="callout-img" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}">`;
             } else {
                 emojiHTML = unicode2Emoji(unicode);
             }

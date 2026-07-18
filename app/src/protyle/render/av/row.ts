@@ -17,11 +17,11 @@ import {isCustomAttr} from "./blockAttr";
 import {getColIconByType, getColNameByType} from "./col";
 import {unicode2Emoji} from "../../../emoji";
 import {escapeAttr} from "../../../util/escape";
-import {getCompressURL} from "../../../util/image";
 import {getAVSelectStat, getAvBodyData, resetAVRowSelect, updateAVRowSelect} from "./virtualScroll";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVOverlay} from "./overlay";
 import {openAVMenu} from "./menu";
+import {resolveProtyleAssetBackground, resolveProtyleAssetSource} from "../../util/assetSource";
 
 export const getRowHTML = (options: {
     data: IAVView
@@ -31,6 +31,7 @@ export const getRowHTML = (options: {
     pinIndex?: number
     fileIcon: string
     localization: IProtyle["localization"]
+    protyle: IProtyle
 }) => {
     let html = "";
     if (options.type === "gallery") {
@@ -41,9 +42,9 @@ export const getRowHTML = (options: {
             const coverClass = "av__gallery-cover av__gallery-cover--" + kanbanData.cardAspectRatio;
             if (galleryRow.coverURL) {
                 if (galleryRow.coverURL.startsWith("background")) {
-                    html += `<div class="${coverClass}"><img class="av__gallery-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" style="${galleryRow.coverURL}"></div>`;
+                    html += `<div class="${coverClass}"><img class="av__gallery-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" style="${escapeAttr(resolveProtyleAssetBackground(options.protyle, galleryRow.coverURL))}"></div>`;
                 } else {
-                    html += `<div class="${coverClass}"><img loading="lazy" class="av__gallery-img${kanbanData.fitImage ? " av__gallery-img--fit" : ""}" src="${getCompressURL(galleryRow.coverURL)}"></div>`;
+                    html += `<div class="${coverClass}"><img loading="lazy" class="av__gallery-img${kanbanData.fitImage ? " av__gallery-img--fit" : ""}" data-src="${escapeAttr(galleryRow.coverURL)}" src="${escapeAttr(resolveProtyleAssetSource(options.protyle, galleryRow.coverURL))}"></div>`;
                 }
             } else if (galleryRow.coverContent) {
                 html += `<div class="${coverClass}"><div class="av__gallery-content">${galleryRow.coverContent}</div><div></div></div>`;
@@ -79,7 +80,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery", options.fileIcon, options.localization)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery", options.fileIcon, options.localization, options.protyle)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -113,9 +114,9 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
             const coverClass = "av__gallery-cover av__gallery-cover--" + kanbanData.cardAspectRatio;
             if (kanbanRow.coverURL) {
                 if (kanbanRow.coverURL.startsWith("background")) {
-                    html += `<div class="${coverClass}"><img class="av__gallery-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" style="${kanbanRow.coverURL}"></div>`;
+                    html += `<div class="${coverClass}"><img class="av__gallery-img" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" style="${escapeAttr(resolveProtyleAssetBackground(options.protyle, kanbanRow.coverURL))}"></div>`;
                 } else {
-                    html += `<div class="${coverClass}"><img loading="lazy" class="av__gallery-img${kanbanData.fitImage ? " av__gallery-img--fit" : ""}" src="${getCompressURL(kanbanRow.coverURL)}"></div>`;
+                    html += `<div class="${coverClass}"><img loading="lazy" class="av__gallery-img${kanbanData.fitImage ? " av__gallery-img--fit" : ""}" data-src="${escapeAttr(kanbanRow.coverURL)}" src="${escapeAttr(resolveProtyleAssetSource(options.protyle, kanbanRow.coverURL))}"></div>`;
                 }
             } else if (kanbanRow.coverContent.trim()) {
                 html += `<div class="${coverClass}"><div class="av__gallery-content">${kanbanRow.coverContent}</div><div></div></div>`;
@@ -149,7 +150,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban", options.fileIcon, options.localization)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban", options.fileIcon, options.localization, options.protyle)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -202,7 +203,7 @@ ${cell.value?.isDetached ? ' data-detached="true"' : ""}
 style="width: ${column.width || "200px"};
 ${cell.valueType === "number" ? "text-align: right;" : ""}
 ${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon, "table", options.fileIcon, options.localization)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon, "table", options.fileIcon, options.localization, options.protyle)}</div>`;
 
         if (options.pinIndex === index) {
             html += "</div>";
@@ -387,7 +388,7 @@ data-wrap="${item.dataset.wrap}"
 data-dtype="${item.dataset.dtype}" 
 style="width: ${item.style.width};${item.dataset.dtype === "number" ? "text-align: right;" : ""}" 
 ${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(colType, null), lineNumber, true, "table",
-    options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
+    options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>`;
         if (pinIndex === index) {
             cellsHTML += "</div>";
         }
@@ -440,6 +441,7 @@ ${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(
                             "table",
                             options.protyle.settings.icons.file,
                             options.protyle.localization,
+                            options.protyle,
                         );
                         renderCellAttr(cellItem, cellValue);
                     }

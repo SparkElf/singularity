@@ -151,7 +151,7 @@ export const openMenuPanel = (options: {
         } else if (options.type === "select") {
             html = getSelectHTML(fields, options.cellElements, selectState, true, options.blockElement, localization);
         } else if (options.type === "asset") {
-            html = getAssetHTML(options.cellElements, localization);
+            html = getAssetHTML(options.cellElements, localization, options.protyle);
         } else if (options.type === "edit") {
             if (options.editData) {
                 if (typeof options.editData.colData.wrap === "undefined") {

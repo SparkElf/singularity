@@ -1,6 +1,7 @@
 import {Constants} from "../constants";
 import {Hint} from "./hint";
 import {getLute} from "./render/setLute";
+import {resolveProtyleEmojiPath} from "./util/emojiPath";
 import {Preview} from "./preview";
 import {addLoading, initUI, removeLoading} from "./ui/initUI";
 import {LocalUndo, Undo} from "./undo";
@@ -619,11 +620,11 @@ export class Protyle {
 
     private init() {
         this.protyle.lute = getLute({
-            emojiSite: this.protyle.options.hint.emojiPath,
             emojis: this.protyle.options.hint.emoji,
             headingAnchor: false,
             listStyle: this.protyle.options.preview.markdown.listStyle,
             paragraphBeginningSpace: this.protyle.options.preview.markdown.paragraphBeginningSpace,
+            resolveEmojiPath: (path) => resolveProtyleEmojiPath(this.protyle, path),
             sanitize: this.protyle.options.preview.markdown.sanitize,
         }, this.settings);
 

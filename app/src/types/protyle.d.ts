@@ -133,6 +133,10 @@ interface ILuteOptions extends IMarkdownConfig {
     lazyLoadImage?: string;
 }
 
+interface IProtyleLuteOptions extends Omit<ILuteOptions, "emojiSite"> {
+    resolveEmojiPath: (path: string) => string;
+}
+
 declare class Viz {
     public static instance(): Promise<Viz>;
 

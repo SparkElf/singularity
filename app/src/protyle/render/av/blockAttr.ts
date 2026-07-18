@@ -11,11 +11,12 @@ import {openLink} from "../../../editor/openLink";
 import {editAssetItem} from "./asset";
 import {previewImages} from "../../preview/image";
 import {Constants} from "../../../constants";
-import {getCompressURL, removeCompressURL} from "../../../util/image";
+import {removeCompressURL} from "../../../util/image";
 import {beginAVDrag, currentAVDrag, endAVDrag} from "./dragState";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
 import {touchDragOwner} from "../../ui/touchDragState";
+import {resolveProtyleAssetSource} from "../../util/assetSource";
 
 const genAVRollupHTML = (value: IAVCellValue, localization: IProtyle["localization"]) => {
     let html = "";
@@ -68,6 +69,7 @@ export const genAVValueHTML = (
     value: IAVCellValue,
     fileIcon: string,
     localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
     let html = "";
     switch (value.type) {
@@ -93,7 +95,7 @@ export const genAVValueHTML = (
         case "mAsset":
             value.mAsset?.forEach(item => {
                 if (item.type === "image") {
-                    html += `<img loading="lazy" class="av__cellassetimg ariaLabel" aria-label="${escapeAriaLabel(item.content)}" src="${getCompressURL(item.content)}">`;
+                    html += `<img loading="lazy" class="av__cellassetimg ariaLabel" aria-label="${escapeAriaLabel(item.content)}" data-src="${escapeAttr(item.content)}" src="${escapeAttr(resolveProtyleAssetSource(protyle, item.content))}">`;
                 } else {
                     html += `<span class="b3-chip b3-chip--middle av__celltext--url ariaLabel" aria-label="${escapeAriaLabel(item.content)}" data-name="${escapeAttr(item.name)}" data-url="${escapeAttr(item.content)}">${escapeHtml(item.name || item.content)}</span>`;
                 }
@@ -154,7 +156,7 @@ export const genAVValueHTML = (
             break;
         case "rollup":
             value?.rollup?.contents?.forEach((item) => {
-                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item, fileIcon, localization) : genAVRollupHTML(item, localization);
+                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item, fileIcon, localization, protyle) : genAVRollupHTML(item, localization);
                 if (rollupText) {
                     html += rollupText.replace("fn__flex-1", "") + ",&nbsp;";
                 }
@@ -217,7 +219,7 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
 data-options="${item.key?.options ? escapeAttr(JSON.stringify(item.key.options)) : "[]"}" 
 ${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${localization.text("empty")}"`}
-class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0], protyle.settings.icons.file, localization)}</div>
+class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0], protyle.settings.icons.file, localization, protyle)}</div>
 </div>`;
             });
             innerHTML += `<div class="fn__hr"></div>
@@ -500,7 +502,7 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
                     protyle,
                     cellElements: [target.parentElement],
                     blockElement: hasClosestBlock(target) as HTMLElement,
-                    content: target.tagName === "IMG" ? target.getAttribute("src") : target.getAttribute("data-url"),
+                    content: target.tagName === "IMG" ? target.getAttribute("data-src") : target.getAttribute("data-url"),
                     type: target.tagName === "IMG" ? "image" : "file",
                     name: target.tagName === "IMG" ? "" : target.getAttribute("data-name"),
                     index,

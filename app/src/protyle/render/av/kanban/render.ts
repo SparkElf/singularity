@@ -43,6 +43,7 @@ const getKanbanHTML = (
     virtualData: IAVVirtualData,
     fileIcon: string,
     localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
     let galleryHTML = "";
     // body
@@ -65,6 +66,7 @@ const getKanbanHTML = (
             type: "kanban",
             fileIcon,
             localization,
+            protyle,
         });
     });
     galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${localization.text("newRow")}</div>`;
@@ -205,7 +207,7 @@ export const renderKanban = async (options: {
             }
             bodyHTML += `<div class="av__kanban-group${group.cardSize === 0 ? " av__kanban-group--small" : (group.cardSize === 2 ? " av__kanban-group--big" : "")}"${selectBg}>
     ${getKanbanTitleHTML(group, group.cardCount, options.protyle.localization)}
-    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization)}</div>
+    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>
 </div>`;
         }
     });

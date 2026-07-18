@@ -36,7 +36,6 @@ import {scrollCenter} from "../../util/highlightById";
 import {escapeHtml} from "../../../util/escape";
 import {editGalleryItem, openGalleryItemMenu} from "./gallery/util";
 import {clearSelect} from "../../util/clear";
-import {removeCompressURL} from "../../../util/image";
 import {requestBlockFold} from "../../util/blockFoldRequest";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVMenu, openAVMenu} from "./menu";
@@ -313,7 +312,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
         } else if (target.classList.contains("av__cellassetimg")) {
             previewAttrViewImages(
                 protyle,
-                removeCompressURL((target as HTMLImageElement).getAttribute("src")),
+                (target as HTMLImageElement).getAttribute("data-src"),
                 blockElement.getAttribute("data-av-id"),
                 blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
                 blockElement.querySelector('[data-type="av-search"]')?.textContent.trim() || ""
@@ -979,11 +978,11 @@ export const updateAttrViewCellAnimation = (protyle: IProtyle, cellElement: HTML
                 };
             }
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                viewType, protyle.settings.icons.file, protyle.localization);
+                viewType, protyle.settings.icons.file, protyle.localization, protyle);
             cellElement.parentElement.setAttribute("data-empty", cellValueIsEmpty(value).toString());
         } else {
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                "table", protyle.settings.icons.file, protyle.localization);
+                "table", protyle.settings.icons.file, protyle.localization, protyle);
         }
         if (hasDragFill) {
             addDragFill(cellElement, protyle.localization);

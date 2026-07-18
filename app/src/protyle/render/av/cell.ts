@@ -18,8 +18,8 @@ import {mergeAddOption} from "./select";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldIdByCellElement} from "./row";
 import {getFieldsByData} from "./view";
-import {getCompressURL, removeCompressURL} from "../../../util/image";
 import {closeAVMenu} from "./menu";
+import {resolveProtyleAssetSource} from "../../util/assetSource";
 
 const renderCellURL = (urlContent: string) => {
     let host = urlContent;
@@ -131,7 +131,7 @@ export const genCellValueByElement = (colType: TAVCol, cellElement: HTMLElement)
             const isImg = item.classList.contains("av__cellassetimg");
             mAsset.push({
                 type: isImg ? "image" : "file",
-                content: isImg ? removeCompressURL(decodeURI(item.getAttribute("src"))) : item.getAttribute("data-url"),
+                content: isImg ? item.getAttribute("data-src") : item.getAttribute("data-url"),
                 name: isImg ? "" : item.getAttribute("data-name")
             });
         });
@@ -896,7 +896,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
                 data: oldValue
             });
             if (isCustomAttr) {
-                item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
+                item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization, protyle);
             } else {
                 updateAttrViewCellAnimation(protyle, item, cellValue);
             }
@@ -941,7 +941,7 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
 };
 
 export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: boolean, type: TAVView,
-                           fileIcon: string, localization: IProtyle["localization"]) => {
+                           fileIcon: string, localization: IProtyle["localization"], protyle: IProtyle) => {
     let text = "";
     if ("template" === cellValue.type) {
         // 使用 DOMPurify 过滤危险标签和事件属性，保留安全的 HTML 格式 https://github.com/siyuan-note/siyuan/issues/18169
@@ -991,7 +991,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     } else if (cellValue.type === "mAsset") {
         cellValue?.mAsset?.forEach((item) => {
             if (item.type === "image") {
-                text += `<img loading="lazy" class="av__cellassetimg ariaLabel" aria-label="${escapeAriaLabel(item.content)}" src="${getCompressURL(encodeURI(item.content))}">`;
+                text += `<img loading="lazy" class="av__cellassetimg ariaLabel" aria-label="${escapeAriaLabel(item.content)}" data-src="${escapeAttr(item.content)}" src="${escapeAttr(resolveProtyleAssetSource(protyle, item.content))}">`;
             } else {
                 text += `<span class="b3-chip av__celltext--url ariaLabel" aria-label="${escapeAriaLabel(item.content)}" data-name="${escapeAttr(item.name)}" data-url="${escapeAttr(item.content)}">${escapeHtml(item.name || item.content)}</span>`;
             }
@@ -1005,7 +1005,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     } else if (cellValue.type === "rollup") {
         let rollupType;
         cellValue?.rollup?.contents?.forEach((item) => {
-            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon, localization) : renderRollup(item, showIcon, fileIcon, localization);
+            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon, localization, protyle) : renderRollup(item, showIcon, fileIcon, localization);
             if (rollupText) {
                 text += rollupText + (item.type === "checkbox" ? "" : ", ");
             }
@@ -1203,6 +1203,7 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
                 "table",
                 protyle.settings.icons.file,
                 protyle.localization,
+                protyle,
             );
             renderCellAttr(item.element, data);
             delete item.colId;

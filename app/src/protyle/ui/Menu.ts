@@ -13,8 +13,8 @@ export interface ProtyleDOMMenuDependencies {
     readonly requestClose: () => void;
 }
 
-const closestMenuItem = (target: EventTarget | null): HTMLElement | null =>
-    target instanceof Element ? target.closest<HTMLElement>(".b3-menu__item") : null;
+const closestMenuItem = (target: EventTarget | null): HTMLButtonElement | null =>
+    target instanceof Element ? target.closest<HTMLButtonElement>("button.b3-menu__item") : null;
 
 export class ProtyleDOMMenu implements ProtyleMenuSurface {
     public readonly element: HTMLElement;
@@ -54,6 +54,16 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
             {signal: this.controller.signal},
         );
         title.addEventListener("click", () => this.back(), {signal: this.controller.signal});
+        dependencies.portalRoot.ownerDocument.addEventListener(
+            "pointerdown",
+            (event) => this.handleOutsidePointer(event),
+            {capture: true, signal: this.controller.signal},
+        );
+        dependencies.portalRoot.ownerDocument.addEventListener(
+            "keydown",
+            (event) => this.handleKeydown(event),
+            {capture: true, signal: this.controller.signal},
+        );
     }
 
     public addItem(item: ProtyleMenuItem): HTMLElement | undefined {
@@ -146,6 +156,7 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
         if (!items || !parent) {
             return;
         }
+        parent.setAttribute("aria-expanded", "true");
         items.style.maxHeight = "";
         const parentRect = parent.getBoundingClientRect();
         const submenuRect = submenu.getBoundingClientRect();
@@ -165,7 +176,8 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
         const shown = this.element.querySelectorAll<HTMLElement>(".b3-menu__item--show");
         const current = shown.item(shown.length - 1);
         if (current) {
-            current.classList.remove("b3-menu__item--show");
+            this.collapseItem(current);
+            this.selectItem(current);
             return;
         }
         this.close();
@@ -254,8 +266,11 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
             item.bind(element);
         }
         if (item.submenu) {
+            element.setAttribute("aria-expanded", "false");
+            element.setAttribute("aria-haspopup", "menu");
             const submenu = document.createElement("div");
             submenu.className = "b3-menu__submenu";
+            submenu.setAttribute("role", "menu");
             const submenuItems = document.createElement("div");
             submenuItems.className = "b3-menu__items";
             item.submenu.forEach((child) => {
@@ -306,23 +321,189 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
     private handlePointer(event: Event): void {
         const item = closestMenuItem(event.target);
         if (!item || !this.element.contains(item) ||
-            item.classList.contains("b3-menu__item--readonly")) {
+            item.disabled || item.classList.contains("b3-menu__item--readonly")) {
             return;
         }
         this.element.querySelectorAll<HTMLElement>(".b3-menu__item--show").forEach((shown) => {
             if (shown !== item && !shown.contains(item) && !item.contains(shown)) {
-                shown.classList.remove("b3-menu__item--show");
+                this.collapseItem(shown);
             }
         });
-        this.element.querySelectorAll(".b3-menu__item--current")
-            .forEach((current) => current.classList.remove("b3-menu__item--current"));
-        item.classList.add("b3-menu__item--current");
+        this.selectItem(item, false);
         const submenu = item.querySelector<HTMLElement>(":scope > .b3-menu__submenu");
         if (submenu) {
             item.classList.add("b3-menu__item--show");
             if (!this.element.classList.contains("b3-menu--fullscreen")) {
                 this.showSubMenu(submenu);
             }
+        }
+    }
+
+    private activateCurrentItem(): boolean {
+        const current = this.currentItem();
+        if (!current) {
+            return false;
+        }
+        const submenu = current.querySelector<HTMLElement>(":scope > .b3-menu__submenu");
+        if (submenu) {
+            this.openSubmenu(current, submenu);
+            return true;
+        }
+        const control = current.querySelector<HTMLElement>(
+            ":scope > input:not(:disabled), :scope > textarea:not(:disabled), :scope > select:not(:disabled), :scope > [contenteditable='true']",
+        );
+        if (control) {
+            control.focus();
+            return true;
+        }
+        current.click();
+        return true;
+    }
+
+    private collapseItem(item: HTMLElement): void {
+        item.classList.remove("b3-menu__item--show");
+        item.setAttribute("aria-expanded", "false");
+        item.querySelectorAll(".b3-menu__item--current")
+            .forEach((current) => current.classList.remove("b3-menu__item--current"));
+        item.querySelectorAll<HTMLElement>(".b3-menu__item--show")
+            .forEach((shown) => this.collapseItem(shown));
+    }
+
+    private currentItem(): HTMLElement | null {
+        const current = this.element.querySelectorAll<HTMLElement>(".b3-menu__item--current");
+        for (let index = current.length - 1; index >= 0; index--) {
+            const item = current.item(index);
+            if (!item.closest(".fn__none") && this.hasOpenAncestors(item)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private handleKeydown(event: KeyboardEvent): void {
+        if (!this.isOpen() || !this.isTopmost()) {
+            return;
+        }
+        if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            this.close();
+            return;
+        }
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || this.isEditableTarget(event.target)) {
+            return;
+        }
+        let handled = false;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            handled = this.moveCurrent(event.key === "ArrowDown" ? 1 : -1);
+        } else if (event.key === "ArrowRight") {
+            const current = this.currentItem();
+            const submenu = current?.querySelector<HTMLElement>(":scope > .b3-menu__submenu");
+            if (current && submenu) {
+                this.openSubmenu(current, submenu);
+            }
+            handled = true;
+        } else if (event.key === "ArrowLeft") {
+            const current = this.currentItem();
+            const submenu = current?.parentElement?.parentElement;
+            const parent = submenu?.classList.contains("b3-menu__submenu")
+                ? submenu.parentElement as HTMLElement | null
+                : null;
+            if (parent) {
+                this.collapseItem(parent);
+                this.selectItem(parent);
+            }
+            handled = true;
+        } else if (event.key === "Enter" || event.key === " ") {
+            handled = this.activateCurrentItem();
+        }
+        if (handled) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    }
+
+    private handleOutsidePointer(event: PointerEvent): void {
+        if (!this.isOpen() || event.composedPath().includes(this.element)) {
+            return;
+        }
+        this.close();
+    }
+
+    private hasOpenAncestors(item: HTMLElement): boolean {
+        let submenu = item.parentElement?.parentElement;
+        while (submenu?.classList.contains("b3-menu__submenu")) {
+            const parent = submenu.parentElement;
+            if (!parent?.classList.contains("b3-menu__item--show")) {
+                return false;
+            }
+            submenu = parent.parentElement?.parentElement;
+        }
+        return true;
+    }
+
+    private isEditableTarget(target: EventTarget | null): boolean {
+        return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+    }
+
+    private isNavigable(item: HTMLElement): boolean {
+        return !item.matches(":disabled, .fn__none") && !item.closest(".fn__none") &&
+            (!item.classList.contains("b3-menu__item--readonly") || Boolean(item.querySelector(
+                "input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable='true']",
+            )));
+    }
+
+    private isOpen(): boolean {
+        return this.element.isConnected && !this.element.classList.contains("fn__none");
+    }
+
+    private isTopmost(): boolean {
+        const menus = Array.from(this.dependencies.portalRoot.children)
+            .filter((child): child is HTMLElement => child instanceof HTMLElement && child.hasAttribute("data-protyle-menu"));
+        return menus.at(-1) === this.element;
+    }
+
+    private moveCurrent(direction: 1 | -1): boolean {
+        const current = this.currentItem();
+        const items = Array.from(
+            (current?.parentElement ?? this.itemsElement).children,
+        ).filter((item): item is HTMLElement => item instanceof HTMLElement &&
+            item.classList.contains("b3-menu__item") && this.isNavigable(item));
+        if (items.length === 0) {
+            return false;
+        }
+        const currentIndex = current ? items.indexOf(current) : -1;
+        const nextIndex = currentIndex === -1
+            ? (direction === 1 ? 0 : items.length - 1)
+            : (currentIndex + direction + items.length) % items.length;
+        if (current) {
+            this.collapseItem(current);
+        }
+        this.selectItem(items[nextIndex]);
+        return true;
+    }
+
+    private openSubmenu(item: HTMLElement, submenu: HTMLElement): void {
+        item.classList.add("b3-menu__item--show");
+        item.setAttribute("aria-expanded", "true");
+        const first = Array.from(submenu.querySelector<HTMLElement>(":scope > .b3-menu__items")?.children ?? [])
+            .find((child): child is HTMLElement => child instanceof HTMLElement &&
+                child.classList.contains("b3-menu__item") && this.isNavigable(child));
+        if (first) {
+            this.selectItem(first);
+        }
+        if (!this.element.classList.contains("b3-menu--fullscreen")) {
+            this.showSubMenu(submenu);
+        }
+    }
+
+    private selectItem(item: HTMLElement, focus = true): void {
+        this.element.querySelectorAll(".b3-menu__item--current")
+            .forEach((current) => current.classList.remove("b3-menu__item--current"));
+        item.classList.add("b3-menu__item--current");
+        if (focus) {
+            item.focus({preventScroll: true});
+            item.scrollIntoView({block: "nearest"});
         }
     }
 
