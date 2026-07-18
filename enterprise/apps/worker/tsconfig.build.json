@@ -11,5 +11,7 @@
     "rootDir": "src",
     "sourceMap": true,
     "tsBuildInfoFile": null
-  }
+  },
+  "include": ["src"],
+  "exclude": ["test", "vitest.integration.config.ts", "vitest.unit.config.ts"]
 }

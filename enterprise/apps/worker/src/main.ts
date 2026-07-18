@@ -2,7 +2,6 @@ import { DatabaseRuntime } from "@singularity/database";
 
 import { runWorkerApplication } from "./application.js";
 import { loadWorkerConfiguration } from "./configuration.js";
-import { RestorePlatformModule } from "./restore-platform.module.js";
 
 const abort = new AbortController();
 const shutdown = (): void => abort.abort();
@@ -15,11 +14,6 @@ try {
   await runWorkerApplication({
     configuration,
     database,
-    restorePlatformModule: RestorePlatformModule.register(
-      configuration.restore,
-      configuration.deployments,
-      database,
-    ),
     signal: abort.signal,
   });
 } finally {

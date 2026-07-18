@@ -2,8 +2,8 @@
 title: "ADR-017: L1分享、审计、备份恢复与运行观测"
 description: "确定L1只读分享、可验证审计链、隔离恢复和后台采样的长期边界"
 author: "Codex"
-date: "2026-07-18"
-version: "1.2.0"
+date: "2026-07-19"
+version: "1.5.0"
 status: "accepted"
 tags: ["adr", "share", "audit", "backup", "observability"]
 ---
@@ -56,7 +56,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 4. 恢复只能创建新的非活动隔离空间和新的Kernel实例，禁止覆盖或合并到现有在线空间。恢复前依次验证对象摘要、清单格式、Kernel版本兼容、归档路径、条目类型、单项大小、展开总大小和文件摘要；解包过程拒绝符号链接、硬链接、设备文件和路径逃逸。
 5. 解包后Kernel在隔离目录完成结构、SQLite可打开性、`.sy`可解析性、引用索引和清单一致性检查。所有检查通过后任务进入`ready-for-activation`，仍需显式激活；任一步失败都关闭实例并删除整个恢复目标，不保留部分空间或回退到源空间。
 6. 备份不是在线读取事实源，恢复期间不向浏览器提供内容，也不以旧版本兼容、跳过文件或部分成功作为降级路径。
-7. 任务日志稳定标签`backup.job`，记录`spaceId`、任务ID、状态、对象键、校验结果和`requestId`，不记录正文、对象内容、凭证或宿主绝对路径。
+7. 任务日志稳定标签`backup.job`由`BackupSpaceHandler`和`RestoreSpaceHandler`在领域状态提交后记录；Worker启动对账发现已进入`ready-for-activation`的恢复实例丢失时，`ProcessRestoreDeployment`是该失败转移和目标删除的生产owner，并在同一事务提交后记录一次失败标签。固定字段为`taskKind`、`taskId`、`spaceId`、可选`targetSpaceId`、`status`、`objectKey`、`validationResult`、`reason`、`elapsedMs`和`requestId`。成功路径的`reason`来自显式任务`kind`，失败路径来自显式失败码；`validationResult`只使用`pending`、`passed`、`failed`或`not-completed`。恢复处理器的执行期失败和清理重放都通过恢复任务到备份的作用域关系读取权威不透明对象键；只有启动对账未重新验证对象键，因此该路径的`objectKey`记录`null`。通用Worker租约日志不重复生成该标签，日志不记录正文、对象内容、凭证、错误原文或宿主绝对路径。
 
 ### 健康与容量
 
@@ -66,7 +66,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 
 ### 恢复实例句柄生命周期
 
-1. 每个Worker进程只创建一个`RuntimeKernelDeploymentRegistry`。启动配置在canonical deployment schema解析后写入该registry；`KernelPrivateClient`和恢复平台通过Nest DI共享同一实例，不维护第二套句柄表。
+1. 每个Worker进程只创建一个`RuntimeKernelDeploymentRegistry`。启动配置在canonical deployment schema解析后写入该registry；`KernelPrivateClient`和恢复平台通过Nest DI共享同一实例，不维护第二套句柄表。`WorkerPlatformModule`是`DatabaseRuntime`、该registry、`NestWorkerJobLogger`和`WORKER_JOB_LOGGER`的唯一生命周期owner；`WorkerModule`与`RestorePlatformModule`导入同一个动态模块实例，不重复提供或关闭这些进程级资源。
 2. `ProcessRestoreDeployment`只有在归档解包完成、隔离工作区验证通过、Kernel以服务认证的`readyz`返回匹配实例身份和版本，并且运行时metadata持久化成功后，才把本地端点注册到registry。恢复处理器收到句柄后再以同一任务claim写入`ready-for-activation`。
 3. 失败恢复、过期claim和显式目标清理先从registry撤销句柄，再终止进程并删除metadata、工作区和控制面目标；撤销后新的备份或观测请求立即无法解析该实例。
 4. Worker重启只接纳metadata、工作区、进程命令行和实例环境均匹配的存活目标，并把它们重新注册到同一registry。句柄冲突或身份不一致不走fallback，启动失败并清理该目标。
@@ -76,6 +76,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
    端点和通知同一事务提交，清理反向删除端点并通知。API与Worker各自只持有
    进程内唯一`RuntimeKernelDeploymentRegistry`，不从句柄、地址或首个响应推断
    TLS profile。详见[ADR-022](0022-cross-process-kernel-endpoint-source.md)。
+6. Kernel实例创建时的`starting`是初始化值，不是状态转移，不写`kernel.lifecycle`。运维三态变更由`AccessOperationsService#setKernelState`在事务提交后记录；恢复成功或执行期失败清理由`RestoreSpaceHandler`在对应事务提交后记录；Worker启动对账的运行时丢失由`ProcessRestoreDeployment`在对账事务提交后记录。对账保留空间时记录`ready -> unavailable`；若同一事务还把恢复任务置为`failed`并删除Kernel和隔离空间，只记录最终提交结果`ready -> removed`，不记录未提交的中间`unavailable`。固定字段为`kernelInstanceId`、`spaceId`、`fromState`、`toState`、`reason`、`elapsedMs`和触发`requestId`；同态更新不记录。运维原因来自显式操作名，恢复成功原因来自显式任务`kind`，失败原因来自显式失败码；启动对账固定使用`restore-runtime-lost`，同一次对账生成的`requestId`同时关联数据库通知和日志。对账事务已移除端点或目标，重放不会重复记录。不记录错误原文、部署凭据、正文、端点或路径。
 
 ### 不在本决策范围
 

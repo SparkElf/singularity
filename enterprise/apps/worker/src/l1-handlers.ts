@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 import { Inject, Injectable } from "@nestjs/common";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
 import {
@@ -22,6 +24,7 @@ import type {
   SampleKernelJob,
   WorkerJobBase,
   WorkerJobHandler,
+  WorkerJobLogger,
   WorkerJobRecord,
 } from "./worker.js";
 import { WorkerJobError } from "./worker.js";
@@ -31,6 +34,7 @@ import {
   MAXIMUM_AUDIT_ARCHIVE_EVENT_COUNT,
   MAXIMUM_BACKUP_BYTES,
   RESTORE_DEPLOYMENT,
+  WORKER_JOB_LOGGER,
 } from "./tokens.js";
 
 export interface BackupKernelPort {
@@ -147,6 +151,14 @@ function sequenceProperty(
   return sequence;
 }
 
+type BackupBegin =
+  | { outcome: "succeeded-idempotent" }
+  | {
+      objectKey: ReturnType<typeof parseObjectKey>;
+      outcome: "execute";
+      transitioned: boolean;
+    };
+
 @Injectable()
 @HandlesWorkerJob({ kind: "backup-space" })
 export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
@@ -159,6 +171,8 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
     @Inject(MAXIMUM_BACKUP_BYTES)
     private readonly maximumBackupBytes: number,
     private readonly objects: FileObjectStore,
+    @Inject(WORKER_JOB_LOGGER)
+    private readonly logger: WorkerJobLogger,
   ) {}
 
   decode(record: WorkerJobRecord): BackupSpaceJob {
@@ -172,8 +186,31 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
   }
 
   async execute(job: BackupSpaceJob, signal: AbortSignal): Promise<void> {
+    const startedAt = performance.now();
+    let runningCommitted = false;
+    let objectKey: string | null = null;
     try {
-      const key = await this.#begin(job);
+      const begin = await this.#begin(job);
+      if (begin.outcome === "succeeded-idempotent") {
+        return;
+      }
+      const key = begin.objectKey;
+      runningCommitted = true;
+      objectKey = key;
+      if (begin.transitioned) {
+        this.logger.info({
+          elapsedMs: performance.now() - startedAt,
+          event: "backup.job",
+          objectKey,
+          reason: job.kind,
+          requestId: job.requestId,
+          spaceId: job.spaceId,
+          status: "running",
+          taskId: job.backupId,
+          taskKind: "backup",
+          validationResult: "pending",
+        });
+      }
       signal.throwIfAborted();
       const archive = await this.kernel.createBackup(job, signal);
       let stored: StoredObject;
@@ -213,6 +250,18 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
       if (count !== 1) {
         throw new WorkerJobError("backup-state-conflict", null);
       }
+      this.logger.info({
+        elapsedMs: performance.now() - startedAt,
+        event: "backup.job",
+        objectKey,
+        reason: job.kind,
+        requestId: job.requestId,
+        spaceId: job.spaceId,
+        status: "succeeded",
+        taskId: job.backupId,
+        taskKind: "backup",
+        validationResult: "passed",
+      });
     } catch (error) {
       if (signal.aborted) {
         throw error;
@@ -221,7 +270,7 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
         error instanceof WorkerJobError && error.retryAt === null
           ? null
           : retryAt(job.attempt);
-      await this.database.client.$executeRaw(
+      const transitioned = await this.database.client.$executeRaw(
         Prisma.sql`
           UPDATE "space_backups"
           SET
@@ -236,6 +285,28 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
             AND "status" IN ('queued', 'running')
         `,
       );
+      if (transitioned === 1 && (nextRetryAt === null || runningCommitted)) {
+        this.logger.warn({
+          elapsedMs: performance.now() - startedAt,
+          event: "backup.job",
+          objectKey,
+          reason:
+            error instanceof WorkerJobError
+              ? error.code
+              : "backup-execution-failed",
+          requestId: job.requestId,
+          spaceId: job.spaceId,
+          status: nextRetryAt === null ? "failed" : "queued",
+          taskId: job.backupId,
+          taskKind: "backup",
+          validationResult:
+            (error instanceof WorkerJobError &&
+              error.code === "backup-object-conflict") ||
+            (error instanceof ObjectStoreError && error.code === "corrupt-object")
+              ? "failed"
+              : "not-completed",
+        });
+      }
       if (error instanceof WorkerJobError && error.retryAt === null) {
         throw error;
       }
@@ -243,50 +314,95 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
     }
   }
 
-  async #begin(job: BackupSpaceJob) {
-    const rows = await this.database.client.$queryRaw<Array<{ objectKey: string | null }>>(
-      Prisma.sql`
-        UPDATE "space_backups"
-        SET "status" = 'running', "object_key" = COALESCE("space_backups"."object_key", ${createObjectKey()})
-        FROM "organizations" AS organization, "spaces" AS source_space
-        WHERE "space_backups"."id" = ${job.backupId}::uuid
-          AND "space_backups"."organization_id" = ${job.organizationId}::uuid
-          AND "space_backups"."source_space_id" = ${job.spaceId}::uuid
-          AND organization."id" = "space_backups"."organization_id"
-          AND source_space."id" = "space_backups"."source_space_id"
-          AND source_space."organization_id" = "space_backups"."organization_id"
-          AND organization."status" = 'active'
-          AND source_space."status" IN ('active', 'archived')
-          AND "space_backups"."status" IN ('queued', 'running')
-        RETURNING "space_backups"."object_key" AS "objectKey"
-      `,
-    );
-    const objectKey = rows[0]?.objectKey;
-    if (objectKey === undefined || objectKey === null) {
-      throw new WorkerJobError("backup-state-conflict", null);
-    }
-    return parseObjectKey(objectKey);
+  async #begin(job: BackupSpaceJob): Promise<BackupBegin> {
+    return this.database.client.$transaction(async (transaction) => {
+      const rows = await transaction.$queryRaw<
+        Array<{
+          objectKey: string | null;
+          status: "queued" | "running" | "succeeded";
+        }>
+      >(
+        Prisma.sql`
+          SELECT
+            backup."object_key" AS "objectKey",
+            backup."status"
+          FROM "space_backups" AS backup
+          INNER JOIN "organizations" AS organization
+            ON organization."id" = backup."organization_id"
+          INNER JOIN "spaces" AS source_space
+            ON source_space."id" = backup."source_space_id"
+            AND source_space."organization_id" = backup."organization_id"
+          WHERE backup."id" = ${job.backupId}::uuid
+            AND backup."organization_id" = ${job.organizationId}::uuid
+            AND backup."source_space_id" = ${job.spaceId}::uuid
+            AND backup."status" IN ('queued', 'running', 'succeeded')
+            AND (
+              backup."status" = 'succeeded'
+              OR (
+                organization."status" = 'active'
+                AND source_space."status" IN ('active', 'archived')
+              )
+            )
+          FOR UPDATE OF backup
+        `,
+      );
+      const current = rows[0];
+      if (current === undefined) {
+        throw new WorkerJobError("backup-state-conflict", null);
+      }
+      if (current.status === "succeeded") {
+        return { outcome: "succeeded-idempotent" };
+      }
+      const objectKey =
+        current.objectKey === null
+          ? createObjectKey()
+          : parseObjectKey(current.objectKey);
+      const updated = await transaction.$executeRaw(
+        Prisma.sql`
+          UPDATE "space_backups"
+          SET "status" = 'running', "object_key" = ${objectKey}
+          WHERE "id" = ${job.backupId}::uuid
+            AND "organization_id" = ${job.organizationId}::uuid
+            AND "source_space_id" = ${job.spaceId}::uuid
+            AND "status" = ${current.status}::"space_backup_status"
+        `,
+      );
+      if (updated !== 1) {
+        throw new WorkerJobError("backup-state-conflict", null);
+      }
+      return {
+        objectKey,
+        outcome: "execute",
+        transitioned: current.status === "queued",
+      };
+    });
   }
 }
 
+type KernelInstanceState = "ready" | "starting" | "unavailable";
+
 interface RestoreCleanupRow {
   failureCode: string;
+  objectKey: string;
   status: "queued" | "restoring";
+  targetKernelStatus: KernelInstanceState | null;
 }
 
 interface RestoreSourceRow {
   authorized: boolean;
   objectKey: string;
   sha256: string;
+  targetKernelStatus: KernelInstanceState;
 }
 
 interface RestoreStateRow {
   claimActive: boolean;
+  objectKey: string;
   targetSpaceId: string | null;
   workerAttempt: number | null;
   workerJobId: string | null;
   status: string;
-  targetKernelStatus: string | null;
+  targetKernelStatus: KernelInstanceState | null;
   targetSpaceStatus: string | null;
 }
 
@@ -294,7 +410,9 @@ type RestoreBegin =
   | {
       cleanupRequired: true;
       failureCode: string;
+      objectKey: string;
       status: "queued" | "restoring";
+      targetKernelStatus: KernelInstanceState | null;
     }
   | { idempotent: true }
   | (RestoreSourceRow & { cleanupRequired: false; idempotent: false });
@@ -319,6 +437,8 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
     @Inject(MAXIMUM_BACKUP_BYTES)
     private readonly maximumBackupBytes: number,
     private readonly objects: FileObjectStore,
+    @Inject(WORKER_JOB_LOGGER)
+    private readonly logger: WorkerJobLogger,
   ) {}
 
   decode(record: WorkerJobRecord): RestoreSpaceJob {
@@ -338,13 +458,17 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
   }
 
   async execute(job: RestoreSpaceJob, signal: AbortSignal): Promise<void> {
+    const startedAt = performance.now();
     let started = false;
+    let objectKey: string | null = null;
+    let targetKernelStatus: KernelInstanceState | null = null;
     try {
       const begin = await this.#begin(job);
       if ("idempotent" in begin && begin.idempotent) {
         return;
       }
       if (begin.cleanupRequired) {
+        objectKey = begin.objectKey;
         try {
           if (
             !(await this.#markCleanupRequired(
@@ -358,7 +482,32 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
               restoreClaimRetryAt(),
             );
           }
-          await this.#cleanupFailed(job);
+          const removedKernel = await this.#cleanupFailed(job);
+          this.logger.warn({
+            elapsedMs: performance.now() - startedAt,
+            event: "backup.job",
+            objectKey,
+            reason: begin.failureCode,
+            requestId: job.requestId,
+            spaceId: job.sourceSpaceId,
+            status: "failed",
+            targetSpaceId: job.targetSpaceId,
+            taskId: job.restoreId,
+            taskKind: "restore",
+            validationResult: "not-completed",
+          });
+          if (removedKernel && begin.targetKernelStatus !== null) {
+            this.logger.warn({
+              elapsedMs: performance.now() - startedAt,
+              event: "kernel.lifecycle",
+              fromState: begin.targetKernelStatus,
+              kernelInstanceId: job.targetKernelInstanceId,
+              reason: begin.failureCode,
+              requestId: job.requestId,
+              spaceId: job.targetSpaceId,
+              toState: "removed",
+            });
+          }
         } catch (error) {
           if (
             error instanceof WorkerJobError &&
@@ -374,11 +523,27 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         throw new WorkerJobError(begin.failureCode, null);
       }
       started = true;
+      targetKernelStatus = begin.targetKernelStatus;
+      const parsedObjectKey = parseObjectKey(begin.objectKey);
+      objectKey = parsedObjectKey;
+      this.logger.info({
+        elapsedMs: performance.now() - startedAt,
+        event: "backup.job",
+        objectKey,
+        reason: job.kind,
+        requestId: job.requestId,
+        spaceId: job.sourceSpaceId,
+        status: "restoring",
+        targetSpaceId: job.targetSpaceId,
+        taskId: job.restoreId,
+        taskKind: "restore",
+        validationResult: "pending",
+      });
       if (!begin.authorized) {
         throw new WorkerJobError("restore-authorization-revoked", null);
       }
       const archive = await this.objects.openReadStream(
-        parseObjectKey(begin.objectKey),
+        parsedObjectKey,
         this.maximumBackupBytes,
       );
       const result = await this.deployment.restore(
@@ -444,6 +609,29 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           spaceId: result.endpoint.spaceId,
         });
       });
+      this.logger.info({
+        elapsedMs: performance.now() - startedAt,
+        event: "backup.job",
+        objectKey,
+        reason: job.kind,
+        requestId: job.requestId,
+        spaceId: job.sourceSpaceId,
+        status: "ready-for-activation",
+        targetSpaceId: job.targetSpaceId,
+        taskId: job.restoreId,
+        taskKind: "restore",
+        validationResult: "passed",
+      });
+      this.logger.info({
+        elapsedMs: performance.now() - startedAt,
+        event: "kernel.lifecycle",
+        fromState: begin.targetKernelStatus,
+        kernelInstanceId: job.targetKernelInstanceId,
+        reason: job.kind,
+        requestId: job.requestId,
+        spaceId: job.targetSpaceId,
+        toState: "ready",
+      });
     } catch (error) {
       if (signal.aborted) {
         throw error;
@@ -462,7 +650,32 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
             restoreClaimRetryAt(),
           );
         }
-        await this.#cleanupFailed(job);
+        const removedKernel = await this.#cleanupFailed(job);
+        this.logger.warn({
+          elapsedMs: performance.now() - startedAt,
+          event: "backup.job",
+          objectKey,
+          reason: failureCode,
+          requestId: job.requestId,
+          spaceId: job.sourceSpaceId,
+          status: "failed",
+          targetSpaceId: job.targetSpaceId,
+          taskId: job.restoreId,
+          taskKind: "restore",
+          validationResult: "not-completed",
+        });
+        if (removedKernel && targetKernelStatus !== null) {
+          this.logger.warn({
+            elapsedMs: performance.now() - startedAt,
+            event: "kernel.lifecycle",
+            fromState: targetKernelStatus,
+            kernelInstanceId: job.targetKernelInstanceId,
+            reason: failureCode,
+            requestId: job.requestId,
+            spaceId: job.targetSpaceId,
+            toState: "removed",
+          });
+        }
       } catch (cleanupError) {
         if (
           cleanupError instanceof WorkerJobError &&
@@ -482,14 +695,26 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
   async #begin(job: RestoreSpaceJob): Promise<RestoreBegin> {
     const cleanupRows = await this.database.client.$queryRaw<RestoreCleanupRow[]>(
       Prisma.sql`
-        SELECT "failure_code" AS "failureCode", "status"
-        FROM "space_restore_jobs"
-        WHERE "id" = ${job.restoreId}::uuid
-          AND "organization_id" = ${job.organizationId}::uuid
-          AND "source_space_id" = ${job.sourceSpaceId}::uuid
-          AND "target_space_id" = ${job.targetSpaceId}::uuid
-          AND "status" IN ('queued', 'restoring')
-          AND "failure_code" IS NOT NULL
+        SELECT
+          restore."failure_code" AS "failureCode",
+          backup."object_key" AS "objectKey",
+          restore."status",
+          target_kernel."status" AS "targetKernelStatus"
+        FROM "space_restore_jobs" AS restore
+        INNER JOIN "space_backups" AS backup
+          ON backup."id" = restore."backup_id"
+          AND backup."organization_id" = restore."organization_id"
+          AND backup."source_space_id" = restore."source_space_id"
+          AND backup."object_key" IS NOT NULL
+        LEFT JOIN "kernel_instances" AS target_kernel
+          ON target_kernel."id" = ${job.targetKernelInstanceId}::uuid
+          AND target_kernel."space_id" = restore."target_space_id"
+        WHERE restore."id" = ${job.restoreId}::uuid
+          AND restore."organization_id" = ${job.organizationId}::uuid
+          AND restore."source_space_id" = ${job.sourceSpaceId}::uuid
+          AND restore."target_space_id" = ${job.targetSpaceId}::uuid
+          AND restore."status" IN ('queued', 'restoring')
+          AND restore."failure_code" IS NOT NULL
         LIMIT 1
       `,
     );
@@ -498,7 +723,9 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
       return {
         cleanupRequired: true,
         failureCode: cleanup.failureCode,
+        objectKey: cleanup.objectKey,
         status: cleanup.status,
+        targetKernelStatus: cleanup.targetKernelStatus,
       };
     }
 
@@ -536,6 +763,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         RETURNING
           backup."object_key" AS "objectKey",
           backup."sha256",
+          target_kernel."status" AS "targetKernelStatus",
           (
             organization."status" = 'active'
             AND source_space."status" IN ('active', 'archived')
@@ -589,6 +817,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
       const stateRows = await this.database.client.$queryRaw<RestoreStateRow[]>(
         Prisma.sql`
           SELECT
+            backup."object_key" AS "objectKey",
             restore."status",
             restore."target_space_id" AS "targetSpaceId",
             restore."worker_job_id" AS "workerJobId",
@@ -604,6 +833,11 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
                 AND claim."lease_expires_at" > CURRENT_TIMESTAMP
             ) AS "claimActive"
           FROM "space_restore_jobs" AS restore
+          INNER JOIN "space_backups" AS backup
+            ON backup."id" = restore."backup_id"
+            AND backup."organization_id" = restore."organization_id"
+            AND backup."source_space_id" = restore."source_space_id"
+            AND backup."object_key" IS NOT NULL
           LEFT JOIN "spaces" AS target_space
             ON target_space."id" = restore."target_space_id"
             AND target_space."organization_id" = restore."organization_id"
@@ -652,7 +886,9 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         return {
           cleanupRequired: true,
           failureCode: "restore-claim-expired",
+          objectKey: state.objectKey,
           status: "restoring",
+          targetKernelStatus: state.targetKernelStatus,
         };
       }
       if (
@@ -665,7 +901,9 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         return {
           cleanupRequired: true,
           failureCode: "restore-state-conflict",
+          objectKey: state.objectKey,
           status: "queued",
+          targetKernelStatus: state.targetKernelStatus,
         };
       }
       throw new WorkerJobError("restore-state-conflict", null);
@@ -711,9 +949,9 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
     return updated === 1;
   }
 
-  async #cleanupFailed(job: RestoreSpaceJob): Promise<void> {
+  async #cleanupFailed(job: RestoreSpaceJob): Promise<boolean> {
     await this.deployment.destroyTarget(job);
-    await this.database.client.$transaction(async (transaction) => {
+    return this.database.client.$transaction(async (transaction) => {
       await transaction.$executeRaw(
         Prisma.sql`
           DELETE FROM "space_capacity_observations"
@@ -788,12 +1026,13 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
       await transaction.documentShare.deleteMany({
         where: { organizationId: job.organizationId, spaceId: job.targetSpaceId },
       });
-      await transaction.kernelInstance.deleteMany({
+      const removedKernel = await transaction.kernelInstance.deleteMany({
         where: { id: job.targetKernelInstanceId, spaceId: job.targetSpaceId },
       });
       await transaction.space.deleteMany({
         where: { id: job.targetSpaceId, organizationId: job.organizationId },
       });
+      return removedKernel.count === 1;
     });
   }
 }

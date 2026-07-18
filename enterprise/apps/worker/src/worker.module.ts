@@ -1,7 +1,7 @@
 import type { DynamicModule, Type } from "@nestjs/common";
 import { Module } from "@nestjs/common";
 import { DiscoveryModule } from "@nestjs/core";
-import { DatabaseRuntime } from "@singularity/database";
+import type { DatabaseRuntime } from "@singularity/database";
 import { KernelPrivateClient } from "@singularity/kernel-client";
 import { FileObjectStore } from "@singularity/object-store";
 
@@ -14,8 +14,8 @@ import {
   RestoreSpaceHandler,
   SampleKernelHandler,
 } from "./l1-handlers.js";
-import { NestWorkerJobLogger } from "./logger.js";
 import { PostgresWorkerJobRepository } from "./postgres-job-repository.js";
+import { RestorePlatformModule } from "./restore-platform.module.js";
 import {
   ArchiveAuditJobProducer,
   SampleKernelJobProducer,
@@ -28,26 +28,31 @@ import {
   WORKER_CONFIGURATION,
 } from "./tokens.js";
 import { WorkerApplication } from "./worker-application.js";
+import { WorkerPlatformModule } from "./worker-platform.module.js";
 
 export interface WorkerModuleOptions {
   readonly configuration: WorkerConfiguration;
   readonly database: DatabaseRuntime;
-  readonly restorePlatformModule: DynamicModule | Type<unknown>;
+  readonly restorePlatformModule?: DynamicModule | Type<unknown>;
 }
 
 @Module({})
 export class WorkerModule {
   static register(options: WorkerModuleOptions): DynamicModule {
-    const restorePlatformModule = options.restorePlatformModule;
+    const platformModule = WorkerPlatformModule.register(
+      options.database,
+      options.configuration.deployments,
+    );
+    const restorePlatformModule = options.restorePlatformModule ??
+      RestorePlatformModule.register(options.configuration.restore, platformModule);
     return {
       module: WorkerModule,
-      imports: [DiscoveryModule, restorePlatformModule],
+      imports: [DiscoveryModule, platformModule, restorePlatformModule],
       providers: [
         {
           provide: WORKER_CONFIGURATION,
           useValue: options.configuration,
         },
-        { provide: DatabaseRuntime, useValue: options.database },
         {
           provide: FileObjectStore,
           inject: [WORKER_CONFIGURATION],
@@ -93,7 +98,6 @@ export class WorkerModule {
         ArchiveAuditJobProducer,
         BackupSpaceHandler,
         KernelWorkerClient,
-        NestWorkerJobLogger,
         PostgresWorkerJobRepository,
         RestoreSpaceHandler,
         SampleKernelHandler,

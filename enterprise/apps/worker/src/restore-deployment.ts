@@ -40,7 +40,8 @@ import { z } from "zod";
 
 import type { RestoreDeploymentConfiguration } from "./configuration.js";
 import type { RestoreDeploymentPort } from "./l1-handlers.js";
-import type { RestoreSpaceJob } from "./worker.js";
+import { WORKER_JOB_LOGGER } from "./tokens.js";
+import type { RestoreSpaceJob, WorkerJobLogger } from "./worker.js";
 
 export const RESTORE_PLATFORM_CONFIGURATION = Symbol(
   "RESTORE_PLATFORM_CONFIGURATION",
@@ -136,7 +137,7 @@ interface ReadyResponse {
 }
 
 interface RuntimeEndpointRow {
-  deploymentHandle: string;
+  handle: string;
   hostname: string;
   kernelInstanceId: string;
   port: number;
@@ -232,6 +233,8 @@ export class ProcessRestoreDeployment
     private readonly database: DatabaseRuntime,
     @Inject(RuntimeKernelDeploymentRegistry)
     private readonly deployments: RuntimeKernelDeploymentRegistry,
+    @Inject(WORKER_JOB_LOGGER)
+    private readonly logger: WorkerJobLogger,
   ) {
     this.#configuration = configuration;
   }
@@ -1310,7 +1313,7 @@ export class ProcessRestoreDeployment
     const rows = await this.database.client.$queryRaw<RuntimeEndpointRow[]>(
       Prisma.sql`
         SELECT
-          kernel."deployment_handle" AS "deploymentHandle",
+          kernel."deployment_handle" AS "handle",
           endpoint."hostname",
           endpoint."kernel_instance_id" AS "kernelInstanceId",
           endpoint."port",
@@ -1352,55 +1355,64 @@ export class ProcessRestoreDeployment
   }
 
   async #removeStaleEndpoint(endpoint: KernelRuntimeEndpoint): Promise<void> {
-    await this.database.client.$transaction(async (transaction) => {
-      const rows = await transaction.$queryRaw<
-        Array<{
-          organizationId: string;
-          restoreStatus: string | null;
-        }>
-      >(
-        Prisma.sql`
-          SELECT
-            space."organization_id" AS "organizationId",
-            restore."status" AS "restoreStatus"
-          FROM "kernel_runtime_endpoints" AS endpoint
-          INNER JOIN "kernel_instances" AS kernel
-            ON kernel."id" = endpoint."kernel_instance_id"
-            AND kernel."space_id" = endpoint."space_id"
-          INNER JOIN "spaces" AS space
-            ON space."id" = endpoint."space_id"
-          LEFT JOIN "space_restore_jobs" AS restore
-            ON restore."target_space_id" = endpoint."space_id"
-          WHERE endpoint."kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
-            AND endpoint."space_id" = ${endpoint.spaceId}::uuid
-            AND kernel."deployment_handle" = ${endpoint.handle}
-          FOR UPDATE OF endpoint, kernel, space
-        `,
-      );
-      const current = rows[0];
-      if (current === undefined) {
-        return;
-      }
-      await transaction.$executeRaw(
-        Prisma.sql`
-          DELETE FROM "kernel_runtime_endpoints"
-          WHERE "kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
-            AND "space_id" = ${endpoint.spaceId}::uuid
-        `,
-      );
-      await transaction.$executeRaw(
-        Prisma.sql`
-          UPDATE "kernel_instances"
-          SET "deployment_handle" = NULL,
-              "status" = 'unavailable'::"kernel_instance_status",
-              "version" = NULL
-          WHERE "id" = ${endpoint.kernelInstanceId}::uuid
-            AND "space_id" = ${endpoint.spaceId}::uuid
-            AND "deployment_handle" = ${endpoint.handle}
-        `,
-      );
-      if (current.restoreStatus === "ready-for-activation") {
+    const startedAt = performance.now();
+    const requestId = randomUUID();
+    const reconciliation = await this.database.client.$transaction(
+      async (transaction) => {
+        // Target lifecycle owners serialize on the space row.
+        const spaces = await transaction.$queryRaw<
+          Array<{ organizationId: string }>
+        >(
+          Prisma.sql`
+            SELECT "organization_id" AS "organizationId"
+            FROM "spaces"
+            WHERE "id" = ${endpoint.spaceId}::uuid
+            FOR UPDATE
+          `,
+        );
+        const current = spaces[0];
+        if (current === undefined) {
+          return null;
+        }
+        const runtimes = await transaction.$queryRaw<
+          Array<{ kernelInstanceId: string }>
+        >(
+          Prisma.sql`
+            SELECT endpoint."kernel_instance_id" AS "kernelInstanceId"
+            FROM "kernel_runtime_endpoints" AS endpoint
+            INNER JOIN "kernel_instances" AS kernel
+              ON kernel."id" = endpoint."kernel_instance_id"
+              AND kernel."space_id" = endpoint."space_id"
+            WHERE endpoint."kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
+              AND endpoint."space_id" = ${endpoint.spaceId}::uuid
+              AND kernel."deployment_handle" = ${endpoint.handle}
+              AND kernel."status" = 'ready'::"kernel_instance_status"
+            FOR UPDATE OF endpoint, kernel
+          `,
+        );
+        if (runtimes[0] === undefined) {
+          return null;
+        }
         await transaction.$executeRaw(
+          Prisma.sql`
+            DELETE FROM "kernel_runtime_endpoints"
+            WHERE "kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
+              AND "space_id" = ${endpoint.spaceId}::uuid
+          `,
+        );
+        await transaction.$executeRaw(
+          Prisma.sql`
+            UPDATE "kernel_instances"
+            SET "status" = 'unavailable'::"kernel_instance_status"
+            WHERE "id" = ${endpoint.kernelInstanceId}::uuid
+              AND "space_id" = ${endpoint.spaceId}::uuid
+              AND "deployment_handle" = ${endpoint.handle}
+              AND "status" = 'ready'::"kernel_instance_status"
+          `,
+        );
+        const failedRestores = await transaction.$queryRaw<
+          Array<{ restoreId: string; sourceSpaceId: string }>
+        >(
           Prisma.sql`
             UPDATE "space_restore_jobs"
             SET "status" = 'failed'::"space_restore_status",
@@ -1409,67 +1421,104 @@ export class ProcessRestoreDeployment
                 "failure_code" = 'restore-runtime-lost'
             WHERE "target_space_id" = ${endpoint.spaceId}::uuid
               AND "status" = 'ready-for-activation'::"space_restore_status"
+            RETURNING
+              "id" AS "restoreId",
+              "source_space_id" AS "sourceSpaceId"
           `,
         );
+        const failedRestore = failedRestores[0];
+        if (failedRestore !== undefined) {
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "space_capacity_observations"
+              WHERE "space_id" = ${endpoint.spaceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "kernel_health_observations"
+              WHERE "kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "space_memberships"
+              WHERE "space_id" = ${endpoint.spaceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "space_group_grants"
+              WHERE "organization_id" = ${current.organizationId}::uuid
+                AND "space_id" = ${endpoint.spaceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "document_shares"
+              WHERE "organization_id" = ${current.organizationId}::uuid
+                AND "space_id" = ${endpoint.spaceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "kernel_instances"
+              WHERE "id" = ${endpoint.kernelInstanceId}::uuid
+                AND "space_id" = ${endpoint.spaceId}::uuid
+            `,
+          );
+          await transaction.$executeRaw(
+            Prisma.sql`
+              DELETE FROM "spaces"
+              WHERE "id" = ${endpoint.spaceId}::uuid
+                AND "organization_id" = ${current.organizationId}::uuid
+            `,
+          );
+        }
         await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "space_capacity_observations"
-            WHERE "space_id" = ${endpoint.spaceId}::uuid
-          `,
+          Prisma.sql`SELECT pg_notify(
+            ${KERNEL_DEPLOYMENT_CHANGED_CHANNEL},
+            ${JSON.stringify({
+              deploymentHandle: endpoint.handle,
+              kernelInstanceId: endpoint.kernelInstanceId,
+              kind: "remove",
+              requestId,
+              spaceId: endpoint.spaceId,
+            })}
+          )`,
         );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "kernel_health_observations"
-            WHERE "kernel_instance_id" = ${endpoint.kernelInstanceId}::uuid
-          `,
-        );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "space_memberships"
-            WHERE "space_id" = ${endpoint.spaceId}::uuid
-          `,
-        );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "space_group_grants"
-            WHERE "organization_id" = ${current.organizationId}::uuid
-              AND "space_id" = ${endpoint.spaceId}::uuid
-          `,
-        );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "document_shares"
-            WHERE "organization_id" = ${current.organizationId}::uuid
-              AND "space_id" = ${endpoint.spaceId}::uuid
-          `,
-        );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "kernel_instances"
-            WHERE "id" = ${endpoint.kernelInstanceId}::uuid
-              AND "space_id" = ${endpoint.spaceId}::uuid
-          `,
-        );
-        await transaction.$executeRaw(
-          Prisma.sql`
-            DELETE FROM "spaces"
-            WHERE "id" = ${endpoint.spaceId}::uuid
-              AND "organization_id" = ${current.organizationId}::uuid
-          `,
-        );
-      }
-      await transaction.$executeRaw(
-        Prisma.sql`SELECT pg_notify(
-          ${KERNEL_DEPLOYMENT_CHANGED_CHANNEL},
-          ${JSON.stringify({
-            deploymentHandle: endpoint.handle,
-            kernelInstanceId: endpoint.kernelInstanceId,
-            kind: "remove",
-            requestId: randomUUID(),
-            spaceId: endpoint.spaceId,
-          })}
-        )`,
-      );
+        return { failedRestore };
+      },
+    );
+    if (reconciliation === null) {
+      return;
+    }
+    const elapsedMs = performance.now() - startedAt;
+    const failedRestore = reconciliation.failedRestore;
+    if (failedRestore !== undefined) {
+      this.logger.warn({
+        elapsedMs,
+        event: "backup.job",
+        objectKey: null,
+        reason: "restore-runtime-lost",
+        requestId,
+        spaceId: failedRestore.sourceSpaceId,
+        status: "failed",
+        targetSpaceId: endpoint.spaceId,
+        taskId: failedRestore.restoreId,
+        taskKind: "restore",
+        validationResult: "passed",
+      });
+    }
+    this.logger.warn({
+      elapsedMs,
+      event: "kernel.lifecycle",
+      fromState: "ready",
+      kernelInstanceId: endpoint.kernelInstanceId,
+      reason: "restore-runtime-lost",
+      requestId,
+      spaceId: endpoint.spaceId,
+      toState: failedRestore === undefined ? "unavailable" : "removed",
     });
   }
 
