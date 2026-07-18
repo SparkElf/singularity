@@ -158,9 +158,7 @@ export function createProtyleApplicationPort(
     `${state.fontSize}px`,
   );
 
-  return {
-    localization: protyleLocalization,
-    settings: {
+  const settings: ProtyleApplicationSettings = {
       appearance: {
         codeBlockThemeDark: "base16/dracula",
         codeBlockThemeLight: "github",
@@ -201,6 +199,13 @@ export function createProtyleApplicationPort(
         widget: false,
       },
       hotkeys: {
+        includes: (hotkey) => [
+          settings.hotkeys.general,
+          settings.hotkeys.editor.general,
+          settings.hotkeys.editor.heading,
+          settings.hotkeys.editor.insert,
+          toolbarHotkeys,
+        ].some((group) => Object.values(group).includes(hotkey)),
         general: {
           addToDatabase: "",
           enter: "⌥→",
@@ -321,6 +326,9 @@ export function createProtyleApplicationPort(
           state.recentFontStyles = styles;
         },
       },
-    },
+    };
+  return {
+    localization: protyleLocalization,
+    settings,
   };
 }
