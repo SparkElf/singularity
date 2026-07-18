@@ -188,13 +188,23 @@ export function parseKernelGatewayTarget(
     upstreamPath = `/upload?notebook=${encodeURIComponent(identity.notebookId)}&documentId=${encodeURIComponent(identity.documentId)}`;
   } else if (route.remainder.startsWith("/exports/")) {
     if (
-      !onlyParameters(route.url.searchParams, ["notebookId", "documentId"])
+      !onlyParameters(route.url.searchParams, [
+        "notebookId",
+        "documentId",
+        "download",
+      ]) ||
+      route.url.searchParams.get("download") !== "true"
     ) {
       throw new KernelGatewayAdmissionError(400);
     }
     identity = resourceIdentity(route.url.searchParams);
     surface = "export";
-    upstreamPath = `/export/${route.remainder.slice("/exports/".length)}`;
+    const upstream = new URL(
+      `/export/${route.remainder.slice("/exports/".length)}`,
+      "https://kernel.invalid",
+    );
+    upstream.searchParams.set("download", "true");
+    upstreamPath = `${upstream.pathname}${upstream.search}`;
   } else {
     return null;
   }

@@ -32,6 +32,7 @@ const KERNEL_ENVELOPE_NOT_FOUND_PATH = "/api/block/getBlockDOM";
 const KERNEL_ENVELOPE_VALIDATION_PATH = "/api/block/checkBlockExist";
 const KERNEL_ENVELOPE_UNAVAILABLE_PATH = "/api/block/getBlockIndex";
 const KERNEL_ENVELOPE_SUCCESS_PATH = "/api/block/getRefText";
+const KERNEL_EXPORT_PATH = "/export/code/report.txt?download=true";
 
 interface AuthenticatedGraph {
   readonly cookie: string;
@@ -60,6 +61,13 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
   beforeAll(async () => {
     kernel = await startTestKernelGateway({
       handler: (request) => {
+        if (request.path === KERNEL_EXPORT_PATH) {
+          return {
+            body: "exported content",
+            headers: { "content-type": "text/plain" },
+            status: 200,
+          };
+        }
         const envelopeCodes = new Map<string, number>([
           [KERNEL_ENVELOPE_NOT_FOUND_PATH, 404],
           [KERNEL_ENVELOPE_VALIDATION_PATH, -1],
@@ -204,6 +212,25 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     });
   }
 
+  function requestExport(
+    graph: AuthenticatedGraph,
+    downloadValues: readonly string[],
+  ): Promise<Response> {
+    const parameters = new URLSearchParams({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+    });
+    downloadValues.forEach((value) => parameters.append("download", value));
+    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/exports/code/report.txt?${parameters.toString()}`;
+    return fetch(`${testApi.baseUrl}${path}`, {
+      headers: {
+        Cookie: graph.cookie,
+        Origin: TEST_PUBLIC_ORIGIN,
+      },
+      method: "GET",
+    });
+  }
+
   test("marks a hidden authorization 404 as terminal runtime access loss", async () => {
     const graph = await createAuthenticatedGraph();
     const revoked = await operations.execute({
@@ -287,5 +314,35 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
       data: "Block title",
       msg: "",
     });
+  });
+
+  test("proxies an explicitly identified export as a download", async () => {
+    const graph = await createAuthenticatedGraph();
+    const requestCount = kernel.requests.length;
+
+    const response = await requestExport(graph, ["true"]);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      'attachment; filename="report.txt"',
+    );
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(await response.text()).toBe("exported content");
+    expect(kernel.requests).toHaveLength(requestCount + 1);
+    expect(kernel.requests.at(-1)?.path).toBe(KERNEL_EXPORT_PATH);
+  });
+
+  test.each([
+    { downloadValues: [], name: "missing" },
+    { downloadValues: ["false"], name: "not true" },
+    { downloadValues: ["true", "true"], name: "repeated" },
+  ])("rejects a $name export download parameter", async ({ downloadValues }) => {
+    const graph = await createAuthenticatedGraph();
+    const requestCount = kernel.requests.length;
+
+    const response = await requestExport(graph, downloadValues);
+
+    expect(response.status).toBe(400);
+    expect(kernel.requests).toHaveLength(requestCount);
   });
 });
