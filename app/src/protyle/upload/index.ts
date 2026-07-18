@@ -2,7 +2,7 @@ import {insertHTML} from "../util/insertHTML";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {Constants} from "../../constants";
 import {getEditorRange} from "../util/selection";
-import {genAssetHTML} from "../../asset/renderAssets";
+import {createAssetBlockDOM} from "../util/assetBlockDOM";
 import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {getContenteditableElement} from "../wysiwyg/getBlock";
 import {getTypeByCellElement, updateCellsValue} from "../render/av/cell";
@@ -161,7 +161,12 @@ const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => 
             content: path,
             name: name
         });
-        successFileText += genAssetHTML(type, path, name, filename);
+        successFileText += createAssetBlockDOM({
+            path,
+            imageAlt: name,
+            linkLabel: filename,
+            showNetworkMark: !path.startsWith("assets/"),
+        });
         if (!Constants.SIYUAN_ASSETS_AUDIO.includes(type) && !Constants.SIYUAN_ASSETS_VIDEO.includes(type) &&
             keys.length - 1 !== index) {
             if (nodeElement && nodeElement.classList.contains("table")) {
