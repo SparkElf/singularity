@@ -4,7 +4,8 @@ import {genCellValue} from "./cell";
 import {getPropertiesHTML, openMenuPanel} from "./openMenuPanel";
 import {getLabelByNumberFormat} from "./number";
 import {removeAttrViewColAnimation, updateAttrViewCellAnimation} from "./action";
-import {openEmojiPanel, unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
+import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
 import {focusBlock} from "../../util/selection";
 import {toggleUpdateRelationBtn} from "./relation";
 import {bindRollupData, getRollupHTML} from "./rollup";
@@ -103,7 +104,7 @@ export const getEditHTML = (options: {
 <button class="b3-menu__item" data-type="nobg">
     <div class="fn__block">
         <div class="fn__flex">
-            <span class="b3-menu__avemoji" data-col-type="${colData.type}" data-icon="${colData.icon}" data-type="update-icon">${colData.icon ? unicode2Emoji(colData.icon) : `<svg style="width: 14px;height: 14px"><use xlink:href="#${getColIconByType(colData.type)}"></use></svg>`}</span>
+            <span class="b3-menu__avemoji" data-col-type="${colData.type}" data-icon="${colData.icon}" data-type="update-icon">${colData.icon ? unicodeToEmoji(options.protyle, colData.icon) : `<svg style="width: 14px;height: 14px"><use xlink:href="#${getColIconByType(colData.type)}"></use></svg>`}</span>
             <div class="b3-form__icona fn__block">
                 <input data-type="name" class="b3-text-field b3-form__icona-input" type="text">
                 <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${colData.desc ? escapeAriaLabel(colData.desc) : localization.text("addDesc")}"><use xlink:href="#iconInfo"></use></svg>
@@ -650,7 +651,7 @@ const addAttrViewColAnimation = (options: {
             let html = "";
             if (item.classList.contains("av__row--header")) {
                 html = `<div class="av__cell av__cell--header" draggable="true" data-icon="${options.icon || ""}" data-col-id="${options.id}" data-dtype="${options.type}" data-wrap="false" style="width: 200px;">
-    ${options.icon ? unicode2Emoji(options.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(options.type)}"></use></svg>`}
+    ${options.icon ? unicodeToEmoji(options.protyle, options.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(options.type)}"></use></svg>`}
     <span class="av__celltext fn__flex-1">${options.name}</span>
     <div class="av__widthdrag"></div>
 </div>`;
@@ -763,7 +764,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
         type: "empty",
         label: `<div class="fn__hr"></div><div class="fn__flex">
     <div class="fn__space"></div>
-    <span class="b3-menu__avemoji">${cellElement.dataset.icon ? unicode2Emoji(cellElement.dataset.icon) : `<svg style="height: 14px;width: 14px;"><use xlink:href="#${getColIconByType(type)}"></use></svg>`}</span>
+    <span class="b3-menu__avemoji">${cellElement.dataset.icon ? unicodeToEmoji(protyle, cellElement.dataset.icon) : `<svg style="height: 14px;width: 14px;"><use xlink:href="#${getColIconByType(type)}"></use></svg>`}</span>
     <div class="b3-form__icona fn__block">
         <input class="b3-text-field b3-form__icona-input" type="text">
         <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${oldDesc ? escapeAriaLabel(oldDesc) : localization.text("addDesc")}"><use xlink:href="#iconInfo"></use></svg>
@@ -783,26 +784,30 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             const iconElement = element.querySelector(".b3-menu__avemoji") as HTMLElement;
             iconElement.addEventListener("click", (event) => {
                 const rect = iconElement.getBoundingClientRect();
-                openEmojiPanel("", "av", {
-                    x: rect.left,
-                    y: rect.bottom + 4,
-                    h: rect.height,
-                    w: rect.width
-                }, (unicode) => {
-                    transaction(protyle, [{
-                        action: "setAttrViewColIcon",
-                        id: colId,
-                        avID,
-                        data: unicode,
-                    }], [{
-                        action: "setAttrViewColIcon",
-                        id: colId,
-                        avID,
-                        data: cellElement.dataset.icon,
-                    }]);
-                    iconElement.innerHTML = unicode ? unicode2Emoji(unicode) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getColIconByType(type)}"></use></svg>`;
-                    updateAttrViewCellAnimation(protyle, blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {icon: unicode});
-                }, iconElement.querySelector("img"));
+                openProtyleEmojiMenu({
+                    protyle,
+                    position: {
+                        x: rect.left,
+                        y: rect.bottom + 4,
+                        h: rect.height,
+                        w: rect.width,
+                    },
+                    onSelect: (unicode) => {
+                        transaction(protyle, [{
+                            action: "setAttrViewColIcon",
+                            id: colId,
+                            avID,
+                            data: unicode,
+                        }], [{
+                            action: "setAttrViewColIcon",
+                            id: colId,
+                            avID,
+                            data: cellElement.dataset.icon,
+                        }]);
+                        iconElement.innerHTML = unicode ? unicodeToEmoji(protyle, unicode) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getColIconByType(type)}"></use></svg>`;
+                        updateAttrViewCellAnimation(protyle, blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {icon: unicode});
+                    },
+                });
                 event.preventDefault();
                 event.stopPropagation();
             });
@@ -1334,7 +1339,7 @@ export const removeCol = (options: {
     if (options.isCustomAttr) {
         closeOwnedAVOverlay(options.protyle, "panel", options.avPanelElement);
     } else {
-        options.menuElement.innerHTML = getPropertiesHTML(options.fields, options.protyle.localization);
+        options.menuElement.innerHTML = getPropertiesHTML(options.fields, options.protyle);
         setPosition(options.menuElement,
             options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom,
             options.tabRect.height, 0, true);

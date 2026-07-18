@@ -63,7 +63,7 @@ export const getAssetHTML = (
     protyle: IProtyle,
 ) => {
     let html = "";
-    genCellValueByElement("mAsset", cellElements[0]).mAsset.forEach((item, index) => {
+    genCellValueByElement(protyle, "mAsset", cellElements[0]).mAsset.forEach((item, index) => {
         let contentHTML;
         if (item.type === "image") {
             contentHTML = `<span data-type="openAssetItem" class="fn__flex-1 ariaLabel" aria-label="${escapeAriaLabel(item.content)}">
@@ -126,7 +126,7 @@ export const updateAssetCell = (options: {
                 item = options.cellElements[elementIndex] = (options.blockElement.querySelector(`.av__gallery-item[data-id="${rowID}"] .av__cell[data-field-id="${item.dataset.fieldId}"]`)) as HTMLElement;
             }
         }
-        const cellValue = genCellValueByElement(getTypeByCellElement(item) || item.dataset.type as TAVCol, item);
+        const cellValue = genCellValueByElement(options.protyle, getTypeByCellElement(item) || item.dataset.type as TAVCol, item);
         const oldValue = JSON.parse(JSON.stringify(cellValue));
         if (elementIndex === 0) {
             if (typeof options.removeIndex === "number") {

@@ -2,6 +2,7 @@ import type {
   ProtyleCoreCreateOptions,
   ProtyleCoreDocumentOptions,
   ProtyleCoreFactory,
+  ProtyleHostDispatchEvent,
   ProtyleHostEvent,
   ProtyleSession,
 } from "./contracts.ts";
@@ -30,6 +31,14 @@ const workspaceEvent: ProtyleHostEvent = {
   type: "activate-document",
 };
 
+const dispatchedWorkspaceEvent: ProtyleHostDispatchEvent = {
+  ...workspaceEvent,
+  sourceEditorId: "editor-primary",
+};
+
+// @ts-expect-error Session dispatches of editor events require an exact source instance.
+const dispatchedWorkspaceWithoutSource: ProtyleHostDispatchEvent = workspaceEvent;
+
 // @ts-expect-error 内容事件必须同时携带源文档身份。
 const assetWithoutDocument: ProtyleHostEvent = {
   assetPath: "assets/example.png",
@@ -46,6 +55,8 @@ const workspaceWithoutNotebook: ProtyleHostEvent = {
 
 void assetEvent;
 void workspaceEvent;
+void dispatchedWorkspaceEvent;
+void dispatchedWorkspaceWithoutSource;
 void assetWithoutDocument;
 void workspaceWithoutNotebook;
 

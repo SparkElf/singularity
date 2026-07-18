@@ -13,7 +13,7 @@ import {
 } from "./selection";
 import {Constants} from "../../constants";
 import {highlightRender} from "../render/highlightRender";
-import {updateAttrViewCellAnimation, updateAVName} from "../render/av/action";
+import {updateAVName} from "../render/av/action";
 import {updateCellsValue} from "../render/av/cell";
 import {input} from "../wysiwyg/input";
 import {updateListOrder} from "../wysiwyg/list";
@@ -94,7 +94,7 @@ const getNextDataRow = (currentRowElement: Element, protyle: IProtyle): HTMLElem
         pinIndex,
         type: "table",
         fileIcon: protyle.settings.icons.file,
-        localization: protyle.localization,
+        protyle,
     });
     const bottomElement = bodyElement.querySelector(".av__row--util");
     bottomElement.insertAdjacentHTML("beforebegin", rowHTML);
@@ -219,11 +219,6 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
                     nextID: previousID,
                     isDetached: selectCellElement.dataset.detached === "true",
                 }]);
-                updateAttrViewCellAnimation(protyle, selectCellElement, {
-                    type: "block",
-                    isDetached: false,
-                    block: {content: contenteditableElement.firstElementChild.textContent, id: sourceId}
-                });
                 return;
             }
         }

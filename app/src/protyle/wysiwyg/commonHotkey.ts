@@ -416,7 +416,7 @@ export const goHome = (protyle: IProtyle) => {
         const getDocParam: IObject = {
             id: protyle.block.rootID,
             mode: 0,
-            size: window.siyuan.config.editor.dynamicLoadBlocks,
+            size: protyle.settings.editor.dynamicLoadBlocks,
         };
         if (isEncryptedBox(protyle.notebookId)) {
             getDocParam.notebook = protyle.notebookId;
@@ -433,7 +433,7 @@ export const goEnd = (protyle: IProtyle) => {
         const getDocParam: IObject = {
             id: protyle.block.rootID,
             mode: 4,
-            size: window.siyuan.config.editor.dynamicLoadBlocks,
+            size: protyle.settings.editor.dynamicLoadBlocks,
         };
         if (isEncryptedBox(protyle.notebookId)) {
             getDocParam.notebook = protyle.notebookId;

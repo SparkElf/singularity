@@ -1,4 +1,4 @@
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {getColIconByType} from "./col";
 import {escapeHtml} from "../../../util/escape";
 import {setPosition} from "../../../util/setPosition";
@@ -66,7 +66,7 @@ export const setGroupMethod = async (options: {
     options.menuElement.innerHTML = getGroupsHTML(
         getFieldsByData(options.data),
         options.data.view,
-        options.protyle.localization,
+        options.protyle,
     );
     bindGroupsEvent({
         protyle: options.protyle,
@@ -82,8 +82,9 @@ export const getGroupsMethodHTML = (
     columns: IAVColumn[],
     group: IAVGroup,
     viewType: TAVView,
-    localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     const selectHTML = '<svg class="b3-menu__checked"><use xlink:href="#iconSelect"></use></svg>';
     let html = viewType === "kanban" ? "" : `<button class="b3-menu__item" data-type="setGroupMethod">
     <div class="b3-menu__label">${localization.text("calcOperatorNone")}</div>
@@ -95,7 +96,7 @@ export const getGroupsMethodHTML = (
         }
         html += `<button class="b3-menu__item" data-id="${item.id}" data-type="setGroupMethod">
     <div class="b3-menu__label fn__flex">
-        ${item.icon ? unicode2Emoji(item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
+        ${item.icon ? unicodeToEmoji(protyle, item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
         ${escapeHtml(item.name) || "&nbsp;"}
     </div>
     ${group?.field === item.id ? selectHTML : ""}
@@ -205,8 +206,9 @@ export const bindGroupsNumber = (options: {
 export const getGroupsHTML = (
     columns: IAVColumn[],
     view: IAVView,
-    localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let html = "";
     let column: IAVColumn;
     if (view.group && view.group.field) {
@@ -310,7 +312,7 @@ export const bindGroupsEvent = (options: {
         options.menuElement.innerHTML = getGroupsHTML(
             getFieldsByData(options.data),
             options.data.view,
-            options.protyle.localization,
+            options.protyle,
         );
         bindGroupsEvent({
             protyle: options.protyle,
@@ -351,7 +353,7 @@ export const goGroupsDate = (options: {
                 options.menuElement.innerHTML = getGroupsHTML(
                     getFieldsByData(options.data),
                     options.data.view,
-                    options.protyle.localization,
+                    options.protyle,
                 );
                 bindGroupsEvent({
                     protyle: options.protyle,
@@ -403,7 +405,7 @@ export const goGroupsSort = (options: {
                 options.menuElement.innerHTML = getGroupsHTML(
                     getFieldsByData(options.data),
                     options.data.view,
-                    options.protyle.localization,
+                    options.protyle,
                 );
                 bindGroupsEvent({
                     protyle: options.protyle,

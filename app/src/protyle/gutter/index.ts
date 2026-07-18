@@ -7,10 +7,8 @@ import {
     isInEmbedBlock
 } from "../util/hasClosest";
 import {getIconByType} from "../util/getIconByType";
-import {enterBack, iframeMenu, tableMenu, videoMenu} from "../../menus/protyle";
 import {foldBlocksRecursively, setFold} from "../util/blockFold";
-import {copySubMenu, openAttr, openFileAttr, openWechatNotify} from "../../menus/commonMenuItem";
-import {isMac} from "../util/browserPlatform";
+import {isMac, isNarrowViewport} from "../util/browserPlatform";
 import {copyPlainText, writeText} from "../util/clipboard";
 import {downloadExportFile} from "../util/download";
 import {isOnlyMeta, updateHotkeyAfterTip, updateHotkeyTip} from "../util/keyboard";
@@ -29,28 +27,19 @@ import {highlightRender} from "../render/highlightRender";
 import {blockRender} from "../render/blockRender";
 import {getContenteditableElement, getParentBlock, getTopAloneElement, isNotEditBlock} from "../wysiwyg/getBlock";
 import * as dayjs from "dayjs";
-import {cancelSB, genEmptyElement, insertEmptyBlock, jumpToParent,} from "../../block/util";
 import {transparentImgSrc} from "../util/dragTip";
 import {countBlockStatistics} from "../util/statistics";
 import {Constants} from "../../constants";
 import {mathRender} from "../render/mathRender";
 import {duplicateBlock} from "../wysiwyg/commonHotkey";
-import {isEncryptedBox, movePathTo} from "../../util/pathName";
-import {hintMoveBlock} from "../hint/extend";
-import {quickMakeCard} from "../../card/makeCard";
-import {transferBlockRef} from "../../menus/block";
-import {isMobile} from "../../util/functions";
-import {AIActions} from "../../ai/actions";
 import {hideTooltip} from "../ui/tooltip";
 import {appearanceMenu} from "../toolbar/Font";
-import {setPosition} from "../../util/setPosition";
 import {emitProtylePluginMenu} from "../util/plugin";
 import {insertAttrViewBlockAnimation, updateHeader} from "../render/av/row";
 import {avContextmenu, duplicateCompletely} from "../render/av/action";
 import {getPlainText} from "../util/paste";
 import {addEditorToDatabase} from "../render/av/addToDatabase";
 import {processClonePHElement} from "../render/util";
-import {hideMessage, showMessage} from "../../dialog/message";
 import {clearSelect} from "../util/clear";
 import {chartRender} from "../render/chartRender";
 import {zoomOut} from "../util/zoom";
@@ -58,6 +47,16 @@ import {requestBlockFold} from "../util/blockFoldRequest";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {beginProtyleDrag, endProtyleDrag} from "../ui/dragState";
 import {touchDragOwner} from "../ui/touchDragState";
+import {createBlockCopyMenu} from "../ui/blockCopyMenu";
+import {positionElementInViewport} from "../ui/positionElement";
+import {
+    cancelSuperBlock,
+    createEmptyBlockElement,
+    insertEmptyBlockAt,
+    navigateBack,
+    navigateRelativeBlock,
+} from "./blockActions";
+import {createIframeMenu, createMediaMenu} from "./mediaMenu";
 import type {
     ProtyleMenuHandle,
     ProtyleMenuSurface,
@@ -84,6 +83,12 @@ const reportGutterRequestFailure = (protyle: IProtyle, path: string, error: unkn
     }
 };
 
+const reportGutterActionFailure = (protyle: IProtyle, action: string, error: unknown) => {
+    if (!protyle.requestSignal.aborted) {
+        console.error(`[protyle.gutter] ${action} failed`, error);
+    }
+};
+
 const submitGutterRequest = (
     protyle: IProtyle,
     path: string,
@@ -92,6 +97,25 @@ const submitGutterRequest = (
     void requestGutter(protyle, path, body, "write").catch((error) => {
         reportGutterRequestFailure(protyle, path, error);
     });
+};
+
+const toggleQuickFlashcards = (protyle: IProtyle, elements: Element[]) => {
+    const candidates = elements.filter((item) => item.getAttribute("data-type") !== "NodeThematicBreak");
+    const remove = candidates.every((item) =>
+        (item.getAttribute(Constants.CUSTOM_RIFF_DECKS) || "").includes(Constants.QUICK_DECK_ID));
+    const blockIDs = candidates
+        .filter((item) => (item.getAttribute(Constants.CUSTOM_RIFF_DECKS) || "").includes(Constants.QUICK_DECK_ID) === remove)
+        .map((item) => item.getAttribute("data-node-id")!);
+    candidates.forEach((item) => item.classList.remove("protyle-wysiwyg--select"));
+    transaction(protyle, [{
+        action: remove ? "removeFlashcards" : "addFlashcards",
+        deckID: Constants.QUICK_DECK_ID,
+        blockIDs,
+    }], [{
+        action: remove ? "addFlashcards" : "removeFlashcards",
+        deckID: Constants.QUICK_DECK_ID,
+        blockIDs,
+    }]);
 };
 
 // 块类型 data-type 到本地化名称键的映射，用于块标提示中的 ${x}
@@ -135,14 +159,20 @@ export class Gutter {
     }
 
     private closeMenu() {
-        this.menuHandle?.close();
+        const handle = this.menuHandle;
         this.menuHandle = undefined;
+        handle?.close();
     }
 
     private openMenu(protyle: IProtyle) {
         this.closeMenu();
         const handle = protyle.session!.runtime.menu.open() as ProtyleMenuHandle<ProtyleMenuSurface>;
         this.menuHandle = handle;
+        handle.menu.removeCB = () => {
+            if (this.menuHandle === handle) {
+                this.menuHandle = undefined;
+            }
+        };
         return handle.menu;
     }
 
@@ -235,7 +265,7 @@ export class Gutter {
             selectElements.forEach(item => {
                 if (item.querySelector("iframe")) {
                     const type = item.getAttribute("data-type");
-                    const embedElement = genEmptyElement();
+                    const embedElement = createEmptyBlockElement(protyle);
                     embedElement.classList.add("protyle-wysiwyg--select");
                     getContenteditableElement(embedElement).innerHTML = `<svg class="svg"><use xlink:href="${buttonElement.querySelector("use").getAttribute("xlink:href")}"></use></svg> ${getBlockTypeName(protyle, type)}`;
                     ghostElement.append(embedElement);
@@ -401,7 +431,11 @@ export class Gutter {
                 }
                 hideElements(["gutter"], protyle);
                 countBlockStatistics(protyle, []);
-                insertEmptyBlock(protyle, buttonElement.dataset.type === "gutterPlusBefore" ? "beforebegin" : "afterend", id);
+                void insertEmptyBlockAt(
+                    protyle,
+                    buttonElement.dataset.type === "gutterPlusBefore" ? "beforebegin" : "afterend",
+                    id,
+                ).catch((error) => reportGutterActionFailure(protyle, "insert empty block", error));
                 return;
             }
             if (buttonElement.dataset.type === "NodeAttributeViewRowMenu" || buttonElement.dataset.type === "NodeAttributeViewRow") {
@@ -456,31 +490,6 @@ export class Gutter {
                     }
                     blockElement.setAttribute("updated", newUpdated);
                 } else {
-                    if (!protyle.disabled && event.shiftKey) {
-                        const blockRef = rowElement.querySelector('[data-dtype="block"] .av__celltext--ref');
-                        const blockId = blockRef?.getAttribute("data-id");
-                        if (blockId) {
-                            void protyle.session!.runtime.transport.request<IWebSocketData>(
-                                "/api/attr/getBlockAttrs",
-                                {id: blockId},
-                                {
-                                    identity: {
-                                        documentId: blockId,
-                                        notebookId: blockRef.getAttribute("data-notebook-id")!,
-                                    },
-                                    intent: "read",
-                                    signal: protyle.requestSignal,
-                                },
-                            )
-                                .then((response) => {
-                                    openFileAttr(response.data, "av", protyle);
-                                })
-                                .catch((error) => {
-                                    reportGutterRequestFailure(protyle, "/api/attr/getBlockAttrs", error);
-                                });
-                            return;
-                        }
-                    }
                     avContextmenu(protyle, rowElement as HTMLElement, {
                         x: gutterRect.left,
                         y: gutterRect.bottom,
@@ -508,13 +517,10 @@ export class Gutter {
                             restoreScroll: zoomIn ? "never" : "if-document",
                             zoom: zoomIn,
                         });
-                    }).catch((error) => {
-                        if (!protyle.requestSignal.aborted) {
-                            console.error("[protyle.transport] block fold request failed", error);
-                        }
-                    });
+                    }).catch((error) => reportGutterActionFailure(protyle, "open folded block", error));
                 } else {
-                    zoomOut({protyle, id});
+                    void zoomOut({protyle, id})
+                        .catch((error) => reportGutterActionFailure(protyle, "zoom out", error));
                 }
             } else if (event.altKey) {
                 let foldElement: Element;
@@ -573,9 +579,15 @@ export class Gutter {
                     }
                 }
                 foldElement.classList.remove("protyle-wysiwyg--hl");
-            } else if (event.shiftKey && !protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
+            } else if (event.shiftKey && !protyle.disabled && protyle.settings.features.blockAttributes) {
                 // 直接使用当前事件，确保窗口未激活时按 Shift 点击块标仍可打开属性面板。
-                openAttr(protyle.wysiwyg.element.querySelector(`[data-node-id="${id}"]`), "bookmark", protyle);
+                protyle.host.dispatch({
+                    type: "open-block-attributes",
+                    notebookId: protyle.notebookId,
+                    documentId: protyleContentIdentity(protyle).documentId,
+                    blockId: id,
+                    focus: "bookmark",
+                });
             } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
                 const menu = this.renderMenu(protyle, buttonElement);
                 // https://ld246.com/article/1648433751993
@@ -1033,24 +1045,27 @@ export class Gutter {
                 });
             }
         }
-        if (!protyle.disabled) {
+        if (!protyle.disabled && protyle.settings.features.aiActions) {
             this.menu.addItem({
                 id: "ai",
                 icon: "iconSparkles",
                 label: gutterText(protyle, "aiEdit"),
                 accelerator: protyle.settings.hotkeys.editor.general.ai,
                 click() {
-                    AIActions(selectsElement, protyle);
+                    protyle.host.dispatch({
+                        type: "open-ai-actions",
+                        documentId: identity.documentId,
+                        notebookId: identity.notebookId,
+                        blockIds: selectsElement.map((item) => item.getAttribute("data-node-id")!),
+                    });
                 }
             });
         }
-        const copyMenu: IMenu[] = (copySubMenu(
-            Array.from(selectsElement).map(item => item.getAttribute("data-node-id")),
-            true,
-            selectsElement[0],
-            undefined,
-            protyle.notebookId
-        ) as IMenu[]).concat([{
+        const copyMenu: IMenu[] = createBlockCopyMenu({
+            blockIds: selectsElement.map((item) => item.getAttribute("data-node-id")!),
+            focusElement: selectsElement[0],
+            protyle,
+        }).concat([{
             id: "copyPlainText",
             iconHTML: "",
             label: gutterText(protyle, "copyPlainText"),
@@ -1110,20 +1125,20 @@ export class Gutter {
                     document.execCommand("cut");
                 }
             });
-            this.menu.addItem({
-                id: "move",
-                label: gutterText(protyle, "move"),
-                accelerator: protyle.settings.hotkeys.general.move,
-                icon: "iconMove",
-                click: () => {
-                    movePathTo({
-                        cb: (toPath) => {
-                            hintMoveBlock(toPath[0], selectsElement, protyle);
-                        },
-                        flashcard: false
-                    });
-                }
-            });
+            if (protyle.settings.features.blockMove) {
+                this.menu.addItem({
+                    id: "move",
+                    label: gutterText(protyle, "move"),
+                    accelerator: protyle.settings.hotkeys.general.move,
+                    icon: "iconMove",
+                    click: () => protyle.host.dispatch({
+                        type: "open-block-move",
+                        documentId: identity.documentId,
+                        notebookId: identity.notebookId,
+                        blockIds: selectsElement.map((item) => item.getAttribute("data-node-id")!),
+                    }),
+                });
+            }
             this.menu.addItem({
                 id: "addToDatabase",
                 label: gutterText(protyle, "addToDatabase"),
@@ -1173,52 +1188,52 @@ export class Gutter {
                     protyle.toolbar.subElement.classList.remove("fn__none");
                     protyle.toolbar.subElementCloseCB = undefined;
                     const position = selectsElement[0].getBoundingClientRect();
-                    setPosition(protyle.toolbar.subElement, position.left, position.top);
+                    positionElementInViewport(protyle.toolbar.subElement, position.left, position.top);
                 }
             })!;
-            if (!isMobile()) {
+            if (!isNarrowViewport()) {
                 appearanceElement.lastElementChild.classList.add("b3-menu__submenu--row");
             }
             this.genAlign(selectsElement, protyle);
             this.genWidths(selectsElement, protyle);
             // this.genHeights(selectsElement, protyle);
         }
-        if (!protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
+        if (!protyle.disabled &&
+            (protyle.settings.features.quickFlashcard || protyle.settings.features.flashcardDeck)) {
             this.menu.addItem({
                 id: "separator_quickMakeCard",
                 type: "separator"
             });
-            const allCardsMade = !selectsElement.some(item => !item.hasAttribute(Constants.CUSTOM_RIFF_DECKS) && item.getAttribute("data-type") !== "NodeThematicBreak");
-            this.menu.addItem({
-                id: allCardsMade ? "removeCard" : "quickMakeCard",
-                label: allCardsMade ? gutterText(protyle, "removeCard") : gutterText(protyle, "quickMakeCard"),
-                accelerator: protyle.settings.hotkeys.editor.general.quickMakeCard,
-                icon: "iconRiffCard",
-                click() {
-                    quickMakeCard(protyle, selectsElement);
-                }
-            });
-            this.menu.addItem({
-                id: "addToDeck",
-                label: gutterText(protyle, "addToDeck"),
-                icon: "iconRiffCard",
-                ignore: !protyle.settings.features.flashcardDeck,
-                click() {
-                    const ids: string[] = [];
-                    selectsElement.forEach(item => {
-                        if (item.getAttribute("data-type") === "NodeThematicBreak") {
-                            return;
-                        }
-                        ids.push(item.getAttribute("data-node-id"));
-                    });
-                    protyle.host.dispatch({
-                        type: "open-card-deck-picker",
-                        documentId: identity.documentId,
-                        notebookId: identity.notebookId,
-                        blockIds: ids,
-                    });
-                }
-            });
+            if (protyle.settings.features.quickFlashcard) {
+                const allCardsMade = !selectsElement.some(item =>
+                    !item.hasAttribute(Constants.CUSTOM_RIFF_DECKS) &&
+                    item.getAttribute("data-type") !== "NodeThematicBreak");
+                this.menu.addItem({
+                    id: allCardsMade ? "removeCard" : "quickMakeCard",
+                    label: allCardsMade ? gutterText(protyle, "removeCard") : gutterText(protyle, "quickMakeCard"),
+                    accelerator: protyle.settings.hotkeys.editor.general.quickMakeCard,
+                    icon: "iconRiffCard",
+                    click: () => toggleQuickFlashcards(protyle, selectsElement),
+                });
+            }
+            if (protyle.settings.features.flashcardDeck) {
+                this.menu.addItem({
+                    id: "addToDeck",
+                    label: gutterText(protyle, "addToDeck"),
+                    icon: "iconRiffCard",
+                    click() {
+                        const ids = selectsElement
+                            .filter((item) => item.getAttribute("data-type") !== "NodeThematicBreak")
+                            .map((item) => item.getAttribute("data-node-id")!);
+                        protyle.host.dispatch({
+                            type: "open-card-deck-picker",
+                            documentId: identity.documentId,
+                            notebookId: identity.notebookId,
+                            blockIds: ids,
+                        });
+                    }
+                });
+            }
         }
 
         emitProtylePluginMenu({
@@ -1239,7 +1254,7 @@ export class Gutter {
         }
         hideElements(["util", "toolbar", "hint"], protyle);
         this.closeMenu();
-        if (isMobile()) {
+        if (isNarrowViewport()) {
             (document.activeElement as HTMLElement).blur();
         }
         const id = buttonElement.getAttribute("data-node-id");
@@ -1624,19 +1639,24 @@ export class Gutter {
                 submenu: turnIntoSubmenu
             });
         }
-        if (!protyle.disabled && !nodeElement.classList.contains("hr")) {
+        if (!protyle.disabled && !nodeElement.classList.contains("hr") && protyle.settings.features.aiActions) {
             this.menu.addItem({
                 id: "ai",
                 icon: "iconSparkles",
                 label: gutterText(protyle, "aiEdit"),
                 accelerator: protyle.settings.hotkeys.editor.general.ai,
                 click() {
-                    AIActions([nodeElement], protyle);
+                    protyle.host.dispatch({
+                        type: "open-ai-actions",
+                        documentId: identity.documentId,
+                        notebookId: identity.notebookId,
+                        blockIds: [id],
+                    });
                 }
             });
         }
 
-        const copyMenu = (copySubMenu([id], true, nodeElement, undefined, protyle.notebookId) as IMenu[]).concat([{
+        const copyMenu = createBlockCopyMenu({blockIds: [id], focusElement: nodeElement, protyle}).concat([{
             id: "copyPlainText",
             iconHTML: "",
             label: gutterText(protyle, "copyPlainText"),
@@ -1667,9 +1687,7 @@ export class Gutter {
             copyMenu.splice(6, 0, {
                 iconHTML: "",
                 label: gutterText(protyle, "copyAVID"),
-                click() {
-                    writeText(nodeElement.getAttribute("data-av-id"));
-                }
+                click: () => writeText(nodeElement.getAttribute("data-av-id")),
             });
             if (!protyle.disabled) {
                 copyMenu.push({
@@ -1720,20 +1738,20 @@ export class Gutter {
                     document.execCommand("cut");
                 }
             });
-            this.menu.addItem({
-                id: "move",
-                icon: "iconMove",
-                label: gutterText(protyle, "move"),
-                accelerator: protyle.settings.hotkeys.general.move,
-                click: () => {
-                    movePathTo({
-                        cb: (toPath) => {
-                            hintMoveBlock(toPath[0], [nodeElement], protyle);
-                        },
-                        flashcard: false,
-                    });
-                }
-            });
+            if (protyle.settings.features.blockMove) {
+                this.menu.addItem({
+                    id: "move",
+                    icon: "iconMove",
+                    label: gutterText(protyle, "move"),
+                    accelerator: protyle.settings.hotkeys.general.move,
+                    click: () => protyle.host.dispatch({
+                        type: "open-block-move",
+                        documentId: identity.documentId,
+                        notebookId: identity.notebookId,
+                        blockIds: [id],
+                    }),
+                });
+            }
             this.menu.addItem({
                 id: "addToDatabase",
                 icon: "iconDatabase",
@@ -1778,7 +1796,7 @@ export class Gutter {
                 label: gutterText(protyle, "cancel") + " " + gutterText(protyle, "superBlock"),
                 accelerator: protyle.settings.hotkeys.editor.general[isCol ? "hLayout" : "vLayout"],
                 async click() {
-                    const sbData = await cancelSB(protyle, nodeElement);
+                    const sbData = await cancelSuperBlock(protyle, nodeElement);
                     transaction(protyle, sbData.doOperations, sbData.undoOperations);
                     focusBlock(protyle.wysiwyg.element.querySelector(`[data-node-id="${sbData.previousId}"]`));
                     hideElements(["gutter"], protyle);
@@ -1883,18 +1901,22 @@ export class Gutter {
                     iconHTML: "",
                     label: gutterText(protyle, "saveCodeBlockAsFile"),
                     click() {
-                        const msgId = showMessage(gutterText(protyle, "exporting"), -1);
-                        void requestGutter(
+                        protyle.host.dispatch({
+                            type: "notify",
+                            level: "info",
+                            message: gutterText(protyle, "exporting"),
+                        });
+                        return requestGutter(
                             protyle,
                             "/api/export/exportCodeBlock",
                             {id, notebook: protyle.notebookId},
                             "read",
                         ).then((response) => {
-                            downloadExportFile(response.data.path);
+                            downloadExportFile(
+                                protyle.session!.runtime.resources.resolveExport(identity, response.data.path),
+                            );
                         }).catch((error) => {
                             reportGutterRequestFailure(protyle, "/api/export/exportCodeBlock", error);
-                        }).finally(() => {
-                            hideMessage(msgId);
                         });
                     }
                 }]
@@ -1938,24 +1960,19 @@ export class Gutter {
                     }
                 }]
             });
-        } else if (type === "NodeTable" && !protyle.disabled) {
-            let range = getEditorRange(nodeElement);
-            const tableElement = nodeElement.querySelector("table");
-            if (!tableElement.contains(range.startContainer)) {
-                range = getEditorRange(tableElement.querySelector("th"));
-            }
-            const cellElement = hasClosestByTag(range.startContainer, "TD") ||
-                hasClosestByTag(range.startContainer, "TH") || nodeElement.querySelector("th, td");
-            if (cellElement) {
-                this.menu.addItem({id: "separator_table", type: "separator"});
-                this.menu.addItem({
-                    id: "table",
-                    type: "submenu",
-                    icon: "iconTable",
-                    label: gutterText(protyle, "table"),
-                    submenu: tableMenu(protyle, nodeElement, cellElement as HTMLTableCellElement, range).menus as IMenu[]
-                });
-            }
+        } else if (type === "NodeTable" && !protyle.disabled && protyle.settings.features.tableMenu) {
+            this.menu.addItem({id: "separator_table", type: "separator"});
+            this.menu.addItem({
+                id: "table",
+                icon: "iconTable",
+                label: gutterText(protyle, "table"),
+                click: () => protyle.host.dispatch({
+                    type: "open-table-menu",
+                    documentId: identity.documentId,
+                    notebookId: identity.notebookId,
+                    blockId: id,
+                }),
+            });
         } else if (type === "NodeAttributeView") {
             this.menu.addItem({id: "separator_exportCSV", type: "separator"});
             this.menu.addItem({
@@ -1963,12 +1980,14 @@ export class Gutter {
                 icon: "iconDatabase",
                 label: gutterText(protyle, "export") + " CSV",
                 click() {
-                    void requestGutter(protyle, "/api/export/exportAttributeView", {
+                    return requestGutter(protyle, "/api/export/exportAttributeView", {
                         id: nodeElement.getAttribute("data-av-id"),
                         blockID: id,
                         notebook: protyle.notebookId,
                     }, "read").then((response) => {
-                        downloadExportFile(response.data.zip);
+                        downloadExportFile(
+                            protyle.session!.runtime.resources.resolveExport(identity, response.data.zip),
+                        );
                     }).catch((error) => {
                         reportGutterRequestFailure(protyle, "/api/export/exportAttributeView", error);
                     });
@@ -1981,7 +2000,7 @@ export class Gutter {
                 type: "submenu",
                 icon: type === "NodeVideo" ? "iconVideo" : "iconRecord",
                 label: gutterText(protyle, "assets"),
-                submenu: videoMenu(protyle, nodeElement, type)
+                submenu: createMediaMenu(protyle, nodeElement, type)
             });
         } else if (type === "NodeIFrame" && !protyle.disabled) {
             this.menu.addItem({id: "separator_IFrame", type: "separator"});
@@ -1990,7 +2009,7 @@ export class Gutter {
                 type: "submenu",
                 icon: "iconGlobe",
                 label: gutterText(protyle, "assets"),
-                submenu: iframeMenu(protyle, nodeElement)
+                submenu: createIframeMenu(protyle, nodeElement)
             });
         } else if (type === "NodeHTMLBlock" && !protyle.disabled) {
             this.menu.addItem({id: "separator_html", type: "separator"});
@@ -2143,13 +2162,11 @@ export class Gutter {
                 icon: "iconCopy",
                 label: `${gutterText(protyle, "copy")} ${gutterText(protyle, "headings1")}`,
                 click() {
-                    void requestGutter(protyle, "/api/block/getHeadingChildrenDOM", {
+                    return requestGutter(protyle, "/api/block/getHeadingChildrenDOM", {
                         id,
                         notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
-                    }, "read").then((response) => {
-                        void writeText(response.data + Constants.ZWSP);
-                    }).catch((error) => {
+                    }, "read").then((response) => writeText(response.data + Constants.ZWSP)).catch((error) => {
                         reportGutterRequestFailure(protyle, "/api/block/getHeadingChildrenDOM", error);
                     });
                 }
@@ -2159,12 +2176,12 @@ export class Gutter {
                 icon: "iconCut",
                 label: `${gutterText(protyle, "cut")} ${gutterText(protyle, "headings1")}`,
                 click() {
-                    void requestGutter(protyle, "/api/block/getHeadingChildrenDOM", {
+                    return requestGutter(protyle, "/api/block/getHeadingChildrenDOM", {
                         id,
                         notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
-                    }, "read").then((response) => {
-                        void writeText(response.data + Constants.ZWSP);
+                    }, "read").then(async (response) => {
+                        await writeText(response.data + Constants.ZWSP);
                         return requestGutter(protyle, "/api/block/getHeadingDeleteTransaction", {
                             id,
                             notebook: protyle.notebookId,
@@ -2177,7 +2194,7 @@ export class Gutter {
                         });
                         if (protyle.wysiwyg.element.childElementCount === 0) {
                             const newID = Lute.NewNodeID();
-                            const emptyElement = genEmptyElement(false, false, newID);
+                            const emptyElement = createEmptyBlockElement(protyle, false, false, newID);
                             protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                             deleteResponse.data.doOperations.push({
                                 action: "insert",
@@ -2206,7 +2223,7 @@ export class Gutter {
                 icon: "iconTrashcan",
                 label: `${gutterText(protyle, "delete")} ${gutterText(protyle, "headings1")}`,
                 click() {
-                    void requestGutter(protyle, "/api/block/getHeadingDeleteTransaction", {
+                    return requestGutter(protyle, "/api/block/getHeadingDeleteTransaction", {
                         id,
                         notebook: protyle.notebookId,
                     }, "read").then((response) => {
@@ -2217,7 +2234,7 @@ export class Gutter {
                         });
                         if (protyle.wysiwyg.element.childElementCount === 0) {
                             const newID = Lute.NewNodeID();
-                            const emptyElement = genEmptyElement(false, false, newID);
+                            const emptyElement = createEmptyBlockElement(protyle, false, false, newID);
                             protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                             response.data.doOperations.push({
                                 action: "insert",
@@ -2245,18 +2262,14 @@ export class Gutter {
                 icon: "iconEnter",
                 accelerator: `${protyle.settings.hotkeys.general.enter ? updateHotkeyTip(protyle.settings.hotkeys.general.enter) + "/" : ""}${updateHotkeyAfterTip("⌘" + gutterText(protyle, "click"))}`,
                 label: gutterText(protyle, "enter"),
-                click: () => {
-                    zoomOut({protyle, id});
-                }
+                click: () => zoomOut({protyle, id}),
             });
             this.menu.addItem({
                 id: "enterBack",
                 icon: "iconEnterBack",
                 accelerator: protyle.settings.hotkeys.general.enterBack,
                 label: gutterText(protyle, "enterBack"),
-                click: () => {
-                    enterBack(protyle, id);
-                }
+                click: () => navigateBack(protyle, id),
             });
         } else {
             this.menu.addItem({
@@ -2264,28 +2277,22 @@ export class Gutter {
                 icon: "iconEnter",
                 accelerator: `${updateHotkeyTip(protyle.settings.hotkeys.general.enter)}/${updateHotkeyTip("⌘" + gutterText(protyle, "click"))}`,
                 label: gutterText(protyle, "openBy"),
-                click: () => {
-                    void requestBlockFold(protyle, {
+                click: () => requestBlockFold(protyle, {
+                    notebookId: protyle.notebookId,
+                    documentId: id,
+                }).then(({zoomIn}) => {
+                    protyle.host.dispatch({
+                        type: "open-document",
                         notebookId: protyle.notebookId,
                         documentId: id,
-                    }).then(({zoomIn}) => {
-                        protyle.host.dispatch({
-                            type: "open-document",
-                            notebookId: protyle.notebookId,
-                            documentId: id,
-                            disposition: "current",
-                            scope: zoomIn ? "subtree" : "context",
-                            attention: "focus",
-                            scroll: "auto",
-                            restoreScroll: zoomIn ? "never" : "if-document",
-                            zoom: zoomIn,
-                        });
-                    }).catch((error) => {
-                        if (!protyle.requestSignal.aborted) {
-                            console.error("[protyle.transport] block fold request failed", error);
-                        }
+                        disposition: "current",
+                        scope: zoomIn ? "subtree" : "context",
+                        attention: "focus",
+                        scroll: "auto",
+                        restoreScroll: zoomIn ? "never" : "if-document",
+                        zoom: zoomIn,
                     });
-                }
+                }).catch((error) => reportGutterActionFailure(protyle, "open folded block", error)),
             });
         }
         if (!protyle.disabled) {
@@ -2297,7 +2304,7 @@ export class Gutter {
                 click() {
                     hideElements(["select"], protyle);
                     countBlockStatistics(protyle, []);
-                    insertEmptyBlock(protyle, "beforebegin", id);
+                    return insertEmptyBlockAt(protyle, "beforebegin", id);
                 }
             });
             this.menu.addItem({
@@ -2308,12 +2315,22 @@ export class Gutter {
                 click() {
                     hideElements(["select"], protyle);
                     countBlockStatistics(protyle, []);
-                    insertEmptyBlock(protyle, "afterend", id);
+                    return insertEmptyBlockAt(protyle, "afterend", id);
                 }
             });
             const countElement = nodeElement.lastElementChild.querySelector(".protyle-attr--refcount");
-            if (countElement && countElement.textContent) {
-                transferBlockRef(menu, id);
+            if (countElement?.textContent && protyle.settings.features.blockRefTransfer) {
+                this.menu.addItem({
+                    id: "transferBlockRef",
+                    label: gutterText(protyle, "transferBlockRef"),
+                    icon: "iconScrollHoriz",
+                    click: () => protyle.host.dispatch({
+                        type: "open-block-ref-transfer",
+                        notebookId: identity.notebookId,
+                        documentId: identity.documentId,
+                        blockId: id,
+                    }),
+                });
             }
         }
         this.menu.addItem({
@@ -2328,7 +2345,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParentPrev,
                 click() {
                     hideElements(["select"], protyle);
-                    jumpToParent(protyle, nodeElement, "previous");
+                    return navigateRelativeBlock(protyle, id, "previous");
                 }
             }, {
                 iconHTML: "",
@@ -2337,7 +2354,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParentNext,
                 click() {
                     hideElements(["select"], protyle);
-                    jumpToParent(protyle, nodeElement, "next");
+                    return navigateRelativeBlock(protyle, id, "next");
                 }
             }, {
                 iconHTML: "",
@@ -2346,7 +2363,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParent,
                 click() {
                     hideElements(["select"], protyle);
-                    jumpToParent(protyle, nodeElement, "parent");
+                    return navigateRelativeBlock(protyle, id, "parent");
                 }
             }]
         });
@@ -2376,15 +2393,19 @@ export class Gutter {
                     }
                 });
             }
-            if (!protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
+            if (!protyle.disabled && protyle.settings.features.blockAttributes) {
                 this.menu.addItem({
                     id: "attr",
                     label: gutterText(protyle, "attr"),
                     icon: "iconAttr",
                     accelerator: protyle.settings.hotkeys.editor.general.attr + "/" + updateHotkeyTip("⇧" + gutterText(protyle, "click")),
-                    click() {
-                        openAttr(nodeElement, "bookmark", protyle);
-                    }
+                    click: () => protyle.host.dispatch({
+                        type: "open-block-attributes",
+                        notebookId: identity.notebookId,
+                        documentId: identity.documentId,
+                        blockId: id,
+                        focus: "bookmark",
+                    }),
                 });
             }
         }
@@ -2404,10 +2425,10 @@ export class Gutter {
                     protyle.toolbar.subElement.classList.remove("fn__none");
                     protyle.toolbar.subElementCloseCB = undefined;
                     const position = nodeElement.getBoundingClientRect();
-                    setPosition(protyle.toolbar.subElement, position.left, position.top);
+                    positionElementInViewport(protyle.toolbar.subElement, position.left, position.top);
                 }
             })!;
-            if (!isMobile()) {
+            if (!isNarrowViewport()) {
                 appearanceElement.lastElementChild.classList.add("b3-menu__submenu--row");
             }
             this.genAlign([nodeElement], protyle);
@@ -2415,7 +2436,7 @@ export class Gutter {
             // this.genHeights([nodeElement], protyle);
         }
         this.menu.addItem({id: "separator_4", type: "separator"});
-        if (protyle.settings.features.wechatReminder &&
+        if (!protyle.disabled && protyle.settings.features.wechatReminder &&
             !["NodeThematicBreak", "NodeBlockQueryEmbed", "NodeIFrame", "NodeHTMLBlock", "NodeWidget", "NodeVideo", "NodeAudio"].includes(type) &&
             getContenteditableElement(nodeElement)?.textContent.trim() !== "" &&
             (type !== "NodeCodeBlock" || (type === "NodeCodeBlock" && !nodeElement.getAttribute("data-subtype")))) {
@@ -2423,37 +2444,39 @@ export class Gutter {
                 id: "wechatReminder",
                 icon: "iconMp",
                 label: gutterText(protyle, "wechatReminder"),
-                ignore: protyle.disabled,
-                click() {
-                    openWechatNotify(nodeElement);
-                }
+                click: () => protyle.host.dispatch({
+                    type: "open-block-reminder",
+                    notebookId: identity.notebookId,
+                    documentId: identity.documentId,
+                    blockId: id,
+                }),
             });
         }
-        if (type !== "NodeThematicBreak" && !protyle.disabled && !isEncryptedBox(protyle.notebookId)) {
+        if (type !== "NodeThematicBreak" && !protyle.disabled &&
+            (protyle.settings.features.quickFlashcard || protyle.settings.features.flashcardDeck)) {
             const isCardMade = nodeElement.hasAttribute(Constants.CUSTOM_RIFF_DECKS);
-            this.menu.addItem({
-                id: isCardMade ? "removeCard" : "quickMakeCard",
-                icon: "iconRiffCard",
-                label: isCardMade ? gutterText(protyle, "removeCard") : gutterText(protyle, "quickMakeCard"),
-                accelerator: protyle.settings.hotkeys.editor.general.quickMakeCard,
-                click() {
-                    quickMakeCard(protyle, [nodeElement]);
-                }
-            });
-            this.menu.addItem({
-                id: "addToDeck",
-                label: gutterText(protyle, "addToDeck"),
-                ignore: !protyle.settings.features.flashcardDeck,
-                icon: "iconRiffCard",
-                click() {
-                    protyle.host.dispatch({
+            if (protyle.settings.features.quickFlashcard) {
+                this.menu.addItem({
+                    id: isCardMade ? "removeCard" : "quickMakeCard",
+                    icon: "iconRiffCard",
+                    label: isCardMade ? gutterText(protyle, "removeCard") : gutterText(protyle, "quickMakeCard"),
+                    accelerator: protyle.settings.hotkeys.editor.general.quickMakeCard,
+                    click: () => toggleQuickFlashcards(protyle, [nodeElement]),
+                });
+            }
+            if (protyle.settings.features.flashcardDeck) {
+                this.menu.addItem({
+                    id: "addToDeck",
+                    label: gutterText(protyle, "addToDeck"),
+                    icon: "iconRiffCard",
+                    click: () => protyle.host.dispatch({
                         type: "open-card-deck-picker",
                         documentId: identity.documentId,
                         notebookId: identity.notebookId,
                         blockIds: [id],
-                    });
-                }
-            });
+                    }),
+                });
+            }
             this.menu.addItem({id: "separator_5", type: "separator"});
         }
 
@@ -2486,7 +2509,7 @@ export class Gutter {
             icon: "iconHeading" + level,
             label: gutterText(protyle, "heading" + level),
             click() {
-                void requestGutter(protyle, "/api/block/getHeadingLevelTransaction", {
+                return requestGutter(protyle, "/api/block/getHeadingLevelTransaction", {
                     id,
                     notebook: protyle.notebookId,
                     level

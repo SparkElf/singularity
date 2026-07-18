@@ -94,6 +94,7 @@ import type {
 import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 import { contentDirectorySpaceQueryKey } from "@/spaces/content-directory-api.ts";
+import { createSpaceGatewayResourcePort } from "@/spaces/gateway-paths.ts";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -153,10 +154,40 @@ function createSpaceHostMediator(
         }),
       });
       return;
+    case "open-asset": {
+      const resources = createSpaceGatewayResourcePort({
+        organizationId: bootstrap.organizationId,
+        spaceId: bootstrap.spaceId,
+      });
+      const url = resources.resolveAsset(
+        {
+          documentId: event.documentId,
+          notebookId: event.notebookId,
+        },
+        event.assetPath,
+      );
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    case "open-external":
+      window.open(event.url, "_blank", "noopener,noreferrer");
+      return;
     case "activate-document":
+    case "open-ai-actions":
     case "open-ai-writing":
+    case "open-block-attributes":
+    case "open-block-move":
+    case "open-block-ref-transfer":
+    case "open-block-reminder":
+    case "open-table-menu":
+    case "delete-document":
+    case "open-document-export":
+    case "open-document-move":
     case "persist-workspace-layout":
+    case "rename-asset":
+    case "share-document-community":
     case "toggle-document-fullscreen":
+    case "upload-cloud-assets":
     case "update-document-statistics":
     case "open-graph":
     case "notify":

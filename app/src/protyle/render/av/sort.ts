@@ -1,7 +1,7 @@
 import {getColIconByType} from "./col";
 import {transaction} from "../../wysiwyg/transaction";
 import {setPosition} from "../../../util/setPosition";
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
 import {openAVMenu} from "./menu";
@@ -39,7 +39,7 @@ export const addSort = (options: {
         if (!hasSort) {
             menu.addItem({
                 label: column.name,
-                iconHTML: column.icon ? unicode2Emoji(column.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`,
+                iconHTML: column.icon ? unicodeToEmoji(options.protyle, column.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`,
                 click: () => {
                     const oldSorts = Object.assign([], options.data.view.sorts);
                     options.data.view.sorts.push({
@@ -60,7 +60,7 @@ export const addSort = (options: {
                     options.menuElement.innerHTML = getSortsHTML(
                         fields,
                         options.data.view.sorts,
-                        options.protyle.localization,
+                        options.protyle,
                     );
                     bindSortsEvent(options.protyle, options.menuElement, options.data, options.blockID);
                     setPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
@@ -109,13 +109,14 @@ export const bindSortsEvent = (protyle: IProtyle, menuElement: HTMLElement, data
 export const getSortsHTML = (
     columns: IAVColumn[],
     sorts: IAVSort[],
-    localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let html = "";
     const genSortItem = (id: string) => {
         let sortHTML = "";
         columns.forEach((item) => {
-            sortHTML += `<option value="${item.id}" ${item.id === id ? "selected" : ""}>${item.icon && unicode2Emoji(item.icon)}${item.name}</option>`;
+            sortHTML += `<option value="${item.id}" ${item.id === id ? "selected" : ""}>${item.icon && unicodeToEmoji(protyle, item.icon)}${item.name}</option>`;
         });
         return sortHTML;
     };

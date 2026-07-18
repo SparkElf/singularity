@@ -42,9 +42,9 @@ const getKanbanHTML = (
     e: HTMLElement,
     virtualData: IAVVirtualData,
     fileIcon: string,
-    localization: IProtyle["localization"],
     protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let galleryHTML = "";
     // body
     data.cards.forEach((item: IAVGalleryItem, rowIndex: number) => {
@@ -65,7 +65,6 @@ const getKanbanHTML = (
             rowIndex,
             type: "kanban",
             fileIcon,
-            localization,
             protyle,
         });
     });
@@ -207,7 +206,7 @@ export const renderKanban = async (options: {
             }
             bodyHTML += `<div class="av__kanban-group${group.cardSize === 0 ? " av__kanban-group--small" : (group.cardSize === 2 ? " av__kanban-group--big" : "")}"${selectBg}>
     ${getKanbanTitleHTML(group, group.cardCount, options.protyle.localization)}
-    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>
+    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file, options.protyle)}</div>
 </div>`;
         }
     });

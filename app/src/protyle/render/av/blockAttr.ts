@@ -3,7 +3,8 @@ import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import * as dayjs from "dayjs";
 import {popTextCell, updateCellsValue} from "./cell";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName} from "../../util/hasClosest";
-import {openEmojiPanel, unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
+import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
 import {uploadFiles} from "../../upload";
@@ -17,6 +18,7 @@ import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
 import {touchDragOwner} from "../../ui/touchDragState";
 import {resolveProtyleAssetSource} from "../../util/assetSource";
+import {registerAVBlockValueTarget, resolveAVBlockTarget, setAVBlockIcon} from "./blockTarget";
 
 const genAVRollupHTML = (value: IAVCellValue, localization: IProtyle["localization"]) => {
     let html = "";
@@ -146,7 +148,8 @@ export const genAVValueHTML = (
                         html += `<span data-row-id="${rowID}" class="av__cell--relation"><span><svg style="height: 26px"><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                     } else {
                         // data-block-id 用于更新 emoji
-                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
+                        const targetReference = registerAVBlockValueTarget(protyle, item.block);
+                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                     }
                 }
             });
@@ -213,7 +216,7 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
                 innerHTML += `<div class="block__icons av__row" data-id="${id}" data-col-id="${item.key.id}">
     <div class="block__icon" draggable="true"><svg><use xlink:href="#iconDrag"></use></svg></div>
     <div class="block__logo block__logo--icon ariaLabel fn__pointer" data-type="editCol" data-position="parentW" aria-label="${escapeAriaLabel(item.key.name)}<div class='ft__on-surface'>${escapeAriaLabel(item.key.desc)}</div>">
-        ${item.key.icon ? unicode2Emoji(item.key.icon, "block__logoicon", true) : `<svg class="block__logoicon"><use xlink:href="#${getColIconByType(item.key.type)}"></use></svg>`}
+        ${item.key.icon ? unicodeToEmoji(protyle, item.key.icon, "block__logoicon", true) : `<svg class="block__logoicon"><use xlink:href="#${getColIconByType(item.key.type)}"></use></svg>`}
         <span>${escapeHtml(item.key.name)}</span>
     </div>
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
@@ -476,16 +479,26 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
     }
     while (target && element !== target) {
         const type = target.getAttribute("data-type");
-        if (target.classList.contains("b3-menu__avemoji")) {
+        if (type === "block-icon") {
+            const blockTarget = resolveAVBlockTarget(protyle, target.dataset.avBlockTarget!);
             const rect = target.getBoundingClientRect();
-            openEmojiPanel(target.nextElementSibling.getAttribute("data-id"), "doc", {
-                x: rect.left,
-                y: rect.bottom,
-                h: rect.height,
-                w: rect.width,
-            }, (unicode) => {
-                target.innerHTML = unicode2Emoji(unicode || protyle.settings.icons.file);
-            }, target.querySelector("img"));
+            openProtyleEmojiMenu({
+                protyle,
+                position: {
+                    x: rect.left,
+                    y: rect.bottom,
+                    h: rect.height,
+                    w: rect.width,
+                },
+                onSelect: async (unicode, signal) => {
+                    await setAVBlockIcon(protyle, blockTarget, unicode, signal);
+                    if (signal.aborted || !target.isConnected) {
+                        return;
+                    }
+                    target.dataset.unicode = unicode;
+                    target.innerHTML = unicodeToEmoji(protyle, unicode || protyle.settings.icons.file);
+                },
+            });
             event.preventDefault();
             event.stopPropagation();
             return true;

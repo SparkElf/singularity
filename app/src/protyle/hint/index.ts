@@ -48,6 +48,8 @@ import {beginHintRequest, reportHintRequestFailure, requestHint} from "./request
 import type {HintSearchReferenceResponse} from "./protocol";
 import {createReferencedDocument} from "./documents";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {escapeAttr} from "../../util/escape";
+import {registerAVBlockTarget, resolveAVBlockTarget} from "../render/av/blockTarget";
 
 export class Hint {
     public timeId: number;
@@ -73,7 +75,8 @@ export class Hint {
             }
             const btnElement = hasClosestByTag(eventTarget, "BUTTON");
             if (btnElement && !btnElement.classList.contains("emojis__item") && !btnElement.classList.contains("emojis__type")) {
-                this.fill(decodeURIComponent(btnElement.getAttribute("data-value")), protyle, false, this.source === "search" ? isNotCtrl(event) : isOnlyMeta(event));
+                this.fill(decodeURIComponent(btnElement.getAttribute("data-value")), protyle, false,
+                    this.source === "search" ? isNotCtrl(event) : isOnlyMeta(event), btnElement.dataset.avBlockTarget);
                 event.preventDefault();
                 event.stopPropagation(); // https://github.com/siyuan-note/siyuan/issues/3710
                 return;
@@ -274,7 +277,7 @@ export class Hint {
             if (hintData.html === "separator") {
                 hintsHTML += `<button data-id="${hintData.id || ""}" class="b3-menu__separator"></button>`;
             } else {
-                hintsHTML += `<button data-id="${hintData.id || ""}" style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${focusClass}" data-value="${encodeURIComponent(hintData.value)}">${hintData.html}</button>`;
+                hintsHTML += `<button data-id="${hintData.id || ""}"${hintData.avBlockTarget ? ` data-av-block-target="${escapeAttr(hintData.avBlockTarget)}"` : ""} style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${focusClass}" data-value="${encodeURIComponent(hintData.value)}">${hintData.html}</button>`;
             }
         });
         return `${hintsHTML}</div>`;
@@ -330,7 +333,9 @@ export class Hint {
                 }
                 upDownHint(this.element.lastElementChild, event);
                 if (event.key === "Enter") {
-                    this.fill(decodeURIComponent(this.element.querySelector(".b3-list-item--focus").getAttribute("data-value")), protyle, false, isNotCtrl(event));
+                    const current = this.element.querySelector<HTMLElement>(".b3-list-item--focus")!;
+                    this.fill(decodeURIComponent(current.getAttribute("data-value")), protyle, false, isNotCtrl(event),
+                        current.dataset.avBlockTarget);
                     event.preventDefault();
                 } else if (event.key === "Escape") {
                     this.element.classList.add("fn__none");
@@ -373,7 +378,7 @@ export class Hint {
                 return;
             }
             let searchHTML = "";
-            response.data.blocks.forEach((item: IBlock & {box: string; id: string}, index: number) => {
+            response.data.blocks.forEach((item, index) => {
                 let blockRefHTML;
                 if (source === "av") {
                     // av 搜索时需要获取值 https://github.com/siyuan-note/siyuan/issues/12020
@@ -385,7 +390,12 @@ export class Hint {
                 } else {
                     blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${oldValue}</span>`;
                 }
-                searchHTML += `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${index === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefHTML)}">
+                const blockTarget = source === "av" ? registerAVBlockTarget(protyle, {
+                    blockId: item.id,
+                    documentId: item.rootID,
+                    notebookId: item.box,
+                }) : undefined;
+                searchHTML += `<button${blockTarget ? ` data-av-block-target="${escapeAttr(blockTarget)}"` : ""} style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${index === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefHTML)}">
 ${genHintItemHTML(item, protyle)}
 </button>`;
             });
@@ -421,10 +431,10 @@ ${genHintItemHTML(item, protyle)}
             this.element.innerHTML = `<div style="padding:0;max-height:min(402px,40vh);width:366px" class="emojis">
 <div class="emojis__panel">${filterEmoji(protyle, value, 256)}</div>
 <div class="fn__flex${value ? " fn__none" : ""}">
-    ${protyle.settings.recentEmojis.values.length === 0 ? "" : `<button data-type="0" class="emojis__type ariaLabel" aria-label="${protyle.localization.text("recentEmoji")}">${unicodeToEmoji(protyle, "2b50")}</button>`}
+    ${protyle.settings.recentEmojis.values.length === 0 ? "" : `<button data-type="0" class="emojis__type ariaLabel" aria-label="${escapeAttr(protyle.localization.text("recentEmoji"))}">${unicodeToEmoji(protyle, "2b50")}</button>`}
     ${protyle.settings.emojis.flatMap((group, index) => {
                 const icon = getEmojiGroupIcon(group);
-                return icon ? [`<button data-type="${index + 1}" class="emojis__type ariaLabel" aria-label="${getEmojiGroupTitle(protyle, index)}">${unicodeToEmoji(protyle, icon)}</button>`] : [];
+                return icon ? [`<button data-type="${index + 1}" class="emojis__type ariaLabel" aria-label="${escapeAttr(getEmojiGroupTitle(protyle, index))}">${unicodeToEmoji(protyle, icon)}</button>`] : [];
             }).join("")}
 </div>
 </div>`;
@@ -443,7 +453,7 @@ ${genHintItemHTML(item, protyle)}
         }
     }
 
-    public fill(value: string, protyle: IProtyle, updateRange = true, refIsS = false) {
+    public fill(value: string, protyle: IProtyle, updateRange = true, refIsS = false, avBlockTarget?: string) {
         this.menus.close();
         hideElements(["hint", "toolbar"], protyle);
         if (updateRange && this.source !== "av") {
@@ -471,7 +481,8 @@ ${genHintItemHTML(item, protyle)}
             let tempElement = document.createElement("div");
             tempElement.innerHTML = value.replace(/<mark>/g, "").replace(/<\/mark>/g, "");
             tempElement = tempElement.firstElementChild as HTMLDivElement;
-            const sourceId = tempElement.getAttribute("data-id");
+            const target = resolveAVBlockTarget(protyle, avBlockTarget!);
+            const sourceId = target.blockId;
             rowElement.dataset.id = sourceId;
             transaction(protyle, [{
                 action: "replaceAttrViewBlock",
@@ -491,7 +502,9 @@ ${genHintItemHTML(item, protyle)}
                 isDetached: false,
                 block: {
                     content: tempElement.textContent,
-                    id: sourceId
+                    documentId: target.documentId,
+                    id: sourceId,
+                    notebookId: target.notebookId,
                 }
             });
             return;
@@ -916,7 +929,8 @@ ${genHintItemHTML(item, protyle)}
                 if (mark === Constants.ZWSP + 3) {
                     (this.element.querySelector(".b3-list-item--focus input") as HTMLElement).click();
                 } else {
-                    this.fill(mark, protyle, true, isOnlyMeta(event));
+                    const current = this.element.querySelector<HTMLElement>(".b3-list-item--focus")!;
+                    this.fill(mark, protyle, true, isOnlyMeta(event), current.dataset.avBlockTarget);
                 }
             }
             event.preventDefault();

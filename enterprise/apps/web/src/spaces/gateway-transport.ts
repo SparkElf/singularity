@@ -6,8 +6,8 @@ import {
   type ApiProblem,
 } from "@singularity/contracts";
 import type {
-  ProtyleHostEvent,
   ProtyleRequestOptions,
+  ProtyleRuntimeErrorEvent,
   ProtyleSubscription,
   ProtyleSubscriptionOptions,
   ProtyleTransport,
@@ -24,8 +24,6 @@ import {
   type SpaceGatewayIdentity,
 } from "@/spaces/gateway-paths.ts";
 
-type RuntimeErrorEvent = Extract<ProtyleHostEvent, { type: "runtime-error" }>;
-
 export interface SpaceGatewayTransport<TMessage> extends ProtyleTransport<TMessage> {
   freeze: () => void;
   resumeSubmission: () => void;
@@ -33,7 +31,7 @@ export interface SpaceGatewayTransport<TMessage> extends ProtyleTransport<TMessa
 
 interface CreateSpaceGatewayTransportOptions {
   readonly getCsrfToken: (signal: AbortSignal) => Promise<string>;
-  readonly onRuntimeError: (event: RuntimeErrorEvent) => void;
+  readonly onRuntimeError: (event: ProtyleRuntimeErrorEvent) => void;
   readonly space: SpaceGatewayIdentity;
 }
 
@@ -138,7 +136,7 @@ export function createSpaceGatewayTransport<TMessage>(
   };
 
   const reportRuntimeError = (
-    category: RuntimeErrorEvent["category"],
+    category: ProtyleRuntimeErrorEvent["category"],
     requestId: string,
   ) => {
     const terminal = category === "unauthenticated" || category === "forbidden";

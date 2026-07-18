@@ -183,6 +183,7 @@ describe("SpaceSessionRoot", () => {
         restoreScroll: "never",
         scope: "target",
         scroll: "auto",
+        sourceEditorId: "editor-primary",
         type: "open-document",
         zoom: false,
       });
@@ -193,6 +194,7 @@ describe("SpaceSessionRoot", () => {
       expect.objectContaining({
         documentId: "20260718000100-docum01",
         notebookId: "20260718000000-noteb01",
+        sourceEditorId: "editor-primary",
         type: "open-document",
       }),
       readyBootstrap(SPACE_A),

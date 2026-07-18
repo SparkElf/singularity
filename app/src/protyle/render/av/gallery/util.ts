@@ -1,6 +1,6 @@
 import {transaction} from "../../../wysiwyg/transaction";
 import {hasClosestByClassName} from "../../../util/hasClosest";
-import {unicode2Emoji} from "../../../../emoji";
+import {unicodeToEmoji} from "../../../hint/emoji";
 import {getColIconByType} from "../col";
 import {avContextmenu} from "../action";
 import {Constants} from "../../../../constants";
@@ -88,7 +88,7 @@ export const setGalleryCover = (options: {
                 addedSeparator = true;
             }
             menu.addItem({
-                iconHTML: item.icon ? unicode2Emoji(item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`,
+                iconHTML: item.icon ? unicodeToEmoji(options.protyle, item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`,
                 checked: options.view.coverFrom === 2 && options.view.coverFromAssetKeyID === item.id,
                 label: item.name,
                 click() {

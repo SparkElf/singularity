@@ -1315,7 +1315,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
     const imgSrc = imgElement.getAttribute("src");
     if (imgSrc) {
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_3", type: "separator"}).element);
-        openMenu(protyle.app, imgSrc, protyle.notebookId, protyle.block.rootID, false, false);
+        openMenu(protyle.app, imgSrc, protyle.notebookId, false, false);
     }
     const dataSrc = imgElement.getAttribute("data-src");
     if (dataSrc && dataSrc.startsWith("assets/")) {
@@ -1601,7 +1601,7 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
 
     if (linkAddress) {
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
-        openMenu(protyle.app, linkAddress, protyle.notebookId, protyle.block.rootID, false, true);
+        openMenu(protyle.app, linkAddress, protyle.notebookId, false, true);
         if (linkAddress?.startsWith("assets/")) {
             window.siyuan.menus.menu.append(new MenuItem(exportAsset(linkAddress)).element);
             window.siyuan.menus.menu.append(new MenuItem(writeAssetToClipboard(linkAddress)).element);
@@ -2009,7 +2009,6 @@ export const iframeMenu = (protyle: IProtyle, nodeElement: Element) => {
             protyle.app,
             iframeSrc,
             protyle.notebookId,
-            protyle.block.rootID,
             true,
             false,
         ) as IMenu[]);
@@ -2058,7 +2057,6 @@ export const videoMenu = (protyle: IProtyle, nodeElement: Element, type: string)
                 protyle.app,
                 src,
                 protyle.notebookId,
-                protyle.block.rootID,
                 true,
                 false,
             ) as IMenu[]

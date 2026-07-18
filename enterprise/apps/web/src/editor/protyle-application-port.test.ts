@@ -41,8 +41,22 @@ describe("createProtyleApplicationPort", () => {
 
     expect(restored.settings.editor.fontSize).toBe(18);
     expect(restored.settings.features).toEqual({
+      aiActions: false,
       aiWriting: false,
+      assetRename: false,
+      blockAttributes: false,
+      blockMove: false,
+      blockRefTransfer: false,
+      cloudAssetUpload: false,
+      communityShare: false,
+      documentDelete: false,
+      documentExport: false,
+      documentMove: false,
       flashcardDeck: false,
+      fullscreen: false,
+      quickFlashcard: false,
+      tableMenu: false,
+      webBlockLink: false,
       wechatReminder: false,
       widget: false,
     });

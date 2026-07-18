@@ -81,7 +81,8 @@ import {
     getTypeByCellElement,
     updateCellsValue
 } from "../render/av/cell";
-import {openEmojiPanel, unicode2Emoji} from "../../emoji";
+import {emojiContentHTML, unicodeToEmoji} from "../hint/emoji";
+import {openProtyleEmojiMenu} from "../ui/emojiMenu";
 import {openLink} from "../../editor/openLink";
 import {mathRender} from "../render/mathRender";
 import {editAssetItem} from "../render/av/asset";
@@ -99,8 +100,6 @@ import {BlockPanel} from "../../block/Panel";
 import {isEncryptedBox, parseSiYuanUriInfo} from "../../util/pathName";
 import {zoomOut} from "../util/zoom";
 import {requestBlockFold} from "../util/blockFoldRequest";
-import {escapeAttr} from "../../util/escape";
-import {resolveProtyleEmojiPath} from "../util/emojiPath";
 
 export class WYSIWYG {
     public lastHTMLs: { [key: string]: string } = {};
@@ -108,8 +107,10 @@ export class WYSIWYG {
     public preventKeyup: boolean;
 
     private preventClick: boolean;
+    private readonly settings: IProtyle["settings"];
 
     constructor(protyle: IProtyle) {
+        this.settings = protyle.settings;
         this.element = document.createElement("div");
         this.element.className = "protyle-wysiwyg";
         this.element.setAttribute("spellcheck", "false");
@@ -120,7 +121,7 @@ export class WYSIWYG {
         } else {
             this.element.setAttribute("contenteditable", "true");
         }
-        if (window.siyuan.config.editor.displayBookmarkIcon) {
+        if (this.settings.editor.displayBookmarkIcon) {
             this.element.classList.add("protyle-wysiwyg--attr");
         }
         this.bindCommonEvent(protyle);
@@ -135,7 +136,7 @@ export class WYSIWYG {
     public renderCustom(ial: Record<string, string>) {
         let isFullWidth = ial[Constants.CUSTOM_SY_FULLWIDTH];
         if (!isFullWidth) {
-            isFullWidth = window.siyuan.config.editor.fullWidth ? "true" : "false";
+            isFullWidth = this.settings.editor.fullWidth ? "true" : "false";
         }
         if (isFullWidth === "true") {
             this.element.parentElement.setAttribute("data-fullwidth", "true");
@@ -370,7 +371,7 @@ export class WYSIWYG {
                         )) {
                             html += "[";
                         }
-                        html += JSON.stringify(genCellValueByElement(getTypeByCellElement(item), item)) + ",";
+                        html += JSON.stringify(genCellValueByElement(protyle, getTypeByCellElement(item), item)) + ",";
                         if (index === cellElements.length - 1 || (
                             cellElements[index + 1] !== item.nextElementSibling &&
                             !(!item.nextElementSibling && item.parentElement.nextElementSibling === cellElements[index + 1])
@@ -1008,7 +1009,7 @@ export class WYSIWYG {
                         if (!originData[rowElement.dataset.id]) {
                             originData[rowElement.dataset.id] = [];
                         }
-                        originData[rowElement.dataset.id].push(genCellValueByElement(getTypeByCellElement(item), item));
+                        originData[rowElement.dataset.id].push(genCellValueByElement(protyle, getTypeByCellElement(item), item));
                         lastOriginCellElement = item;
                         originCellIds.push(item.dataset.id);
                     }
@@ -2628,7 +2629,7 @@ export class WYSIWYG {
                     const getDocParam: IObject = {
                         id: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
                         mode: 1,
-                        size: window.siyuan.config.editor.dynamicLoadBlocks,
+                        size: protyle.settings.editor.dynamicLoadBlocks,
                     };
                     if (isEncryptedBox(protyle.notebookId)) {
                         getDocParam.notebook = protyle.notebookId;
@@ -2648,7 +2649,7 @@ export class WYSIWYG {
                     const getDocParam: IObject = {
                         id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                         mode: 2,
-                        size: window.siyuan.config.editor.dynamicLoadBlocks,
+                        size: protyle.settings.editor.dynamicLoadBlocks,
                     };
                     if (isEncryptedBox(protyle.notebookId)) {
                         getDocParam.notebook = protyle.notebookId;
@@ -3399,39 +3400,36 @@ export class WYSIWYG {
                 const nodeElement = hasClosestBlock(calloutIconElement);
                 if (nodeElement) {
                     const emojiRect = calloutIconElement.getBoundingClientRect();
-                    openEmojiPanel("", "av", {
-                        x: emojiRect.left,
-                        y: emojiRect.bottom,
-                        h: emojiRect.height,
-                        w: emojiRect.width
-                    }, (unicode) => {
-                        const oldHTML = nodeElement.outerHTML;
-                        let emojiHTML;
-                        if (unicode.startsWith("api/icon/getDynamicIcon")) {
-                            emojiHTML = `<img class="callout-img" src="${unicode}"/>`;
-                        } else if (unicode.indexOf(".") > -1) {
-                            emojiHTML = `<img class="callout-img" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}">`;
-                        } else {
-                            emojiHTML = unicode2Emoji(unicode);
-                        }
-                        if (unicode === "") {
-                            const subType = nodeElement.getAttribute("data-subtype");
-                            if (subType === "NOTE") {
-                                emojiHTML = "✏️";
-                            } else if (subType === "TIP") {
-                                emojiHTML = "💡";
-                            } else if (subType === "IMPORTANT") {
-                                emojiHTML = "❗";
-                            } else if (subType === "WARNING") {
-                                emojiHTML = "⚠️";
-                            } else if (subType === "CAUTION") {
-                                emojiHTML = "🚨";
+                    openProtyleEmojiMenu({
+                        protyle,
+                        position: {
+                            x: emojiRect.left,
+                            y: emojiRect.bottom,
+                            h: emojiRect.height,
+                            w: emojiRect.width,
+                        },
+                        onSelect: (unicode) => {
+                            const oldHTML = nodeElement.outerHTML;
+                            let emojiHTML = unicodeToEmoji(protyle, unicode, "callout-img");
+                            if (unicode === "") {
+                                const subType = nodeElement.getAttribute("data-subtype");
+                                if (subType === "NOTE") {
+                                    emojiHTML = "✏️";
+                                } else if (subType === "TIP") {
+                                    emojiHTML = "💡";
+                                } else if (subType === "IMPORTANT") {
+                                    emojiHTML = "❗";
+                                } else if (subType === "WARNING") {
+                                    emojiHTML = "⚠️";
+                                } else if (subType === "CAUTION") {
+                                    emojiHTML = "🚨";
+                                }
                             }
-                        }
-                        calloutIconElement.innerHTML = emojiHTML;
-                        updateTransaction(protyle, nodeElement, oldHTML);
-                        focusBlock(nodeElement);
-                    }, calloutIconElement.querySelector("img"));
+                            calloutIconElement.innerHTML = emojiHTML;
+                            updateTransaction(protyle, nodeElement, oldHTML);
+                            focusBlock(nodeElement);
+                        },
+                    });
                 }
                 event.preventDefault();
                 event.stopPropagation();
@@ -3443,27 +3441,23 @@ export class WYSIWYG {
                 const nodeElement = hasClosestBlock(emojiElement);
                 if (nodeElement) {
                     const emojiRect = emojiElement.getBoundingClientRect();
-                    openEmojiPanel("", "av", {
-                        x: emojiRect.left,
-                        y: emojiRect.bottom,
-                        h: emojiRect.height,
-                        w: emojiRect.width
-                    }, (unicode) => {
-                        emojiElement.insertAdjacentHTML("afterend", "<wbr>");
-                        const oldHTML = nodeElement.outerHTML;
-                        let emojiHTML;
-                        if (unicode.startsWith("api/icon/getDynamicIcon")) {
-                            emojiHTML = `<img class="emoji" src="${unicode}"/>`;
-                        } else if (unicode.indexOf(".") > -1) {
-                            const emojiList = unicode.split(".");
-                            emojiHTML = `<img alt="${escapeAttr(emojiList[0])}" class="emoji" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}" title="${escapeAttr(emojiList[0])}">`;
-                        } else {
-                            emojiHTML = unicode2Emoji(unicode);
-                        }
-                        emojiElement.outerHTML = emojiHTML;
-                        updateTransaction(protyle, nodeElement, oldHTML);
-                        focusByWbr(nodeElement, range);
-                    }, emojiElement);
+                    openProtyleEmojiMenu({
+                        protyle,
+                        position: {
+                            x: emojiRect.left,
+                            y: emojiRect.bottom,
+                            h: emojiRect.height,
+                            w: emojiRect.width,
+                        },
+                        onSelect: (unicode) => {
+                            emojiElement.insertAdjacentHTML("afterend", "<wbr>");
+                            const oldHTML = nodeElement.outerHTML;
+                            const emojiHTML = emojiContentHTML(protyle, unicode);
+                            emojiElement.outerHTML = emojiHTML;
+                            updateTransaction(protyle, nodeElement, oldHTML);
+                            focusByWbr(nodeElement, range);
+                        },
+                    });
                 }
                 return;
             }

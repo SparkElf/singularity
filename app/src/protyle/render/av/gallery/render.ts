@@ -39,9 +39,9 @@ const getGalleryHTML = (
     e: HTMLElement,
     virtualData: IAVVirtualData,
     fileIcon: string,
-    localization: IProtyle["localization"],
     protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let galleryHTML = "";
     // body
     data.cards.forEach((item: IAVGalleryItem, rowIndex: number) => {
@@ -56,7 +56,7 @@ const getGalleryHTML = (
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        galleryHTML += getRowHTML({data, row: item, rowIndex, type: "gallery", fileIcon, localization, protyle});
+        galleryHTML += getRowHTML({data, row: item, rowIndex, type: "gallery", fileIcon, protyle});
     });
     galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${localization.text("newRow")}</div>`;
     return `<div class="av__gallery${data.cardSize === 0 ? " av__gallery--small" : (data.cardSize === 2 ? " av__gallery--big" : "")}">
@@ -80,7 +80,7 @@ const renderGroupGallery = (options: ITableOptions) => {
     options.data.view.groups.forEach((group: IAVGallery) => {
         if (group.groupHidden === 0) {
             avBodyHTML += `${getGroupTitleHTML(group, group.cardCount, options.protyle.localization)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body${group.groupFolded ? " fn__none" : ""}">${getGalleryHTML(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>`;
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body${group.groupFolded ? " fn__none" : ""}">${getGalleryHTML(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle)}</div>`;
         }
     });
     if (options.renderAll) {
@@ -293,7 +293,6 @@ export const renderGallery = async (options: {
         options.blockElement,
         virtualData.all,
         options.protyle.settings.icons.file,
-        options.protyle.localization,
         options.protyle,
     );
     if (options.renderAll) {

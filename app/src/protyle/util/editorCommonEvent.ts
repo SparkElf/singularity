@@ -1445,7 +1445,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
 
                     const getDocParam: IObject = {
                         id: protyle.block.id,
-                        size: window.siyuan.config.editor.dynamicLoadBlocks,
+                        size: protyle.settings.editor.dynamicLoadBlocks,
                     };
                     if (isEncryptedBox(protyle.notebookId)) {
                         getDocParam.notebook = protyle.notebookId;
