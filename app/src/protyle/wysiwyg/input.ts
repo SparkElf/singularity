@@ -5,7 +5,7 @@ import {transaction, updateTransaction} from "./transaction";
 import {mathRender} from "../render/mathRender";
 import {highlightRender} from "../render/highlightRender";
 import {getContenteditableElement, fixAdjacentTags, hasNextSibling, hasPreviousSibling, isNotEditBlock} from "./getBlock";
-import {genEmptyBlock} from "../../block/util";
+import {genEmptyBlock} from "./blockElement";
 import {blockRender} from "../render/blockRender";
 import {hideElements} from "../ui/hideElements";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
@@ -172,7 +172,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
                 focusHR = true;
             }
         } else {
-            html += genEmptyBlock(false, true);
+            html += genEmptyBlock(protyle, false, true);
         }
     } else {
         if (type !== "NodeCodeBlock" && (

@@ -1,4 +1,5 @@
-import {genEmptyElement, genHeadingElement, insertEmptyBlock} from "../../block/util";
+import {insertEmptyBlock} from "./blockActions";
+import {genEmptyElement, genHeadingElement} from "./blockElement";
 import {focusByRange, focusByWbr, getSelectionOffset, setLastNodeRange} from "../util/selection";
 import {
     getContenteditableElement, getParentBlock,
@@ -202,7 +203,7 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
             blockElement.previousElementSibling.getAttribute("fold") === "1") {
             newElement = genHeadingElement(blockElement.previousElementSibling, false, true) as HTMLDivElement;
         } else {
-            newElement = genEmptyElement(false, true);
+            newElement = genEmptyElement(protyle, false, true);
         }
         blockElement.insertAdjacentElement("beforebegin", newElement);
         const newId = newElement.getAttribute("data-node-id");
@@ -246,7 +247,7 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
     if (blockElement.getAttribute("data-type") === "NodeHeading" && blockElement.getAttribute("fold") === "1") {
         newElement.innerHTML = genHeadingElement(blockElement, true) as string;
     } else {
-        newElement.appendChild(genEmptyElement(false, false));
+        newElement.appendChild(genEmptyElement(protyle, false, false));
     }
     const newEditableElement = newElement.querySelector('[contenteditable="true"]');
     newEditableElement.appendChild(range.extractContents());
@@ -419,14 +420,14 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
         range.insertNode(wbrElement);
         const html = listItemElement.parentElement.outerHTML;
         wbrElement.remove();
-        let newElement = genListItemElement(listItemElement, -1, true);
+        let newElement = genListItemElement(protyle, listItemElement, -1, true);
         if (!blockElement.previousElementSibling.classList.contains("protyle-action")) {
             // 列表项中有多个块，最后一个块为空，换行应进行缩进
             if (getContenteditableElement(blockElement).textContent !== "") {
                 return false;
             }
             blockElement.remove();
-            newElement = genListItemElement(listItemElement, -1, true);
+            newElement = genListItemElement(protyle, listItemElement, -1, true);
             listItemElement.insertAdjacentElement("afterend", newElement);
         } else if (getContenteditableElement(blockElement).textContent === "") {
             listItemElement.insertAdjacentElement("afterend", newElement);
@@ -456,7 +457,7 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
             range.insertNode(document.createElement("wbr"));
             const html = listItemElement.outerHTML;
             blockElement.querySelector("wbr").remove();
-            newElement = genListItemElement(subListElement.firstElementChild, -1, true);
+            newElement = genListItemElement(protyle, subListElement.firstElementChild, -1, true);
             subListElement.firstElementChild.before(newElement);
             if (subListElement.getAttribute("data-subtype") === "o") {
                 updateListOrder(subListElement);
@@ -474,7 +475,7 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
                 range.insertNode(document.createElement("wbr"));
             }
             range.setEndAfter(editableElement.lastChild);
-            newElement = genListItemElement(listItemElement, 0, false);
+            newElement = genListItemElement(protyle, listItemElement, 0, false);
             const newEditElement = getContenteditableElement(newElement);
             newEditElement.appendChild(range.extractContents());
             const subWbrElement = newEditElement.querySelector("wbr");
@@ -560,7 +561,7 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
     if (editableElement.lastChild) {
         range.setEndAfter(editableElement.lastChild);
     }
-    newElement = genListItemElement(listItemElement, 0, false);
+    newElement = genListItemElement(protyle, listItemElement, 0, false);
     const newEditableElement = getContenteditableElement(newElement);
     newEditableElement.appendChild(range.extractContents());
     const selectWbrElement = newEditableElement.querySelector("wbr");

@@ -4,7 +4,7 @@ import {hasClosestBlock, hasClosestByClassName, hasClosestByTag} from "./hasClos
 import {matchHotKey} from "./hotKey";
 import {isNotCtrl} from "./keyboard";
 import {scrollCenter} from "./highlightById";
-import {insertEmptyBlock} from "../../block/util";
+import {insertEmptyBlock} from "../wysiwyg/blockActions";
 import {removeBlock} from "../wysiwyg/remove";
 import {hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
 import * as dayjs from "dayjs";

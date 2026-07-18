@@ -1,6 +1,6 @@
 import {focusByWbr} from "../util/selection";
 import {transaction, turnsIntoOneTransaction, updateTransaction} from "./transaction";
-import {genEmptyBlock} from "../../block/util";
+import {genEmptyBlock} from "./blockElement";
 import * as dayjs from "dayjs";
 import {Constants} from "../../constants";
 import {moveToPrevious, removeBlock} from "./remove";
@@ -76,16 +76,22 @@ export const toggleTaskListItem = (protyle: IProtyle, taskItemElement: Element):
     updateTransaction(protyle, taskItemElement, html);
 };
 
-export const genListItemElement = (listItemElement: Element, offset = 0, wbr = false, startIndex?: number) => {
+export const genListItemElement = (
+    protyle: IProtyle,
+    listItemElement: Element,
+    offset = 0,
+    wbr = false,
+    startIndex?: number,
+) => {
     const element = document.createElement("template");
     const type = listItemElement.getAttribute("data-subtype");
     if (type === "o") {
         const index = startIndex !== undefined ? startIndex : parseInt(listItemElement.getAttribute("data-marker")) + offset + 1;
-        element.innerHTML = `<div data-marker="${index}." data-subtype="o" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div contenteditable="false" class="protyle-action protyle-action--order" draggable="true">${index}.</div>${genEmptyBlock(false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
+        element.innerHTML = `<div data-marker="${index}." data-subtype="o" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div contenteditable="false" class="protyle-action protyle-action--order" draggable="true">${index}.</div>${genEmptyBlock(protyle, false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
     } else if (type === "t") {
-        element.innerHTML = `<div data-task=" " data-marker="*" data-subtype="t" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div class="protyle-action protyle-action--task" draggable="true"><svg><use xlink:href="#iconUncheck"></use></svg></div>${genEmptyBlock(false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
+        element.innerHTML = `<div data-task=" " data-marker="*" data-subtype="t" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div class="protyle-action protyle-action--task" draggable="true"><svg><use xlink:href="#iconUncheck"></use></svg></div>${genEmptyBlock(protyle, false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
     } else {
-        element.innerHTML = `<div data-marker="*" data-subtype="u" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div class="protyle-action" draggable="true"><svg><use xlink:href="#iconDot"></use></svg></div>${genEmptyBlock(false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
+        element.innerHTML = `<div data-marker="*" data-subtype="u" data-node-id="${Lute.NewNodeID()}" data-type="NodeListItem" class="li"><div class="protyle-action" draggable="true"><svg><use xlink:href="#iconDot"></use></svg></div>${genEmptyBlock(protyle, false, wbr)}<div class="protyle-attr" contenteditable="false"></div></div>`;
     }
     return element.content.firstElementChild as HTMLElement;
 };
@@ -103,7 +109,7 @@ export const addSubList = (protyle: IProtyle, nodeElement: Element, range: Range
             return false;
         }
         const id = Lute.NewNodeID();
-        const newListItemElement = genListItemElement(parentItemElement, 0, true, 1);
+        const newListItemElement = genListItemElement(protyle, parentItemElement, 0, true, 1);
         const newListHTML = `<div data-subtype="${parentItemElement.getAttribute("data-subtype")}" data-node-id="${id}" data-type="NodeList" class="list" updated="${dayjs().format("YYYYMMDDHHmmss")}">${newListItemElement.outerHTML}<div class="protyle-attr" contenteditable="false">${Constants.ZWSP}</div></div>`;
         lastElement.insertAdjacentHTML("afterend", newListHTML);
         unfoldElements(protyle, [parentItemElement]);
@@ -126,7 +132,7 @@ export const addSubList = (protyle: IProtyle, nodeElement: Element, range: Range
     if (!lastSubItem) {
         return false;
     }
-    const newListElement = genListItemElement(lastSubItem, 0, true);
+    const newListElement = genListItemElement(protyle, lastSubItem, 0, true);
     const id = newListElement.getAttribute("data-node-id");
     lastSubItem.after(newListElement);
     unfoldElements(protyle, [lastSubItem.parentElement, parentItemElement]);

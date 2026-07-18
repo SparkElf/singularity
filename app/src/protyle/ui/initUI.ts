@@ -7,7 +7,7 @@ import {lineNumberRender} from "../render/highlightRender";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {genUUID} from "../../util/genID";
 import {getContenteditableElement, getLastBlock} from "../wysiwyg/getBlock";
-import {genEmptyElement, genHeadingElement} from "../../block/util";
+import {genEmptyElement, genHeadingElement} from "../wysiwyg/blockElement";
 import {transaction} from "../wysiwyg/transaction";
 import {focusByRange} from "../util/selection";
 import {moveResize} from "../../dialog/moveResize";
@@ -164,7 +164,7 @@ export const initUI = (protyle: IProtyle) => {
                 if (lastElement.getAttribute("data-type") === "NodeHeading" && lastElement.getAttribute("fold") === "1") {
                     emptyElement = genHeadingElement(lastElement) as Element;
                 } else {
-                    emptyElement = genEmptyElement(false, false);
+                    emptyElement = genEmptyElement(protyle, false, false);
                 }
                 protyle.wysiwyg.element.insertAdjacentElement("beforeend", emptyElement);
                 transaction(protyle, [{

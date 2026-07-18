@@ -445,6 +445,7 @@ interface ISearchAssetOption {
 
 interface ITextOption {
     color?: string,
+    notebookId?: string,
     type: string
 }
 

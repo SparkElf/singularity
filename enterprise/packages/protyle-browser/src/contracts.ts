@@ -863,6 +863,7 @@ export interface ProtyleApplicationSettings {
     readonly persist: () => void;
   };
   readonly navigation: {
+    readonly noSplitScreenWhenOpenTab: boolean;
     readonly openFilesUseCurrentTab: boolean;
   };
   readonly toolbar: {

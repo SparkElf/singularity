@@ -49,13 +49,9 @@ import {beginProtyleDrag, endProtyleDrag} from "../ui/dragState";
 import {touchDragOwner} from "../ui/touchDragState";
 import {createBlockCopyMenu} from "../ui/blockCopyMenu";
 import {positionElementInViewport} from "../ui/positionElement";
-import {
-    cancelSuperBlock,
-    createEmptyBlockElement,
-    insertEmptyBlockAt,
-    navigateBack,
-    navigateRelativeBlock,
-} from "./blockActions";
+import {insertEmptyBlock, jumpToParent, navigateBack} from "../wysiwyg/blockActions";
+import {genEmptyElement} from "../wysiwyg/blockElement";
+import {cancelSB} from "../wysiwyg/superBlock";
 import {createIframeMenu, createMediaMenu} from "./mediaMenu";
 import type {
     ProtyleMenuHandle,
@@ -265,7 +261,7 @@ export class Gutter {
             selectElements.forEach(item => {
                 if (item.querySelector("iframe")) {
                     const type = item.getAttribute("data-type");
-                    const embedElement = createEmptyBlockElement(protyle);
+                    const embedElement = genEmptyElement(protyle);
                     embedElement.classList.add("protyle-wysiwyg--select");
                     getContenteditableElement(embedElement).innerHTML = `<svg class="svg"><use xlink:href="${buttonElement.querySelector("use").getAttribute("xlink:href")}"></use></svg> ${getBlockTypeName(protyle, type)}`;
                     ghostElement.append(embedElement);
@@ -431,7 +427,7 @@ export class Gutter {
                 }
                 hideElements(["gutter"], protyle);
                 countBlockStatistics(protyle, []);
-                void insertEmptyBlockAt(
+                void insertEmptyBlock(
                     protyle,
                     buttonElement.dataset.type === "gutterPlusBefore" ? "beforebegin" : "afterend",
                     id,
@@ -1796,7 +1792,7 @@ export class Gutter {
                 label: gutterText(protyle, "cancel") + " " + gutterText(protyle, "superBlock"),
                 accelerator: protyle.settings.hotkeys.editor.general[isCol ? "hLayout" : "vLayout"],
                 async click() {
-                    const sbData = await cancelSuperBlock(protyle, nodeElement);
+                    const sbData = await cancelSB(protyle, nodeElement);
                     transaction(protyle, sbData.doOperations, sbData.undoOperations);
                     focusBlock(protyle.wysiwyg.element.querySelector(`[data-node-id="${sbData.previousId}"]`));
                     hideElements(["gutter"], protyle);
@@ -2194,7 +2190,7 @@ export class Gutter {
                         });
                         if (protyle.wysiwyg.element.childElementCount === 0) {
                             const newID = Lute.NewNodeID();
-                            const emptyElement = createEmptyBlockElement(protyle, false, false, newID);
+                            const emptyElement = genEmptyElement(protyle, false, false, newID);
                             protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                             deleteResponse.data.doOperations.push({
                                 action: "insert",
@@ -2234,7 +2230,7 @@ export class Gutter {
                         });
                         if (protyle.wysiwyg.element.childElementCount === 0) {
                             const newID = Lute.NewNodeID();
-                            const emptyElement = createEmptyBlockElement(protyle, false, false, newID);
+                            const emptyElement = genEmptyElement(protyle, false, false, newID);
                             protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                             response.data.doOperations.push({
                                 action: "insert",
@@ -2304,7 +2300,7 @@ export class Gutter {
                 click() {
                     hideElements(["select"], protyle);
                     countBlockStatistics(protyle, []);
-                    return insertEmptyBlockAt(protyle, "beforebegin", id);
+                    return insertEmptyBlock(protyle, "beforebegin", id);
                 }
             });
             this.menu.addItem({
@@ -2315,7 +2311,7 @@ export class Gutter {
                 click() {
                     hideElements(["select"], protyle);
                     countBlockStatistics(protyle, []);
-                    return insertEmptyBlockAt(protyle, "afterend", id);
+                    return insertEmptyBlock(protyle, "afterend", id);
                 }
             });
             const countElement = nodeElement.lastElementChild.querySelector(".protyle-attr--refcount");
@@ -2345,7 +2341,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParentPrev,
                 click() {
                     hideElements(["select"], protyle);
-                    return navigateRelativeBlock(protyle, id, "previous");
+                    return jumpToParent(protyle, nodeElement, "previous");
                 }
             }, {
                 iconHTML: "",
@@ -2354,7 +2350,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParentNext,
                 click() {
                     hideElements(["select"], protyle);
-                    return navigateRelativeBlock(protyle, id, "next");
+                    return jumpToParent(protyle, nodeElement, "next");
                 }
             }, {
                 iconHTML: "",
@@ -2363,7 +2359,7 @@ export class Gutter {
                 accelerator: protyle.settings.hotkeys.editor.general.jumpToParent,
                 click() {
                     hideElements(["select"], protyle);
-                    return navigateRelativeBlock(protyle, id, "parent");
+                    return jumpToParent(protyle, nodeElement, "parent");
                 }
             }]
         });

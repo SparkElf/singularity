@@ -24,7 +24,7 @@ import {BlockRef} from "./BlockRef";
 import {hintRenderTemplate, hintRenderWidget} from "../hint/extend";
 import {blockRender} from "../render/blockRender";
 import * as dayjs from "dayjs";
-import {insertEmptyBlock} from "../../block/util";
+import {insertEmptyBlock} from "../wysiwyg/blockActions";
 import {matchHotKey} from "../util/hotKey";
 import {toolbarKeyToMenu} from "./config";
 import {previewTemplate} from "./template";

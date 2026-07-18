@@ -160,7 +160,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
     const wysiwyg = p.wysiwyg!;
 
     wysiwyg.element.innerHTML = "";
-    const emptyElement = genEmptyElement(false, false);
+    const emptyElement = genEmptyElement(p, false, false);
     emptyElement.firstElementChild.classList.add("protyle-wysiwyg--empty");
     emptyElement.firstElementChild.setAttribute("placeholder", L.agentInputPlaceholder);
     wysiwyg.element.appendChild(emptyElement);
@@ -250,7 +250,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
         },
         clear: () => {
             wysiwyg.element.innerHTML = "";
-            const emptyElement = genEmptyElement(false, false);
+            const emptyElement = genEmptyElement(p, false, false);
             emptyElement.firstElementChild.classList.add("protyle-wysiwyg--empty");
             emptyElement.firstElementChild.setAttribute("placeholder", L.agentInputPlaceholder);
             wysiwyg.element.appendChild(emptyElement);

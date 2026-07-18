@@ -49,8 +49,8 @@ import {
 } from "./transaction";
 import {fontEvent} from "../toolbar/Font";
 import {addSubList, listIndent, listOutdent, toggleTaskListItem} from "./list";
-import {newFileContentBySelect} from "../../editor/rename";
-import {cancelSB, insertEmptyBlock, jumpToParent} from "../../block/util";
+import {insertEmptyBlock, jumpToParent} from "./blockActions";
+import {cancelSB} from "./superBlock";
 import {alignImgCenter, alignImgLeft, commonHotkey, downSelect, getStartEndElement, upSelect} from "./commonHotkey";
 import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../../menus/protyle";
 import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
@@ -63,18 +63,92 @@ import {countBlockStatistics} from "../util/statistics";
 import {moveToDown, moveToUp} from "./move";
 import {beforePaste, pasteAsPlainText} from "../util/paste";
 import {preventScroll} from "../scroll/preventScroll";
-import {getRefCreateSavePath, newFileBySelect} from "../../util/newFile";
 import {removeSearchMark} from "../util/searchMark";
 import {avKeydown} from "../render/av/keydown";
 import {requestBlockFold} from "../util/blockFoldRequest";
 import {protyleContentIdentity} from "../util/contentLoad";
-import {AIActions} from "../../ai/actions";
-import {openLink} from "../../editor/openLink";
-import {onlyProtyleCommand} from "../../boot/globalEvent/command/protyle";
-import {AIChat} from "../../ai/chat";
 import {updateCalloutType} from "./callout";
 import {tabCodeBlock} from "./codeBlock";
-import {getTopBarHeight} from "../../layout/getTopBarHeight";
+import {zoomOut} from "../util/zoom";
+import {openProtyleLink} from "../util/openLink";
+import {createDocumentFromSelection, createNamedReferenceFromSelection} from "./createDocument";
+
+const navigateByEnterHotkey = (protyle: IProtyle, nodeElement: HTMLElement) => {
+    let targetElement = getTopAloneElement(nodeElement);
+    if (targetElement.parentElement.classList.contains("li") &&
+        targetElement.parentElement.parentElement.classList.contains("list") &&
+        targetElement.nextElementSibling?.classList.contains("list") &&
+        targetElement.previousElementSibling.classList.contains("protyle-action")) {
+        targetElement = targetElement.parentElement;
+    }
+    const documentId = targetElement.getAttribute("data-node-id")!;
+    if (!protyle.options.backlinkData) {
+        void zoomOut({protyle, id: documentId});
+        return;
+    }
+    void requestBlockFold(protyle, {
+        notebookId: protyle.notebookId,
+        documentId,
+    }).then(({zoomIn, isRoot}) => {
+        protyle.host.dispatch({
+            type: "open-document",
+            notebookId: protyle.notebookId,
+            documentId,
+            disposition: "current",
+            scope: zoomIn ? "subtree" : "context",
+            attention: isRoot ? "focus" : "focus-and-highlight",
+            scroll: "auto",
+            restoreScroll: zoomIn ? "never" : "if-document",
+            zoom: zoomIn,
+        });
+    }).catch((error) => {
+        if (!protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] enter navigation request failed", error);
+        }
+    });
+};
+
+const navigateByEnterBackHotkey = (protyle: IProtyle, nodeElement: HTMLElement) => {
+    const documentId = nodeElement.getAttribute("data-node-id")!;
+    if (protyle.block.showAll) {
+        void zoomOut({protyle, id: protyle.block.parent2ID!, focusId: documentId});
+        return;
+    }
+    const pathIds = protyle.path!.split("/");
+    if (pathIds.length > 2) {
+        protyle.host.dispatch({
+            type: "open-document",
+            notebookId: protyle.notebookId,
+            documentId: pathIds[pathIds.length - 2],
+            disposition: "current",
+            scope: "target",
+            attention: "focus",
+            scroll: "auto",
+            restoreScroll: "always",
+            zoom: false,
+        });
+    }
+};
+
+const findViewportCenterBlock = (protyle: IProtyle) => {
+    const contentRect = protyle.contentElement.getBoundingClientRect();
+    const centerX = contentRect.left + contentRect.width / 2;
+    const centerY = contentRect.top + contentRect.height / 2;
+    const maximumDistance = Math.ceil(contentRect.height / 2);
+    for (let distance = 0; distance <= maximumDistance; distance += 16) {
+        const positions = distance === 0 ? [centerY] : [centerY + distance, centerY - distance];
+        for (const y of positions) {
+            if (y < contentRect.top || y > contentRect.bottom) {
+                continue;
+            }
+            const pointElement = document.elementFromPoint(centerX, y);
+            const blockElement = pointElement && hasClosestBlock(pointElement);
+            if (blockElement && protyle.wysiwyg.element.contains(blockElement)) {
+                return blockElement;
+            }
+        }
+    }
+};
 
 export const getContentByInlineHTML = (protyle: IProtyle, range: Range, cb: (content: string) => void) => {
     let html = "";
@@ -480,22 +554,14 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
 
         if (matchHotKey(hotkeys.general.enter, event)) {
-            onlyProtyleCommand({
-                protyle,
-                command: "enter",
-                previousRange: range,
-            });
+            navigateByEnterHotkey(protyle, nodeElement);
             event.preventDefault();
             event.stopPropagation();
             return;
         }
 
         if (matchHotKey(hotkeys.general.enterBack, event)) {
-            onlyProtyleCommand({
-                protyle,
-                command: "enterBack",
-                previousRange: range,
-            });
+            navigateByEnterBackHotkey(protyle, nodeElement);
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -542,12 +608,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + protyle.contentElement.clientHeight - 60;
                 protyle.scroll.lastScrollTop = protyle.contentElement.scrollTop - 1;
             }
-            const contentRect = protyle.contentElement.getBoundingClientRect();
-            let centerElement = document.elementFromPoint(contentRect.x + contentRect.width / 2, contentRect.y + contentRect.height / 2);
-            if (centerElement.classList.contains("protyle-wysiwyg")) {
-                centerElement = document.elementFromPoint(contentRect.x + contentRect.width / 2, contentRect.y + contentRect.height / 2 + getTopBarHeight());
-            }
-            const centerBlockElement = hasClosestBlock(centerElement);
+            const centerBlockElement = findViewportCenterBlock(protyle);
             if (centerBlockElement && centerBlockElement !== nodeElement) {
                 focusBlock(centerBlockElement, undefined, false);
             }
@@ -1237,22 +1298,12 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 // 同步 toolbar.range，避免 DOM 已被其他操作（undo/enter 等）替换后变为 detached，
                 // 导致后续异步回调中 setInlineMark 读到无效 range https://github.com/siyuan-note/siyuan/issues/17896
                 protyle.toolbar.range = range;
-                if (isNewNameFile) {
-                    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/filetree/getHPathByPath", {
-                        notebook: protyle.notebookId,
-                        path: protyle.path,
-                    }, {
-                        identity: protyleContentIdentity(protyle),
-                        intent: "read",
-                        signal: protyle.requestSignal,
-                    }).then((response) => {
-                        newFileBySelect(protyle, selectText, nodeElement, response.data, protyle.notebookId);
-                    }).catch((error) => console.error("[protyle.transport] document path load failed", error));
-                } else {
-                    getRefCreateSavePath(protyle.notebookId, protyle.path, (targetNotebookId, hPath) => {
-                        newFileBySelect(protyle, selectText, nodeElement, hPath, targetNotebookId);
-                    });
-                }
+                createNamedReferenceFromSelection(
+                    protyle,
+                    selectText,
+                    nodeElement,
+                    isNewNameFile ? "current-path" : "configured",
+                );
             }
             event.preventDefault();
             event.stopPropagation();
@@ -1260,7 +1311,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
 
         if (matchHotKey(generalHotkeys.newContentFile, event)) {
-            newFileContentBySelect(protyle);
+            createDocumentFromSelection(protyle);
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -1824,21 +1875,33 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        if (!event.repeat && matchHotKey(generalHotkeys.ai, event)) {
+        if (protyle.settings.features.aiActions && !event.repeat && matchHotKey(generalHotkeys.ai, event)) {
             event.preventDefault();
             event.stopPropagation();
             let selectsElement: HTMLElement[] = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectsElement.length === 0) {
                 selectsElement = [nodeElement];
             }
-            AIActions(selectsElement, protyle);
+            const identity = protyleContentIdentity(protyle);
+            protyle.host.dispatch({
+                type: "open-ai-actions",
+                notebookId: identity.notebookId,
+                documentId: identity.documentId,
+                blockIds: selectsElement.map((element) => element.getAttribute("data-node-id")!),
+            });
             return;
         }
 
-        if (!event.repeat && matchHotKey(generalHotkeys.aiWriting, event)) {
+        if (protyle.settings.features.aiWriting && !event.repeat && matchHotKey(generalHotkeys.aiWriting, event)) {
             event.preventDefault();
             event.stopPropagation();
-            AIChat(protyle, nodeElement);
+            const identity = protyleContentIdentity(protyle);
+            protyle.host.dispatch({
+                type: "open-ai-writing",
+                notebookId: identity.notebookId,
+                documentId: identity.documentId,
+                blockId: nodeElement.getAttribute("data-node-id")!,
+            });
             return;
         }
 
@@ -1985,7 +2048,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         if (matchHotKey(generalHotkeys.openBy, event)) {
             const aElement = hasClosestByAttribute(range.startContainer, "data-type", "a");
             if (aElement) {
-                openLink(protyle, aElement.getAttribute("data-href"), undefined, false);
+                openProtyleLink(protyle, aElement.getAttribute("data-href")!);
                 event.preventDefault();
                 event.stopPropagation();
                 return;
@@ -1994,7 +2057,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             if (fileElement) {
                 const fileIds = fileElement.getAttribute("data-id").split("/");
                 const linkAddress = `assets/${fileIds[1]}`;
-                openLink(protyle, linkAddress, undefined, false);
+                openProtyleLink(protyle, linkAddress);
                 event.preventDefault();
                 event.stopPropagation();
                 return;

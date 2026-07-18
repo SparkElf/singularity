@@ -13,7 +13,8 @@ import {
     hasPreviousSibling
 } from "./getBlock";
 import {transaction, turnsIntoOneTransaction, turnsIntoTransaction, updateTransaction} from "./transaction";
-import {cancelSB, genEmptyElement, rebalanceSbWidth, refreshSbResize} from "../../block/util";
+import {genEmptyElement} from "./blockElement";
+import {cancelSB, rebalanceSbWidth, refreshSbResize} from "./superBlock";
 import {listOutdent, updateListOrder} from "./list";
 import {zoomOut} from "../util/zoom";
 import {preventScroll} from "../scroll/preventScroll";
@@ -189,7 +190,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     !item.classList.contains("protyle-action") && !item.classList.contains("protyle-attr"));
                 if (topParentElement.classList.contains("li") && firstBlock?.classList.contains("list")) {
                     const emptyID = Lute.NewNodeID();
-                    const emptyElement = genEmptyElement(false, false, emptyID);
+                    const emptyElement = genEmptyElement(protyle, false, false, emptyID);
                     // 空段落插到列表标记之后、首个子块之前，与服务端 doInsert 通过 nextID 定位的位置一致
                     liChildren.find(item => item.classList.contains("protyle-action"))?.after(emptyElement);
                     deletes.push({
@@ -221,7 +222,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
             } else {
                 if ((sideElement.classList.contains("protyle-wysiwyg") && protyle.wysiwyg.element.childElementCount === 0)) {
                     const newID = Lute.NewNodeID();
-                    const emptyElement = genEmptyElement(false, true, newID);
+                    const emptyElement = genEmptyElement(protyle, false, true, newID);
                     sideElement.insertAdjacentElement("afterbegin", emptyElement);
                     deletes.push({
                         action: "insert",

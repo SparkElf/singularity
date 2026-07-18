@@ -17,14 +17,14 @@ import {
 } from "./hasClosest";
 import {Constants} from "../../constants";
 import {paste} from "./paste";
+import {insertEmptyBlock} from "../wysiwyg/blockActions";
+import {genEmptyElement} from "../wysiwyg/blockElement";
 import {
     cancelSB,
-    genEmptyElement,
     genSBElement,
-    insertEmptyBlock,
     refreshSbAndPersistWidth,
-    refreshSbResize
-} from "../../block/util";
+    refreshSbResize,
+} from "../wysiwyg/superBlock";
 import {transaction, turnsIntoOneTransaction} from "../wysiwyg/transaction";
 import {updateListOrder} from "../wysiwyg/list";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
@@ -287,7 +287,7 @@ const moveTo = async (protyle: IProtyle, sourceProtyle: IProtyle, sourceElements
                     doOperations.splice(0, 0, {
                         action: "insert",
                         id: newId,
-                        data: genEmptyElement(false, false, newId).outerHTML,
+                        data: genEmptyElement(sourceProtyle, false, false, newId).outerHTML,
                         parentID: sourceProtyle.block.parentID
                     });
                     undoOperations.splice(0, 0, {
