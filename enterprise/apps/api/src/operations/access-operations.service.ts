@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { OnModuleInit } from "@nestjs/common";
@@ -34,6 +35,18 @@ type OperationBaseResult<Outcome extends OperationOutcome> = {
   operationId: string;
   outcome: Outcome;
 };
+type KernelInstanceState = SetKernelStateAccessOperation["kernelState"];
+
+interface LockedKernelInstance {
+  id: string;
+  status: KernelInstanceState;
+}
+
+interface KernelStateTransition {
+  fromState: KernelInstanceState;
+  kernelInstanceId: string;
+  toState: KernelInstanceState;
+}
 
 async function publishKernelDeploymentChange(
   transaction: Prisma.TransactionClient,
@@ -255,19 +268,33 @@ export class AccessOperationsService implements OnModuleInit {
     operationId: string,
     command: SetKernelStateAccessOperation,
   ): Promise<AccessOperationResult> {
-    return this.database.client.$transaction(async (transaction) => {
+    const startedAt = performance.now();
+    const committed = await this.database.client.$transaction(async (transaction) => {
       if (!(await this.#lockSpace(transaction, command.spaceId))) {
-        return this.#result(operationId, "not-found");
+        return {
+          result: this.#result(operationId, "not-found"),
+          transition: null,
+        };
       }
       const space = await transaction.space.findUnique({
         where: { id: command.spaceId },
         select: { organizationId: true, status: true },
       });
       if (space?.status !== "active") {
-        return this.#result(operationId, "conflict");
+        return {
+          result: this.#result(operationId, "conflict"),
+          transition: null,
+        };
       }
-      if (!(await this.#lockKernelInstance(transaction, command.spaceId))) {
-        return this.#result(operationId, "not-found");
+      const kernelInstance = await this.#lockKernelInstance(
+        transaction,
+        command.spaceId,
+      );
+      if (kernelInstance === null) {
+        return {
+          result: this.#result(operationId, "not-found"),
+          transition: null,
+        };
       }
       const endpointRows = await transaction.$queryRaw<
         Array<{ deploymentHandle: string; kernelInstanceId: string; spaceId: string }>
@@ -281,9 +308,7 @@ export class AccessOperationsService implements OnModuleInit {
           INNER JOIN "kernel_instances" AS kernel
             ON kernel."id" = endpoint."kernel_instance_id"
             AND kernel."space_id" = endpoint."space_id"
-          WHERE endpoint."kernel_instance_id" = (
-            SELECT "id" FROM "kernel_instances" WHERE "space_id" = ${command.spaceId}::uuid
-          )
+          WHERE endpoint."kernel_instance_id" = ${kernelInstance.id}::uuid
             AND kernel."deployment_handle" IS NOT NULL
           LIMIT 1
         `,
@@ -291,13 +316,11 @@ export class AccessOperationsService implements OnModuleInit {
       await transaction.$executeRaw(
         Prisma.sql`
           DELETE FROM "kernel_runtime_endpoints"
-          WHERE "kernel_instance_id" = (
-            SELECT "id" FROM "kernel_instances" WHERE "space_id" = ${command.spaceId}::uuid
-          )
+          WHERE "kernel_instance_id" = ${kernelInstance.id}::uuid
         `,
       );
       await transaction.kernelInstance.update({
-        where: { spaceId: command.spaceId },
+        where: { id: kernelInstance.id },
         data:
           command.kernelState === "starting"
             ? {
@@ -327,8 +350,32 @@ export class AccessOperationsService implements OnModuleInit {
         targetId: command.spaceId,
         targetType: "space",
       });
-      return this.#result(operationId, "updated");
+      const transition: KernelStateTransition | null =
+        kernelInstance.status === command.kernelState
+          ? null
+          : {
+              fromState: kernelInstance.status,
+              kernelInstanceId: kernelInstance.id,
+              toState: command.kernelState,
+            };
+      return {
+        result: this.#result(operationId, "updated"),
+        transition,
+      };
     });
+    if (committed.transition !== null) {
+      this.#logger.log({
+        elapsedMs: performance.now() - startedAt,
+        event: "kernel.lifecycle",
+        fromState: committed.transition.fromState,
+        kernelInstanceId: committed.transition.kernelInstanceId,
+        reason: command.operation,
+        requestId: operationId,
+        spaceId: command.spaceId,
+        toState: committed.transition.toState,
+      });
+    }
+    return committed.result;
   }
 
   @HandlesAccessOperation("set-space-member")
@@ -829,11 +876,11 @@ export class AccessOperationsService implements OnModuleInit {
   async #lockKernelInstance(
     transaction: Transaction,
     spaceId: string,
-  ): Promise<boolean> {
-    const rows = await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "kernel_instances" WHERE "space_id" = ${spaceId} FOR UPDATE`,
+  ): Promise<LockedKernelInstance | null> {
+    const rows = await transaction.$queryRaw<LockedKernelInstance[]>(
+      Prisma.sql`SELECT "id", "status" FROM "kernel_instances" WHERE "space_id" = ${spaceId} FOR UPDATE`,
     );
-    return rows.length === 1;
+    return rows[0] ?? null;
   }
 
   #isUniqueConflict(error: unknown): boolean {

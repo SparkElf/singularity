@@ -634,6 +634,11 @@ describe("controlled access operations with PostgreSQL", () => {
     });
 
     test("set-kernel-state persists all three authoritative states and clears starting deployment fields", async () => {
+      logger.clear();
+      const kernelInstance = await database.kernelInstance.findUniqueOrThrow({
+        where: { spaceId: installation.spaceId },
+        select: { id: true },
+      });
       const ready = await runOperation(operations, {
         operation: "set-kernel-state",
         spaceId: installation.spaceId,
@@ -685,6 +690,21 @@ describe("controlled access operations with PostgreSQL", () => {
         status: "starting",
         version: null,
       });
+      const unchanged = await runOperation(operations, {
+        operation: "set-kernel-state",
+        spaceId: installation.spaceId,
+        kernelState: "starting",
+      });
+      expect(unchanged.result.outcome).toBe("updated");
+
+      expect(logger.output.match(/event: 'kernel\.lifecycle'/g)).toHaveLength(3);
+      expect(logger.output).toContain(`kernelInstanceId: '${kernelInstance.id}'`);
+      expect(logger.output).toContain(`spaceId: '${installation.spaceId}'`);
+      expect(logger.output).toContain(`requestId: '${ready.result.operationId}'`);
+      expect(logger.output).toContain("fromState: 'starting'");
+      expect(logger.output).toContain("toState: 'ready'");
+      expect(logger.output).toContain("reason: 'set-kernel-state'");
+      expect(logger.output).toMatch(/elapsedMs: [0-9]/);
     });
 
     test("revoke-user-sessions revokes every active session for the user", async () => {
