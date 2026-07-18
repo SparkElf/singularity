@@ -114,22 +114,28 @@ func QueryTagSpansByLabel(label string) (ret []*Span) {
 	return
 }
 
-func QueryTagSpansByKeyword(keyword string, limit int) (ret []*Span) {
+func QueryTagSpansByKeywordInBox(keyword string, limit int, boxID string) (ret []*Span) {
 	// 标签搜索支持空格分隔关键字 Tag search supports space-separated keywords https://github.com/siyuan-note/siyuan/issues/14580
 	keywords := strings.Fields(keyword)
-	var stmt string
+	conditions := []string{"type LIKE '%tag%'"}
 	var args []any
 	if len(keywords) == 0 {
-		stmt = "SELECT * FROM spans WHERE type LIKE '%tag%' AND content != '' GROUP BY markdown LIMIT " + strconv.Itoa(limit)
+		conditions = append(conditions, "content != ''")
 	} else {
 		var likes []string
 		for _, k := range keywords {
 			likes = append(likes, "content LIKE ? ESCAPE '\\'")
 			args = append(args, "%"+escapeLikePattern(k)+"%")
 		}
-		stmt = "SELECT * FROM spans WHERE type LIKE '%tag%' AND (" + strings.Join(likes, " AND ") + ") GROUP BY markdown LIMIT " + strconv.Itoa(limit)
+		conditions = append(conditions, "("+strings.Join(likes, " AND ")+")")
 	}
-	rows, err := query(stmt, args...)
+	if boxID != "" {
+		conditions = append(conditions, "box = ?")
+		args = append(args, boxID)
+	}
+	stmt := "SELECT * FROM spans WHERE " + strings.Join(conditions, " AND ") +
+		" GROUP BY markdown LIMIT " + strconv.Itoa(limit)
+	rows, err := queryForBox(boxID, stmt, args...)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
