@@ -1,14 +1,29 @@
-import { randomUUID } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  randomUUID,
+  sign,
+  type KeyObject,
+} from "node:crypto";
 
 import {
   AUTH_CSRF_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
+  AUTH_OIDC_CALLBACK_PATH,
+  AUTH_OIDC_PROVIDERS_PATH,
+  AUTH_OIDC_START_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  ORGANIZATION_OIDC_PROVIDERS_PATH_TEMPLATE,
+  ORGANIZATION_OIDC_PROVIDER_PATH_TEMPLATE,
   type ApiProblemCode,
   apiProblemSchema,
   csrfTokenSchema,
+  managedOidcProviderSchema,
+  managedOidcProvidersResponseSchema,
+  oidcProvidersResponseSchema,
+  oidcStartResponseSchema,
   sessionTokenSchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
@@ -36,6 +51,148 @@ import {
 
 const password = "correct horse battery staple";
 const initialTime = new Date("2026-07-15T00:00:00.000Z");
+const oidcClientId = "singularity-enterprise";
+const oidcFlowCookieName = "__Host-singularity_oidc_flow";
+const oidcKeyId = "singularity-http-contract-key";
+const trustedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const forgedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+type OidcIdTokenMode = "valid" | "forged-signature" | "wrong-nonce";
+
+interface OidcTokenExchange {
+  authorization: string | null;
+  body: URLSearchParams;
+}
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    headers: { "Content-Type": "application/json" },
+    status,
+  });
+}
+
+function fetchInputUrl(input: string | URL | Request): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  return input instanceof URL ? input.toString() : input.url;
+}
+
+function signedIdToken(
+  privateKey: KeyObject,
+  claims: Readonly<Record<string, unknown>>,
+): string {
+  const header = Buffer.from(
+    JSON.stringify({ alg: "ES256", kid: oidcKeyId, typ: "JWT" }),
+    "utf8",
+  ).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims), "utf8").toString(
+    "base64url",
+  );
+  const signingInput = Buffer.from(`${header}.${payload}`, "ascii");
+  const signature = sign("sha256", signingInput, {
+    dsaEncoding: "ieee-p1363",
+    key: privateKey,
+  }).toString("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+class OidcProviderBoundary {
+  readonly issuer = `https://identity.example.test/${randomUUID()}`;
+  readonly authorizationEndpoint = `${this.issuer}/authorize`;
+  readonly tokenEndpoint = `${this.issuer}/token`;
+  readonly jwksUri = `${this.issuer}/jwks`;
+  readonly tokenExchanges: OidcTokenExchange[] = [];
+  jwksRequests = 0;
+
+  #idToken:
+    | { mode: OidcIdTokenMode; nonce: string; subject: string }
+    | undefined;
+  #jwksAvailable = true;
+
+  configureIdToken(input: {
+    mode?: OidcIdTokenMode;
+    nonce: string;
+    subject: string;
+  }): void {
+    this.#idToken = {
+      mode: input.mode ?? "valid",
+      nonce: input.nonce,
+      subject: input.subject,
+    };
+  }
+
+  makeJwksUnavailable(): void {
+    this.#jwksAvailable = false;
+  }
+
+  install(): void {
+    const nativeFetch = globalThis.fetch.bind(globalThis);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = fetchInputUrl(input);
+      if (!url.startsWith(`${this.issuer}/`)) {
+        return nativeFetch(input, init);
+      }
+      if (url === `${this.issuer}/.well-known/openid-configuration`) {
+        return jsonResponse({
+          authorization_endpoint: this.authorizationEndpoint,
+          issuer: this.issuer,
+          jwks_uri: this.jwksUri,
+          token_endpoint: this.tokenEndpoint,
+        });
+      }
+      if (url === this.tokenEndpoint) {
+        const request = new Request(input, init);
+        const idToken = this.#idToken;
+        if (idToken === undefined) {
+          throw new Error("The external OIDC identity was not configured");
+        }
+        this.tokenExchanges.push({
+          authorization: request.headers.get("authorization"),
+          body: new URLSearchParams(await request.text()),
+        });
+        const nowSeconds = Math.floor(Date.now() / 1_000);
+        const nonce =
+          idToken.mode === "wrong-nonce"
+            ? Buffer.alloc(32, 0xa5).toString("base64url")
+            : idToken.nonce;
+        const signingKey =
+          idToken.mode === "forged-signature"
+            ? forgedOidcKey.privateKey
+            : trustedOidcKey.privateKey;
+        return jsonResponse({
+          id_token: signedIdToken(signingKey, {
+            aud: oidcClientId,
+            email: `oidc-${idToken.subject}@example.test`,
+            email_verified: true,
+            exp: nowSeconds + 5 * 60,
+            iat: nowSeconds,
+            iss: this.issuer,
+            nonce,
+            sub: idToken.subject,
+          }),
+        });
+      }
+      if (url === this.jwksUri) {
+        this.jwksRequests += 1;
+        if (!this.#jwksAvailable) {
+          return jsonResponse({ code: "jwks-unavailable" }, 503);
+        }
+        return jsonResponse({
+          keys: [
+            {
+              ...trustedOidcKey.publicKey.export({ format: "jwk" }),
+              alg: "ES256",
+              kid: oidcKeyId,
+              use: "sig",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ code: "not-found" }, 404);
+    });
+  }
+}
 
 class MutableClock implements Clock {
   #milliseconds: number;
@@ -74,6 +231,16 @@ function requireSetCookie(response: Response): string {
   return setCookie;
 }
 
+function requireNamedSetCookie(response: Response, name: string): string {
+  const setCookie = response.headers
+    .getSetCookie()
+    .find((value) => value.startsWith(`${name}=`));
+  if (setCookie === undefined) {
+    throw new Error(`The HTTP response did not set the ${name} cookie`);
+  }
+  return setCookie;
+}
+
 function cookiePair(setCookie: string): string {
   const pair = setCookie.split(";", 1)[0];
   if (pair === undefined) {
@@ -97,6 +264,23 @@ function expectProductionCookieAttributes(setCookie: string): void {
   expect(setCookie).toContain("Secure");
   expect(setCookie).toContain("SameSite=Lax");
   expect(setCookie).not.toMatch(/(?:^|;)\s*Domain=/i);
+}
+
+function expectOidcFlowCookieAttributes(setCookie: string): void {
+  expect(setCookie).toContain(`${oidcFlowCookieName}=`);
+  expect(setCookie).toContain("Path=/");
+  expect(setCookie).toContain("HttpOnly");
+  expect(setCookie).toContain("Secure");
+  expect(setCookie).toContain("SameSite=Lax");
+  expect(setCookie).not.toMatch(/(?:^|;)\s*Domain=/i);
+}
+
+function requireSearchParameter(url: URL, name: string): string {
+  const value = url.searchParams.get(name);
+  if (value === null) {
+    throw new Error(`The OIDC authorization URL is missing ${name}`);
+  }
+  return value;
 }
 
 function loginRequest(
@@ -127,6 +311,35 @@ function csrfRequest(baseUrl: string, cookie: string): Promise<Response> {
   });
 }
 
+function oidcStartRequest(
+  baseUrl: string,
+  input: { providerId: string; returnTo?: string },
+): Promise<Response> {
+  return fetch(`${baseUrl}${AUTH_OIDC_START_PATH}`, {
+    body: JSON.stringify(input),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: TEST_PUBLIC_ORIGIN,
+    },
+    method: "POST",
+  });
+}
+
+function oidcCallbackRequest(
+  baseUrl: string,
+  input: { code: string; cookie: string; state: string },
+): Promise<Response> {
+  const callback = new URL(AUTH_OIDC_CALLBACK_PATH, baseUrl);
+  callback.search = new URLSearchParams({
+    code: input.code,
+    state: input.state,
+  }).toString();
+  return fetch(callback, {
+    headers: { Cookie: input.cookie },
+    redirect: "manual",
+  });
+}
+
 describe("identity HTTP contract with PostgreSQL", () => {
   let database: DatabaseClient;
   let passwordDigest: string;
@@ -152,6 +365,7 @@ describe("identity HTTP contract with PostgreSQL", () => {
       try {
         await testApi.dispose();
       } finally {
+        vi.restoreAllMocks();
         vi.useRealTimers();
       }
     }
@@ -163,6 +377,60 @@ describe("identity HTTP contract with PostgreSQL", () => {
       select: { id: true },
     });
     return user.id;
+  }
+
+  async function createOidcIdentityGraph(
+    providerBoundary: OidcProviderBoundary,
+  ): Promise<{
+    organizationId: string;
+    providerId: string;
+    subject: string;
+    userId: string;
+  }> {
+    const organizationId = randomUUID();
+    const subject = randomUUID();
+    const userId = await createUser(
+      `oidc-existing-${randomUUID()}@example.test`,
+    );
+    await database.organization.create({
+      data: {
+        id: organizationId,
+        name: "OIDC HTTP contract",
+        status: "active",
+      },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "member",
+        status: "active",
+        userId,
+      },
+    });
+    const provider = await database.oidcProvider.create({
+      data: {
+        clientId: oidcClientId,
+        issuer: providerBoundary.issuer,
+        name: "Enterprise identity",
+        organizationId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    await database.oidcIdentity.create({
+      data: {
+        organizationId,
+        providerId: provider.id,
+        subject,
+        userId,
+      },
+    });
+    return {
+      organizationId,
+      providerId: provider.id,
+      subject,
+      userId,
+    };
   }
 
   async function restartApplication(trustedProxyCidrs?: string): Promise<void> {
@@ -639,5 +907,411 @@ describe("identity HTTP contract with PostgreSQL", () => {
       401,
       "unauthenticated",
     );
+  });
+
+  test("manages organization OIDC providers through owner HTTP routes and hides disabled providers", async () => {
+    const organizationId = randomUUID();
+    const loginIdentifier = `oidc-owner-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    await database.organization.create({
+      data: {
+        id: organizationId,
+        name: "OIDC provider management",
+        status: "active",
+      },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "owner",
+        status: "active",
+        userId,
+      },
+    });
+    const login = await loginRequest(
+      testApi.baseUrl,
+      { loginIdentifier, password },
+      { origin: TEST_PUBLIC_ORIGIN },
+    );
+    expect(login.status).toBe(200);
+    const ownerCookie = cookiePair(requireSetCookie(login));
+    const loginBody = (await login.json()) as { csrfToken: unknown };
+    const csrfToken = csrfTokenSchema.parse(loginBody.csrfToken);
+    const providersPath = ORGANIZATION_OIDC_PROVIDERS_PATH_TEMPLATE.replace(
+      "{organizationId}",
+      organizationId,
+    );
+    const mutationHeaders = {
+      [CSRF_HEADER_NAME]: csrfToken,
+      "Content-Type": "application/json",
+      Cookie: ownerCookie,
+      Origin: TEST_PUBLIC_ORIGIN,
+    };
+    const issuer = "https://identity.example.test/corporate";
+
+    const createdResponse = await fetch(`${testApi.baseUrl}${providersPath}`, {
+      body: JSON.stringify({
+        clientId: oidcClientId,
+        clientSecretReference: "corporate-oidc",
+        issuer,
+        name: " Corporate SSO ",
+      }),
+      headers: mutationHeaders,
+      method: "POST",
+    });
+    expect(createdResponse.status).toBe(201);
+    expect(createdResponse.headers.get("cache-control")).toBe("no-store");
+    const created = managedOidcProviderSchema.parse(
+      await createdResponse.json(),
+    );
+    expect(created).toEqual({
+      clientId: oidcClientId,
+      clientSecretReference: "corporate-oidc",
+      issuer,
+      name: "Corporate SSO",
+      organizationId,
+      providerId: expect.any(String),
+      status: "active",
+    });
+
+    const managedResponse = await fetch(`${testApi.baseUrl}${providersPath}`, {
+      headers: { Cookie: ownerCookie },
+    });
+    expect(managedResponse.status).toBe(200);
+    expect(
+      managedOidcProvidersResponseSchema.parse(await managedResponse.json()),
+    ).toEqual({ providers: [created] });
+    const publicResponse = await fetch(
+      `${testApi.baseUrl}${AUTH_OIDC_PROVIDERS_PATH}`,
+    );
+    expect(publicResponse.status).toBe(200);
+    expect(
+      oidcProvidersResponseSchema.parse(await publicResponse.json()),
+    ).toEqual({
+      providers: [{ name: "Corporate SSO", providerId: created.providerId }],
+    });
+
+    const providerPath = ORGANIZATION_OIDC_PROVIDER_PATH_TEMPLATE.replace(
+      "{organizationId}",
+      organizationId,
+    ).replace("{providerId}", created.providerId);
+    const disabledResponse = await fetch(`${testApi.baseUrl}${providerPath}`, {
+      body: JSON.stringify({
+        clientSecretReference: null,
+        name: "Corporate SSO disabled",
+        status: "disabled",
+      }),
+      headers: mutationHeaders,
+      method: "PATCH",
+    });
+    expect(disabledResponse.status).toBe(200);
+    expect(
+      managedOidcProviderSchema.parse(await disabledResponse.json()),
+    ).toEqual({
+      clientId: oidcClientId,
+      issuer,
+      name: "Corporate SSO disabled",
+      organizationId,
+      providerId: created.providerId,
+      status: "disabled",
+    });
+    const publicAfterDisable = await fetch(
+      `${testApi.baseUrl}${AUTH_OIDC_PROVIDERS_PATH}`,
+    );
+    expect(publicAfterDisable.status).toBe(200);
+    expect(
+      oidcProvidersResponseSchema.parse(await publicAfterDisable.json()),
+    ).toEqual({ providers: [] });
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId,
+          targetId: created.providerId,
+          targetType: "oidc-provider",
+        },
+      }),
+    ).resolves.toBe(2);
+  });
+
+  test("completes a signed OIDC HTTP flow with state, nonce, PKCE, JWKS, and a usable session", async () => {
+    const providerBoundary = new OidcProviderBoundary();
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.install();
+    const returnTo = "/spaces?source=oidc";
+
+    const start = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+      returnTo,
+    });
+    expect(start.status).toBe(200);
+    expect(start.headers.get("cache-control")).toBe("no-store");
+    const flowSetCookie = requireNamedSetCookie(start, oidcFlowCookieName);
+    expectOidcFlowCookieAttributes(flowSetCookie);
+    const flowCookie = cookiePair(flowSetCookie);
+    const { authorizationUrl } = oidcStartResponseSchema.parse(
+      await start.json(),
+    );
+    const authorization = new URL(authorizationUrl);
+    expect(`${authorization.origin}${authorization.pathname}`).toBe(
+      providerBoundary.authorizationEndpoint,
+    );
+    expect(authorization.searchParams.get("client_id")).toBe(oidcClientId);
+    expect(authorization.searchParams.get("code_challenge_method")).toBe(
+      "S256",
+    );
+    expect(authorization.searchParams.get("redirect_uri")).toBe(
+      `${TEST_PUBLIC_ORIGIN}${AUTH_OIDC_CALLBACK_PATH}`,
+    );
+    expect(authorization.searchParams.get("response_type")).toBe("code");
+    expect(authorization.searchParams.get("scope")).toBe("openid email");
+    const codeChallenge = sessionTokenSchema.parse(
+      requireSearchParameter(authorization, "code_challenge"),
+    );
+    const nonce = sessionTokenSchema.parse(
+      requireSearchParameter(authorization, "nonce"),
+    );
+    const state = sessionTokenSchema.parse(
+      requireSearchParameter(authorization, "state"),
+    );
+    providerBoundary.configureIdToken({ nonce, subject: graph.subject });
+
+    const callback = await oidcCallbackRequest(testApi.baseUrl, {
+      code: "accepted-authorization-code",
+      cookie: flowCookie,
+      state,
+    });
+    expect(callback.status).toBe(303);
+    expect(callback.headers.get("cache-control")).toBe("no-store");
+    expect(callback.headers.get("location")).toBe(returnTo);
+    const clearedFlowCookie = requireNamedSetCookie(
+      callback,
+      oidcFlowCookieName,
+    );
+    expect(cookiePair(clearedFlowCookie)).toBe(`${oidcFlowCookieName}=`);
+    const sessionSetCookie = requireNamedSetCookie(
+      callback,
+      AUTH_SESSION_COOKIE_NAME,
+    );
+    expectProductionCookieAttributes(sessionSetCookie);
+    const sessionCookie = cookiePair(sessionSetCookie);
+    expect(sessionTokenSchema.parse(cookieValue(sessionCookie))).toHaveLength(43);
+
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    const exchange = providerBoundary.tokenExchanges[0];
+    if (exchange === undefined) {
+      throw new Error("The OIDC token exchange was not captured");
+    }
+    expect(exchange.authorization).toBeNull();
+    expect(exchange.body.get("client_id")).toBe(oidcClientId);
+    expect(exchange.body.get("code")).toBe("accepted-authorization-code");
+    expect(exchange.body.get("grant_type")).toBe("authorization_code");
+    expect(exchange.body.get("redirect_uri")).toBe(
+      `${TEST_PUBLIC_ORIGIN}${AUTH_OIDC_CALLBACK_PATH}`,
+    );
+    const codeVerifier = sessionTokenSchema.parse(
+      exchange.body.get("code_verifier"),
+    );
+    expect(
+      createHash("sha256")
+        .update(codeVerifier, "ascii")
+        .digest("base64url"),
+    ).toBe(codeChallenge);
+    expect(providerBoundary.jwksRequests).toBe(1);
+
+    const authenticated = await csrfRequest(testApi.baseUrl, sessionCookie);
+    expect(authenticated.status).toBe(200);
+    const authenticatedBody = (await authenticated.json()) as {
+      csrfToken: unknown;
+    };
+    expect(csrfTokenSchema.parse(authenticatedBody.csrfToken)).toHaveLength(43);
+    await expect(
+      database.authSession.findFirstOrThrow({
+        where: { userId: graph.userId },
+        select: { revokedAt: true, userId: true },
+      }),
+    ).resolves.toEqual({ revokedAt: null, userId: graph.userId });
+    await expect(
+      database.oidcAuthorizationAttempt.findFirstOrThrow({
+        where: { providerId: graph.providerId },
+        select: { consumedAt: true },
+      }),
+    ).resolves.toEqual({ consumedAt: initialTime });
+  });
+
+  test("keeps an unknown OIDC state unused and rejects replay before a second token exchange", async () => {
+    const providerBoundary = new OidcProviderBoundary();
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.install();
+    const start = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+    });
+    expect(start.status).toBe(200);
+    const flowCookie = cookiePair(
+      requireNamedSetCookie(start, oidcFlowCookieName),
+    );
+    const { authorizationUrl } = oidcStartResponseSchema.parse(
+      await start.json(),
+    );
+    const authorization = new URL(authorizationUrl);
+    const nonce = requireSearchParameter(authorization, "nonce");
+    const state = requireSearchParameter(authorization, "state");
+    providerBoundary.configureIdToken({ nonce, subject: graph.subject });
+
+    const unknownState = Buffer.alloc(32, 0x5a).toString("base64url");
+    expect(unknownState).not.toBe(state);
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "wrong-state-code",
+        cookie: flowCookie,
+        state: unknownState,
+      }),
+      401,
+      "unauthenticated",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(0);
+    await expect(
+      database.oidcAuthorizationAttempt.findFirstOrThrow({
+        where: { providerId: graph.providerId },
+        select: { consumedAt: true },
+      }),
+    ).resolves.toEqual({ consumedAt: null });
+
+    const accepted = await oidcCallbackRequest(testApi.baseUrl, {
+      code: "single-use-code",
+      cookie: flowCookie,
+      state,
+    });
+    expect(accepted.status).toBe(303);
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "replayed-code",
+        cookie: flowCookie,
+        state,
+      }),
+      401,
+      "unauthenticated",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+  });
+
+  test.each([
+    {
+      label: "a nonce that does not match the authorization request",
+      mode: "wrong-nonce" as const,
+    },
+    {
+      label: "an ID Token signature that does not match the advertised JWKS",
+      mode: "forged-signature" as const,
+    },
+  ])("rejects $label and consumes the one-time state", async ({ mode }) => {
+    const providerBoundary = new OidcProviderBoundary();
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.install();
+    const start = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+    });
+    expect(start.status).toBe(200);
+    const flowCookie = cookiePair(
+      requireNamedSetCookie(start, oidcFlowCookieName),
+    );
+    const { authorizationUrl } = oidcStartResponseSchema.parse(
+      await start.json(),
+    );
+    const authorization = new URL(authorizationUrl);
+    const nonce = requireSearchParameter(authorization, "nonce");
+    const state = requireSearchParameter(authorization, "state");
+    providerBoundary.configureIdToken({
+      mode,
+      nonce,
+      subject: graph.subject,
+    });
+
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "untrusted-token-code",
+        cookie: flowCookie,
+        state,
+      }),
+      401,
+      "unauthenticated",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    expect(providerBoundary.jwksRequests).toBe(1);
+    await expect(
+      database.authSession.count({ where: { userId: graph.userId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.oidcAuthorizationAttempt.findFirstOrThrow({
+        where: { providerId: graph.providerId },
+        select: { consumedAt: true },
+      }),
+    ).resolves.toEqual({ consumedAt: initialTime });
+
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "retry-after-untrusted-token",
+        cookie: flowCookie,
+        state,
+      }),
+      401,
+      "unauthenticated",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    expect(providerBoundary.jwksRequests).toBe(1);
+  });
+
+  test("maps an unavailable OIDC JWKS to 503 and does not retry a consumed state", async () => {
+    const providerBoundary = new OidcProviderBoundary();
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.install();
+    const start = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+    });
+    expect(start.status).toBe(200);
+    const flowCookie = cookiePair(
+      requireNamedSetCookie(start, oidcFlowCookieName),
+    );
+    const { authorizationUrl } = oidcStartResponseSchema.parse(
+      await start.json(),
+    );
+    const authorization = new URL(authorizationUrl);
+    const nonce = requireSearchParameter(authorization, "nonce");
+    const state = requireSearchParameter(authorization, "state");
+    providerBoundary.configureIdToken({ nonce, subject: graph.subject });
+    providerBoundary.makeJwksUnavailable();
+
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "jwks-outage-code",
+        cookie: flowCookie,
+        state,
+      }),
+      503,
+      "service-unavailable",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    expect(providerBoundary.jwksRequests).toBe(1);
+    await expect(
+      database.authSession.count({ where: { userId: graph.userId } }),
+    ).resolves.toBe(0);
+    await expect(
+      database.oidcAuthorizationAttempt.findFirstOrThrow({
+        where: { providerId: graph.providerId },
+        select: { consumedAt: true },
+      }),
+    ).resolves.toEqual({ consumedAt: initialTime });
+
+    await expectProblem(
+      await oidcCallbackRequest(testApi.baseUrl, {
+        code: "retry-after-jwks-outage",
+        cookie: flowCookie,
+        state,
+      }),
+      401,
+      "unauthenticated",
+    );
+    expect(providerBoundary.tokenExchanges).toHaveLength(1);
+    expect(providerBoundary.jwksRequests).toBe(1);
   });
 });

@@ -4,10 +4,18 @@ import {
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
   AUTH_SESSION_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  ORGANIZATION_SPACES_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GROUP_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_PATH_TEMPLATE,
   type AccessOperationResult,
   type ApiProblemCode,
   apiProblemSchema,
+  authorizedSpacesResponseSchema,
   buildSpaceRuntimePath,
+  loginResponseSchema,
+  managedSpaceSummarySchema,
   spaceRuntimeBootstrapSchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
@@ -35,6 +43,11 @@ interface MemberGraph {
   installation: InstallationGraph;
   loginIdentifier: string;
   userId: string;
+}
+
+interface AuthenticatedUser {
+  cookie: string;
+  csrfToken: string;
 }
 
 type InvalidatedAccessLayer =
@@ -102,7 +115,30 @@ function requireCookiePair(response: Response): string {
   return pair;
 }
 
-describe("authorized space HTTP contract with PostgreSQL", () => {
+function buildPath(
+  template: string,
+  parameters: Readonly<Record<string, string>>,
+): string {
+  let path = template;
+  for (const [name, value] of Object.entries(parameters)) {
+    path = path.replace(`{${name}}`, encodeURIComponent(value));
+  }
+  if (path.includes("{")) {
+    throw new Error("Test API path parameters are incomplete");
+  }
+  return path;
+}
+
+function mutationHeaders(user: AuthenticatedUser): Record<string, string> {
+  return {
+    [CSRF_HEADER_NAME]: user.csrfToken,
+    "Content-Type": "application/json",
+    Cookie: user.cookie,
+    Origin: TEST_PUBLIC_ORIGIN,
+  };
+}
+
+describe("space HTTP contracts with PostgreSQL", () => {
   let database: DatabaseClient;
   let logger: CapturingLogger;
   let operations: AccessOperationsService;
@@ -162,7 +198,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
     return { installation, loginIdentifier, userId };
   }
 
-  async function login(loginIdentifier: string): Promise<string> {
+  async function login(loginIdentifier: string): Promise<AuthenticatedUser> {
     const response = await fetch(`${testApi.baseUrl}${AUTH_LOGIN_PATH}`, {
       body: JSON.stringify({ loginIdentifier, password }),
       headers: {
@@ -172,7 +208,8 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
       method: "POST",
     });
     expect(response.status).toBe(200);
-    return requireCookiePair(response);
+    const { csrfToken } = loginResponseSchema.parse(await response.json());
+    return { cookie: requireCookiePair(response), csrfToken };
   }
 
   function listSpaces(cookie: string): Promise<Response> {
@@ -253,7 +290,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
         adminUserId: otherUserId,
       }),
     );
-    const cookie = await login(installation.loginIdentifier);
+    const { cookie } = await login(installation.loginIdentifier);
 
     const response = await listSpaces(cookie);
     const responseText = await response.text();
@@ -282,6 +319,236 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
     expect(responseText).not.toContain(otherUserId);
   });
 
+  test("creates a managed space and grants its creator direct admin access", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const spacesPath = buildPath(ORGANIZATION_SPACES_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${spacesPath}`, {
+      body: JSON.stringify({ name: "Engineering" }),
+      headers: mutationHeaders(owner),
+      method: "POST",
+    });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const created = managedSpaceSummarySchema.parse(await response.json());
+    expect(created).toMatchObject({
+      organizationId: installation.organizationId,
+      spaceName: "Engineering",
+      status: "active",
+    });
+
+    const authorizedResponse = await listSpaces(owner.cookie);
+    expect(authorizedResponse.status).toBe(200);
+    expect(
+      authorizedSpacesResponseSchema.parse(await authorizedResponse.json())
+        .spaces,
+    ).toContainEqual({
+      organizationId: installation.organizationId,
+      organizationName: "Singularity",
+      role: "admin",
+      spaceId: created.spaceId,
+      spaceName: "Engineering",
+    });
+  });
+
+  test("archives a space and removes it from authorized runtime access", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const spacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${spacePath}`, {
+      body: JSON.stringify({ status: "archived" }),
+      headers: mutationHeaders(owner),
+      method: "PATCH",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const archived = managedSpaceSummarySchema.parse(await response.json());
+    expect(archived).toEqual({
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+      spaceName: "Primary Space",
+      status: "archived",
+    });
+
+    const authorizedResponse = await listSpaces(owner.cookie);
+    expect(authorizedResponse.status).toBe(200);
+    expect(
+      authorizedSpacesResponseSchema
+        .parse(await authorizedResponse.json())
+        .spaces.some((space) => space.spaceId === installation.spaceId),
+    ).toBe(false);
+  });
+
+  test("grants an organization member direct space access through HTTP", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const loginIdentifier = `direct-member-${randomUUID()}@example.test`;
+    const userId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier,
+        password,
+      }),
+    );
+    const memberPath = buildPath(ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+      userId,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${memberPath}`, {
+      body: JSON.stringify({ role: "editor" }),
+      headers: mutationHeaders(owner),
+      method: "PUT",
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+
+    const member = await login(loginIdentifier);
+    const authorizedResponse = await listSpaces(member.cookie);
+    expect(authorizedResponse.status).toBe(200);
+    expect(
+      authorizedSpacesResponseSchema.parse(await authorizedResponse.json()),
+    ).toEqual({
+      spaces: [
+        {
+          organizationId: installation.organizationId,
+          organizationName: "Singularity",
+          role: "editor",
+          spaceId: installation.spaceId,
+          spaceName: "Primary Space",
+        },
+      ],
+    });
+  });
+
+  test("grants space access to active members of an organization group through HTTP", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const loginIdentifier = `group-member-${randomUUID()}@example.test`;
+    const userId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier,
+        password,
+      }),
+    );
+    const group = await database.userGroup.create({
+      data: {
+        name: "Readers",
+        organizationId: installation.organizationId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    await database.userGroupMembership.create({
+      data: {
+        groupId: group.id,
+        organizationId: installation.organizationId,
+        userId,
+      },
+    });
+    const groupPath = buildPath(ORGANIZATION_SPACE_GROUP_PATH_TEMPLATE, {
+      groupId: group.id,
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${groupPath}`, {
+      body: JSON.stringify({ role: "viewer" }),
+      headers: mutationHeaders(owner),
+      method: "PUT",
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+
+    const member = await login(loginIdentifier);
+    const authorizedResponse = await listSpaces(member.cookie);
+    expect(authorizedResponse.status).toBe(200);
+    expect(
+      authorizedSpacesResponseSchema.parse(await authorizedResponse.json()),
+    ).toEqual({
+      spaces: [
+        {
+          organizationId: installation.organizationId,
+          organizationName: "Singularity",
+          role: "viewer",
+          spaceId: installation.spaceId,
+          spaceName: "Primary Space",
+        },
+      ],
+    });
+  });
+
+  test("rejects a foreign space identifier under a managed organization path without mutating the foreign space", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const foreignOrganizationId = randomUUID();
+    await database.organization.create({
+      data: {
+        id: foreignOrganizationId,
+        name: "Foreign Organization",
+        status: "active",
+      },
+    });
+    const foreignLoginIdentifier = `foreign-admin-${randomUUID()}@example.test`;
+    const foreignUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: foreignOrganizationId,
+        loginIdentifier: foreignLoginIdentifier,
+        password,
+      }),
+    );
+    const foreignSpaceId = createdSpaceId(
+      await operations.execute({
+        operation: "create-space",
+        adminUserId: foreignUserId,
+        name: "Foreign Space",
+        organizationId: foreignOrganizationId,
+      }),
+    );
+    const mismatchedPath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: foreignSpaceId,
+    });
+
+    const rejected = await fetch(`${testApi.baseUrl}${mismatchedPath}`, {
+      body: JSON.stringify({ status: "archived" }),
+      headers: mutationHeaders(owner),
+      method: "PATCH",
+    });
+    await expectProblem(rejected, 404, "not-found");
+
+    const foreignAdmin = await login(foreignLoginIdentifier);
+    const foreignSpacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: foreignOrganizationId,
+      spaceId: foreignSpaceId,
+    });
+    const targetResponse = await fetch(
+      `${testApi.baseUrl}${foreignSpacePath}`,
+      { headers: { Cookie: foreignAdmin.cookie } },
+    );
+    expect(targetResponse.status).toBe(200);
+    expect(
+      managedSpaceSummarySchema.parse(await targetResponse.json()),
+    ).toEqual({
+      organizationId: foreignOrganizationId,
+      spaceId: foreignSpaceId,
+      spaceName: "Foreign Space",
+      status: "active",
+    });
+  });
+
   test.each<InvalidatedAccessLayer>([
     "user",
     "organization",
@@ -290,7 +557,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
     "space-membership",
   ])("requires an active %s layer for the authorized space list", async (layer) => {
     const graph = await createMemberGraph();
-    const cookie = await login(graph.loginIdentifier);
+    const { cookie } = await login(graph.loginIdentifier);
     expect((await listSpaces(cookie)).status).toBe(200);
     const invalidated = await invalidateLayer(graph, layer);
     expect(["revoked", "updated"]).toContain(invalidated.outcome);
@@ -307,7 +574,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
 
   test("returns only the latest role and operator-produced starting, ready, and unavailable states", async () => {
     const installation = await initialize();
-    const cookie = await login(installation.loginIdentifier);
+    const { cookie } = await login(installation.loginIdentifier);
 
     const starting = await runtime(
       cookie,
@@ -407,7 +674,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
 
   test("returns the same hidden 404 for unknown organization and space identifiers", async () => {
     const installation = await initialize();
-    const cookie = await login(installation.loginIdentifier);
+    const { cookie } = await login(installation.loginIdentifier);
     const responses = await Promise.all([
       runtime(cookie, randomUUID(), installation.spaceId),
       runtime(cookie, installation.organizationId, randomUUID()),
@@ -437,7 +704,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
         adminUserId: otherUserId,
       }),
     );
-    const cookie = await login(installation.loginIdentifier);
+    const { cookie } = await login(installation.loginIdentifier);
 
     await expectProblem(
       await runtime(cookie, installation.organizationId, hiddenSpaceId),
@@ -453,7 +720,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
     "space-membership",
   ])("turns an invalidated %s layer into the same hidden 404", async (layer) => {
     const graph = await createMemberGraph();
-    const cookie = await login(graph.loginIdentifier);
+    const { cookie } = await login(graph.loginIdentifier);
     expect(
       (
         await runtime(
