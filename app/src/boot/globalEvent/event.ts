@@ -8,12 +8,18 @@ import {Constants} from "../../constants";
 import {hasClosestByClassName, isInEmbedBlock} from "../../protyle/util/hasClosest";
 import {hideTooltip} from "../../dialog/tooltip";
 import {hideAllElements} from "../../protyle/ui/hideElements";
-import {dragOverScroll, stopScrollAnimation} from "./dragover";
+import {dragOverScroll, stopScrollAnimation} from "../../protyle/ui/dragScroll";
 import {setWebViewFocusable} from "../../mobile/util/mobileAppUtil";
-import {cancelManualTouch, initTouchDragBridge, isLastPointerMouse} from "../../util/touchDragBridge";
+import {
+    cancelManualTouch,
+    cancelTouchDragBridgeGesture,
+    installTouchDragBridge,
+    isLastPointerMouse,
+} from "../../protyle/ui/touchDragBridge";
 import {isWindow} from "../../util/functions";
 import {getDockByType} from "../../layout/tabUtil";
 import {fetchPost} from "../../util/fetch";
+import {touchDragOwner} from "../../protyle/ui/touchDragState";
 
 export const initWindowEvent = (app: App) => {
 	let lastEncryptedNotebookTouch = 0;
@@ -233,8 +239,9 @@ export const initWindowEvent = (app: App) => {
 
     document.addEventListener("touchend", (event) => {
         // 无条件前置取消手动桥接：触发各组件（如 Outline.bindSort）注册的 mouseup 清理回调，复位 document.onmousemove 等状态
+        const wasTouchDragging = touchDragOwner.active;
         cancelManualTouch();
-        if (window.siyuan.touchDragActive) {
+        if (wasTouchDragging) {
             return;
         }
         if (Math.abs(startX - event.changedTouches[0].clientX) < Constants.SIZE_DRAG_THRESHOLD &&
@@ -252,5 +259,14 @@ export const initWindowEvent = (app: App) => {
             event.preventDefault();
         }
     });
-    initTouchDragBridge();
+    const disposeTouchDragBridge = installTouchDragBridge();
+    const handleTouchDragBridgePageHide = (event: PageTransitionEvent) => {
+        if (event.persisted) {
+            cancelTouchDragBridgeGesture();
+            return;
+        }
+        disposeTouchDragBridge();
+        window.removeEventListener("pagehide", handleTouchDragBridgePageHide);
+    };
+    window.addEventListener("pagehide", handleTouchDragBridgePageHide);
 };

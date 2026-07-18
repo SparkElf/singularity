@@ -1,7 +1,6 @@
 import {getIconByType} from "../util/getIconByType";
 import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
-import {MenuItem} from "../../menus/Menu";
 import {fullscreen, net2LocalAssets, updateReadonly} from "./action";
 import {openFileAttr} from "../../menus/commonMenuItem";
 import {setEditMode} from "../util/setEditMode";
@@ -30,13 +29,34 @@ import {listIndent, listOutdent} from "../wysiwyg/list";
 import {improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
 import {getCloudURL} from "../../config/util/about";
 
+type BreadcrumbMenuHandle = ReturnType<NonNullable<IProtyle["runtime"]>["menu"]["open"]>;
+
 export class Breadcrumb {
     public element: HTMLElement;
     private mediaRecorder: RecordMedia;
     private id: string;
     private messageId: string;
+    private menuHandle?: BreadcrumbMenuHandle;
+
+    private closeMenu() {
+        const handle = this.menuHandle;
+        this.menuHandle = undefined;
+        handle?.close();
+    }
+
+    private openMenu(protyle: IProtyle) {
+        const handle = protyle.runtime!.menu.open();
+        this.menuHandle = handle;
+        handle.menu.removeCB = () => {
+            if (this.menuHandle === handle) {
+                this.menuHandle = undefined;
+            }
+        };
+        return handle;
+    }
 
     constructor(protyle: IProtyle) {
+        protyle.requestSignal.addEventListener("abort", () => this.closeMenu(), {once: true});
         const element = document.createElement("div");
         element.className = "protyle-breadcrumb";
         let padHTML = "";
@@ -259,19 +279,22 @@ ${padHTML}
     }
 
     public showMenu(protyle: IProtyle, position: IPosition) {
-        if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
-            window.siyuan.menus.menu.element.getAttribute("data-name") === Constants.MENU_BREADCRUMB_MORE) {
-            window.siyuan.menus.menu.remove();
+        if (this.menuHandle) {
+            this.closeMenu();
             return;
         }
+        const menuHandle = this.openMenu(protyle);
+        const {menu} = menuHandle;
         let id;
         const cursorNodeElement = hasClosestBlock(getEditorRange(protyle.element).startContainer);
         if (cursorNodeElement) {
             id = cursorNodeElement.getAttribute("data-node-id");
         }
         fetchPost("/api/block/getTreeStat", {id: id || (protyle.block.showAll ? protyle.block.id : protyle.block.rootID)}, (response) => {
-            window.siyuan.menus.menu.remove();
-            window.siyuan.menus.menu.element.setAttribute("data-name", Constants.MENU_BREADCRUMB_MORE);
+            if (this.menuHandle !== menuHandle) {
+                return;
+            }
+            menu.element.setAttribute("data-name", Constants.MENU_BREADCRUMB_MORE);
             if (!protyle.contentElement.classList.contains("fn__none") && !protyle.disabled) {
                 let uploadHTML = "";
                 uploadHTML = '<input class="b3-form__upload" type="file" multiple="multiple"';
@@ -280,11 +303,11 @@ ${padHTML}
                 } else {
                     uploadHTML += ">";
                 }
-                const uploadMenu = new MenuItem({
+                const uploadMenu = menu.addItem({
                     id: "insertAsset",
                     icon: "iconDownload",
                     label: `${window.siyuan.languages.insertAsset}${uploadHTML}`,
-                }).element;
+                })!;
                 uploadMenu.querySelector("input").addEventListener("change", (event: InputEvent & {
                     target: HTMLInputElement
                 }) => {
@@ -292,50 +315,49 @@ ${padHTML}
                         return;
                     }
                     uploadFiles(protyle, event.target.files, event.target);
-                    window.siyuan.menus.menu.remove();
+                    this.closeMenu();
                 });
-                window.siyuan.menus.menu.append(uploadMenu);
-                window.siyuan.menus.menu.append(new MenuItem({
-                        id: this.mediaRecorder?.isRecording ? "endRecord" : "startRecord",
-                        current: this.mediaRecorder && this.mediaRecorder.isRecording,
-                        icon: "iconRecord",
-                        label: this.mediaRecorder?.isRecording ? window.siyuan.languages.endRecord : window.siyuan.languages.startRecord,
-                        click: () => {
-                            if (!this.mediaRecorder) {
-                                navigator.mediaDevices.getUserMedia({audio: true}).then((mediaStream: MediaStream) => {
-                                    this.mediaRecorder = new RecordMedia(mediaStream);
-                                    this.mediaRecorder.recorder.onaudioprocess = (e: AudioProcessingEvent) => {
-                                        // Do nothing if not recording:
-                                        if (!this.mediaRecorder.isRecording) {
-                                            return;
-                                        }
-                                        // Copy the data from the input buffers;
-                                        const left = e.inputBuffer.getChannelData(0);
-                                        const right = e.inputBuffer.getChannelData(1);
-                                        this.mediaRecorder.cloneChannelData(left, right);
-                                    };
-                                    this.startRecord(protyle);
-                                }).catch(() => {
-                                    showMessage(window.siyuan.languages["record-tip"]);
-                                });
-                                return;
-                            }
-
-                            if (this.mediaRecorder.isRecording) {
-                                this.mediaRecorder.stopRecording();
-                                hideMessage(this.messageId);
-                                const file: File = new File([this.mediaRecorder.buildWavFileBlob()],
-                                    `record${(new Date()).getTime()}.wav`, {type: "video/webm"});
-                                uploadFiles(protyle, [file]);
-                            } else {
-                                hideMessage(this.messageId);
+                menu.addItem({
+                    id: this.mediaRecorder?.isRecording ? "endRecord" : "startRecord",
+                    current: this.mediaRecorder && this.mediaRecorder.isRecording,
+                    icon: "iconRecord",
+                    label: this.mediaRecorder?.isRecording ? window.siyuan.languages.endRecord : window.siyuan.languages.startRecord,
+                    click: () => {
+                        if (!this.mediaRecorder) {
+                            navigator.mediaDevices.getUserMedia({audio: true}).then((mediaStream: MediaStream) => {
+                                this.mediaRecorder = new RecordMedia(mediaStream);
+                                this.mediaRecorder.recorder.onaudioprocess = (e: AudioProcessingEvent) => {
+                                    // Do nothing if not recording:
+                                    if (!this.mediaRecorder.isRecording) {
+                                        return;
+                                    }
+                                    // Copy the data from the input buffers;
+                                    const left = e.inputBuffer.getChannelData(0);
+                                    const right = e.inputBuffer.getChannelData(1);
+                                    this.mediaRecorder.cloneChannelData(left, right);
+                                };
                                 this.startRecord(protyle);
-                            }
+                            }).catch(() => {
+                                showMessage(window.siyuan.languages["record-tip"]);
+                            });
+                            return;
                         }
-                    }).element);
+
+                        if (this.mediaRecorder.isRecording) {
+                            this.mediaRecorder.stopRecording();
+                            hideMessage(this.messageId);
+                            const file: File = new File([this.mediaRecorder.buildWavFileBlob()],
+                                `record${(new Date()).getTime()}.wav`, {type: "video/webm"});
+                            uploadFiles(protyle, [file]);
+                        } else {
+                            hideMessage(this.messageId);
+                            this.startRecord(protyle);
+                        }
+                    }
+                });
             }
             if (!protyle.disabled) {
-                window.siyuan.menus.menu.append(new MenuItem({
+                menu.addItem({
                     id: "netImg2LocalAsset",
                     label: window.siyuan.languages.netImg2LocalAsset,
                     icon: "iconImgDown",
@@ -343,8 +365,8 @@ ${padHTML}
                     click() {
                         net2LocalAssets(protyle, "Img");
                     }
-                }).element);
-                window.siyuan.menus.menu.append(new MenuItem({
+                });
+                menu.addItem({
                     id: "netAssets2LocalAssets",
                     label: window.siyuan.languages.netAssets2LocalAssets,
                     icon: "iconDownloadAssets",
@@ -352,8 +374,8 @@ ${padHTML}
                     click() {
                         net2LocalAssets(protyle, "Assets");
                     }
-                }).element);
-                window.siyuan.menus.menu.append(new MenuItem({
+                });
+                menu.addItem({
                     id: "uploadAssets2CDN",
                     label: window.siyuan.languages.uploadAssets2CDN,
                     icon: "iconUploadAssets",
@@ -364,9 +386,9 @@ ${padHTML}
                             });
                         }
                     }
-                }).element);
+                });
                 if (window.siyuan.user) { // 登录链滴账号后即可使用 `分享到链滴` https://github.com/siyuan-note/siyuan/issues/7392
-                    window.siyuan.menus.menu.append(new MenuItem({
+                    menu.addItem({
                         id: "share2Liandi",
                         label: window.siyuan.languages.share2Liandi,
                         icon: "iconLiandi",
@@ -379,11 +401,11 @@ ${padHTML}
                                     });
                                 });
                         }
-                    }).element);
+                    });
                 }
             }
             if (!protyle.scroll?.element.classList.contains("fn__none")) {
-                window.siyuan.menus.menu.append(new MenuItem({
+                menu.addItem({
                     id: "keepLazyLoad",
                     icon: "iconKeepContent",
                     current: protyle.scroll.keepLazyLoad,
@@ -391,12 +413,12 @@ ${padHTML}
                     click: () => {
                         protyle.scroll.keepLazyLoad = !protyle.scroll.keepLazyLoad;
                     }
-                }).element);
+                });
             }
-            if (window.siyuan.menus.menu.element.lastElementChild.childElementCount > 0) {
-                window.siyuan.menus.menu.append(new MenuItem({id: "separator_1", type: "separator"}).element);
+            if (menu.element.lastElementChild.childElementCount > 0) {
+                menu.addItem({id: "separator_1", type: "separator"});
             }
-            window.siyuan.menus.menu.append(new MenuItem({
+            menu.addItem({
                 id: "refresh",
                 icon: "iconRefresh",
                 accelerator: window.siyuan.config.keymap.editor.general.refresh.custom,
@@ -404,9 +426,9 @@ ${padHTML}
                 click: () => {
                     reloadProtyle(protyle, !isMobile());
                 }
-            }).element);
+            });
             if (!protyle.disabled) {
-                window.siyuan.menus.menu.append(new MenuItem({
+                menu.addItem({
                     id: "optimizeTypography",
                     label: window.siyuan.languages.optimizeTypography,
                     accelerator: window.siyuan.config.keymap.editor.general.optimizeTypography.custom,
@@ -417,9 +439,9 @@ ${padHTML}
                             id: protyle.block.rootID
                         });
                     }
-                }).element);
+                });
             }
-            window.siyuan.menus.menu.append(new MenuItem({
+            menu.addItem({
                 id: "fullscreen",
                 icon: protyle.element.className.includes("fullscreen") ? "iconFullscreenExit" : "iconFullscreen",
                 accelerator: window.siyuan.config.keymap.editor.general.fullscreen.custom,
@@ -428,8 +450,8 @@ ${padHTML}
                     fullscreen(protyle.element);
                     resize(protyle);
                 }
-            }).element);
-            window.siyuan.menus.menu.append(new MenuItem({
+            });
+            menu.addItem({
                 id: "editMode",
                 icon: "iconEdit",
                 label: window.siyuan.languages["edit-mode"],
@@ -452,14 +474,14 @@ ${padHTML}
                     accelerator: window.siyuan.config.keymap.editor.general.preview.custom,
                     click: () => {
                         setEditMode(protyle, "preview");
-                        window.siyuan.menus.menu.remove();
+                        this.closeMenu();
                         saveLayout();
                     }
                 }]
-            }).element);
+            });
             if (!window.siyuan.config.editor.readOnly && !window.siyuan.config.readonly) {
                 const isCustomReadonly = protyle.wysiwyg.element.getAttribute(Constants.CUSTOM_SY_READONLY);
-                window.siyuan.menus.menu.append(new MenuItem({
+                menu.addItem({
                     id: "editReadonly",
                     label: window.siyuan.languages.editReadonly,
                     icon: "iconLock",
@@ -487,11 +509,11 @@ ${padHTML}
                             });
                         }
                     }]
-                }).element);
+                });
             }
             if (!protyle.disabled) {
                 const isCustomFullWidth = protyle.wysiwyg.element.getAttribute(Constants.CUSTOM_SY_FULLWIDTH);
-                window.siyuan.menus.menu.append(new MenuItem({
+                menu.addItem({
                     id: "fullWidth",
                     label: window.siyuan.languages.fullWidth,
                     icon: "iconFullWidth",
@@ -530,9 +552,11 @@ ${padHTML}
                             });
                         }
                     }]
-                }).element);
+                });
             }
             emitProtylePluginMenu({
+                localization: protyle.localization,
+                menu,
                 plugins: protyle.plugins,
                 type: "open-menu-breadcrumbmore",
                 detail: {
@@ -541,17 +565,17 @@ ${padHTML}
                 },
                 separatorPosition: "top",
             });
-            window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
-            window.siyuan.menus.menu.append(new MenuItem({
+            menu.addItem({id: "separator_2", type: "separator"});
+            menu.addItem({
                 id: "docInfo",
                 iconHTML: "",
                 type: "readonly",
                 // 不能换行，否则移动端间距过大
                 label: `<div class="fn__flex">${window.siyuan.languages.runeCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.runeCount}</div><div class="fn__flex">${window.siyuan.languages.wordCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.wordCount}</div><div class="fn__flex">${window.siyuan.languages.linkCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.linkCount}</div><div class="fn__flex">${window.siyuan.languages.imgCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.imageCount}</div><div class="fn__flex">${window.siyuan.languages.refCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.refCount}</div><div class="fn__flex">${window.siyuan.languages.blockCount}<span class="fn__space fn__flex-1"></span>${response.data.stat.blockCount}</div>`,
-            }).element);
-            window.siyuan.menus.menu.popup(position);
+            });
+            menu.popup(position);
             const popoverElement = hasTopClosestByClassName(protyle.element, "block__popover", true);
-            window.siyuan.menus.menu.element.setAttribute("data-from", popoverElement ? popoverElement.dataset.level + "popover" : "app");
+            menu.element.setAttribute("data-from", popoverElement ? popoverElement.dataset.level + "popover" : "app");
         });
     }
 

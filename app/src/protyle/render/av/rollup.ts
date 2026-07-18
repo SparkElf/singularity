@@ -1,14 +1,13 @@
-import {Menu} from "../../../plugin/Menu";
 import {hasClosestByClassName} from "../../util/hasClosest";
 import {upDownHint} from "../../util/upDownHint";
 import {escapeHtml} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
 import {unicode2Emoji} from "../../../emoji";
 import {getColIconByType, getColId} from "./col";
-import {showMessage} from "../../../dialog/message";
 import {getNameByOperator} from "./calc";
 import {getFieldsByData} from "./view";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {openAVMenu} from "./menu";
 
 const updateCol = (options: {
     target: HTMLElement,
@@ -42,7 +41,7 @@ const updateCol = (options: {
         const goSearchRollupCalcElement = goSearchRollupTargetElement.nextElementSibling as HTMLElement;
         goSearchRollupCalcElement.removeAttribute("data-col-type");
         goSearchRollupCalcElement.removeAttribute("data-calc");
-        goSearchRollupCalcElement.querySelector(".b3-menu__accelerator").textContent = window.siyuan.languages.original;
+        goSearchRollupCalcElement.querySelector(".b3-menu__accelerator").textContent = options.protyle.localization.text("original");
     } else {
         if (itemElement.dataset.colId === colData.rollup?.keyID) {
             return;
@@ -52,7 +51,7 @@ const updateCol = (options: {
         const goSearchRollupCalcElement = options.target.nextElementSibling as HTMLElement;
         goSearchRollupCalcElement.removeAttribute("data-calc");
         goSearchRollupCalcElement.setAttribute("data-col-type", itemElement.dataset.colType);
-        goSearchRollupCalcElement.querySelector(".b3-menu__accelerator").textContent = window.siyuan.languages.original;
+        goSearchRollupCalcElement.querySelector(".b3-menu__accelerator").textContent = options.protyle.localization.text("original");
     }
     const oldColValue = JSON.parse(JSON.stringify(colData.rollup));
     transaction(options.protyle, [{
@@ -79,7 +78,11 @@ const updateCol = (options: {
 const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string, avId: string, isRelation: boolean,
                        cb?: () => void) => {
     if (!isRelation && !avId) {
-        showMessage(window.siyuan.languages.selectRelation);
+        protyle.host.dispatch({
+            type: "notify",
+            level: "info",
+            message: protyle.localization.text("selectRelation"),
+        });
         return;
     }
     const load = beginAVRenderLoad(protyle, element);
@@ -95,10 +98,10 @@ const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string,
         response.data.keys.forEach((item: IAVColumn, index: number) => {
             html += `<div class="b3-list-item b3-list-item--narrow${index === 0 ? " b3-list-item--focus" : ""}" data-col-id="${item.id}" ${isRelation ? `data-target-av-id="${item.relation.avID}"` : `data-col-type="${item.type}"`}>
         ${item.icon ? unicode2Emoji(item.icon, "b3-list-item__graphic", true) : `<svg class="b3-list-item__graphic"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
-        <span class="b3-list-item__text">${escapeHtml(item.name || window.siyuan.languages.title)}</span>
+        <span class="b3-list-item__text">${escapeHtml(item.name || protyle.localization.text("title"))}</span>
 </div>`;
         });
-        element.innerHTML = html || `<div class="b3-list--empty">${window.siyuan.languages.emptyContent}</div>`;
+        element.innerHTML = html || `<div class="b3-list--empty">${protyle.localization.text("emptyContent")}</div>`;
         if (cb) {
             cb();
         }
@@ -114,13 +117,16 @@ export const goSearchRollupCol = (options: {
     colId: string,
     isRelation: boolean,
 }) => {
-    window.siyuan.menus.menu.remove();
-    const menu = new Menu();
+    const menuHandle = openAVMenu(options.protyle);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     menu.addItem({
         iconHTML: "",
         type: "empty",
         label: `<div class="fn__flex-column b3-menu__filter">
-    <input class="b3-text-field fn__flex-shrink" placeholder="${window.siyuan.languages[options.isRelation ? "searchRelation" : "searchRollupProperty"]}"/>
+    <input class="b3-text-field fn__flex-shrink" placeholder="${options.protyle.localization.text(options.isRelation ? "searchRelation" : "searchRollupProperty")}"/>
     <div class="fn__hr"></div>
     <div class="b3-list fn__flex-1 b3-list--background">
         <img style="margin: 0 auto;display: block;width: 64px;height: 64px" src="/stage/loading-pure.svg">
@@ -141,7 +147,7 @@ export const goSearchRollupCol = (options: {
                     event.preventDefault();
                     event.stopPropagation();
                     updateCol(options, listElement.querySelector(".b3-list-item--focus") as HTMLElement);
-                    window.siyuan.menus.menu.remove();
+                    menuHandle.close();
                 }
             });
             inputElement.addEventListener("input", (event) => {
@@ -154,13 +160,13 @@ export const goSearchRollupCol = (options: {
                 if (listItemElement) {
                     event.stopPropagation();
                     updateCol(options, listItemElement);
-                    window.siyuan.menus.menu.remove();
+                    menuHandle.close();
                 }
             });
             genSearchList(options.protyle, listElement, "",
                 options.isRelation ? options.data.id : options.target.dataset.avId, options.isRelation, () => {
                 const rect = options.target.getBoundingClientRect();
-                menu.open({
+                menu.popup({
                     x: rect.left,
                     y: rect.bottom,
                     h: rect.height,
@@ -172,7 +178,12 @@ export const goSearchRollupCol = (options: {
     menu.element.querySelector(".b3-menu__items").setAttribute("style", "overflow: initial");
 };
 
-export const getRollupHTML = (options: { data?: IAV, cellElements?: HTMLElement[], colData?: IAVColumn }) => {
+export const getRollupHTML = (options: {
+    data?: IAV,
+    cellElements?: HTMLElement[],
+    colData?: IAVColumn,
+    localization: IProtyle["localization"],
+}) => {
     let colData: IAVColumn;
     if (options.colData) {
         colData = options.colData;
@@ -185,18 +196,18 @@ export const getRollupHTML = (options: { data?: IAV, cellElements?: HTMLElement[
         });
     }
     return `<button class="b3-menu__item b3-menu__item--current" data-type="goSearchRollupCol" data-old-value='${JSON.stringify(colData.rollup || {})}'>
-    <span class="b3-menu__label">${window.siyuan.languages.relation}</span>
+    <span class="b3-menu__label">${options.localization.text("relation")}</span>
     <span class="b3-menu__accelerator"></span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item" data-type="goSearchRollupTarget">
-    <span class="b3-menu__label">${window.siyuan.languages.rollupProperty}</span>
+    <span class="b3-menu__label">${options.localization.text("rollupProperty")}</span>
     <span class="b3-menu__accelerator"></span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item" data-type="goSearchRollupCalc">
-    <span class="b3-menu__label">${window.siyuan.languages.rollupCalc}</span>
-    <span class="b3-menu__accelerator">${getNameByOperator(colData.rollup?.calc?.operator, true)}</span>
+    <span class="b3-menu__label">${options.localization.text("rollupCalc")}</span>
+    <span class="b3-menu__accelerator">${getNameByOperator(colData.rollup?.calc?.operator, true, options.localization)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>`;
 };

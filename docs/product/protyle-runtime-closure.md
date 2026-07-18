@@ -199,6 +199,7 @@ P-L1-01至05细化L1生产Protyle迁移的内容兼容子集。完整方案第8.
 - **权限**：浏览器只表达只读体验，所有正式写入由Gateway的HTTP策略最终授权；Protyle WebSocket只接收服务端推送并拒绝浏览器数据帧。
 - **私网认证**：Gateway到Kernel的HTTPS、WSS握手和readiness统一使用mTLS与短期Ed25519服务JWT，验证精确证书身份且禁止`InsecureSkipVerify`，浏览器凭证不得透传。
 - **资源**：在线附件、上传和导出只使用当前组织/空间Gateway地址；应用源只内联MIME allowlist中的惰性类型，HTML/JS/SVG/XML/PDF/未知类型及导出HTML强制下载并使用`nosniff`与sandbox CSP，PDF预览只由PDF.js绘制canvas；构建期编辑器脚本使用版本清单，不从Session猜测基址。
+- **企业编辑器能力**：企业组合根关闭AI Writing与Widget，自定义Emoji只通过携带`spaceId + notebookId + documentId`的只读Gateway资源端口加载，SVG和HTML仍强制下载。
 - **错误**：不新增刷新、降级、旧请求、直连Kernel或默认成功fallback。
 - **字段**：公开编辑器装配只使用`spaceId`、`notebookId`、`documentId`、宿主`readOnly`、表面和动作所需最小字段；离开编辑器且会访问内容库的事件继续携带同一`notebookId`，它与`spaceId`、`documentId`正交且不由响应改写；文档属性只读只从真实内容响应取得，不作为第二个边界字段；不增加`workspaceId`、`rootId`等同义字段。
 - **性能**：工作台事件不携带正文或DOM；Registry、菜单和浮层按实例增量管理，不扫描完整布局树。

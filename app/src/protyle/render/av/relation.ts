@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {hasClosestByClassName, hasTopClosestByClassName} from "../../util/hasClosest";
 import {UDLRHint, upDownHint} from "../../util/upDownHint";
 import {escapeHtml, escapeLessThans} from "../../../util/escape";
@@ -12,9 +11,10 @@ import {getFieldsByData, getViewName} from "./view";
 import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";
 import {isMobile} from "../../../util/functions";
-import {showMessage} from "../../../dialog/message";
 import {writeText} from "../../util/clipboard";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {openAVMenu} from "./menu";
+import {closeOwnedAVOverlay} from "./overlay";
 
 interface IAVItem {
     avID: string;
@@ -51,16 +51,16 @@ const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string,
     <span class="fn__space--small"></span>
     <div class="b3-list-item--two fn__flex-1">
         <div class="b3-list-item__first">
-            <span class="b3-list-item__text">${escapeHtml(item.avName || window.siyuan.languages._kernel[267])}</span>
+            <span class="b3-list-item__text">${escapeHtml(item.avName || protyle.localization.kernelText(267))}</span>
         </div>
         <div class="b3-list-item__meta b3-list-item__showall">${escapeLessThans(item.hPath)}</div>
     </div>
-    <svg aria-label="${window.siyuan.languages.thisDatabase}" style="margin: 0 0 0 4px" class="b3-list-item__hinticon ariaLabel${item.avID === avId ? "" : " fn__none"}"><use xlink:href="#iconInfo"></use></svg>
+    <svg aria-label="${protyle.localization.text("thisDatabase")}" style="margin: 0 0 0 4px" class="b3-list-item__hinticon ariaLabel${item.avID === avId ? "" : " fn__none"}"><use xlink:href="#iconInfo"></use></svg>
 </div>`;
             if (hasChildren) {
                 html += '<div class="fn__none">';
                 item.children.forEach((subItem) => {
-                    const viewDefaultName = getViewName(subItem.viewLayout);
+                    const viewDefaultName = getViewName(subItem.viewLayout, protyle.localization);
                     html += `<div style="padding-left: 48px;" class="b3-list-item b3-list-item--narrow" data-av-id="${subItem.avID}" data-view-id="${subItem.viewID}">
 <span class="b3-list-item__text">${escapeHtml(subItem.viewName)}</span> 
 <span class="b3-list-item__meta">${viewDefaultName}</span>
@@ -78,10 +78,10 @@ const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string,
     });
 };
 
-const setDatabase = (avId: string, element: HTMLElement, item: HTMLElement) => {
+const setDatabase = (protyle: IProtyle, avId: string, element: HTMLElement, item: HTMLElement) => {
     element.dataset.avId = item.dataset.avId;
     element.dataset.blockId = item.dataset.blockId;
-    element.querySelector(".b3-menu__accelerator").textContent = item.querySelector(".b3-list-item__hinticon").classList.contains("fn__none") ? item.querySelector(".b3-list-item__text").textContent : window.siyuan.languages.thisDatabase;
+    element.querySelector(".b3-menu__accelerator").textContent = item.querySelector(".b3-list-item__hinticon").classList.contains("fn__none") ? item.querySelector(".b3-list-item__text").textContent : protyle.localization.text("thisDatabase");
     const menuElement = hasClosestByClassName(element, "b3-menu__items");
     if (menuElement) {
         toggleUpdateRelationBtn(menuElement, avId, true);
@@ -90,8 +90,11 @@ const setDatabase = (avId: string, element: HTMLElement, item: HTMLElement) => {
 
 export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElement,
                              cb?: (element: HTMLElement) => void, excludes = true) => {
-    window.siyuan.menus.menu.remove();
-    const menu = new Menu();
+    const menuHandle = openAVMenu(protyle);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     menu.addItem({
         iconHTML: "",
         type: "empty",
@@ -117,9 +120,9 @@ export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElemen
                     if (cb) {
                         cb(listItemElement);
                     } else {
-                        setDatabase(avId, target, listItemElement);
+                        setDatabase(protyle, avId, target, listItemElement);
                     }
-                    window.siyuan.menus.menu.remove();
+                    menuHandle.close();
                 }
             });
             inputElement.addEventListener("input", (event: InputEvent) => {
@@ -152,9 +155,9 @@ export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElemen
                         if (cb) {
                             cb(clickTarget);
                         } else {
-                            setDatabase(avId, target, clickTarget);
+                            setDatabase(protyle, avId, target, clickTarget);
                         }
-                        window.siyuan.menus.menu.remove();
+                        menuHandle.close();
                         break;
                     }
                     clickTarget = clickTarget.parentElement;
@@ -162,7 +165,7 @@ export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElemen
             });
             genSearchList(protyle, listElement, "", avId, excludes, () => {
                 const rect = target.getBoundingClientRect();
-                menu.open({
+                menu.popup({
                     x: rect.left,
                     y: rect.bottom,
                     h: rect.height,
@@ -221,8 +224,8 @@ export const updateRelation = (options: {
         name: inputElement.dataset.oldValue,
         format: colData.name
     }]);
-    options.avElement.remove();
-    updateAttrViewCellAnimation(options.blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {name: colNewName});
+    closeOwnedAVOverlay(options.protyle, "panel", options.avElement);
+    updateAttrViewCellAnimation(options.protyle, options.blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {name: colNewName});
     focusBlock(options.blockElement);
 };
 
@@ -283,7 +286,7 @@ const genSelectItemHTML = (options: {
     className?: string,
     rowId?: string,
     newName?: string
-}) => {
+}, localization: IProtyle["localization"]) => {
     if (options.type === "selected") {
         return `<svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
 <span class="b3-menu__label fn__ellipsis ${options.isDetached ? "" : " popover__block"}" ${options.isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'} data-id="${options.id}">${options.text}</span>
@@ -292,11 +295,11 @@ const genSelectItemHTML = (options: {
     if (options.type === "empty") {
         if (options.newName) {
             return `<button class="b3-menu__item" data-type="setRelationCell">
-    <span class="b3-menu__label fn__ellipsis">${window.siyuan.languages.newRowInRelation.replace("${x}", options.text).replace("${y}", options.newName)}</span>
+    <span class="b3-menu__label fn__ellipsis">${localization.text("newRowInRelation").replace("${x}", options.text).replace("${y}", options.newName)}</span>
 </button>`;
         }
         return `<button class="b3-menu__item">
-    <span class="b3-menu__label">${window.siyuan.languages.emptyContent}</span>
+    <span class="b3-menu__label">${localization.text("emptyContent")}</span>
 </button>`;
     }
     if (options.type == "unselect") {
@@ -334,8 +337,8 @@ draggable="true">${genSelectItemHTML({
                 type: "selected",
                 id: item.dataset.id,
                 isDetached: !item.classList.contains("av__celltext--ref"),
-                text: Lute.EscapeHTMLStr(item.textContent || window.siyuan.languages.untitled)
-            })}</button>`;
+                text: Lute.EscapeHTMLStr(item.textContent || protyle.localization.text("untitled"))
+            }, protyle.localization)}</button>`;
         });
         cells.forEach((item) => {
             if (!hasIds.includes(item.blockID)) {
@@ -344,8 +347,8 @@ draggable="true">${genSelectItemHTML({
                     rowId: item.blockID,
                     id: item.block.id,
                     isDetached: item.isDetached,
-                    text: Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)
-                });
+                    text: Lute.EscapeHTMLStr(item.block.content || protyle.localization.text("untitled"))
+                }, protyle.localization);
             }
         });
         const refElement = menuElement.querySelector(".popover__block");
@@ -356,7 +359,7 @@ ${keyword ? genSelectItemHTML({
             type: "empty",
             newName: Lute.EscapeHTMLStr(keyword),
             text: `<span style="color: var(--b3-protyle-inline-blockref-color);" class="popover__block" data-id="${refElement.getAttribute("data-id")}">${refElement.textContent}</span>`,
-        }) : (html ? "" : genSelectItemHTML({type: "empty"}))}`;
+        }, protyle.localization) : (html ? "" : genSelectItemHTML({type: "empty"}, protyle.localization))}`;
         menuElement.querySelector(".b3-menu__items .b3-menu__item:not(.fn__none)").classList.add("b3-menu__item--current");
         updateCopyRelatedItems(menuElement);
     }).catch((error) => {
@@ -394,8 +397,8 @@ draggable="true">${genSelectItemHTML({
                 type: "selected",
                 id: item.dataset.id,
                 isDetached: !item.classList.contains("av__celltext--ref"),
-                text: Lute.EscapeHTMLStr(item.textContent || window.siyuan.languages.untitled)
-            })}</button>`;
+                text: Lute.EscapeHTMLStr(item.textContent || options.protyle.localization.text("untitled"))
+            }, options.protyle.localization)}</button>`;
         });
         cells.forEach((item) => {
             if (!hasIds.includes(item.blockID)) {
@@ -404,13 +407,13 @@ draggable="true">${genSelectItemHTML({
                     rowId: item.blockID,
                     id: item.block.id,
                     isDetached: item.isDetached,
-                    text: Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)
-                });
+                    text: Lute.EscapeHTMLStr(item.block.content || options.protyle.localization.text("untitled"))
+                }, options.protyle.localization);
             }
         });
         options.menuElement.querySelector(".b3-menu__items").innerHTML = `${selectHTML}
 <button class="b3-menu__separator"></button>
-${html || genSelectItemHTML({type: "empty"})}`;
+${html || genSelectItemHTML({type: "empty"}, options.protyle.localization)}`;
         const cellRect = options.cellElements[options.cellElements.length - 1].getBoundingClientRect();
         setPosition(options.menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
         options.menuElement.querySelector(".b3-menu__items .b3-menu__item:not(.fn__none)").classList.add("b3-menu__item--current");
@@ -460,7 +463,11 @@ ${html || genSelectItemHTML({type: "empty"})}`;
             });
             if (copyText) {
                 writeText(copyText.trimEnd());
-                showMessage(window.siyuan.languages.copied);
+                options.protyle.host.dispatch({
+                    type: "notify",
+                    level: "success",
+                    message: options.protyle.localization.text("copied"),
+                });
             }
         });
     }).catch((error) => {
@@ -468,7 +475,11 @@ ${html || genSelectItemHTML({type: "empty"})}`;
     });
 };
 
-export const getRelationHTML = (data: IAV, cellElements?: HTMLElement[]) => {
+export const getRelationHTML = (
+    data: IAV,
+    localization: IProtyle["localization"],
+    cellElements?: HTMLElement[],
+) => {
     let colRelationData: IAVColumnRelation;
     getFieldsByData(data).find(item => {
         if (item.id === getColId(cellElements[0], data.viewType)) {
@@ -481,7 +492,7 @@ export const getRelationHTML = (data: IAV, cellElements?: HTMLElement[]) => {
 <div class="b3-menu__item" data-type="nobg">
     <div class="b3-form__icona fn__flex-1" style="overflow: visible">
         <input class="b3-text-field fn__block" style="min-width: 190px"/>
-        <svg class="b3-form__icona-icon ariaLabel fn__none" data-position="north" data-type="copyRelatedItems" aria-label="${window.siyuan.languages.copy} ${window.siyuan.languages.relatedItems}"><use xlink:href="#iconCopy"></use></svg>
+        <svg class="b3-form__icona-icon ariaLabel fn__none" data-position="north" data-type="copyRelatedItems" aria-label="${localization.text("copy")} ${localization.text("relatedItems")}"><use xlink:href="#iconCopy"></use></svg>
     </div>
     <span class="fn__space"></span>
     <span style="color: var(--b3-protyle-inline-blockref-color);max-width: 200px" data-id="" class="popover__block fn__pointer fn__ellipsis"></span>
@@ -548,7 +559,7 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
                 isDetached: !target.querySelector(".popover__block"),
                 text: Lute.EscapeHTMLStr(target.querySelector(".b3-menu__label").textContent),
                 className: target.className
-            });
+            }, protyle.localization);
             updateCellsValue(protyle, nodeElement, newValue, cellElements);
         } else if (rowId) {
             newValue.blockIDs.push(rowId);
@@ -568,9 +579,9 @@ draggable="true">${genSelectItemHTML({
                 id,
                 isDetached: !target.querySelector(".popover__block"),
                 text: Lute.EscapeHTMLStr(target.querySelector(".b3-menu__label").textContent)
-            })}</button>`;
+            }, protyle.localization)}</button>`;
             if (!separatorElement.nextElementSibling) {
-                separatorElement.insertAdjacentHTML("afterend", genSelectItemHTML({type: "empty"}));
+                separatorElement.insertAdjacentHTML("afterend", genSelectItemHTML({type: "empty"}, protyle.localization));
             }
             updateCellsValue(protyle, nodeElement, newValue, cellElements);
         } else {
@@ -610,7 +621,7 @@ class="${target.className} ariaLabel" draggable="true">${genSelectItemHTML({
                 rowId,
                 isDetached: true,
                 text: Lute.EscapeHTMLStr(content)
-            })}</button>`);
+            }, protyle.localization)}</button>`);
             transaction(protyle, doOperations.concat(updateOptions.doOperations));
         }
     }

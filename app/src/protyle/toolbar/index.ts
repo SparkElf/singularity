@@ -1508,8 +1508,11 @@ export class Toolbar {
                     event.stopPropagation();
                     break;
                 } else if (target.dataset.type === "menu") {
-                    protyle.gutter.renderMenu(protyle, protyle.wysiwyg.element.querySelector(".protyle-wysiwyg--select"));
-                    this.activateOverlay();
+                    const menu = protyle.gutter.renderMenu(
+                        protyle,
+                        protyle.wysiwyg.element.querySelector(".protyle-wysiwyg--select"),
+                    )!;
+                    menu.fullscreen();
                     event.preventDefault();
                     event.stopPropagation();
                     break;

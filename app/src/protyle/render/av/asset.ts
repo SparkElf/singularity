@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {updateAttrViewCellAnimation} from "./action";
 import {getSearch, isMobile} from "../../../util/functions";
@@ -23,6 +22,7 @@ import {confirmDialog} from "../../../dialog/confirmDialog";
 import {filesize} from "filesize";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
+import {openAVMenu} from "./menu";
 
 export const bindAssetEvent = (options: {
     protyle: IProtyle,
@@ -56,7 +56,7 @@ export const bindAssetEvent = (options: {
     });
 };
 
-export const getAssetHTML = (cellElements: HTMLElement[]) => {
+export const getAssetHTML = (cellElements: HTMLElement[], localization: IProtyle["localization"]) => {
     let html = "";
     genCellValueByElement("mAsset", cellElements[0]).mAsset.forEach((item, index) => {
         let contentHTML;
@@ -82,16 +82,16 @@ ${contentHTML}
     ${html}
     <button data-type="addAssetExist" class="b3-menu__item b3-menu__item--current">
         <svg class="b3-menu__icon"><use xlink:href="#iconImage"></use></svg>
-        <span class="b3-menu__label">${window.siyuan.languages.assets}</span>
+        <span class="b3-menu__label">${localization.text("assets")}</span>
     </button>
     <button class="b3-menu__item">
         <svg class="b3-menu__icon"><use xlink:href="#iconDownload"></use></svg>
-        <span class="b3-menu__label">${window.siyuan.languages.insertAsset}</span> 
+        <span class="b3-menu__label">${localization.text("insertAsset")}</span>
         <input multiple class="b3-form__upload" type="file">
     </button>
     <button data-type="addAssetLink" class="b3-menu__item">
         <svg class="b3-menu__icon"><use xlink:href="#iconLink"></use></svg>
-        <span class="b3-menu__label">${window.siyuan.languages.link}</span>
+        <span class="b3-menu__label">${localization.text("link")}</span>
     </button>
 </div>`;
 };
@@ -105,6 +105,7 @@ export const updateAssetCell = (options: {
     removeIndex?: number,
     blockElement: Element
 }) => {
+    const {localization} = options.protyle;
     const viewType = options.blockElement.getAttribute("data-av-type") as TAVView;
     const colId = getColId(options.cellElements[0], viewType);
     const cellDoOperations: IOperation[] = [];
@@ -161,9 +162,9 @@ export const updateAssetCell = (options: {
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, options.protyle.settings.icons.file);
+            item.innerHTML = genAVValueHTML(cellValue, options.protyle.settings.icons.file, localization);
         } else {
-            updateAttrViewCellAnimation(item, cellValue);
+            updateAttrViewCellAnimation(options.protyle, item, cellValue);
         }
     });
     cellDoOperations.push({
@@ -174,7 +175,7 @@ export const updateAssetCell = (options: {
     transaction(options.protyle, cellDoOperations, cellUndoOperations);
     const menuElement = currentAVOverlay(options.protyle, "panel")?.lastElementChild as HTMLElement;
     if (menuElement) {
-        menuElement.innerHTML = getAssetHTML(options.cellElements);
+        menuElement.innerHTML = getAssetHTML(options.cellElements, localization);
         bindAssetEvent({
             protyle: options.protyle,
             menuElement,
@@ -198,9 +199,11 @@ export const editAssetItem = (options: {
     index: number,
     rect: DOMRect
 }) => {
+    const {localization} = options.protyle;
     const linkAddress = removeCompressURL(options.content);
     const type = options.type as "image" | "file";
-    const menu = new Menu(Constants.MENU_AV_ASSET_EDIT, async () => {
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_ASSET_EDIT, async (menu) => {
+        const textElements = menu.element.querySelectorAll("textarea");
         let currentLink = textElements[0].value;
         if ((!textElements[1] && currentLink === decodeURI(linkAddress)) ||
             (textElements[1] && currentLink === decodeURI(linkAddress) && textElements[1].value === options.name)) {
@@ -225,24 +228,25 @@ export const editAssetItem = (options: {
             }
         });
     });
-    if (menu.isOpen) {
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     if (type === "file") {
         menu.addItem({
             id: "linkAndTitle",
             iconHTML: "",
             type: "readonly",
             label: `<div class="fn__flex">
-    <span class="fn__flex-center">${window.siyuan.languages.link}</span>
+    <span class="fn__flex-center">${localization.text("link")}</span>
     <span class="fn__space"></span>
-    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
+    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${localization.text("copy")}">
         <svg><use xlink:href="#iconCopy"></use></svg>
     </span>   
 </div><textarea rows="1" style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"};resize: vertical;" class="b3-text-field"></textarea><div class="fn__hr"></div><div class="fn__flex">
-    <span class="fn__flex-center">${window.siyuan.languages.title}</span>
+    <span class="fn__flex-center">${localization.text("title")}</span>
     <span class="fn__space"></span>
-    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
+    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${localization.text("copy")}">
         <svg><use xlink:href="#iconCopy"></use></svg>
     </span>   
 </div><textarea style="width: ${isMobile() ? "100%" : "360px"};margin: 4px 0;resize: vertical;" rows="1" class="b3-text-field"></textarea>`,
@@ -252,7 +256,11 @@ export const editAssetItem = (options: {
                     while (target) {
                         if (target.dataset.action === "copy") {
                             writeText((target.parentElement.nextElementSibling as HTMLTextAreaElement).value);
-                            showMessage(window.siyuan.languages.copied);
+                            options.protyle.host.dispatch({
+                                type: "notify",
+                                level: "success",
+                                message: localization.text("copied"),
+                            });
                             break;
                         }
                         target = target.parentElement;
@@ -260,10 +268,10 @@ export const editAssetItem = (options: {
                 });
             }
         });
-        menu.addSeparator({id: "separator_1"});
+        menu.addItem({id: "separator_1", type: "separator"});
         menu.addItem({
             id: "copy",
-            label: window.siyuan.languages.copy,
+            label: localization.text("copy"),
             icon: "iconCopy",
             click() {
                 writeText(`[${textElements[1].value || textElements[0].value}](${textElements[0].value})`);
@@ -275,9 +283,9 @@ export const editAssetItem = (options: {
             iconHTML: "",
             type: "readonly",
             label: `<div class="fn__flex">
-    <span class="fn__flex-center">${window.siyuan.languages.link}</span>
+    <span class="fn__flex-center">${localization.text("link")}</span>
     <span class="fn__space"></span>
-    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${window.siyuan.languages.copy}">
+    <span data-action="copy" class="block__icon block__icon--show b3-tooltips b3-tooltips__e fn__flex-center" aria-label="${localization.text("copy")}">
         <svg><use xlink:href="#iconCopy"></use></svg>
     </span>   
 </div><textarea rows="1" style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"};resize: vertical;" class="b3-text-field"></textarea>`,
@@ -287,7 +295,11 @@ export const editAssetItem = (options: {
                     while (target) {
                         if (target.dataset.action === "copy") {
                             writeText((target.parentElement.nextElementSibling as HTMLTextAreaElement).value);
-                            showMessage(window.siyuan.languages.copied);
+                            options.protyle.host.dispatch({
+                                type: "notify",
+                                level: "success",
+                                message: localization.text("copied"),
+                            });
                             break;
                         }
                         target = target.parentElement;
@@ -295,10 +307,10 @@ export const editAssetItem = (options: {
                 });
             }
         });
-        menu.addSeparator({id: "separator_1"});
+        menu.addItem({id: "separator_1", type: "separator"});
         menu.addItem({
             id: "copy",
-            label: window.siyuan.languages.copy,
+            label: localization.text("copy"),
             icon: "iconCopy",
             click() {
                 writeText(`![](${textElements[0].value})`);
@@ -306,7 +318,7 @@ export const editAssetItem = (options: {
         });
         menu.addItem({
             id: "copyAsPNG",
-            label: window.siyuan.languages.copyAsPNG,
+            label: localization.text("copyAsPNG"),
             icon: "iconImage",
             click() {
                 copyPNGByLink(textElements[0].value);
@@ -316,7 +328,7 @@ export const editAssetItem = (options: {
     menu.addItem({
         id: "delete",
         icon: "iconTrashcan",
-        label: window.siyuan.languages.delete,
+        label: localization.text("delete"),
         click() {
             updateAssetCell({
                 protyle: options.protyle,
@@ -329,7 +341,7 @@ export const editAssetItem = (options: {
     if (linkAddress?.startsWith("assets/")) {
         menu.addItem({
             id: "rename",
-            label: window.siyuan.languages.rename,
+            label: localization.text("rename"),
             icon: "iconEdit",
             click() {
                 renameAsset(decodeURI(linkAddress));
@@ -348,7 +360,7 @@ export const editAssetItem = (options: {
             openSubMenu.push({
                 id: "insertRight",
                 icon: "iconLayoutRight",
-                label: window.siyuan.languages.insertRight,
+                label: localization.text("insertRight"),
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
                     documentId: options.protyle.block.rootID,
@@ -360,7 +372,7 @@ export const editAssetItem = (options: {
             }, {
                 id: "openBy",
                 icon: "iconOpen",
-                label: window.siyuan.languages.openBy,
+                label: localization.text("openBy"),
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
                     documentId: options.protyle.block.rootID,
@@ -374,19 +386,19 @@ export const editAssetItem = (options: {
             const url = isLocalPath(assetPath) || assetPath.includes(":") ? assetPath : `https://${assetPath}`;
             openSubMenu.push({
                 id: "useBrowserView",
-                label: window.siyuan.languages.useBrowserView,
+                label: localization.text("useBrowserView"),
                 click: () => options.protyle.host.dispatch({type: "open-external", url}),
             });
         }
     }
     if (type !== "file" || openSubMenu.length > 0) {
-        menu.addSeparator({id: "separator_2"});
+        menu.addItem({id: "separator_2", type: "separator"});
     }
     if (type !== "file") {
         menu.addItem({
             id: "cardPreview",
             icon: "iconPreview",
-            label: window.siyuan.languages.cardPreview,
+            label: localization.text("cardPreview"),
             click() {
                 previewAttrViewImages(
                     options.protyle,
@@ -401,7 +413,7 @@ export const editAssetItem = (options: {
     if (openSubMenu.length > 0) {
         menu.addItem({
             id: "openBy",
-            label: window.siyuan.languages.openBy,
+            label: localization.text("openBy"),
             icon: "iconOpen",
             submenu: openSubMenu
         });
@@ -411,7 +423,7 @@ export const editAssetItem = (options: {
         menu.addItem(writeAssetToClipboard(decodeURI(linkAddress)));
     }
     const rect = options.rect;
-    menu.open({
+    menu.popup({
         x: rect.right,
         y: rect.top,
         w: rect.width,
@@ -427,7 +439,8 @@ export const editAssetItem = (options: {
 };
 
 export const addAssetLink = (protyle: IProtyle, cellElements: HTMLElement[], target: HTMLElement, blockElement: Element) => {
-    const menu = new Menu(Constants.MENU_AV_ASSET_EDIT, () => {
+    const {localization} = protyle;
+    const menuHandle = openAVMenu(protyle, Constants.MENU_AV_ASSET_EDIT, (menu) => {
         const textElements = menu.element.querySelectorAll("textarea");
         if (!textElements[0].value && !textElements[1].value) {
             return;
@@ -443,20 +456,21 @@ export const addAssetLink = (protyle: IProtyle, cellElements: HTMLElement[], tar
             }]
         });
     });
-    if (menu.isOpen) {
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     menu.addItem({
         iconHTML: "",
         type: "readonly",
-        label: `${window.siyuan.languages.link}
+        label: `${localization.text("link")}
 <textarea rows="1" style="margin:4px 0;width: ${isMobile() ? "200" : "360"}px;resize: vertical;" class="b3-text-field"></textarea>
 <div class="fn__hr"></div>
-${window.siyuan.languages.title}
+${localization.text("title")}
 <textarea style="width: ${isMobile() ? "200" : "360"}px;margin: 4px 0;resize: vertical;" rows="1" class="b3-text-field"></textarea>`,
     });
     const rect = target.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         x: rect.right,
         y: rect.bottom,
         w: target.parentElement.clientWidth + 8,
@@ -466,17 +480,18 @@ ${window.siyuan.languages.title}
 };
 
 export const dragUpload = (files: ILocalFiles[], protyle: IProtyle, cellElement: HTMLElement) => {
+    const {localization} = protyle;
     let msg = "";
     const assetPaths: string[] = [];
     files.forEach(item => {
         if (item.size && Constants.SIZE_UPLOAD_TIP_SIZE <= item.size) {
-            msg += window.siyuan.languages.uploadFileTooLarge.replace("${x}", item.path).replace("${y}", filesize(item.size, {standard: "iec"})) + "<br>";
+            msg += localization.text("uploadFileTooLarge").replace("${x}", item.path).replace("${y}", filesize(item.size, {standard: "iec"})) + "<br>";
         }
         assetPaths.push(item.path);
     });
 
-    confirmDialog(msg ? window.siyuan.languages.upload : "", msg, () => {
-        const msgId = showMessage(window.siyuan.languages.uploading, 0);
+    confirmDialog(msg ? localization.text("upload") : "", msg, () => {
+        const msgId = showMessage(localization.text("uploading"), 0);
         const identity = protyleContentIdentity(protyle);
         void protyle.transport!.request<IWebSocketData>("/api/asset/insertLocalAssets", {
             assetPaths,

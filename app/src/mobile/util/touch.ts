@@ -85,7 +85,7 @@ export const handleTouchEnd = (event: TouchEvent) => {
             }
         } else if (currentTime - time > Constants.TIMEOUT_LONGPRESS) {
             // 长按：多选已在按住满阈值时触发，此处取消定时器避免重复触发
-            if (isIPhone() && !isChromeBrowser() && !window.siyuan.touchDragActive) {
+            if (isIPhone() && !isChromeBrowser()) {
                 target.dispatchEvent(new MouseEvent("contextmenu", {
                     bubbles: true,
                     cancelable: true,

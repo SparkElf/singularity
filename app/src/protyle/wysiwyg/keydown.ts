@@ -608,13 +608,11 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
 
                 selectElements.push(nodeElement);
             }
-            if (selectElements.length === 1) {
-                protyle.gutter.renderMenu(protyle, selectElements[0]);
-            } else {
-                protyle.gutter.renderMultipleMenu(protyle, selectElements);
-            }
+            const menu = selectElements.length === 1
+                ? protyle.gutter.renderMenu(protyle, selectElements[0])!
+                : protyle.gutter.renderMultipleMenu(protyle, selectElements);
             const rect = nodeElement.getBoundingClientRect();
-            window.siyuan.menus.menu.popup({x: rect.left, y: rect.top, isLeft: true});
+            menu.popup({x: rect.left, y: rect.top, isLeft: true});
             return;
         }
 

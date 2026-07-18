@@ -7,6 +7,7 @@ import {blockRender} from "../render/blockRender";
 import {disabledForeverProtyle, setReadonlyByConfig} from "../util/onGet";
 import {avRender} from "../render/av/render";
 import {hasClosestByAttribute} from "../util/hasClosest";
+import {combineAbortSignals} from "../util/abortSignal";
 import {protyleContentIdentity} from "../util/contentLoad";
 
 interface BacklinkDocumentResponse {
@@ -74,7 +75,7 @@ export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
     breadcrumbLoads.get(breadcrumb)?.controller.abort();
     const state = {controller: new AbortController()};
     breadcrumbLoads.set(breadcrumb, state);
-    const signal = AbortSignal.any([protyle.requestSignal, state.controller.signal]);
+    const signal = combineAbortSignals([protyle.requestSignal, state.controller.signal]);
     const isCurrent = () => breadcrumbLoads.get(breadcrumb) === state &&
         !signal.aborted &&
         !protyle.destroyed &&

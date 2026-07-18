@@ -13,12 +13,15 @@ import language from "../../../../../app/appearance/langs/zh-CN.json";
 export type { ProtyleApplicationPort, ProtyleApplicationSettings } from "@singularity/protyle-browser";
 
 const DEFAULT_EDITOR_FONT_SIZE = 16;
+const MAXIMUM_RECENT_EMOJI_COUNT = 64;
 const STORAGE_PREFIX = "singularity.protyle.application.v1";
 
 const textDictionary = language as unknown as Readonly<Record<string, string>>;
+const attributeViewDictionary = language._attrView as Readonly<Record<string, string>>;
 const kernelDictionary = language._kernel as Readonly<Record<string, string>>;
 
 export const protyleLocalization: ProtyleLocalizationPort = {
+  attributeViewText: (key) => attributeViewDictionary[key],
   language: "zh_CN",
   kernelText: (index) => kernelDictionary[index],
   text: (key) => textDictionary[key],
@@ -28,6 +31,7 @@ interface PersistedApplicationState {
   fontSize: number;
   codeLanguage: string;
   positions: Record<string, ProtyleScrollPosition>;
+  recentEmojis: string[];
   recentFontStyles: string[];
 }
 
@@ -55,6 +59,7 @@ function readPersistedState(
       codeLanguage: "",
       fontSize: DEFAULT_EDITOR_FONT_SIZE,
       positions: {},
+      recentEmojis: [],
       recentFontStyles: [],
     };
   }
@@ -63,6 +68,7 @@ function readPersistedState(
     codeLanguage: parsed.codeLanguage ?? "",
     fontSize: parsed.fontSize ?? DEFAULT_EDITOR_FONT_SIZE,
     positions: parsed.positions ?? {},
+    recentEmojis: parsed.recentEmojis ?? [],
     recentFontStyles: parsed.recentFontStyles ?? [],
   };
 }
@@ -101,6 +107,7 @@ export function createProtyleApplicationPort(
     options.storage.setItem(storageKey, JSON.stringify(state));
   };
   const editor = {
+    blockRefDynamicAnchorTextMaxLen: 96,
     codeLigatures: false,
     codeLineWrap: false,
     codeSyntaxHighlightLineNum: false,
@@ -168,8 +175,64 @@ export function createProtyleApplicationPort(
         addTitle: true,
         paragraphBeginningSpace: false,
       },
+      features: {
+        aiWriting: false,
+        flashcardDeck: false,
+        wechatReminder: false,
+        widget: false,
+      },
       hotkeys: {
-        insertRight: "⌥.",
+        general: {
+          addToDatabase: "",
+          enter: "⌥→",
+          enterBack: "⌥←",
+          move: "",
+          search: "⌘F",
+        },
+        editor: {
+          general: {
+            ai: "",
+            aiWriting: "",
+            alignCenter: "⌥C",
+            alignLeft: "⌥L",
+            alignRight: "⌥R",
+            attr: "⌥⌘A",
+            collapse: "⌘↑",
+            copyPlainText: "",
+            copyText: "",
+            duplicate: "⌘D",
+            duplicateCompletely: "",
+            foldRecursive: "⌥⌘↑",
+            hLayout: "",
+            insertAfter: "⇧⌘A",
+            insertBefore: "⇧⌘B",
+            insertRight: "⌥.",
+            jumpToParent: "⇧⌘J",
+            jumpToParentNext: "⇧⌘N",
+            jumpToParentPrev: "⇧⌘M",
+            ltr: "",
+            quickMakeCard: "⌥⌘F",
+            rtl: "",
+            vLayout: "",
+          },
+          heading: {
+            heading1: "⌥⌘1",
+            heading2: "⌥⌘2",
+            heading3: "⌥⌘3",
+            heading4: "⌥⌘4",
+            heading5: "⌥⌘5",
+            heading6: "⌥⌘6",
+            paragraph: "⌥⌘0",
+          },
+          insert: {
+            check: "⌘L",
+            code: "⇧⌘K",
+            list: "",
+            orderedList: "",
+            quote: "",
+            table: "⌘O",
+          },
+        },
       },
       icons: {
         file: "1f4c4",
@@ -186,6 +249,22 @@ export function createProtyleApplicationPort(
       },
       navigation: {
         openFilesUseCurrentTab: false,
+      },
+      recentEmojis: {
+        add: (unicode) => {
+          const previousIndex = state.recentEmojis.indexOf(unicode);
+          if (previousIndex !== -1) {
+            state.recentEmojis.splice(previousIndex, 1);
+          }
+          state.recentEmojis.unshift(unicode);
+          if (state.recentEmojis.length > MAXIMUM_RECENT_EMOJI_COUNT) {
+            state.recentEmojis.pop();
+          }
+          persist();
+        },
+        get values() {
+          return state.recentEmojis;
+        },
       },
       toolbar: {
         get codeLanguage() {

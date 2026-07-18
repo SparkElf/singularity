@@ -33,6 +33,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
@@ -888,8 +889,10 @@ func createDocWithMd(c *gin.Context) {
 		return
 	}
 
-	notebook := arg["notebook"].(string)
-	if util.InvalidIDPattern(notebook, ret) {
+	notebook, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
 
@@ -905,10 +908,15 @@ func createDocWithMd(c *gin.Context) {
 		parentID = parentIDArg.(string)
 	}
 
-	id := ast.NewNodeID()
-	idArg := arg["id"]
-	if nil != idArg {
-		id = idArg.(string)
+	id := ""
+	if identity, authenticated := serviceauth.RequestContentIdentity(c.Request); authenticated {
+		id = identity.DocumentID
+	} else {
+		id = ast.NewNodeID()
+		idArg := arg["id"]
+		if nil != idArg {
+			id = idArg.(string)
+		}
 	}
 
 	hPath := arg["path"].(string)
@@ -937,7 +945,7 @@ func createDocWithMd(c *gin.Context) {
 		clippingHref = clippingHrefArg.(string)
 	}
 
-	id, err := model.CreateWithMarkdown(tags, notebook, hPath, markdown, parentID, id, withMath, clippingHref, arg)
+	id, err = model.CreateWithMarkdown(tags, notebook, hPath, markdown, parentID, id, withMath, clippingHref, arg)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()

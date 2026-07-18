@@ -3,7 +3,11 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createProtyleFactory } from "@singularity/protyle-browser";
-import { createRealProtyleBrowserCoreFactory } from "@singularity/protyle-browser/core";
+import {
+  cancelTouchDragBridgeGesture,
+  createRealProtyleBrowserCoreFactory,
+  installTouchDragBridge,
+} from "@singularity/protyle-browser/core";
 
 import { App } from "./app/App.tsx";
 import { queryClient } from "./app/query-client.ts";
@@ -29,6 +33,17 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Missing #root application mount point");
 }
+
+const disposeTouchDragBridge = installTouchDragBridge();
+const handleTouchDragBridgePageHide = (event: PageTransitionEvent) => {
+  if (event.persisted) {
+    cancelTouchDragBridgeGesture();
+    return;
+  }
+  disposeTouchDragBridge();
+  window.removeEventListener("pagehide", handleTouchDragBridgePageHide);
+};
+window.addEventListener("pagehide", handleTouchDragBridgePageHide);
 
 createRoot(root).render(
   <StrictMode>

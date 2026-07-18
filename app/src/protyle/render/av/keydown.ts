@@ -6,10 +6,11 @@ import {hasClosestByClassName} from "../../util/hasClosest";
 import {Constants} from "../../../constants";
 import {upDownHint} from "../../util/upDownHint";
 import {clearSelect} from "../../util/clear";
-import {currentAVOverlay} from "./overlay";
+import {closeOwnedAVOverlay, currentAVOverlay} from "./overlay";
+import {isAVMenuOpen} from "./menu";
 
 export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyle: IProtyle) => {
-    if (!nodeElement.classList.contains("av") || !window.siyuan.menus.menu.element.classList.contains("fn__none")) {
+    if (!nodeElement.classList.contains("av") || isAVMenuOpen(protyle)) {
         return false;
     }
     if (event.isComposing) {
@@ -31,7 +32,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
             (event.key === "Backspace" || event.key === "Delete" || event.key === "Escape" ||
                 event.key.startsWith("ArrowLeft") || event.key === "Enter" || matchHotKey("⇥", event) ||
                 matchHotKey("⇧⇥", event))) {
-            avPanelElement.remove();
+            closeOwnedAVOverlay(protyle, "panel", avPanelElement);
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -73,7 +74,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
             if (newCellElement) {
                 clearSelect(["cell"], nodeElement);
                 newCellElement.classList.add("av__cell--select");
-                addDragFill(newCellElement);
+                addDragFill(newCellElement, protyle.localization);
                 cellScrollIntoView(nodeElement, newCellElement, false);
             }
             event.preventDefault();
@@ -92,7 +93,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
             if (newCellElement) {
                 clearSelect(["cell"], nodeElement);
                 newCellElement.classList.add("av__cell--select");
-                addDragFill(newCellElement);
+                addDragFill(newCellElement, protyle.localization);
                 cellScrollIntoView(nodeElement, newCellElement, false);
             } else if (event.key !== "ArrowRight") {
                 clearSelect(["cell"], nodeElement);
@@ -115,7 +116,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
             if (newCellElement) {
                 clearSelect(["cell"], nodeElement);
                 newCellElement.classList.add("av__cell--select");
-                addDragFill(newCellElement);
+                addDragFill(newCellElement, protyle.localization);
                 cellScrollIntoView(nodeElement, newCellElement);
             }
             event.preventDefault();
@@ -129,7 +130,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
             if (newCellElement) {
                 clearSelect(["cell"], nodeElement);
                 newCellElement.classList.add("av__cell--select");
-                addDragFill(newCellElement);
+                addDragFill(newCellElement, protyle.localization);
                 cellScrollIntoView(nodeElement, newCellElement);
             }
             event.preventDefault();
@@ -204,9 +205,9 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
     return false;
 };
 
-export const bindAVPanelKeydown = (event: KeyboardEvent) => {
+export const bindAVPanelKeydown = (event: KeyboardEvent, protyle: IProtyle) => {
     const avPanelElement = currentAVOverlay(protyle, "panel");
-    if (avPanelElement && window.siyuan.menus.menu.element.classList.contains("fn__none")) {
+    if (avPanelElement && !isAVMenuOpen(protyle)) {
         if ((avPanelElement.querySelector('[data-type="goSearchRollupCol"]') && !avPanelElement.querySelector(".b3-text-field")) ||
             avPanelElement.querySelector('[data-type="addAssetExist"]')) {
             const menuElement = avPanelElement.querySelector(".b3-menu__items");

@@ -1,9 +1,10 @@
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {Constants} from "../../../constants";
+import {type AVMenuSurface, openAVMenu} from "./menu";
+import {closeOwnedAVOverlay} from "./overlay";
 
 const addFormatItem = (options: {
-    menu: Menu,
+    menu: AVMenuSurface,
     protyle: IProtyle,
     colId: string,
     avID: string,
@@ -13,7 +14,7 @@ const addFormatItem = (options: {
 }) => {
     options.menu.addItem({
         iconHTML: "",
-        label: getLabelByNumberFormat(options.format),
+        label: getLabelByNumberFormat(options.format, options.protyle.localization),
         click() {
             transaction(options.protyle, [{
                 action: "updateAttrViewColNumberFormat",
@@ -28,7 +29,7 @@ const addFormatItem = (options: {
                 format: options.oldFormat,
                 type: "number",
             }]);
-            options.avPanelElement.remove();
+            closeOwnedAVOverlay(options.protyle, "panel", options.avPanelElement);
         }
     });
 };
@@ -41,7 +42,11 @@ export const formatNumber = (options: {
     avID: string,
     oldFormat: string
 }) => {
-    const menu = new Menu(Constants.MENU_AV_COL_FORMAT_NUMBER);
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_COL_FORMAT_NUMBER);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     addFormatItem({
         menu,
         protyle: options.protyle,
@@ -242,7 +247,7 @@ export const formatNumber = (options: {
     });
 
     const rect = options.element.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         x: rect.left,
         y: rect.bottom,
         h: rect.height,
@@ -251,14 +256,14 @@ export const formatNumber = (options: {
     });
 };
 
-export const getLabelByNumberFormat = (format: string) => {
+export const getLabelByNumberFormat = (format: string, localization: IProtyle["localization"]) => {
     if ("" === format) {
-        return window.siyuan.languages.numberFormatNone;
+        return localization.text("numberFormatNone");
     } else if ("commas" === format) {
-        return window.siyuan.languages.numberFormatCommas;
+        return localization.text("numberFormatCommas");
     } else if ("percent" === format) {
-        return window.siyuan.languages.numberFormatPercent;
+        return localization.text("numberFormatPercent");
     }
 
-    return window.siyuan.languages["numberFormat" + format];
+    return localization.text("numberFormat" + format);
 };

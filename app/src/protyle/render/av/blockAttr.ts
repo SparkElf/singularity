@@ -15,16 +15,17 @@ import {getCompressURL, removeCompressURL} from "../../../util/image";
 import {beginAVDrag, currentAVDrag, endAVDrag} from "./dragState";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
+import {touchDragOwner} from "../../ui/touchDragState";
 
-const genAVRollupHTML = (value: IAVCellValue) => {
+const genAVRollupHTML = (value: IAVCellValue, localization: IProtyle["localization"]) => {
     let html = "";
     const dataValue: IAVCellDateValue = value[value.type as "date"];
     switch (value.type) {
         case "block":
             if (value?.isDetached) {
-                html = `<span>${escapeHtml(value.block?.content || window.siyuan.languages.untitled)}</span>`;
+                html = `<span>${escapeHtml(value.block?.content || localization.text("untitled"))}</span>`;
             } else {
-                html = `<span data-type="block-ref" data-id="${value.block.id}" data-subtype="s" class="av__celltext--ref">${escapeHtml(value.block?.content || window.siyuan.languages.untitled)}</span>`;
+                html = `<span data-type="block-ref" data-id="${value.block.id}" data-subtype="s" class="av__celltext--ref">${escapeHtml(value.block?.content || localization.text("untitled"))}</span>`;
             }
             break;
         case "text":
@@ -63,18 +64,22 @@ const genAVRollupHTML = (value: IAVCellValue) => {
     return html;
 };
 
-export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
+export const genAVValueHTML = (
+    value: IAVCellValue,
+    fileIcon: string,
+    localization: IProtyle["localization"],
+) => {
     let html = "";
     switch (value.type) {
         case "block":
-            html = `<input data-id="${value.block.id}" value="${escapeAttr(value.block.content)}" type="text" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">`;
+            html = `<input data-id="${value.block.id}" value="${escapeAttr(value.block.content)}" type="text" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">`;
             break;
         case "text":
-            html = `<textarea style="resize: vertical" rows="${(value.text?.content || "").split("\n").length}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">${escapeHtml(value.text?.content || "")}</textarea>`;
+            html = `<textarea style="resize: vertical" rows="${(value.text?.content || "").split("\n").length}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">${escapeHtml(value.text?.content || "")}</textarea>`;
             break;
         case "number":
-            html = `<input value="${value.number.isNotEmpty ? value.number.content : ""}" type="number" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">
-<span class="fn__space"></span><span class="fn__flex-center ft__on-surface b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.format}">${value.number.formattedContent}</span><span class="fn__space"></span>`;
+            html = `<input value="${value.number.isNotEmpty ? value.number.content : ""}" type="number" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">
+<span class="fn__space"></span><span class="fn__flex-center ft__on-surface b3-tooltips__w b3-tooltips" aria-label="${localization.text("format")}">${value.number.formattedContent}</span><span class="fn__space"></span>`;
             break;
         case "mSelect":
         case "select":
@@ -95,7 +100,7 @@ export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
             });
             break;
         case "date":
-            html = `<span class="av__celltext" data-value='${JSON.stringify(value[value.type])}' placeholder="${window.siyuan.languages.empty}">`;
+            html = `<span class="av__celltext" data-value='${JSON.stringify(value[value.type])}' placeholder="${localization.text("empty")}">`;
             if (value[value.type] && value[value.type].isNotEmpty) {
                 html += dayjs(value[value.type].content).format(value[value.type].isNotTime ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm");
             }
@@ -111,35 +116,35 @@ export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
             }
             break;
         case "url":
-            html = `<input value="${escapeAttr(value.url.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">
+            html = `<input value="${escapeAttr(value.url.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">
 <span class="fn__space"></span>
-<a ${value.url.content ? `href="${escapeAttr(value.url.content)}"` : ""} target="_blank" aria-label="${window.siyuan.languages.openBy}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconLink"></use></svg></a>`;
+<a ${value.url.content ? `href="${escapeAttr(value.url.content)}"` : ""} target="_blank" aria-label="${localization.text("openBy")}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconLink"></use></svg></a>`;
             break;
         case "phone":
-            html = `<input value="${escapeAttr(value.phone.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">
+            html = `<input value="${escapeAttr(value.phone.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">
 <span class="fn__space"></span>
-<a ${value.phone.content ? `href="tel:${escapeAttr(value.phone.content)}"` : ""} target="_blank" aria-label="${window.siyuan.languages.openBy}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconPhone"></use></svg></a>`;
+<a ${value.phone.content ? `href="tel:${escapeAttr(value.phone.content)}"` : ""} target="_blank" aria-label="${localization.text("openBy")}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconPhone"></use></svg></a>`;
             break;
         case "checkbox":
             html = `<svg class="av__checkbox"><use xlink:href="#icon${value.checkbox.checked ? "Check" : "Uncheck"}"></use></svg>`;
             break;
         case "template":
-            html = `<div class="fn__flex-1" placeholder="${window.siyuan.languages.empty}">${window.DOMPurify.sanitize(value.template.content)}</div>`;
+            html = `<div class="fn__flex-1" placeholder="${localization.text("empty")}">${window.DOMPurify.sanitize(value.template.content)}</div>`;
             break;
         case "email":
-            html = `<input value="${escapeAttr(value.email.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${window.siyuan.languages.empty}">
+            html = `<input value="${escapeAttr(value.email.content)}" class="b3-text-field b3-text-field--text fn__flex-1" placeholder="${localization.text("empty")}">
 <span class="fn__space"></span>
-<a ${value.email.content ? `href="mailto:${escapeAttr(value.email.content)}"` : ""} target="_blank" aria-label="${window.siyuan.languages.openBy}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconEmail"></use></svg></a>`;
+<a ${value.email.content ? `href="mailto:${escapeAttr(value.email.content)}"` : ""} target="_blank" aria-label="${localization.text("openBy")}" class="block__icon block__icon--show fn__flex-center b3-tooltips__w b3-tooltips"><svg><use xlink:href="#iconEmail"></use></svg></a>`;
             break;
         case "relation":
             value?.relation?.contents?.forEach((item, index) => {
                 if (item && item.block) {
                     const rowID = value.relation.blockIDs[index];
                     if (item?.isDetached) {
-                        html += `<span data-row-id="${rowID}" class="av__cell--relation"><span><svg style="height: 26px"><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                        html += `<span data-row-id="${rowID}" class="av__cell--relation"><span><svg style="height: 26px"><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                     } else {
                         // data-block-id 用于更新 emoji
-                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                     }
                 }
             });
@@ -149,7 +154,7 @@ export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
             break;
         case "rollup":
             value?.rollup?.contents?.forEach((item) => {
-                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item, fileIcon) : genAVRollupHTML(item);
+                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item, fileIcon, localization) : genAVRollupHTML(item, localization);
                 if (rollupText) {
                     html += rollupText.replace("fn__flex-1", "") + ",&nbsp;";
                 }
@@ -163,6 +168,7 @@ export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
 };
 
 export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement) => void) => {
+    const {localization} = protyle;
     const load = beginAVRenderLoad(protyle, element);
     void requestAVRender<IWebSocketData>(protyle, load, "/api/av/getAttributeViewKeys", {id}).then((response) => {
         if (!load.isCurrent()) {
@@ -196,10 +202,10 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
             let innerHTML = `<div class="custom-attr__avheader">
     <div class="block__logo block__logo--icon popover__block" style="max-width:calc(100% - 40px)" data-id='${JSON.stringify(table.blockIDs)}'>
         <svg class="block__logoicon"><use xlink:href="#iconDatabase"></use></svg>
-        <span class="fn__ellipsis">${table.avName || window.siyuan.languages.database}</span>
+        <span class="fn__ellipsis">${table.avName || localization.text("database")}</span>
     </div>
     <div class="fn__flex-1"></div>
-    <span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${window.siyuan.languages.removeAV}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>
+    <span data-type="remove" data-row-id="${table.keyValues && table.keyValues[0].values[0].blockID}" class="block__icon block__icon--warning block__icon--show b3-tooltips__w b3-tooltips" aria-label="${localization.text("removeAV")}"><svg><use xlink:href="#iconTrashcan"></use></svg></span>
 </div>`;
             table.keyValues?.forEach(item => {
                 innerHTML += `<div class="block__icons av__row" data-id="${id}" data-col-id="${item.key.id}">
@@ -210,12 +216,12 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     </div>
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
 data-options="${item.key?.options ? escapeAttr(JSON.stringify(item.key.options)) : "[]"}" 
-${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${window.siyuan.languages.empty}"`}  
-class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0], protyle.settings.icons.file)}</div>
+${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${localization.text("empty")}"`}
+class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0], protyle.settings.icons.file, localization)}</div>
 </div>`;
             });
             innerHTML += `<div class="fn__hr"></div>
-<button data-type="addColumn" class="b3-button b3-button--cancel"><svg><use xlink:href="#iconAdd"></use></svg>${window.siyuan.languages.newCol}</button>
+<button data-type="addColumn" class="b3-button b3-button--cancel"><svg><use xlink:href="#iconAdd"></use></svg>${localization.text("newCol")}</button>
 <div class="fn__hr--b"></div><div class="fn__hr--b"></div>`;
             html += `<div data-av-id="${table.avID}" data-av-type="table" data-node-id="${id}" data-type="NodeAttributeView">${innerHTML}</div>`;
 
@@ -236,10 +242,16 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                 ghostElement.innerHTML = target.nextElementSibling.outerHTML;
                 ghostElement.setAttribute("style", "width: 160px;position:fixed;opacity:.1;");
                 document.body.append(ghostElement);
+                const ghostHandle = protyle.session!.runtime.overlays.add(ghostElement);
+                protyle.session!.runtime.overlays.bringToFront(ghostElement);
                 event.dataTransfer.setDragImage(ghostElement, 0, 0);
-                setTimeout(() => {
-                    ghostElement.remove();
-                });
+                if (touchDragOwner.active) {
+                    touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
+                } else {
+                    setTimeout(() => {
+                        ghostHandle.close();
+                    });
+                }
             });
             element.addEventListener("drop", (event) => {
                 counter = 0;
@@ -548,7 +560,7 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
             const rowElements = blockElement.querySelectorAll(".av__row");
             const addMenu = addCol(protyle, blockElement, rowElements[rowElements.length - 1].getAttribute("data-col-id"));
             const addRect = target.getBoundingClientRect();
-            addMenu.open({
+            addMenu?.menu.popup({
                 x: addRect.left,
                 y: addRect.bottom,
                 h: addRect.height

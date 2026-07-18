@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {getFieldsByData} from "./view";
@@ -6,9 +5,10 @@ import {Constants} from "../../../constants";
 import {Dialog} from "../../../dialog";
 import {escapeAttr} from "../../../util/escape";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {type AVMenuSurface, openAVMenu} from "./menu";
 
 const calcItem = (options: {
-    menu: Menu,
+    menu: AVMenuSurface,
     protyle: IProtyle,
     operator: string,
     oldOperator: string,
@@ -20,9 +20,10 @@ const calcItem = (options: {
     template?: string,
     oldTemplate?: string
 }) => {
+    const {localization} = options.protyle;
     options.menu.addItem({
         iconHTML: "",
-        label: getNameByOperator(options.operator, !!options.data),
+        label: getNameByOperator(options.operator, !!options.data, localization),
         click() {
             if (!options.data) {
                 const doData: IAVCalc = {operator: options.operator};
@@ -47,7 +48,11 @@ const calcItem = (options: {
                     blockID: options.blockID
                 }]);
             } else {
-                options.target.querySelector(".b3-menu__accelerator").textContent = getNameByOperator(options.operator, true);
+                options.target.querySelector(".b3-menu__accelerator").textContent = getNameByOperator(
+                    options.operator,
+                    true,
+                    localization,
+                );
                 const colData = getFieldsByData(options.data).find((item) => {
                     if (item.id === options.colId) {
                         if (!item.rollup) {
@@ -90,6 +95,7 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
     colId: string,
     blockID: string
 }, x?: number) => {
+    const {localization} = protyle;
     const load = beginAVRenderLoad(protyle, calcElement);
     let rowElement: HTMLElement | false;
     let type;
@@ -122,14 +128,15 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
     if (type === "lineNumber") {
         return;
     }
-    const menu = new Menu(Constants.MENU_AV_CALC, () => {
+    const menuHandle = openAVMenu(protyle, Constants.MENU_AV_CALC, () => {
         if (rowElement) {
             rowElement.classList.remove("av__row--show");
         }
     });
-    if (menu.isOpen) {
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     calcItem({
         menu,
         protyle,
@@ -509,17 +516,17 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
     };
     menu.addItem({
         iconHTML: "",
-        label: getNameByOperator("Template", !!panelData?.data),
+        label: getNameByOperator("Template", !!panelData?.data, localization),
         click() {
-            menu.close();
+            menuHandle.close();
             const dialog = new Dialog({
-                title: window.siyuan.languages.calcOperatorTemplate,
+                title: localization.text("calcOperatorTemplate"),
                 content: `<div class="b3-dialog__content">
-    <textarea spellcheck="false" class="fn__block b3-text-field" placeholder="${escapeAttr(window.siyuan.languages.rollupTemplateTip)}" rows="8" style="resize: vertical;font-family: var(--b3-font-family-code);">${currentTemplate}</textarea>
+    <textarea spellcheck="false" class="fn__block b3-text-field" placeholder="${escapeAttr(localization.text("rollupTemplateTip"))}" rows="8" style="resize: vertical;font-family: var(--b3-font-family-code);">${currentTemplate}</textarea>
 </div>
 <div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${window.siyuan.languages.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${window.siyuan.languages.confirm}</button>
+    <button class="b3-button b3-button--cancel">${localization.text("cancel")}</button><div class="fn__space"></div>
+    <button class="b3-button b3-button--text">${localization.text("confirm")}</button>
 </div>`,
                 width: "520px",
             });
@@ -539,10 +546,10 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         }
     });
     const calcRect = calcElement.getBoundingClientRect();
-    menu.open({x: Math.max(x || 0, calcRect.left), y: calcRect.bottom, h: calcRect.height});
+    menu.popup({x: Math.max(x || 0, calcRect.left), y: calcRect.bottom, h: calcRect.height});
 };
 
-export const getCalcValue = (column: IAVColumn) => {
+export const getCalcValue = (column: IAVColumn, localization: IProtyle["localization"]) => {
     if (!column.calc || !column.calc.result) {
         return "";
     }
@@ -557,121 +564,125 @@ export const getCalcValue = (column: IAVColumn) => {
     let value = "";
     switch (column.calc.operator) {
         case "Count all":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultCountAll}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultCountAll")}</small>`;
             break;
         case "Count values":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultCountValues}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultCountValues")}</small>`;
             break;
         case "Count unique values":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultCountUniqueValues}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultCountUniqueValues")}</small>`;
             break;
         case "Count empty":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultCountEmpty}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultCountEmpty")}</small>`;
             break;
         case "Count not empty":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultCountNotEmpty}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultCountNotEmpty")}</small>`;
             break;
         case "Percent empty":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultPercentEmpty}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultPercentEmpty")}</small>`;
             break;
         case "Percent not empty":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultPercentNotEmpty}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultPercentNotEmpty")}</small>`;
             break;
         case "Percent unique values":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultPercentUniqueValues}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultPercentUniqueValues")}</small>`;
             break;
         case "Sum":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultSum}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultSum")}</small>`;
             break;
         case  "Average":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultAverage}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultAverage")}</small>`;
             break;
         case  "Median":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultMedian}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultMedian")}</small>`;
             break;
         case  "Min":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultMin}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultMin")}</small>`;
             break;
         case  "Max":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultMax}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultMax")}</small>`;
             break;
         case  "Range":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcResultRange}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcResultRange")}</small>`;
             break;
         case  "Earliest":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcOperatorEarliest}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcOperatorEarliest")}</small>`;
             break;
         case  "Latest":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.calcOperatorLatest}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("calcOperatorLatest")}</small>`;
             break;
         case  "Checked":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.checked}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("checked")}</small>`;
             break;
         case  "Unchecked":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.unchecked}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("unchecked")}</small>`;
             break;
         case  "Percent checked":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.percentChecked}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("percentChecked")}</small>`;
             break;
         case  "Percent unchecked":
-            value = `<span>${resultCalc.formattedContent}</span><small>${window.siyuan.languages.percentUnchecked}</small>`;
+            value = `<span>${resultCalc.formattedContent}</span><small>${localization.text("percentUnchecked")}</small>`;
             break;
         case  "Template":
-            value = `<span>${resultCalc.formattedContent ?? resultCalc.content}</span><small>${window.siyuan.languages.calcResultTemplate}</small>`;
+            value = `<span>${resultCalc.formattedContent ?? resultCalc.content}</span><small>${localization.text("calcResultTemplate")}</small>`;
             break;
     }
     return value;
 };
 
-export const getNameByOperator = (operator: string, isRollup: boolean) => {
+export const getNameByOperator = (
+    operator: string,
+    isRollup: boolean,
+    localization: IProtyle["localization"],
+) => {
     switch (operator) {
         case undefined:
         case "":
-            return isRollup ? window.siyuan.languages.original : window.siyuan.languages.calcOperatorNone;
+            return isRollup ? localization.text("original") : localization.text("calcOperatorNone");
         case "Unique values": // 仅汇总字段的汇总方式在使用
-            return window.siyuan.languages.uniqueValues;
+            return localization.text("uniqueValues");
         case "Count all":
-            return window.siyuan.languages.calcOperatorCountAll;
+            return localization.text("calcOperatorCountAll");
         case "Count values":
-            return window.siyuan.languages.calcOperatorCountValues;
+            return localization.text("calcOperatorCountValues");
         case "Count unique values":
-            return window.siyuan.languages.calcOperatorCountUniqueValues;
+            return localization.text("calcOperatorCountUniqueValues");
         case "Count empty":
-            return window.siyuan.languages.calcOperatorCountEmpty;
+            return localization.text("calcOperatorCountEmpty");
         case "Count not empty":
-            return window.siyuan.languages.calcOperatorCountNotEmpty;
+            return localization.text("calcOperatorCountNotEmpty");
         case "Percent empty":
-            return window.siyuan.languages.calcOperatorPercentEmpty;
+            return localization.text("calcOperatorPercentEmpty");
         case "Percent not empty":
-            return window.siyuan.languages.calcOperatorPercentNotEmpty;
+            return localization.text("calcOperatorPercentNotEmpty");
         case "Percent unique values":
-            return window.siyuan.languages.calcOperatorPercentUniqueValues;
+            return localization.text("calcOperatorPercentUniqueValues");
         case "Checked":
-            return window.siyuan.languages.checked;
+            return localization.text("checked");
         case "Unchecked":
-            return window.siyuan.languages.unchecked;
+            return localization.text("unchecked");
         case "Percent checked":
-            return window.siyuan.languages.percentChecked;
+            return localization.text("percentChecked");
         case "Percent unchecked":
-            return window.siyuan.languages.percentUnchecked;
+            return localization.text("percentUnchecked");
         case "Sum":
-            return window.siyuan.languages.calcOperatorSum;
+            return localization.text("calcOperatorSum");
         case "Average":
-            return window.siyuan.languages.calcOperatorAverage;
+            return localization.text("calcOperatorAverage");
         case "Median":
-            return window.siyuan.languages.calcOperatorMedian;
+            return localization.text("calcOperatorMedian");
         case "Min":
-            return window.siyuan.languages.calcOperatorMin;
+            return localization.text("calcOperatorMin");
         case "Max":
-            return window.siyuan.languages.calcOperatorMax;
+            return localization.text("calcOperatorMax");
         case "Range":
-            return window.siyuan.languages.calcOperatorRange;
+            return localization.text("calcOperatorRange");
         case "Earliest":
-            return window.siyuan.languages.calcOperatorEarliest;
+            return localization.text("calcOperatorEarliest");
         case "Latest":
-            return window.siyuan.languages.calcOperatorLatest;
+            return localization.text("calcOperatorLatest");
         case "Template":
-            return window.siyuan.languages.calcOperatorTemplate;
+            return localization.text("calcOperatorTemplate");
         default:
             return "";
     }

@@ -290,7 +290,6 @@ export abstract class Constants {
     public static readonly MENU_MOVE_PATH_HISTORY = "move-path-history"; // 移动文档窗口搜索历史菜单
     public static readonly MENU_CALLOUT_SELECT = "callout-select"; // 提示选择菜单
 
-    public static readonly MENU_BACKGROUND_ASSET = "background-asset"; // 资源文件选择器菜单
     public static readonly MENU_AI = "ai"; // 块 AI 菜单
     public static readonly MENU_TAB = "tab"; // 页签右键菜单
     public static readonly MENU_TAB_LIST = "tabList"; // 页签切换菜单

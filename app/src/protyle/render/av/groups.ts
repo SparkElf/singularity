@@ -3,10 +3,10 @@ import {getColIconByType} from "./col";
 import {escapeHtml} from "../../../util/escape";
 import {setPosition} from "../../../util/setPosition";
 import {getFieldsByData} from "./view";
-import {Menu} from "../../../plugin/Menu";
 import {objEquals} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {protyleContentIdentity} from "../../util/contentLoad";
+import {openAVMenu} from "./menu";
 
 const setAttrViewGroup = (protyle: IProtyle, blockID: string, avID: string, group: IAVGroup) => {
     const identity = protyleContentIdentity(protyle);
@@ -63,7 +63,11 @@ export const setGroupMethod = async (options: {
     const response = await setAttrViewGroup(options.protyle, blockID,
         options.blockElement.getAttribute("data-av-id"), data);
     options.data.view = response.data.view;
-    options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
+    options.menuElement.innerHTML = getGroupsHTML(
+        getFieldsByData(options.data),
+        options.data.view,
+        options.protyle.localization,
+    );
     bindGroupsEvent({
         protyle: options.protyle,
         menuElement: options.menuElement,
@@ -74,10 +78,15 @@ export const setGroupMethod = async (options: {
     setPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
 };
 
-export const getGroupsMethodHTML = (columns: IAVColumn[], group: IAVGroup, viewType: TAVView) => {
+export const getGroupsMethodHTML = (
+    columns: IAVColumn[],
+    group: IAVGroup,
+    viewType: TAVView,
+    localization: IProtyle["localization"],
+) => {
     const selectHTML = '<svg class="b3-menu__checked"><use xlink:href="#iconSelect"></use></svg>';
     let html = viewType === "kanban" ? "" : `<button class="b3-menu__item" data-type="setGroupMethod">
-    <div class="b3-menu__label">${window.siyuan.languages.calcOperatorNone}</div>
+    <div class="b3-menu__label">${localization.text("calcOperatorNone")}</div>
     ${(!group || !group.field) ? selectHTML : ""}
 </button>`;
     columns.forEach(item => {
@@ -97,64 +106,68 @@ export const getGroupsMethodHTML = (columns: IAVColumn[], group: IAVGroup, viewT
     <span class="block__icon" style="padding: 8px;margin-left: -4px;" data-type="${(!group || !group.field) ? "go-config" : "goGroups"}">
         <svg><use xlink:href="#iconLeft"></use></svg>
     </span>
-    <span class="b3-menu__label ft__center">${window.siyuan.languages.groupMethod}</span>
+    <span class="b3-menu__label ft__center">${localization.text("groupMethod")}</span>
 </button>
 <button class="b3-menu__separator"></button>
 ${html}
 </div>`;
 };
 
-export const getLanguageByIndex = (index: number, type: "sort" | "date") => {
+export const getLanguageByIndex = (
+    index: number,
+    type: "sort" | "date",
+    localization: IProtyle["localization"],
+) => {
     if (type === "sort") {
         switch (index) {
             case 0:
-                return window.siyuan.languages.asc;
+                return localization.text("asc");
             case 1:
-                return window.siyuan.languages.desc;
+                return localization.text("desc");
             case 2:
-                return window.siyuan.languages.customSort;
+                return localization.text("customSort");
             case 3:
-                return window.siyuan.languages.sortBySelectOption;
+                return localization.text("sortBySelectOption");
             default:
                 return "";
         }
     } else if (type === "date") {
         switch (index) {
             case 2:
-                return window.siyuan.languages.groupMethodDateRelative;
+                return localization.text("groupMethodDateRelative");
             case 3:
-                return window.siyuan.languages.groupMethodDateDay;
+                return localization.text("groupMethodDateDay");
             case 4:
-                return window.siyuan.languages.groupMethodDateWeek;
+                return localization.text("groupMethodDateWeek");
             case 5:
-                return window.siyuan.languages.groupMethodDateMonth;
+                return localization.text("groupMethodDateMonth");
             case 6:
-                return window.siyuan.languages.groupMethodDateYear;
+                return localization.text("groupMethodDateYear");
             default:
                 return "";
         }
     }
 };
 
-export const getGroupsNumberHTML = (group: IAVGroup) => {
+export const getGroupsNumberHTML = (group: IAVGroup, localization: IProtyle["localization"]) => {
     return `<div class="b3-menu__items">
     <button class="b3-menu__item" data-type="nobg">
         <span class="block__icon" style="padding: 8px;margin-left: -4px;" data-type="goGroups">
             <svg><use xlink:href="#iconLeft"></use></svg>
         </span>
-        <span class="b3-menu__label ft__center">${window.siyuan.languages.numberFormatNone}</span>
+        <span class="b3-menu__label ft__center">${localization.text("numberFormatNone")}</span>
     </button>
     <button class="b3-menu__separator"></button>
     <div class="b3-menu__item" data-type="nobg">
         <div class="fn__block">
-            <div class="b3-menu__labels">${window.siyuan.languages.groupRange}</div>
+            <div class="b3-menu__labels">${localization.text("groupRange")}</div>
             <div class="fn__flex">
                 <input data-type="avGroupRange" class="b3-text-field fn__flex-1" value="${group?.range?.numStart || 0}">
                 <span class="fn__space"></span>-<span class="fn__space"></span>
                 <input class="b3-text-field fn__flex-1" value="${group?.range?.numEnd || 1000}">            
             </div>
             <div class="fn__hr"></div>
-            <div class="b3-menu__labels">${window.siyuan.languages.groupStep}</div>
+            <div class="b3-menu__labels">${localization.text("groupStep")}</div>
             <input class="b3-text-field fn__block" value="${group?.range?.numStep || 100}">
             <div class="fn__hr--small"></div>
         </div>
@@ -189,7 +202,11 @@ export const bindGroupsNumber = (options: {
     };
 };
 
-export const getGroupsHTML = (columns: IAVColumn[], view: IAVView) => {
+export const getGroupsHTML = (
+    columns: IAVColumn[],
+    view: IAVView,
+    localization: IProtyle["localization"],
+) => {
     let html = "";
     let column: IAVColumn;
     if (view.group && view.group.field) {
@@ -224,29 +241,29 @@ export const getGroupsHTML = (columns: IAVColumn[], view: IAVView) => {
 <button class="b3-menu__item" data-type="nobg">
     <span class="b3-menu__label"></span>
     <span class="block__icon" data-type="hideGroups">
-        ${window.siyuan.languages[showCount === 0 ? "showAll" : "hideAll"]}
+        ${localization.text(showCount === 0 ? "showAll" : "hideAll")}
         <span class="fn__space"></span>
         <svg><use xlink:href="#iconEye${showCount === 0 ? "" : "off"}"></use></svg>
     </span>
 </button>` + groupHTML;
         }
         html = `<button class="b3-menu__item${["date", "updated", "created"].includes(column.type) ? "" : " fn__none"}" data-type="goGroupsDate">
-    <span class="b3-menu__label">${window.siyuan.languages.date}</span>
-    <span class="b3-menu__accelerator">${getLanguageByIndex(view.group.method, "date")}</span>
+    <span class="b3-menu__label">${localization.text("date")}</span>
+    <span class="b3-menu__accelerator">${getLanguageByIndex(view.group.method, "date", localization)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item${column.type === "number" ? "" : " fn__none"}" data-type="getGroupsNumber">
-    <span class="b3-menu__label">${window.siyuan.languages.numberFormatNone}</span>
+    <span class="b3-menu__label">${localization.text("numberFormatNone")}</span>
     <span class="b3-menu__accelerator">${(view.group.range && typeof view.group.range.numStart === "number") ? `${view.group.range.numStart} - ${view.group.range.numEnd}` : ""}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item${["checkbox", "rollup", "mAsset"].includes(column.type) ? " fn__none" : ""}" data-type="goGroupsSort">
-    <span class="b3-menu__label">${window.siyuan.languages.sort}</span>
-    <span class="b3-menu__accelerator">${getLanguageByIndex(view.group.order, "sort")}</span>
+    <span class="b3-menu__label">${localization.text("sort")}</span>
+    <span class="b3-menu__accelerator">${getLanguageByIndex(view.group.order, "sort", localization)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <label class="b3-menu__item">
-    <span class="fn__flex-center">${window.siyuan.languages.hideEmptyGroup}</span>
+    <span class="fn__flex-center">${localization.text("hideEmptyGroup")}</span>
     <span class="fn__space fn__flex-1"></span>
     <input type="checkbox" class="b3-switch b3-switch--menu"${view.group.hideEmpty ? " checked" : ""}>
 </label>
@@ -254,7 +271,7 @@ ${groupHTML}
 <button class="b3-menu__separator"></button>
 <button class="b3-menu__item b3-menu__item--warning" data-type="removeGroups">
     <svg class="b3-menu__icon"><use xlink:href="#iconTrashcan"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.removeGroup}</span>
+    <span class="b3-menu__label">${localization.text("removeGroup")}</span>
 </button>`;
     }
     return `<div class="b3-menu__items">
@@ -262,11 +279,11 @@ ${groupHTML}
     <span class="block__icon" style="padding: 8px;margin-left: -4px;" data-type="go-config">
         <svg><use xlink:href="#iconLeft"></use></svg>
     </span>
-    <span class="b3-menu__label ft__center">${window.siyuan.languages.group}</span>
+    <span class="b3-menu__label ft__center">${localization.text("group")}</span>
 </button>
 <button class="b3-menu__separator"></button>
 <button class="b3-menu__item" data-type="goGroupsMethod">
-    <span class="b3-menu__label">${window.siyuan.languages.groupMethod}</span>
+    <span class="b3-menu__label">${localization.text("groupMethod")}</span>
     <span class="b3-menu__accelerator">${column ? column.name : ""}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
@@ -290,7 +307,11 @@ export const bindGroupsEvent = (options: {
         const response = await setAttrViewGroup(options.protyle, blockID,
             options.blockElement.getAttribute("data-av-id"), options.data.view.group);
         options.data.view = response.data.view;
-        options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
+        options.menuElement.innerHTML = getGroupsHTML(
+            getFieldsByData(options.data),
+            options.data.view,
+            options.protyle.localization,
+        );
         bindGroupsEvent({
             protyle: options.protyle,
             menuElement: options.menuElement,
@@ -309,13 +330,14 @@ export const goGroupsDate = (options: {
     data: IAV;
     blockElement: Element;
 }) => {
-    const menu = new Menu(Constants.MENU_AV_GROUP_DATE);
-    if (menu.isOpen) {
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_GROUP_DATE);
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     const blockID = options.blockElement.getAttribute("data-node-id");
     [2, 3, 4, 5, 6].forEach((item) => {
-        const label = getLanguageByIndex(item, "date");
+        const label = getLanguageByIndex(item, "date", options.protyle.localization);
         menu.addItem({
             iconHTML: "",
             checked: options.data.view.group.method === item,
@@ -326,7 +348,11 @@ export const goGroupsDate = (options: {
                 const response = await setAttrViewGroup(options.protyle, blockID,
                     options.blockElement.getAttribute("data-av-id"), options.data.view.group);
                 options.data.view = response.data.view;
-                options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
+                options.menuElement.innerHTML = getGroupsHTML(
+                    getFieldsByData(options.data),
+                    options.data.view,
+                    options.protyle.localization,
+                );
                 bindGroupsEvent({
                     protyle: options.protyle,
                     menuElement: options.menuElement,
@@ -339,7 +365,7 @@ export const goGroupsDate = (options: {
         });
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         isLeft: true,
         x: rect.right,
         y: rect.bottom
@@ -353,16 +379,17 @@ export const goGroupsSort = (options: {
     menuElement: HTMLElement;
     blockElement: Element;
 }) => {
-    const menu = new Menu(Constants.MENU_AV_GROUP_SORT);
-    if (menu.isOpen) {
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_GROUP_SORT);
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     const blockID = options.blockElement.getAttribute("data-node-id");
     const column = getFieldsByData(options.data).find(item => item.id === options.data.view.group.field);
     (["created", "date", "created", "updated"].includes(column.type) ? [0, 1] : (
         ["mSelect", "select"].includes(column.type) ? [3, 2, 0, 1] : [2, 0, 1]
     )).forEach((item) => {
-        const label = getLanguageByIndex(item, "sort");
+        const label = getLanguageByIndex(item, "sort", options.protyle.localization);
         menu.addItem({
             iconHTML: "",
             checked: options.data.view.group.order === item,
@@ -373,7 +400,11 @@ export const goGroupsSort = (options: {
                 const response = await setAttrViewGroup(options.protyle, blockID,
                     options.blockElement.getAttribute("data-av-id"), options.data.view.group);
                 options.data.view = response.data.view;
-                options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
+                options.menuElement.innerHTML = getGroupsHTML(
+                    getFieldsByData(options.data),
+                    options.data.view,
+                    options.protyle.localization,
+                );
                 bindGroupsEvent({
                     protyle: options.protyle,
                     menuElement: options.menuElement,
@@ -386,7 +417,7 @@ export const goGroupsSort = (options: {
         });
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         isLeft: true,
         x: rect.right,
         y: rect.bottom

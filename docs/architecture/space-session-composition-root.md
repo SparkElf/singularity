@@ -374,11 +374,12 @@ Kernel仅监听HTTPS/WSS企业端口并要求Gateway客户端证书；Gateway使
 
 ### 5.7 空间资源与上传
 
-Runtime新增有真实协议职责的`ProtyleResourcePort`，把文档中的相对`assets/...`、上传FormData和导出下载转换为当前组织/空间的Gateway地址。它不保存资源列表，也不接受任意基址：
+Runtime新增有真实协议职责的`ProtyleResourcePort`，把文档中的相对`assets/...`、自定义Emoji、上传FormData和导出下载转换为当前组织/空间的Gateway地址。它不保存资源列表，也不接受任意基址：
 
 ```typescript
 interface ProtyleResourcePort {
   resolveAsset(identity: ProtyleContentIdentity, path: string): string;
+  resolveEmoji(identity: ProtyleContentIdentity, path: string): string;
   resolveExport(identity: ProtyleContentIdentity, path: string): string;
 }
 ```

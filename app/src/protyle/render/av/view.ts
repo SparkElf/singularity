@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {unicode2Emoji} from "../../../emoji";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
@@ -7,8 +6,8 @@ import {upDownHint} from "../../util/upDownHint";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {hasClosestByClassName} from "../../util/hasClosest";
 import {Constants} from "../../../constants";
-import {currentAVDrag} from "./dragState";
-import {closeAVOverlay} from "./overlay";
+import {closeAVOverlay, closeOwnedAVOverlay} from "./overlay";
+import {openAVMenu} from "./menu";
 
 // countFilterLeaves 递归统计过滤节点树中的叶子数量（分组不计入）。
 const countFilterLeaves = (filters: IAVFilter[]): number => {
@@ -30,14 +29,15 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
     if (options.protyle.disabled) {
         return;
     }
-    const menu = new Menu(Constants.MENU_AV_VIEW);
-    if (menu.isOpen) {
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_VIEW);
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     menu.addItem({
         id: "rename",
         icon: "iconEdit",
-        label: window.siyuan.languages.rename,
+        label: options.protyle.localization.text("rename"),
         click() {
             closeAVOverlay(options.protyle, "panel");
             openMenuPanel({
@@ -53,7 +53,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
     menu.addItem({
         id: "config",
         icon: "iconSettings",
-        label: window.siyuan.languages.config,
+        label: options.protyle.localization.text("config"),
         click() {
             closeAVOverlay(options.protyle, "panel");
             openMenuPanel({
@@ -63,11 +63,11 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
             });
         }
     });
-    menu.addSeparator();
+    menu.addItem({type: "separator"});
     menu.addItem({
         id: "duplicate",
         icon: "iconCopy",
-        label: window.siyuan.languages.duplicate,
+        label: options.protyle.localization.text("duplicate"),
         click() {
             closeAVOverlay(options.protyle, "panel");
             const id = Lute.NewNodeID();
@@ -89,7 +89,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
         menu.addItem({
             id: "delete",
             icon: "iconTrashcan",
-            label: window.siyuan.languages.delete,
+            label: options.protyle.localization.text("delete"),
             click() {
                 closeAVOverlay(options.protyle, "panel");
                 transaction(options.protyle, [{
@@ -102,7 +102,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
         });
     }
     const rect = options.element.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         x: rect.left,
         y: rect.bottom
     });
@@ -138,7 +138,7 @@ export const bindViewEvent = (options: {
         if (event.key === "Enter") {
             event.preventDefault();
             inputElement.blur();
-            options.menuElement.parentElement.remove();
+            closeOwnedAVOverlay(options.protyle, "panel", options.menuElement.parentElement);
         }
     });
     inputElement.select();
@@ -174,20 +174,20 @@ export const bindViewEvent = (options: {
         if (event.key === "Enter") {
             event.preventDefault();
             descElement.blur();
-            options.menuElement.parentElement.remove();
+            closeOwnedAVOverlay(options.protyle, "panel", options.menuElement.parentElement);
         }
     });
     descElement.addEventListener("input", () => {
-        inputElement.nextElementSibling.setAttribute("aria-label", descElement.value ? escapeHtml(descElement.value) : window.siyuan.languages.addDesc);
+        inputElement.nextElementSibling.setAttribute("aria-label", descElement.value ? escapeHtml(descElement.value) : options.protyle.localization.text("addDesc"));
     });
 };
 
-export const getViewHTML = (data: IAV) => {
+export const getViewHTML = (data: IAV, localization: IProtyle["localization"]) => {
     const view = data.view;
     const fields = getFieldsByData(data);
     return `<div class="b3-menu__items">
 <button class="b3-menu__item" data-type="nobg">
-    <span class="b3-menu__label ft__center">${window.siyuan.languages.config}</span>
+    <span class="b3-menu__label ft__center">${localization.text("config")}</span>
 </button>
 <button class="b3-menu__separator"></button>
 <button class="b3-menu__item" data-type="nobg">
@@ -196,44 +196,44 @@ export const getViewHTML = (data: IAV) => {
             <span class="b3-menu__avemoji" data-type="update-view-icon">${view.icon ? unicode2Emoji(view.icon) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getViewIcon(data.viewType)}"></use></svg>`}</span>
             <div class="b3-form__icona fn__block">
                 <input data-type="name" class="b3-text-field b3-form__icona-input" type="text" data-value="${escapeAttr(view.name)}">
-                <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${view.desc ? escapeAriaLabel(view.desc) : window.siyuan.languages.addDesc}"><use xlink:href="#iconInfo"></use></svg>
+                <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${view.desc ? escapeAriaLabel(view.desc) : localization.text("addDesc")}"><use xlink:href="#iconInfo"></use></svg>
             </div>
         </div>
         <div class="fn__none">
             <div class="fn__hr"></div>
-            <textarea placeholder="${window.siyuan.languages.addDesc}" rows="1" data-type="desc" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(view.desc)}">${view.desc}</textarea>
+            <textarea placeholder="${localization.text("addDesc")}" rows="1" data-type="desc" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(view.desc)}">${view.desc}</textarea>
         </div>
         <div class="fn__hr"></div>
     </div>
 </button>
 <button class="b3-menu__item" data-type="go-layout">
     <svg class="b3-menu__icon"><use xlink:href="#${getViewIcon(data.viewType)}"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.layout}</span>
-    <span class="b3-menu__accelerator">${getViewName(data.viewType)}</span>
+    <span class="b3-menu__label">${localization.text("layout")}</span>
+    <span class="b3-menu__accelerator">${getViewName(data.viewType, localization)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__separator"></button>
 <button class="b3-menu__item" data-type="go-properties">
     <svg class="b3-menu__icon"><use xlink:href="#iconList"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.fields}</span>
+    <span class="b3-menu__label">${localization.text("fields")}</span>
     <span class="b3-menu__accelerator">${fields.filter((item: IAVColumn) => !item.hidden).length}/${fields.length}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item" data-type="goFilters">
     <svg class="b3-menu__icon"><use xlink:href="#iconFilter"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.filter}</span>
+    <span class="b3-menu__label">${localization.text("filter")}</span>
     <span class="b3-menu__accelerator">${countFilterLeaves(view.filters)}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item" data-type="goSorts">
     <svg class="b3-menu__icon"><use xlink:href="#iconSort"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.sort}</span>
+    <span class="b3-menu__label">${localization.text("sort")}</span>
     <span class="b3-menu__accelerator">${view.sorts.length}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
 <button class="b3-menu__item" data-type="goGroups">
     <svg class="b3-menu__icon"><use xlink:href="#iconGroups"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.group}</span>
+    <span class="b3-menu__label">${localization.text("group")}</span>
     <span class="b3-menu__accelerator">${(data.view.group && data.view.group.field) ? fields.filter((item: IAVColumn) => item.id === data.view.group.field)[0].name : ""}</span>
     <svg class="b3-menu__icon b3-menu__icon--small"><use xlink:href="#iconRight"></use></svg>
 </button>
@@ -242,11 +242,11 @@ export const getViewHTML = (data: IAV) => {
     <svg class="b3-menu__icon">
         <use xlink:href="#iconCopy"></use>
     </svg>
-    <span class="b3-menu__label">${window.siyuan.languages.duplicate}</span>
+    <span class="b3-menu__label">${localization.text("duplicate")}</span>
 </button>
 <button class="b3-menu__item${data.views.length > 1 ? "" : " fn__none"}" data-type="delete-view">
     <svg class="b3-menu__icon"><use xlink:href="#iconTrashcan"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.delete}</span>
+    <span class="b3-menu__label">${localization.text("delete")}</span>
 </button>
 </div>`;
 };
@@ -274,11 +274,11 @@ export const bindSwitcherEvent = (options: { protyle: IProtyle, menuElement: Ele
                     id: options.blockElement.querySelector(".av__views .item--focus").getAttribute("data-id"),
                     avID: options.blockElement.getAttribute("data-av-id"),
                 }]);
-                options.menuElement.remove();
+                closeOwnedAVOverlay(options.protyle, "panel", options.menuElement.parentElement);
                 focusBlock(options.blockElement);
             }
         } else if (event.key === "Escape") {
-            options.menuElement.remove();
+            closeOwnedAVOverlay(options.protyle, "panel", options.menuElement.parentElement);
             focusBlock(options.blockElement);
         }
     });
@@ -311,7 +311,7 @@ const filterSwitcher = (menuElement: Element) => {
     }
 };
 
-export const getSwitcherHTML = (views: IAVView[], viewId: string) => {
+export const getSwitcherHTML = (views: IAVView[], viewId: string, localization: IProtyle["localization"]) => {
     let html = "";
     views.forEach((item) => {
         html += `<button draggable="true" class="b3-menu__item${item.id === viewId ? " b3-menu__item--current" : ""}" data-id="${item.id}">
@@ -326,11 +326,11 @@ export const getSwitcherHTML = (views: IAVView[], viewId: string) => {
     return `<div class="b3-menu__items fn__flex-column">
 <button class="b3-menu__item" data-type="av-add">
     <svg class="b3-menu__icon"><use xlink:href="#iconAdd"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.newView}</span>
+    <span class="b3-menu__label">${localization.text("newView")}</span>
 </button>
 <button class="b3-menu__separator"></button>
 <div class="b3-menu__item fn__flex-shrink" data-type="nobg">
-    <input class="b3-text-field fn__block" type="text" style="margin: 4px 0" placeholder="${window.siyuan.languages.search}">
+    <input class="b3-text-field fn__block" type="text" style="margin: 4px 0" placeholder="${localization.text("search")}">
 </div>
 <div class="fn__flex-1" style="overflow: auto">
     ${html}
@@ -342,12 +342,16 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
     const id = Lute.NewNodeID();
     const avID = blockElement.getAttribute("data-av-id");
     const viewElement = blockElement.querySelector(".av__views");
-    const addMenu = new Menu(undefined, () => {
+    const menuHandle = openAVMenu(protyle, undefined, () => {
         viewElement.classList.remove("av__views--show");
     });
+    if (!menuHandle) {
+        return;
+    }
+    const addMenu = menuHandle.menu;
     addMenu.addItem({
         icon: "iconTable",
-        label: window.siyuan.languages.table,
+        label: protyle.localization.text("table"),
         click() {
             transaction(protyle, [{
                 action: "addAttrViewView",
@@ -364,7 +368,7 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
     });
     addMenu.addItem({
         icon: "iconBoard",
-        label: window.siyuan.languages.kanban,
+        label: protyle.localization.text("kanban"),
         click() {
             transaction(protyle, [{
                 action: "addAttrViewView",
@@ -383,7 +387,7 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
     });
     addMenu.addItem({
         icon: "iconGallery",
-        label: window.siyuan.languages.gallery,
+        label: protyle.localization.text("gallery"),
         click() {
             transaction(protyle, [{
                 action: "addAttrViewView",
@@ -402,7 +406,7 @@ export const addView = (protyle: IProtyle, blockElement: Element) => {
     });
     viewElement.classList.add("av__views--show");
     const addRect = viewElement.querySelector('.block__icon[data-type="av-add"]')?.getBoundingClientRect();
-    addMenu.open({
+    addMenu.popup({
         x: addRect.left,
         y: addRect.bottom + 8
     });
@@ -419,14 +423,14 @@ export const getViewIcon = (type: string) => {
     }
 };
 
-export const getViewName = (type: string) => {
+export const getViewName = (type: string, localization: IProtyle["localization"]) => {
     switch (type) {
         case "table":
-            return window.siyuan.languages.table;
+            return localization.text("table");
         case "gallery":
-            return window.siyuan.languages.gallery;
+            return localization.text("gallery");
         case "kanban":
-            return window.siyuan.languages.kanban;
+            return localization.text("kanban");
     }
 };
 
@@ -434,11 +438,7 @@ export const getFieldsByData = (data: IAV) => {
     return data.viewType === "table" ? (data.view as IAVTable).columns : (data.view as IAVGallery).fields;
 };
 
-export const dragoverTab = (protyle: IProtyle, event: DragEvent) => {
-    const dragElement = currentAVDrag(protyle);
-    if (!dragElement) {
-        return;
-    }
+export const dragoverTab = (event: DragEvent, dragElement: HTMLElement) => {
     const viewTabElement = dragElement.parentElement;
     if (viewTabElement.scrollWidth > viewTabElement.clientWidth) {
         const viewTabRect = viewTabElement.getBoundingClientRect();

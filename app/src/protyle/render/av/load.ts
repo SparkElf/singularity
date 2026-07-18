@@ -1,34 +1,49 @@
 import type {ProtyleContentIdentity} from "../../../../../enterprise/packages/protyle-browser/src/contracts";
 import {protyleContentIdentity} from "../../util/contentLoad";
+import {combineAbortSignals} from "../../util/abortSignal";
 
 interface AVLoadState {
     readonly controller: AbortController;
     readonly generation: number;
 }
 
+export type AVLoadNamespace = "owner" | "render" | "panel" | "column";
+
 export interface AVRenderLoad {
     readonly identity: ProtyleContentIdentity;
+    readonly namespace: AVLoadNamespace;
     readonly owner: HTMLElement;
     readonly signal: AbortSignal;
     isCurrent: () => boolean;
 }
 
-const states = new WeakMap<HTMLElement, AVLoadState>();
+const states = new WeakMap<object, Map<AVLoadNamespace, AVLoadState>>();
 
-export const beginAVRenderLoad = (protyle: IProtyle, owner: HTMLElement): AVRenderLoad => {
-    const previous = states.get(owner);
+export const beginAVRenderLoad = (
+    protyle: IProtyle,
+    owner: HTMLElement,
+    namespace: AVLoadNamespace = "owner",
+    generationOwner: object = owner,
+): AVRenderLoad => {
+    let ownerStates = states.get(generationOwner);
+    if (!ownerStates) {
+        ownerStates = new Map();
+        states.set(generationOwner, ownerStates);
+    }
+    const previous = ownerStates.get(namespace);
     previous?.controller.abort();
     const state: AVLoadState = {
         controller: new AbortController(),
         generation: (previous?.generation ?? 0) + 1,
     };
-    states.set(owner, state);
-    const signal = AbortSignal.any([protyle.requestSignal, state.controller.signal]);
+    ownerStates.set(namespace, state);
+    const signal = combineAbortSignals([protyle.requestSignal, state.controller.signal]);
     return {
         identity: protyleContentIdentity(protyle),
+        namespace,
         owner,
         signal,
-        isCurrent: () => states.get(owner) === state &&
+        isCurrent: () => states.get(generationOwner)?.get(namespace) === state &&
             !signal.aborted &&
             !protyle.destroyed &&
             owner.isConnected,

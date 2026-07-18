@@ -19,6 +19,7 @@ import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldIdByCellElement} from "./row";
 import {getFieldsByData} from "./view";
 import {getCompressURL, removeCompressURL} from "../../../util/image";
+import {closeAVMenu} from "./menu";
 
 const renderCellURL = (urlContent: string) => {
     let host = urlContent;
@@ -528,11 +529,11 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         }
         if (viewType === "table" && !hasClosestByClassName(cellElements[0], "custom-attr")) {
             cellElements[0].classList.add("av__cell--select");
-            addDragFill(cellElements[0]);
+            addDragFill(cellElements[0], protyle.localization);
         }
         return;
     }
-    window.siyuan.menus.menu.remove();
+    closeAVMenu(protyle);
     const avMaskElement = document.createElement("div");
     avMaskElement.className = "av__mask";
     avMaskElement.innerHTML = html;
@@ -582,7 +583,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
                     focusByRange(protyle.toolbar.range);
                     if (viewType === "table") {
                         cellElements[0].classList.add("av__cell--select");
-                        addDragFill(cellElements[0]);
+                        addDragFill(cellElements[0], protyle.localization);
                     }
                     let textPlain = inputElement.value;
                     if (isDynamicRef(textPlain)) {
@@ -685,7 +686,7 @@ const updateCellValueByInput = (protyle: IProtyle, type: TAVCol, blockElement: H
         cellElements[0] &&
         !hasClosestByClassName(cellElements[0], "custom-attr")) {
         cellElements[0].classList.add("av__cell--select");
-        addDragFill(cellElements[0]);
+        addDragFill(cellElements[0], protyle.localization);
     }
     //  单元格编辑中 ctrl+p 光标定位
     if (!document.querySelector(".b3-dialog")) {
@@ -895,9 +896,9 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
                 data: oldValue
             });
             if (isCustomAttr) {
-                item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file);
+                item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
             } else {
-                updateAttrViewCellAnimation(item, cellValue);
+                updateAttrViewCellAnimation(protyle, item, cellValue);
             }
         }
     }
@@ -940,7 +941,7 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
 };
 
 export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: boolean, type: TAVView,
-                           fileIcon: string) => {
+                           fileIcon: string, localization: IProtyle["localization"]) => {
     let text = "";
     if ("template" === cellValue.type) {
         // 使用 DOMPurify 过滤危险标签和事件属性，保留安全的 HTML 格式 https://github.com/siyuan-note/siyuan/issues/18169
@@ -954,9 +955,9 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     } else if (cellValue.type === "block") {
         // 不可使用换行 https://github.com/siyuan-note/siyuan/issues/11365
         if (cellValue?.isDetached) {
-            text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block.content || "")}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${window.siyuan.languages.more}</span>`;
+            text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block.content || "")}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("more")}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${window.siyuan.languages.update}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("update")}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = `<span class="av__celltext" data-content="${cellValue?.number.isNotEmpty ? cellValue?.number.content : ""}">${cellValue?.number.formattedContent || cellValue?.number.content || ""}</span>`;
@@ -1004,7 +1005,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     } else if (cellValue.type === "rollup") {
         let rollupType;
         cellValue?.rollup?.contents?.forEach((item) => {
-            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon) : renderRollup(item, showIcon, fileIcon);
+            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon, localization) : renderRollup(item, showIcon, fileIcon, localization);
             if (rollupText) {
                 text += rollupText + (item.type === "checkbox" ? "" : ", ");
             }
@@ -1022,10 +1023,10 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
             if (item && item.block) {
                 const rowID = cellValue.relation.blockIDs[index];
                 if (item?.isDetached) {
-                    text += `<span data-row-id="${rowID}" class="av__cell--relation"><span${showIcon ? "" : ' class="fn__none"'}><svg><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                    text += `<span data-row-id="${rowID}" class="av__cell--relation"><span${showIcon ? "" : ' class="fn__none"'}><svg><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                 } else {
                     // data-block-id 用于更新 emoji
-                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                 }
             }
         });
@@ -1043,7 +1044,12 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     return text;
 };
 
-const renderRollup = (cellValue: IAVCellValue, showIcon: boolean, fileIcon: string) => {
+const renderRollup = (
+    cellValue: IAVCellValue,
+    showIcon: boolean,
+    fileIcon: string,
+    localization: IProtyle["localization"],
+) => {
     let text = "";
     if (["text"].includes(cellValue.type)) {
         text = cellValue ? Lute.EscapeHTMLStr(cellValue[cellValue.type as "text"].content || "") : "";
@@ -1059,9 +1065,9 @@ const renderRollup = (cellValue: IAVCellValue, showIcon: boolean, fileIcon: stri
         }
     } else if (cellValue.type === "block") {
         if (cellValue?.isDetached) {
-            text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block?.content || window.siyuan.languages.untitled)}</span>`;
+            text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || window.siyuan.languages.untitled)}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = cellValue?.number.formattedContent || cellValue?.number.content.toString() || "";
@@ -1190,7 +1196,14 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
                 rowID,
                 data
             });
-            item.element.innerHTML = renderCell(data, 0, showIcon, "table", protyle.settings.icons.file);
+            item.element.innerHTML = renderCell(
+                data,
+                0,
+                showIcon,
+                "table",
+                protyle.settings.icons.file,
+                protyle.localization,
+            );
             renderCellAttr(item.element, data);
             delete item.colId;
             delete item.element;
@@ -1210,7 +1223,7 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
     }
 };
 
-export const addDragFill = (cellElement: Element) => {
+export const addDragFill = (cellElement: Element, localization: IProtyle["localization"]) => {
     if (!cellElement) {
         return;
     }
@@ -1220,7 +1233,7 @@ export const addDragFill = (cellElement: Element) => {
         if (["template", "rollup", "lineNumber", "created", "updated"].includes(cellType)) {
             return;
         }
-        cellElement.insertAdjacentHTML("beforeend", `<div aria-label="${window.siyuan.languages.dragFill}" class="av__drag-fill ariaLabel"></div>`);
+        cellElement.insertAdjacentHTML("beforeend", `<div aria-label="${localization.text("dragFill")}" class="av__drag-fill ariaLabel"></div>`);
     }
 };
 

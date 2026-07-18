@@ -83,7 +83,7 @@ const initMultiMenu = (selectItemElements: NodeListOf<Element>, app: App) => {
         }).element);
     }
 
-    window.siyuan.menus.menu.append(movePathToMenu(getTopPaths(
+    window.siyuan.menus.menu.addItem(movePathToMenu(getTopPaths(
         Array.from(selectItemElements)
     )));
 
@@ -507,7 +507,7 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
                 }
             }])
         }).element);
-        window.siyuan.menus.menu.append(movePathToMenu(getTopPaths(
+        window.siyuan.menus.menu.addItem(movePathToMenu(getTopPaths(
             Array.from(fileElement.querySelectorAll(".b3-list-item--focus"))
         )));
         window.siyuan.menus.menu.append(new MenuItem({
@@ -693,7 +693,10 @@ export const initFileMenu = (app: App, notebookId: string, pathString: string, l
         }).element);
     }
     genImportMenu(notebookId, pathString);
-    window.siyuan.menus.menu.append(exportMd(id, notebookId));
+    const exportMenu = exportMd(id, notebookId);
+    if (exportMenu) {
+        window.siyuan.menus.menu.addItem(exportMenu);
+    }
     if (app.plugins) {
         emitOpenMenu({
             plugins: app.plugins,

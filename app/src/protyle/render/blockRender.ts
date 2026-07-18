@@ -1,4 +1,5 @@
 import {hasClosestByAttribute} from "../util/hasClosest";
+import {combineAbortSignals} from "../util/abortSignal";
 import {processRender} from "../util/processCode";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {genBreadcrumb, improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
@@ -30,7 +31,7 @@ const beginEmbedLoad = (protyle: IProtyle, item: HTMLElement): EmbedLoad => {
     embedLoads.get(item)?.controller.abort();
     const state = {controller: new AbortController()};
     embedLoads.set(item, state);
-    const signal = AbortSignal.any([protyle.requestSignal, state.controller.signal]);
+    const signal = combineAbortSignals([protyle.requestSignal, state.controller.signal]);
     return {
         signal,
         isCurrent: () => embedLoads.get(item) === state &&

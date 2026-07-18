@@ -48,7 +48,7 @@ B4接线审计进一步确认，空间路由启动时只有`SpaceRuntimeBootstra
 4. 文档变化通过销毁并重建Protyle处理，不保留虚构的`openDocument`方法。嵌入式live所有者切目标同样重建，detached预览由所有者确定性销毁。
 5. 宿主`readOnly`只表达授权和所有者约束；文档属性只读由Core从真实文档响应取得。Core即时派生有效只读，正式写守卫拒绝事务、上传和写插件能力，同时保留读取能力；文档锁控件使用唯一受控元数据命令，成功或失败后按真实结果重新合并来源。
 6. Session拥有菜单能力，触发表面拥有具体菜单句柄。关闭嵌入式表面或切文档只关闭旧表面的句柄，切空间才释放菜单能力；三条生命周期都先停止工作、中止请求、关闭订阅和浮层/菜单实例，再按所有权销毁编辑器与Session能力。
-7. `KernelTransport`负责绑定空间的JSON请求、只接收推送的WebSocket和FormData上传，并统一拥有CSRF、取消、上传进度、错误转换与终止状态；`ProtyleResourcePort`只解析assets和exports只读URL。公共请求与上传选项不允许任意header字典，上传CSRF不得进入查询串，Gateway按路由策略重建头并通过mTLS与服务JWT访问Kernel。应用源只内联安全MIME allowlist，主动内容与导出HTML强制下载，不允许浏览器直连Kernel、全局资源路径、旧XHR上传或fallback。
+7. `KernelTransport`负责绑定空间的JSON请求、只接收推送的WebSocket和FormData上传，并统一拥有CSRF、取消、上传进度、错误转换与终止状态；`ProtyleResourcePort`只解析assets、自定义Emoji和exports只读URL。公共请求与上传选项不允许任意header字典，上传CSRF不得进入查询串，Gateway按路由策略重建头并通过mTLS与服务JWT访问Kernel。应用源只内联安全MIME allowlist，主动内容与导出HTML强制下载，不允许浏览器直连Kernel、全局资源路径、旧XHR上传或fallback。
 8. Protyle通过类型化HostEvent请求React执行文档导航、搜索、图谱、资源和通知；编辑器插件只依赖`ProtylePluginPort`，不直接依赖React路由或旧布局。
 9. 浏览器入口闭包不得包含ifdef指令、Electron、Node内置模块或原生移动端import；Vite是唯一Web构建路径。
 10. B4由`enterprise`中的唯一`pnpm verify:b4`聚合静态边界、类型、公共包Vitest、React Vitest、`enterprise/scripts`与`app`的`node:test`以及Vite构建；CI分别冻结安装enterprise与app两个lockfile。

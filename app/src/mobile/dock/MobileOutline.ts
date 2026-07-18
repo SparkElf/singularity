@@ -15,7 +15,7 @@ import {openMobileFileById} from "../editor";
 import {Model} from "../../layout/Model";
 import {genUUID} from "../../util/genID";
 import {isEncryptedBox} from "../../util/pathName";
-import {dragOverScroll, stopScrollAnimation} from "../../boot/globalEvent/dragover";
+import {dragOverScroll, stopScrollAnimation} from "../../protyle/ui/dragScroll";
 
 export class MobileOutline extends Model {
     public tree: Tree;
@@ -268,7 +268,7 @@ export class MobileOutline extends Model {
             event.stopPropagation();
             state.ghostElement.style.top = touch.clientY + "px";
             state.ghostElement.style.left = touch.clientX + "px";
-            dragOverScroll({clientY: touch.clientY} as MouseEvent, contentRect(), scrollElement);
+            dragOverScroll({clientY: touch.clientY}, contentRect(), scrollElement);
 
             // 通过 elementFromPoint 定位手指下的目标项
             const target = document.elementFromPoint(touch.clientX, touch.clientY);

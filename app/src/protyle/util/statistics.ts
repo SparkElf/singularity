@@ -1,5 +1,6 @@
 import type {ProtyleDocumentStatistics} from "../../../../enterprise/packages/protyle-browser/src/contracts";
 import {Constants} from "../../constants";
+import {combineAbortSignals} from "./abortSignal";
 import {protyleContentIdentity} from "./contentLoad";
 
 interface StatisticsResponse {
@@ -51,7 +52,7 @@ const scheduleStatistics = (protyle: IProtyle, request: StatisticsRequest) => {
         const controller = new AbortController();
         state.controller = controller;
         state.timeout = undefined;
-        const signal = AbortSignal.any([protyle.requestSignal, controller.signal]);
+        const signal = combineAbortSignals([protyle.requestSignal, controller.signal]);
         const identity = protyleContentIdentity(protyle);
         void protyle.session!.runtime.transport.request<StatisticsResponse>(request.path, request.body, {
             identity,

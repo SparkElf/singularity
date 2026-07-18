@@ -21,6 +21,8 @@ export type {
   ProtyleDocumentScrollRestore,
   ProtyleDocumentStatistics,
   ProtyleEditorRegistry,
+  ProtyleEmojiGroup,
+  ProtyleEmojiItem,
   ProtyleFactory,
   ProtyleHostEvent,
   ProtyleHostPort,

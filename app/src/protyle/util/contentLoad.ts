@@ -1,4 +1,5 @@
 import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
+import {combineAbortSignals} from "./abortSignal";
 
 /**
  * Owns the cancellation and generation boundary for one Protyle content load.
@@ -26,22 +27,6 @@ const stateFor = (protyle: IProtyle): ContentLoadState => {
         states.set(protyle, state);
     }
     return state;
-};
-
-const combineSignals = (signals: AbortSignal[]): AbortSignal => {
-    const controller = new AbortController();
-    const abort = (event: Event) => {
-        const source = event.target as AbortSignal;
-        signals.forEach((signal) => signal.removeEventListener("abort", abort));
-        controller.abort(source.reason);
-    };
-    const aborted = signals.find((signal) => signal.aborted);
-    if (aborted) {
-        controller.abort(aborted.reason);
-        return controller.signal;
-    }
-    signals.forEach((signal) => signal.addEventListener("abort", abort, {once: true}));
-    return controller.signal;
 };
 
 const makeLoad = (
@@ -73,7 +58,7 @@ export const beginProtyleContentLoad = (
     if (ownerSignal && ownerSignal !== protyle.requestSignal) {
         signals.push(ownerSignal);
     }
-    state.signal = combineSignals(signals);
+    state.signal = combineAbortSignals(signals);
     return makeLoad(protyle, state, generation);
 };
 

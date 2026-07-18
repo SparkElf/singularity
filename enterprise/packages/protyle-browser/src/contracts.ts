@@ -108,6 +108,12 @@ export type ProtyleHostEvent =
       blockIds: readonly string[];
     }
   | {
+      type: "open-ai-writing";
+      blockId: string;
+      documentId: string;
+      notebookId: string;
+    }
+  | {
       type: "open-asset";
       documentId: string;
       notebookId: string;
@@ -248,6 +254,7 @@ export interface ProtyleSubscriptionOptions<TMessage> extends ProtyleContentIden
 
 export interface ProtyleResourcePort {
   resolveAsset: (identity: ProtyleContentIdentity, path: string) => string;
+  resolveEmoji: (identity: ProtyleContentIdentity, path: string) => string;
   resolveExport: (identity: ProtyleContentIdentity, path: string) => string;
 }
 
@@ -542,9 +549,26 @@ export type ProtyleToolbarHotkey =
   | "underline";
 
 export interface ProtyleLocalizationPort {
+  readonly attributeViewText: (key: string) => string;
   readonly language: string;
   readonly kernelText: (index: number) => string;
   readonly text: (key: string) => string;
+}
+
+export interface ProtyleEmojiItem {
+  readonly description: string;
+  readonly description_ja_jp: string;
+  readonly description_zh_cn: string;
+  readonly keywords: string;
+  readonly unicode: string;
+}
+
+export interface ProtyleEmojiGroup {
+  readonly id: string;
+  readonly items: readonly ProtyleEmojiItem[];
+  readonly title: string;
+  readonly title_ja_jp: string;
+  readonly title_zh_cn: string;
 }
 
 /**
@@ -559,6 +583,7 @@ export interface ProtyleApplicationSettings {
     readonly theme: "dark" | "light";
   };
   readonly editor: {
+    readonly blockRefDynamicAnchorTextMaxLen: number;
     readonly codeLigatures: boolean;
     readonly codeLineWrap: boolean;
     readonly codeSyntaxHighlightLineNum: boolean;
@@ -594,14 +619,69 @@ export interface ProtyleApplicationSettings {
     readonly addTitle: boolean;
     readonly paragraphBeginningSpace: boolean;
   };
-  readonly emojis: ReadonlyArray<{
-    readonly items: ReadonlyArray<{
-      readonly keywords: string;
-      readonly unicode: string;
-    }>;
-  }>;
+  readonly features: {
+    readonly aiWriting: boolean;
+    readonly flashcardDeck: boolean;
+    readonly wechatReminder: boolean;
+    readonly widget: boolean;
+  };
+  readonly emojis: readonly ProtyleEmojiGroup[];
+  readonly recentEmojis: {
+    readonly values: readonly string[];
+    readonly add: (unicode: string) => void | Promise<void>;
+  };
   readonly hotkeys: {
-    readonly insertRight: string;
+    readonly general: {
+      readonly addToDatabase: string;
+      readonly enter: string;
+      readonly enterBack: string;
+      readonly move: string;
+      readonly search: string;
+    };
+    readonly editor: {
+      readonly general: {
+        readonly ai: string;
+        readonly aiWriting: string;
+        readonly alignCenter: string;
+        readonly alignLeft: string;
+        readonly alignRight: string;
+        readonly attr: string;
+        readonly collapse: string;
+        readonly copyPlainText: string;
+        readonly copyText: string;
+        readonly duplicate: string;
+        readonly duplicateCompletely: string;
+        readonly foldRecursive: string;
+        readonly hLayout: string;
+        readonly insertAfter: string;
+        readonly insertBefore: string;
+        readonly insertRight: string;
+        readonly jumpToParent: string;
+        readonly jumpToParentNext: string;
+        readonly jumpToParentPrev: string;
+        readonly ltr: string;
+        readonly quickMakeCard: string;
+        readonly rtl: string;
+        readonly vLayout: string;
+      };
+      readonly heading: {
+        readonly heading1: string;
+        readonly heading2: string;
+        readonly heading3: string;
+        readonly heading4: string;
+        readonly heading5: string;
+        readonly heading6: string;
+        readonly paragraph: string;
+      };
+      readonly insert: {
+        readonly check: string;
+        readonly code: string;
+        readonly list: string;
+        readonly orderedList: string;
+        readonly quote: string;
+        readonly table: string;
+      };
+    };
   };
   readonly icons: {
     readonly file: string;
