@@ -39,6 +39,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
             fullWidth: editor.fullWidth,
             headingEmbedMode: editor.headingEmbedMode,
             katexMacros: editor.katexMacros,
+            listLogicalOutdent: editor.listLogicalOutdent,
             plantUMLServePath: editor.plantUMLServePath,
             get readOnly() {
                 return editor.readOnly;
