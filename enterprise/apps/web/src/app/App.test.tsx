@@ -23,6 +23,7 @@ import {
   spaceRuntimeQueryKey,
 } from "@/spaces/api.ts";
 import type { SpaceProtyleFactoryProvider } from "@/spaces/SpacePage.tsx";
+import type { SpaceProtyleMenuSurfaceFactory } from "@/spaces/space-session.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -36,6 +37,9 @@ const createRouteTestProtyleFactory = vi.fn<SpaceProtyleFactoryProvider>(() => (
     throw new Error("Core creation is outside the route contract test scope");
   },
 }));
+const createRouteTestProtyleMenuSurface = vi.fn<SpaceProtyleMenuSurfaceFactory>(() => {
+  throw new Error("Menu creation is outside the route contract test scope");
+});
 
 const SPACE_A_SUMMARY = {
   organizationId: ORGANIZATION_A,
@@ -119,7 +123,10 @@ function renderApp(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
-          <App createProtyleFactoryForSpace={createRouteTestProtyleFactory} />
+          <App
+            createProtyleFactoryForSpace={createRouteTestProtyleFactory}
+            createProtyleMenuSurface={createRouteTestProtyleMenuSurface}
+          />
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
@@ -139,6 +146,7 @@ function deferred<T>() {
 afterEach(() => {
   cleanup();
   createRouteTestProtyleFactory.mockClear();
+  createRouteTestProtyleMenuSurface.mockClear();
   onlineManager.setOnline(true);
   vi.useRealTimers();
   useCsrfStore.setState({ csrfToken: null });

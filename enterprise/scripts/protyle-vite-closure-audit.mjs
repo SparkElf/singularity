@@ -21,7 +21,6 @@ const repositoryRoot = resolve(enterpriseRoot, "..");
 const webRoot = join(enterpriseRoot, "apps/web");
 const webEntry = join(webRoot, "src/main.tsx");
 const coreEntry = join(repositoryRoot, "app/src/protyle/browser-entry.ts");
-const coreRoot = join(repositoryRoot, "app/src/protyle");
 const browserPackageRoot = join(enterpriseRoot, "packages/protyle-browser/src");
 const publicCoreEntry = join(browserPackageRoot, "core.ts");
 const publicCoreSpecifier = "@singularity/protyle-browser/core";
@@ -202,7 +201,7 @@ function lineOf(sourceFile, node) {
 }
 
 /**
- * 收集所有会影响浏览器闭包的模块加载形式；type-only 边仍被审计，但不进入运行时图。
+ * 收集所有模块加载形式；type-only 边保留分类证据，但不进入运行时审计图。
  */
 export function collectModuleLoads(sourceFile) {
   const moduleLoads = [];
@@ -236,7 +235,7 @@ export function collectModuleLoads(sourceFile) {
         specifier: expression && ts.isStringLiteralLike(expression)
           ? expression.text
           : null,
-        typeOnly: false,
+        typeOnly: node.isTypeOnly === true,
       });
     }
 
@@ -368,7 +367,7 @@ function auditModuleLoad({ file, sourceFile, moduleLoad, phase }) {
 
 function classifyRelativeTarget(file, target, phase) {
   const violations = [];
-  const fileIsCore = phase === "candidate-core" || isInside(coreRoot, file);
+  const fileIsCore = phase === "candidate-core" || !isInside(enterpriseRoot, file);
   if (!fileIsCore) {
     if (!isInside(enterpriseRoot, target) &&
       !isApprovedPublicCoreEdge(file, target)) {
@@ -436,8 +435,11 @@ function visitGraph({ entry, phase, state }) {
     state.violations.push(...sourceViolations(file, sourceFile, phase));
 
     for (const moduleLoad of collectModuleLoads(sourceFile)) {
+      if (moduleLoad.typeOnly) {
+        continue;
+      }
       state.violations.push(...auditModuleLoad({ file, sourceFile, moduleLoad, phase }));
-      if (!moduleLoad.specifier || moduleLoad.typeOnly) {
+      if (!moduleLoad.specifier) {
         continue;
       }
       const target = resolveSourceFile(file, moduleLoad.specifier);
@@ -465,11 +467,7 @@ function visitGraph({ entry, phase, state }) {
         ...item,
         line: lineOf(sourceFile, moduleLoad.node),
       })));
-      if (phase === "production" && !isInside(enterpriseRoot, target) &&
-        !isInside(coreRoot, target)) {
-        continue;
-      }
-      if (phase === "candidate-core" && targetBoundaryViolations.length > 0) {
+      if (!isInside(repositoryRoot, target)) {
         continue;
       }
       pending.push(canonical(target));

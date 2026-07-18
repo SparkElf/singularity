@@ -6,15 +6,22 @@ import { createProtyleFactory } from "@singularity/protyle-browser";
 import {
   cancelTouchDragBridgeGesture,
   createRealProtyleBrowserCoreFactory,
+  createRealProtyleBrowserMenu,
   installTouchDragBridge,
 } from "@singularity/protyle-browser/core";
 
 import { App } from "./app/App.tsx";
 import { queryClient } from "./app/query-client.ts";
 import { TooltipProvider } from "./components/ui/tooltip.tsx";
-import { createProtyleApplicationPort } from "./editor/protyle-application-port.ts";
+import {
+  createProtyleApplicationPort,
+  protyleLocalization,
+} from "./editor/protyle-application-port.ts";
 import type { SpaceProtyleFactoryProvider } from "./spaces/SpacePage.tsx";
-import type { SpaceProtyleRuntime } from "./spaces/space-session.ts";
+import type {
+  SpaceProtyleMenuSurfaceFactory,
+  SpaceProtyleRuntime,
+} from "./spaces/space-session.ts";
 import "./styles.css";
 
 const createProtyleFactoryForSpace: SpaceProtyleFactoryProvider = (spaceId) => {
@@ -27,6 +34,13 @@ const createProtyleFactoryForSpace: SpaceProtyleFactoryProvider = (spaceId) => {
   });
   return createProtyleFactory(coreFactory, {});
 };
+
+const createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory = (options) =>
+  createRealProtyleBrowserMenu({
+    localization: protyleLocalization,
+    portalRoot: options.portalRoot,
+    requestClose: options.requestClose,
+  });
 
 const root = document.getElementById("root");
 
@@ -50,7 +64,10 @@ createRoot(root).render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <BrowserRouter>
-          <App createProtyleFactoryForSpace={createProtyleFactoryForSpace} />
+          <App
+            createProtyleFactoryForSpace={createProtyleFactoryForSpace}
+            createProtyleMenuSurface={createProtyleMenuSurface}
+          />
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
