@@ -312,6 +312,7 @@ export function createProtyleApplicationPort(
         },
       },
       navigation: {
+        noSplitScreenWhenOpenTab: false,
         openFilesUseCurrentTab: false,
       },
       recentEmojis: {

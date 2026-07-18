@@ -240,6 +240,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
     },
     get navigation() {
         return {
+            noSplitScreenWhenOpenTab: window.siyuan.config.fileTree.noSplitScreenWhenOpenTab,
             openFilesUseCurrentTab: window.siyuan.config.fileTree.openFilesUseCurrentTab,
         };
     },

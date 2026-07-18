@@ -19,7 +19,7 @@ import {transaction} from "../wysiwyg/transaction";
 import {hideTooltip, showTooltip} from "../ui/tooltip";
 import {openTitleMenu} from "./openTitleMenu";
 import {enableLuteMarkdownSyntax, restoreLuteMarkdownSyntax} from "../util/paste";
-import {createEmptyBlockElement} from "../gutter/blockActions";
+import {genEmptyElement} from "../wysiwyg/blockElement";
 import {hasClosestByClassName} from "../util/hasClosest";
 import {isOnlyMeta} from "../util/keyboard";
 import {protyleContentIdentity} from "../util/contentLoad";
@@ -29,7 +29,7 @@ import {
     getFileNameViolation,
     normalizeFileName,
     truncateFileName,
-} from "../../editor/fileNameRules";
+} from "../util/fileNameRules";
 
 type TitleMenuHandle = ReturnType<NonNullable<IProtyle["runtime"]>["menu"]["open"]>;
 
@@ -277,7 +277,7 @@ export class Title {
                         focusBlock(firstElement, protyle.wysiwyg.element);
                     } else {
                         const newId = Lute.NewNodeID();
-                        const newElement = createEmptyBlockElement(protyle, false, true, newId);
+                        const newElement = genEmptyElement(protyle, false, true, newId);
                         protyle.wysiwyg.element.insertAdjacentElement("afterbegin", newElement);
                         focusByWbr(newElement, protyle.toolbar.range || getEditorRange(newElement));
                         transaction(protyle, [{

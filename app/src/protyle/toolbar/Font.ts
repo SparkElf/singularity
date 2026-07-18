@@ -307,6 +307,7 @@ export const setFontStyle = (textElement: HTMLElement, textOption: ITextOption) 
         textElement.setAttribute("data-href", options[0]);
         textElement.removeAttribute("data-subtype");
         textElement.removeAttribute("data-id");
+        textElement.removeAttribute("data-notebook-id");
         if (options[1]) {
             textElement.textContent = options[1];
         }
@@ -316,6 +317,7 @@ export const setFontStyle = (textElement: HTMLElement, textOption: ITextOption) 
         textElement.setAttribute("data-id", options[0]);
         textElement.removeAttribute("data-href");
         textElement.removeAttribute("data-subtype");
+        textElement.removeAttribute("data-notebook-id");
         if (options[1]) {
             textElement.textContent = options[1];
         }
@@ -345,6 +347,9 @@ export const setFontStyle = (textElement: HTMLElement, textOption: ITextOption) 
                 break;
             case "id":
                 setBlockRef(textOption.color);
+                if (textOption.notebookId) {
+                    textElement.setAttribute("data-notebook-id", textOption.notebookId);
+                }
                 break;
             case "inline-math":
                 textElement.className = "render-node";

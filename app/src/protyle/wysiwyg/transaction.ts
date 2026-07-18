@@ -9,7 +9,8 @@ import {zoomOut} from "../util/zoom";
 import {disabledProtyle, enableProtyle, onGet, setReadonlyByConfig} from "../util/onGet";
 import {avRender, refreshAV} from "../render/av/render";
 import {removeFoldHeading} from "../util/heading";
-import {cancelSB, genEmptyElement, genSBElement, refreshSbResize} from "../../block/util";
+import {genEmptyElement} from "./blockElement";
+import {cancelSB, genSBElement, refreshSbResize} from "./superBlock";
 import {hideElements} from "../ui/hideElements";
 import {reloadProtyle} from "../util/reload";
 import {resize} from "../util/resize";
@@ -35,7 +36,7 @@ const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
     if (protyle.wysiwyg.element.childElementCount === 0) {
         if (protyle.block.rootID === protyle.block.id) {
             const newId = Lute.NewNodeID();
-            const newElement = genEmptyElement(false, false, newId);
+            const newElement = genEmptyElement(protyle, false, false, newId);
             doOperations.push({
                 action: "insert",
                 data: newElement.outerHTML,
@@ -288,7 +289,7 @@ const promiseTransaction = (options: {
             // 聚焦时不需要新增块，否则会导致 https://github.com/siyuan-note/siyuan/issues/12326 第一点
             !protyle.block.showAll) {
             const newID = Lute.NewNodeID();
-            const emptyElement = genEmptyElement(false, true, newID);
+            const emptyElement = genEmptyElement(protyle, false, true, newID);
             protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
             transaction(protyle, [{
                 action: "insert",

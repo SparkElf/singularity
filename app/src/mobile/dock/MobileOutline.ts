@@ -1022,7 +1022,7 @@ export class MobileOutline extends Model {
                             });
                             if (data.protyle.wysiwyg.element.childElementCount === 0) {
                                 const newID = Lute.NewNodeID();
-                                const emptyElement = genEmptyElement(false, false, newID);
+                                const emptyElement = genEmptyElement(data.protyle, false, false, newID);
                                 data.protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                                 deleteResponse.data.doOperations.push({
                                     action: "insert",
@@ -1060,7 +1060,7 @@ export class MobileOutline extends Model {
                         });
                         if (data.protyle.wysiwyg.element.childElementCount === 0) {
                             const newID = Lute.NewNodeID();
-                            const emptyElement = genEmptyElement(false, false, newID);
+                            const emptyElement = genEmptyElement(data.protyle, false, false, newID);
                             data.protyle.wysiwyg.element.insertAdjacentElement("afterbegin", emptyElement);
                             response.data.doOperations.push({
                                 action: "insert",
