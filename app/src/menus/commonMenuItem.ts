@@ -555,11 +555,11 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
     return menuItems;
 };
 
-export const exportMd = (id: string, notebookId: string) => {
+export const exportMd = (id: string, notebookId: string): IMenu | undefined => {
     if (window.siyuan.isPublish) {
         return;
     }
-    return new MenuItem({
+    return {
         id: "export",
         label: window.siyuan.languages.export,
         type: "submenu",
@@ -864,7 +864,7 @@ export const exportMd = (id: string, notebookId: string) => {
             },
             /// #endif
         ]
-    }).element;
+    };
 };
 
 export const openMenu = (app: App, src: string, notebookId: string, documentId: string,
@@ -1048,8 +1048,8 @@ export const renameMenu = (options: {
     }).element;
 };
 
-export const movePathToMenu = (paths: string[]) => {
-    return new MenuItem({
+export const movePathToMenu = (paths: string[]): IMenu => {
+    return {
         id: "move",
         label: window.siyuan.languages.move,
         icon: "iconMove",
@@ -1068,5 +1068,5 @@ export const movePathToMenu = (paths: string[]) => {
                 rootIDs,
             });
         }
-    }).element;
+    };
 };

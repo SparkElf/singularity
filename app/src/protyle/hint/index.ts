@@ -14,37 +14,40 @@ import {
     getSelectionOffset,
     getSelectionPosition,
 } from "../util/selection";
-import {genHintItemHTML, hintEmbed, hintRef, hintSlash} from "./extend";
-import {getBlockRefAnchorText, newFileByRefHint, newFileInProtyle} from "../../util/newFile";
+import {genHintItemHTML, hintEmbed, hintRef, hintRenderAssets, hintSlash} from "./extend";
 import {isAbnormalItem, upDownHint} from "../util/upDownHint";
-import {setPosition} from "../../util/setPosition";
+import {setHintPosition} from "./position";
 import {getContenteditableElement, hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
 import {insertHTML} from "../util/insertHTML";
 import {highlightRender} from "../render/highlightRender";
-import {assetMenu, imgMenu} from "../../menus/protyle";
 import {hideElements} from "../ui/hideElements";
-import {fetchPost} from "../../util/fetch";
-import {getDisplayName, isEncryptedBox, pathPosix} from "../../util/pathName";
 import {
-    addEmoji,
+    emojiInsertionHTML,
     filterEmoji,
-    getEmojiDesc,
-    getEmojiTitle,
-    lazyLoadEmoji,
-    lazyLoadEmojiImg,
-    unicode2Emoji
-} from "../../emoji";
+    getEmojiGroupIcon,
+    getEmojiGroupTitle,
+    lazyLoadEmojiGroups,
+    lazyLoadEmojiImages,
+    renderEmojiItems,
+    unicodeToEmoji,
+} from "./emoji";
 import {blockRender} from "../render/blockRender";
 import {uploadFiles} from "../upload";
 import {processRender} from "../util/processCode";
-import {AIChat} from "../../ai/chat";
-import {isMobile} from "../../util/functions";
+import {isNarrowViewport} from "../util/browserPlatform";
 import {isNotCtrl, isOnlyMeta} from "../util/keyboard";
 import {avRender} from "../render/av/render";
 import {genRendererIconHTML} from "../render/renderContext";
 import {updateAttrViewCellAnimation} from "../render/av/action";
 import {setFold} from "../util/blockFold";
+import {HintMenuOwner} from "./menuOwner";
+import {openImageHintMenu} from "./menus";
+import {openAssetMenu} from "../ui/assetMenu";
+import {beginHintRequest, reportHintRequestFailure, requestHint} from "./request";
+import type {HintSearchReferenceResponse} from "./protocol";
+import {createReferencedDocument} from "./documents";
+import {protyleContentIdentity} from "../util/contentLoad";
 
 export class Hint {
     public timeId: number;
@@ -55,8 +58,10 @@ export class Hint {
     public splitChar = "";
     public lastIndex = -1;
     private source: THintSource;
+    private readonly menus: HintMenuOwner;
 
     constructor(protyle: IProtyle) {
+        this.menus = new HintMenuOwner(protyle);
         this.element = document.createElement("div");
         this.element.setAttribute("data-close", "false");
         this.element.className = "protyle-hint b3-list b3-list--background fn__none";
@@ -80,12 +85,10 @@ export class Hint {
                 if (titleElement) {
                     const index = titleElement.nextElementSibling.getAttribute("data-index");
                     if (index) {
-                        let html = "";
-                        window.siyuan.emojis[parseInt(index)].items.forEach(emoji => {
-                            html += `<button data-unicode="${emoji.unicode}" class="emojis__item ariaLabel" aria-label="${getEmojiDesc(emoji)}">
-${unicode2Emoji(emoji.unicode)}</button>`;
-                        });
-                        titleElement.nextElementSibling.innerHTML = html;
+                        titleElement.nextElementSibling.innerHTML = renderEmojiItems(
+                            protyle,
+                            protyle.settings.emojis[parseInt(index)].items,
+                        );
                         titleElement.nextElementSibling.removeAttribute("data-index");
                     }
 
@@ -108,18 +111,20 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                         // iphone
                         range.endContainer.textContent = "";
                     }
-                    addEmoji(unicode);
-                    let emoji;
-                    if (unicode.indexOf(".") > -1) {
-                        emoji = `:${unicode.split(".")[0]}: `;
-                    } else {
-                        emoji = unicode2Emoji(unicode) + " ";
-                    }
-                    insertHTML(protyle.lute.SpinBlockDOM(emoji), protyle, false, true);
+                    this.recordRecentEmoji(protyle, unicode);
+                    insertHTML(emojiInsertionHTML(protyle, unicode), protyle, false, true);
                     this.element.classList.add("fn__none");
                 } else {
                     this.fill(unicode, protyle);
                 }
+            }
+        });
+    }
+
+    private recordRecentEmoji(protyle: IProtyle, unicode: string) {
+        void Promise.resolve(protyle.settings.recentEmojis.add(unicode)).catch((error) => {
+            if (!protyle.destroyed) {
+                console.error("[protyle.hint] recent emoji update failed", error);
             }
         });
     }
@@ -201,7 +206,7 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                 });
             } else {
                 const blockElement = hasClosestBlock(protyle.toolbar.range.startContainer);
-                if (this.enableSlash && !isMobile() && blockElement && !isInEmbedBlock(blockElement)) {
+                if (this.enableSlash && !isNarrowViewport() && blockElement && !isInEmbedBlock(blockElement)) {
                     this.genHTML(hintSlash(key, protyle), protyle, false, "hint");
                 }
             }
@@ -226,11 +231,11 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                 const cellElement = hasClosestByClassName(protyle.toolbar.range.startContainer, "av__cell");
                 if (cellElement) {
                     const cellRect = cellElement.getBoundingClientRect();
-                    setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
+                    setHintPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
                 }
             } else {
                 const textareaPosition = getSelectionPosition(protyle.wysiwyg.element);
-                setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
+                setHintPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
             }
         } else {
             this.element.insertAdjacentHTML("beforeend", '<div class="fn__loading"><img width="64px" src="/stage/loading-pure.svg"></div>');
@@ -296,11 +301,11 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
             const cellElement = hasClosestByClassName(protyle.toolbar.range.startContainer, "av__cell");
             if (cellElement) {
                 const cellRect = cellElement.getBoundingClientRect();
-                setPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
+                setHintPosition(this.element, cellRect.left, cellRect.bottom, cellRect.height);
             }
         } else {
             const textareaPosition = getSelectionPosition(protyle.wysiwyg.element);
-            setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
+            setHintPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
         }
         this.element.scrollTop = 0;
         let currentHintElement = this.element.querySelector(".b3-list-item--focus") as HTMLElement;
@@ -349,6 +354,7 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
 
     private genSearchHTML(protyle: IProtyle, searchElement: HTMLInputElement, nodeElement: false | HTMLElement, oldValue: string, source: THintSource) {
         this.element.lastElementChild.innerHTML = '<div class="ft__center"><img style="height:32px;width:32px;" src="/stage/loading-pure.svg"></div>';
+        const request = beginHintRequest(protyle, "suggestions");
         const searchParam: IObject = {
             k: searchElement.value,
             id: nodeElement ? nodeElement.getAttribute("data-node-id") : protyle.block.parentID,
@@ -356,16 +362,17 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
             rootID: source === "av" ? "" : protyle.block.rootID,
             isDatabase: source === "av",
         };
-        if (isEncryptedBox(protyle.notebookId)) {
-            searchParam.notebook = protyle.notebookId;
-        }
-        fetchPost("/api/search/searchRefBlock", searchParam, (response) => {
-            let searchHTML = "";
-            if (response.data.newDoc) {
-                const blockRefText = `((newFile "${oldValue}"${Constants.ZWSP}'${response.data.k}${Lute.Caret}'))`;
-                searchHTML += `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${response.data.blocks.length === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefText)}"><div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconFile"></use></svg>
-<span class="b3-list-item__text">${window.siyuan.languages.newFile} <mark>${response.data.k}</mark></span></div></button>`;
+        void requestHint<HintSearchReferenceResponse>(
+            protyle,
+            "/api/search/searchRefBlock",
+            searchParam,
+            "read",
+            request,
+        ).then((response) => {
+            if (!request.isCurrent() || !searchElement.isConnected || this.element.classList.contains("fn__none")) {
+                return;
             }
+            let searchHTML = "";
             response.data.blocks.forEach((item: IBlock & {box: string; id: string}, index: number) => {
                 let blockRefHTML;
                 if (source === "av") {
@@ -379,15 +386,20 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                     blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${oldValue}</span>`;
                 }
                 searchHTML += `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${index === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefHTML)}">
-${genHintItemHTML(item)}
+${genHintItemHTML(item, protyle)}
 </button>`;
             });
             if (searchHTML === "") {
-                searchHTML = `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two" data-value="">${window.siyuan.languages.emptyContent}</button>`;
+                searchHTML = `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two" data-value="">${protyle.localization.text("emptyContent")}</button>`;
             }
             this.element.lastElementChild.innerHTML = searchHTML;
-            setPosition(this.element, parseInt(this.element.style.left), parseInt(this.element.style.right));
-        });
+            setHintPosition(this.element, parseInt(this.element.style.left), parseInt(this.element.style.top));
+        }).catch((error) => reportHintRequestFailure(
+            protyle,
+            request,
+            "/api/search/searchRefBlock",
+            error,
+        ));
     }
 
     private genEmojiHTML(protyle: IProtyle, value = "") {
@@ -397,43 +409,34 @@ ${genHintItemHTML(item)}
 
         const panelElement = this.element.querySelector(".emojis__panel");
         if (panelElement) {
-            panelElement.innerHTML = filterEmoji(value, 256);
+            panelElement.innerHTML = filterEmoji(protyle, value, 256);
             if (value) {
                 panelElement.nextElementSibling.classList.add("fn__none");
             } else {
                 panelElement.nextElementSibling.classList.remove("fn__none");
             }
-            lazyLoadEmojiImg(panelElement);
+            lazyLoadEmojiImages(protyle, panelElement);
         } else {
             // max-height：min(402px,40vh) 和 .protyle-hint 保持一致，否则 emoji 不显示底部导航
             this.element.innerHTML = `<div style="padding:0;max-height:min(402px,40vh);width:366px" class="emojis">
-<div class="emojis__panel">${filterEmoji(value, 256)}</div>
+<div class="emojis__panel">${filterEmoji(protyle, value, 256)}</div>
 <div class="fn__flex${value ? " fn__none" : ""}">
-    ${[
-                ["2b50", window.siyuan.languages.recentEmoji],
-                ["1f527", getEmojiTitle(0)],
-                ["1f60d", getEmojiTitle(1)],
-                ["1f433", getEmojiTitle(2)],
-                ["1f96a", getEmojiTitle(3)],
-                ["1f3a8", getEmojiTitle(4)],
-                ["1f3dd-fe0f", getEmojiTitle(5)],
-                ["1f52e", getEmojiTitle(6)],
-                ["267e-fe0f", getEmojiTitle(7)],
-                ["1f6a9", getEmojiTitle(8)],
-            ].map(([unicode, title], index) =>
-                `<button data-type="${index}" class="emojis__type ariaLabel" aria-label="${title}">${unicode2Emoji(unicode)}</button>`
-            ).join("")}
+    ${protyle.settings.recentEmojis.values.length === 0 ? "" : `<button data-type="0" class="emojis__type ariaLabel" aria-label="${protyle.localization.text("recentEmoji")}">${unicodeToEmoji(protyle, "2b50")}</button>`}
+    ${protyle.settings.emojis.flatMap((group, index) => {
+                const icon = getEmojiGroupIcon(group);
+                return icon ? [`<button data-type="${index + 1}" class="emojis__type ariaLabel" aria-label="${getEmojiGroupTitle(protyle, index)}">${unicodeToEmoji(protyle, icon)}</button>`] : [];
+            }).join("")}
 </div>
 </div>`;
-            lazyLoadEmoji(this.element);
-            lazyLoadEmojiImg(this.element);
+            lazyLoadEmojiGroups(protyle, this.element);
+            lazyLoadEmojiImages(protyle, this.element);
         }
         const firstEmojiElement = this.element.querySelector(".emojis__item");
         if (firstEmojiElement) {
             firstEmojiElement.classList.add("emojis__item--current");
             this.element.classList.remove("fn__none");
             const textareaPosition = getSelectionPosition(protyle.wysiwyg.element);
-            setPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
+            setHintPosition(this.element, textareaPosition.left, textareaPosition.top + 26, 30);
             this.element.querySelector(".emojis__panel").scrollTop = 0;
         } else {
             this.element.classList.add("fn__none");
@@ -441,6 +444,7 @@ ${genHintItemHTML(item)}
     }
 
     public fill(value: string, protyle: IProtyle, updateRange = true, refIsS = false) {
+        this.menus.close();
         hideElements(["hint", "toolbar"], protyle);
         if (updateRange && this.source !== "av") {
             protyle.toolbar.range = getEditorRange(protyle.wysiwyg.element);
@@ -467,56 +471,29 @@ ${genHintItemHTML(item)}
             let tempElement = document.createElement("div");
             tempElement.innerHTML = value.replace(/<mark>/g, "").replace(/<\/mark>/g, "");
             tempElement = tempElement.firstElementChild as HTMLDivElement;
-            if (value.startsWith("((newFile ") && value.endsWith(`${Lute.Caret}'))`)) {
-                const fileNames = value.substring(11, value.length - 4).split(`"${Constants.ZWSP}'`);
-                const realFileName = fileNames.length === 1 ? fileNames[0] : fileNames[1];
-                const newID = Lute.NewNodeID();
-                rowElement.dataset.id = newID;
-                newFileByRefHint(protyle, realFileName, () => {
-                    transaction(protyle, [{
-                        action: "replaceAttrViewBlock",
-                        avID,
-                        previousID,
-                        nextID: newID,
-                        isDetached: false,
-                    }], [{
-                        action: "replaceAttrViewBlock",
-                        avID,
-                        previousID: newID,
-                        nextID: previousID,
-                        isDetached: true,
-                    }]);
-                }, newID);
-                updateAttrViewCellAnimation(cellElement, {
-                    type: "block",
-                    isDetached: false,
-                    block: {content: realFileName, id: newID}
-                });
-            } else {
-                const sourceId = tempElement.getAttribute("data-id");
-                rowElement.dataset.id = sourceId;
-                transaction(protyle, [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID,
-                    nextID: sourceId,
-                    isDetached: false,
-                }], [{
-                    action: "replaceAttrViewBlock",
-                    avID,
-                    previousID: sourceId,
-                    nextID: previousID,
-                    isDetached: true,
-                }]);
-                updateAttrViewCellAnimation(cellElement, {
-                    type: "block",
-                    isDetached: false,
-                    block: {
-                        content: tempElement.textContent,
-                        id: sourceId
-                    }
-                });
-            }
+            const sourceId = tempElement.getAttribute("data-id");
+            rowElement.dataset.id = sourceId;
+            transaction(protyle, [{
+                action: "replaceAttrViewBlock",
+                avID,
+                previousID,
+                nextID: sourceId,
+                isDetached: false,
+            }], [{
+                action: "replaceAttrViewBlock",
+                avID,
+                previousID: sourceId,
+                nextID: previousID,
+                isDetached: true,
+            }]);
+            updateAttrViewCellAnimation(protyle, cellElement, {
+                type: "block",
+                isDetached: false,
+                block: {
+                    content: tempElement.textContent,
+                    id: sourceId
+                }
+            });
             return;
         }
         this.enableExtend = value === "emoji";
@@ -559,24 +536,6 @@ ${genHintItemHTML(item)}
             range.setStart(range.startContainer, this.lastIndex);
             focusByRange(range);
         }
-        // 新建文件
-        if (Constants.BLOCK_HINT_KEYS.includes(this.splitChar) && value.startsWith("((newFile ") && value.endsWith(`${Lute.Caret}'))`)) {
-            const fileNames = value.substring(11, value.length - 4).split(`"${Constants.ZWSP}'`);
-            const realFileName = fileNames.length === 1 ? fileNames[0] : fileNames[1];
-            newFileByRefHint(protyle, realFileName, (id) => {
-                // https://github.com/siyuan-note/siyuan/issues/10133
-                protyle.toolbar.range = range;
-                const refElement = protyle.toolbar.setInlineMark(protyle, "block-ref", "range", {
-                    type: "id",
-                    color: `${id}${Constants.ZWSP}${refIsS ? "s" : "d"}${Constants.ZWSP}${getBlockRefAnchorText(refIsS ? fileNames[0] : realFileName)}`
-                });
-                if (refElement[0]) {
-                    protyle.toolbar.range.setEnd(refElement[0].lastChild, refElement[0].lastChild.textContent.length);
-                }
-                protyle.toolbar.range.collapse(false);
-            });
-            return;
-        }
         if (Constants.BLOCK_HINT_KEYS.includes(this.splitChar)) {
             if (value === "") {
                 const editElement = getContenteditableElement(nodeElement);
@@ -613,14 +572,8 @@ ${genHintItemHTML(item)}
             protyle.toolbar.range.collapse(false);
             return;
         } else if (this.splitChar === ":") {
-            addEmoji(value);
-            let emoji;
-            if (value.indexOf(".") > -1) {
-                emoji = `:${value.split(".")[0]}: `;
-            } else {
-                emoji = unicode2Emoji(value) + " ";
-            }
-            insertHTML(protyle.lute.SpinBlockDOM(emoji), protyle);
+            this.recordRecentEmoji(protyle, value);
+            insertHTML(emojiInsertionHTML(protyle, value), protyle);
         } else if (["「「", "「『", "『「", "『『", "{{"].includes(this.splitChar) || this.splitChar === "#" || this.splitChar === ":") {
             if (value === "") {
                 const editElement = getContenteditableElement(nodeElement);
@@ -630,7 +583,7 @@ ${genHintItemHTML(item)}
                 }
                 return;
             }
-            insertHTML(protyle.lute.SpinBlockDOM(value), protyle, false, isMobile());
+            insertHTML(protyle.lute.SpinBlockDOM(value), protyle, false, isNarrowViewport());
             blockRender(protyle, protyle.wysiwyg.element);
             return;
         } else if (this.splitChar === "/" || this.splitChar === "、") {
@@ -676,44 +629,32 @@ ${genHintItemHTML(item)}
                 this.fixImageCursor(range);
                 protyle.toolbar.range = range;
                 const rangePosition = getSelectionPosition(nodeElement, range);
-                assetMenu(protyle, {x: rangePosition.left, y: rangePosition.top + 26, w: 0, h: 26});
+                openAssetMenu({
+                    onCancel: () => focusByRange(protyle.toolbar.range),
+                    onSelect: (path) => hintRenderAssets(path, protyle),
+                    position: {x: rangePosition.left, y: rangePosition.top + 26, w: 0, h: 26},
+                    protyle,
+                });
                 updateTransaction(protyle, nodeElement, html);
                 return;
             } else if (value === Constants.ZWSP + 3) {
                 range.deleteContents();
                 return;
             } else if (value === Constants.ZWSP + 4) {
-                // 新建文档
-                newFileInProtyle(protyle, (createDocId, createDocTitle) => {
-                    insertHTML(`<span data-type="block-ref" data-id="${createDocId}" data-notebook-id="${protyle.notebookId}" data-subtype="d">${getBlockRefAnchorText(createDocTitle)}</span>`, protyle);
-                });
-                return;
-            } else if (value === Constants.ZWSP + 6) {
-                // 新建子文档
-                const newSubDocId = Lute.NewNodeID();
-                fetchPost("/api/filetree/createDoc", {
-                    notebook: protyle.notebookId,
-                    path: pathPosix().join(getDisplayName(protyle.path, false, true), newSubDocId + ".sy"),
-                    title: "",
-                    md: ""
-                }, () => {
-                    insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-notebook-id="${protyle.notebookId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
-                    protyle.host.dispatch({
-                        type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: newSubDocId,
-                        disposition: "current",
-                        scope: "context",
-                        attention: "none",
-                        scroll: "auto",
-                        restoreScroll: "never",
-                        zoom: false,
-                    });
-                });
+                createReferencedDocument(protyle, "configured");
                 return;
             } else if (value === Constants.ZWSP + 5) {
                 range.deleteContents();
-                AIChat(protyle, nodeElement);
+                const identity = protyleContentIdentity(protyle);
+                protyle.host.dispatch({
+                    type: "open-ai-writing",
+                    blockId: id,
+                    documentId: identity.documentId,
+                    notebookId: identity.notebookId,
+                });
+                return;
+            } else if (value === Constants.ZWSP + 6) {
+                createReferencedDocument(protyle, "sub-document");
                 return;
             } else if (Constants.INLINE_TYPE.includes(value)) {
                 range.deleteContents();
@@ -748,7 +689,8 @@ ${genHintItemHTML(item)}
                 }
                 let textContent = value;
                 if (value === "```") {
-                    textContent = value + (Constants.SIYUAN_RENDER_CODE_LANGUAGES.includes(window.siyuan.storage[Constants.LOCAL_CODELANG]) ? "" : window.siyuan.storage[Constants.LOCAL_CODELANG]) + Lute.Caret + "\n```";
+                    const codeLanguage = protyle.settings.toolbar.codeLanguage;
+                    textContent = value + (Constants.SIYUAN_RENDER_CODE_LANGUAGES.includes(codeLanguage) ? "" : codeLanguage) + Lute.Caret + "\n```";
                 }
                 const editableElement = getContenteditableElement(nodeElement);
                 if (value === "![]()") { // https://github.com/siyuan-note/siyuan/issues/4586 1
@@ -774,9 +716,9 @@ ${genHintItemHTML(item)}
                         });
                     }
                     const rect = imgElement.getBoundingClientRect();
-                    imgMenu(protyle, range, imgElement, {
-                        clientX: rect.left,
-                        clientY: rect.top
+                    openImageHintMenu(protyle, this.menus, imgElement, {
+                        x: rect.left,
+                        y: rect.top,
                     });
                     return;
                 } else if (editableElement.textContent === "" && nodeElement.getAttribute("data-type") === "NodeParagraph") {
@@ -917,17 +859,17 @@ ${genHintItemHTML(item)}
                 } else if (value.startsWith("```")) {
                     highlightRender(nodeElement, protyle);
                 } else if (value.startsWith("<iframe") || value.startsWith("<video") || value.startsWith("<audio")) {
-                    protyle.gutter.renderMenu(protyle, nodeElement);
+                    const menu = protyle.gutter.renderMenu(protyle, nodeElement)!;
                     const rect = nodeElement.getBoundingClientRect();
-                    window.siyuan.menus.menu.popup({
+                    menu.popup({
                         x: rect.left,
                         y: rect.top,
                         isLeft: true
                     });
-                    const itemElement = window.siyuan.menus.menu.element.querySelector('[data-id="assetVideo"], [data-id="assetAudio"], [data-id="assetIFrame"]');
+                    const itemElement = menu.element.querySelector('[data-id="assetVideo"], [data-id="assetAudio"], [data-id="assetIFrame"]');
                     itemElement.classList.add("b3-menu__item--show");
-                    window.siyuan.menus.menu.showSubMenu(itemElement.querySelector(".b3-menu__submenu"));
-                    window.siyuan.menus.menu.element.querySelector("textarea").focus();
+                    menu.showSubMenu(itemElement.querySelector(".b3-menu__submenu"));
+                    menu.element.querySelector<HTMLElement>("textarea").focus();
                 } else if (value === "---") {
                     focusBlock(nodeElement);
                 } else if (nodeElement.classList.contains("av")) {
@@ -963,14 +905,8 @@ ${genHintItemHTML(item)}
                     if (range.endContainer.nodeType !== 3) {
                         range.endContainer.childNodes[range.endOffset - 1]?.remove();
                     }
-                    addEmoji(unicode);
-                    let emoji;
-                    if (unicode.indexOf(".") > -1) {
-                        emoji = `:${unicode.split(".")[0]}: `;
-                    } else {
-                        emoji = unicode2Emoji(unicode) + " ";
-                    }
-                    insertHTML(protyle.lute.SpinBlockDOM(emoji), protyle);
+                    this.recordRecentEmoji(protyle, unicode);
+                    insertHTML(emojiInsertionHTML(protyle, unicode), protyle);
                     this.element.classList.add("fn__none");
                 } else {
                     this.fill(unicode, protyle);

@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {confirmDialog} from "../../../dialog/confirmDialog";
@@ -14,6 +13,7 @@ import {getFieldIdByCellElement} from "./row";
 import {Constants} from "../../../constants";
 import {setPosition} from "../../../util/setPosition";
 import {currentAVOverlay} from "./overlay";
+import {openAVMenu} from "./menu";
 
 export interface IAVSelectPanelState {
     cellValues: IAVCellValue[];
@@ -23,7 +23,7 @@ const filterSelectHTML = (key: string, options: {
     name: string,
     color: string,
     desc?: string
-}[], selected: string[] = [], panelElement?: HTMLElement) => {
+}[], localization: IProtyle["localization"], selected: string[] = [], panelElement?: HTMLElement) => {
     let html = "";
     let hasMatch = false;
     if (selected.length === 0 && panelElement) {
@@ -64,7 +64,7 @@ const filterSelectHTML = (key: string, options: {
         <span class="fn__ellipsis">${escapeHtml(key)}</span>
     </span>
 </div>
-<span class="b3-menu__accelerator b3-menu__accelerator--hotkey">${window.siyuan.languages.enterKey}</span>
+<span class="b3-menu__accelerator b3-menu__accelerator--hotkey">${localization.text("enterKey")}</span>
 </button>${html}`;
     } else if (html.indexOf("b3-menu__item--current") === -1) {
         html = html.replace('class="b3-menu__item"', 'class="b3-menu__item b3-menu__item--current"');
@@ -126,9 +126,9 @@ export const removeCellOption = (protyle: IProtyle, cellElements: HTMLElement[],
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file);
+            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
         } else {
-            updateAttrViewCellAnimation(item, cellValue);
+            updateAttrViewCellAnimation(protyle, item, cellValue);
         }
     });
     doOperations.push({
@@ -153,6 +153,7 @@ export const removeCellOption = (protyle: IProtyle, cellElements: HTMLElement[],
 };
 
 export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, blockElement: Element, isCustomAttr: boolean, state: IAVSelectPanelState, cellElements?: HTMLElement[]) => {
+    const {localization} = protyle;
     const menuElement = hasClosestByClassName(target, "b3-menu");
     if (!menuElement) {
         return;
@@ -165,7 +166,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
     let color = target.parentElement.dataset.color;
     const fields = getFieldsByData(data);
     const cellValues = state.cellValues;
-    const menu = new Menu(Constants.MENU_AV_COL_OPTION, () => {
+    const menuHandle = openAVMenu(protyle, Constants.MENU_AV_COL_OPTION, () => {
         if ((name === inputElement.value && desc === descElement.value) || !inputElement.value) {
             return;
         }
@@ -238,12 +239,23 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     }
                 });
                 if (cellElement.classList.contains("custom-attr__avvalue")) {
-                    cellElement.innerHTML = genAVValueHTML(cellValues[index], protyle.settings.icons.file);
+                    cellElement.innerHTML = genAVValueHTML(
+                        cellValues[index],
+                        protyle.settings.icons.file,
+                        localization,
+                    );
                 } else {
-                    updateAttrViewCellAnimation(cellElement, cellValues[index]);
+                    updateAttrViewCellAnimation(protyle, cellElement, cellValues[index]);
                 }
             });
-            menuElement.innerHTML = getSelectHTML(fields, cellElements, state, false, blockElement);
+            menuElement.innerHTML = getSelectHTML(
+                fields,
+                cellElements,
+                state,
+                false,
+                blockElement,
+                localization,
+            );
             bindSelectEvent(protyle, data, menuElement, cellElements, blockElement, state);
         }
         if (selectedElement) {
@@ -253,20 +265,21 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
             setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
         }
     });
-    if (menu.isOpen) {
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     menu.addItem({
         iconHTML: "",
         type: "empty",
         label: `<div class="fn__hr"></div>
 <div class="b3-form__icona fn__block">
     <input class="b3-text-field b3-form__icona-input" type="text" size="16">
-    <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${desc ? escapeAriaLabel(desc) : window.siyuan.languages.addDesc}"><use xlink:href="#iconInfo"></use></svg>
+    <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${desc ? escapeAriaLabel(desc) : localization.text("addDesc")}"><use xlink:href="#iconInfo"></use></svg>
 </div>
 <div class="fn__none">
     <div class="fn__hr"></div>
-    <textarea rows="1" placeholder="${window.siyuan.languages.addDesc}" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(desc)}">${desc}</textarea>
+    <textarea rows="1" placeholder="${localization.text("addDesc")}" class="b3-text-field fn__block" type="text" data-value="${escapeAttr(desc)}">${desc}</textarea>
 </div>
 <div class="fn__hr--small"></div>`,
         bind(element) {
@@ -276,7 +289,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     return;
                 }
                 if (event.key === "Enter") {
-                    menu.close();
+                    menuHandle.close();
                 }
             });
             inputElement.value = name;
@@ -293,20 +306,20 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     return;
                 }
                 if (event.key === "Enter") {
-                    menu.close();
+                    menuHandle.close();
                 }
             });
             descElement.addEventListener("input", () => {
-                inputElement.nextElementSibling.setAttribute("aria-label", descElement.value ? escapeHtml(descElement.value) : window.siyuan.languages.addDesc);
+                inputElement.nextElementSibling.setAttribute("aria-label", descElement.value ? escapeHtml(descElement.value) : localization.text("addDesc"));
             });
         }
     });
     menu.addItem({
         id: "delete",
-        label: window.siyuan.languages.delete,
+        label: localization.text("delete"),
         icon: "iconTrashcan",
         click() {
-            confirmDialog(window.siyuan.languages.deleteOpConfirm, window.siyuan.languages.confirmDelete, () => {
+            confirmDialog(localization.text("deleteOpConfirm"), localization.text("confirmDelete"), () => {
                 let colOptions: { name: string, color: string }[] = [];
                 fields.find(column => {
                     if (column.id === colId) {
@@ -358,12 +371,23 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                             }
                         });
                         if (cellElement.classList.contains("custom-attr__avvalue")) {
-                            cellElement.innerHTML = genAVValueHTML(cellValues[index], protyle.settings.icons.file);
+                            cellElement.innerHTML = genAVValueHTML(
+                                cellValues[index],
+                                protyle.settings.icons.file,
+                                localization,
+                            );
                         } else {
-                            updateAttrViewCellAnimation(cellElement, cellValues[index]);
+                            updateAttrViewCellAnimation(protyle, cellElement, cellValues[index]);
                         }
                     });
-                    menuElement.innerHTML = getSelectHTML(fields, cellElements, state, false, blockElement);
+                    menuElement.innerHTML = getSelectHTML(
+                        fields,
+                        cellElements,
+                        state,
+                        false,
+                        blockElement,
+                        localization,
+                    );
                     bindSelectEvent(protyle, data, menuElement, cellElements, blockElement, state);
                 }
                 if (selectedElement) {
@@ -375,7 +399,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
             }, undefined, true);
         }
     });
-    menu.addSeparator();
+    menu.addItem({type: "separator"});
     let html = "<div class=\"fn__flex fn__flex-wrap\" style=\"width: 238px\">";
     Array.from(Array(14).keys()).forEach(index => {
         html += `<button data-color="${index + 1}" class="color__square${parseInt(color) === index + 1 ? " color__square--current" : ""}" style="color: var(--b3-font-color${index + 1});background-color: var(--b3-font-background${index + 1});">A</button>`;
@@ -452,12 +476,23 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                                 }
                             });
                             if (cellElement.classList.contains("custom-attr__avvalue")) {
-                                cellElement.innerHTML = genAVValueHTML(cellValues[cellIndex], protyle.settings.icons.file);
+                                cellElement.innerHTML = genAVValueHTML(
+                                    cellValues[cellIndex],
+                                    protyle.settings.icons.file,
+                                    localization,
+                                );
                             } else {
-                                updateAttrViewCellAnimation(cellElement, cellValues[cellIndex]);
+                                updateAttrViewCellAnimation(protyle, cellElement, cellValues[cellIndex]);
                             }
                         });
-                        menuElement.innerHTML = getSelectHTML(fields, cellElements, state, false, blockElement);
+                        menuElement.innerHTML = getSelectHTML(
+                            fields,
+                            cellElements,
+                            state,
+                            false,
+                            blockElement,
+                            localization,
+                        );
                         bindSelectEvent(protyle, data, menuElement, cellElements, blockElement, state);
                     }
                     menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll;
@@ -472,7 +507,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
         }
     });
     const rect = target.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         x: rect.right,
         y: rect.bottom,
         w: rect.width,
@@ -501,10 +536,22 @@ export const bindSelectEvent = (protyle: IProtyle, data: IAV, menuElement: HTMLE
         if (event.isComposing) {
             return;
         }
-        listElement.innerHTML = filterSelectHTML(inputElement.value, colData.options, [], menuElement);
+        listElement.innerHTML = filterSelectHTML(
+            inputElement.value,
+            colData.options,
+            protyle.localization,
+            [],
+            menuElement,
+        );
     });
     inputElement.addEventListener("compositionend", () => {
-        listElement.innerHTML = filterSelectHTML(inputElement.value, colData.options, [], menuElement);
+        listElement.innerHTML = filterSelectHTML(
+            inputElement.value,
+            colData.options,
+            protyle.localization,
+            [],
+            menuElement,
+        );
     });
     inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
         if (event.isComposing) {
@@ -617,9 +664,9 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file);
+            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
         } else {
-            updateAttrViewCellAnimation(item, cellValue);
+            updateAttrViewCellAnimation(protyle, item, cellValue);
         }
     });
 
@@ -659,7 +706,14 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
     } else {
         const oldScroll = menuElement.querySelector(".b3-menu__items").scrollTop;
         const oldChipsHeight = menuElement.querySelector(".b3-chips").clientHeight;
-        menuElement.innerHTML = getSelectHTML(fields, cellElements, state, false, blockElement);
+        menuElement.innerHTML = getSelectHTML(
+            fields,
+            cellElements,
+            state,
+            false,
+            blockElement,
+            protyle.localization,
+        );
         bindSelectEvent(protyle, data, menuElement, cellElements, blockElement, state);
         menuElement.querySelector("input").focus();
         menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll + (menuElement.querySelector(".b3-chips").clientHeight - oldChipsHeight);
@@ -669,7 +723,14 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
     }
 };
 
-export const getSelectHTML = (fields: IAVColumn[], cellElements: HTMLElement[], state: IAVSelectPanelState, init = false, blockElement: Element) => {
+export const getSelectHTML = (
+    fields: IAVColumn[],
+    cellElements: HTMLElement[],
+    state: IAVSelectPanelState,
+    init = false,
+    blockElement: Element,
+    localization: IProtyle["localization"],
+) => {
     if (init) {
         // 快速选中后如果 render 了再使用 genCellValueByElement 获取的元素和当前选中的不一致， https://github.com/siyuan-note/siyuan/issues/11268
         state.cellValues = [];
@@ -697,7 +758,7 @@ export const getSelectHTML = (fields: IAVColumn[], cellElements: HTMLElement[], 
     ${selectedHTML}
     <input>
 </div>
-<div style="flex: 1;overflow: auto;">${filterSelectHTML("", colData.options, selected)}</div>
+<div style="flex: 1;overflow: auto;">${filterSelectHTML("", colData.options, localization, selected)}</div>
 </div>`;
 };
 

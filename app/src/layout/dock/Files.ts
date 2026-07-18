@@ -428,19 +428,12 @@ export class Files extends Model {
                 ghostElement.setAttribute("style", `width: 219px;position: fixed;top:-${selectElements.length * 30}px`);
                 ghostElement.setAttribute("class", "b3-list b3-list--background");
                 document.body.append(ghostElement);
-                if (window.siyuan.touchDragActive) {
-                    // 触屏保留 DOM ghost 供 touchDragBridge 跟随手指
-                    event.dataTransfer.setDragImage(ghostElement, 16, 16);
-                    window.siyuan.touchDragGhost = ghostElement;
-                } else {
-                    // 桌面端隐藏原生 ghost，改用自定义双区跟随框
-                    const transparentImg = new Image();
-                    transparentImg.src = transparentImgSrc;
-                    event.dataTransfer.setDragImage(transparentImg, 0, 0);
-                    setTimeout(() => {
-                        ghostElement.remove();
-                    });
-                }
+                const transparentImg = new Image();
+                transparentImg.src = transparentImgSrc;
+                event.dataTransfer.setDragImage(transparentImg, 0, 0);
+                setTimeout(() => {
+                    ghostElement.remove();
+                });
                 event.dataTransfer.setData(Constants.SIYUAN_DROP_FILE, ids);
                 event.dataTransfer.setData(Constants.SIYUAN_DROP_NOTEBOOK, JSON.stringify(documentTargets));
                 event.dataTransfer.dropEffect = "move";

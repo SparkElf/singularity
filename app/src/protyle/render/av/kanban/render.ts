@@ -13,7 +13,11 @@ interface IIds {
     fieldId: string,
 }
 
-const getKanbanTitleHTML = (group: IAVView, counter: number) => {
+const getKanbanTitleHTML = (
+    group: IAVView,
+    counter: number,
+    localization: IProtyle["localization"],
+) => {
     let nameHTML = "";
     if (["mSelect", "select"].includes(group.groupValue.type)) {
         group.groupValue.mSelect.forEach((item) => {
@@ -27,13 +31,19 @@ const getKanbanTitleHTML = (group: IAVView, counter: number) => {
     // av__group-name 为第三方需求，本应用内没有使用，但不能移除 https://github.com/siyuan-note/siyuan/issues/15736
     return `<div class="av__group-title">
     <span class="av__group-name fn__ellipsis" style="white-space: nowrap;">${nameHTML}</span>
-    ${(!counter || counter === 0) ? '<span class="fn__space"></span>' : `<span aria-label="${window.siyuan.languages.entryNum}" data-position="north" class="av__group-counter ariaLabel">${counter}</span>`}
+    ${(!counter || counter === 0) ? '<span class="fn__space"></span>' : `<span aria-label="${localization.text("entryNum")}" data-position="north" class="av__group-counter ariaLabel">${counter}</span>`}
     <span class="fn__flex-1"></span>
-    <span class="av__group-icon av__group-icon--hover ariaLabel" data-type="av-add-top" data-position="north" aria-label="${window.siyuan.languages.newRow}"><svg><use xlink:href="#iconAdd"></use></svg></span>
+    <span class="av__group-icon av__group-icon--hover ariaLabel" data-type="av-add-top" data-position="north" aria-label="${localization.text("newRow")}"><svg><use xlink:href="#iconAdd"></use></svg></span>
 </div>`;
 };
 
-const getKanbanHTML = (data: IAVKanban, e: HTMLElement, virtualData: IAVVirtualData, fileIcon: string) => {
+const getKanbanHTML = (
+    data: IAVKanban,
+    e: HTMLElement,
+    virtualData: IAVVirtualData,
+    fileIcon: string,
+    localization: IProtyle["localization"],
+) => {
     let galleryHTML = "";
     // body
     data.cards.forEach((item: IAVGalleryItem, rowIndex: number) => {
@@ -54,16 +64,17 @@ const getKanbanHTML = (data: IAVKanban, e: HTMLElement, virtualData: IAVVirtualD
             rowIndex,
             type: "kanban",
             fileIcon,
+            localization,
         });
     });
-    galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${window.siyuan.languages.newRow}</div>`;
+    galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${localization.text("newRow")}</div>`;
     return `<div class="av__gallery av__gallery--small">
     ${virtualData?.topSpacerHeight ? `<div class="av__spacer" style="height: ${virtualData.topSpacerHeight}px;"></div>` : ""}${galleryHTML}
 </div>
 <div class="av__gallery-load${data.cardCount > data.cards.length ? "" : " fn__none"}">
     <button class="b3-button av__button" data-type="av-load-more">
         <svg><use xlink:href="#iconArrowDown"></use></svg>
-        <span>${window.siyuan.languages.loadMore}</span>
+        <span>${localization.text("loadMore")}</span>
         <svg data-type="set-page-size" data-size="${data.pageSize}"><use xlink:href="#iconMore"></use></svg>
     </button>
 </div>`;
@@ -77,7 +88,7 @@ export const renderKanban = async (options: {
     data?: IAV,
     load?: AVRenderLoad,
 }) => {
-    const load = options.load ?? beginAVRenderLoad(options.protyle, options.blockElement);
+    const load = options.load ?? beginAVRenderLoad(options.protyle, options.blockElement, "render");
     const searchInputElement = options.blockElement.querySelector('[data-type="av-search"]') as HTMLInputElement;
     const editIds: IIds[] = [];
     options.blockElement.querySelectorAll(".av__gallery-fields--edit").forEach(item => {
@@ -193,8 +204,8 @@ export const renderKanban = async (options: {
                 }
             }
             bodyHTML += `<div class="av__kanban-group${group.cardSize === 0 ? " av__kanban-group--small" : (group.cardSize === 2 ? " av__kanban-group--big" : "")}"${selectBg}>
-    ${getKanbanTitleHTML(group, group.cardCount)}
-    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file)}</div>
+    ${getKanbanTitleHTML(group, group.cardCount, options.protyle.localization)}
+    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization)}</div>
 </div>`;
         }
     });

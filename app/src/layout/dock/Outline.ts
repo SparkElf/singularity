@@ -27,7 +27,7 @@ import {Editor} from "../../editor";
 import {mathRender} from "../../protyle/render/mathRender";
 import {genEmptyElement} from "../../block/util";
 import {focusBlock, focusByWbr} from "../../protyle/util/selection";
-import {dragOverScroll, stopScrollAnimation} from "../../boot/globalEvent/dragover";
+import {dragOverScroll, stopScrollAnimation} from "../../protyle/ui/dragScroll";
 
 export class Outline extends Model {
     public tree: Tree;

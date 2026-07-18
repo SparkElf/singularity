@@ -2,7 +2,7 @@ import * as dayjs from "dayjs";
 import {genCellValueByElement, updateCellsValue} from "./cell";
 import {currentAVOverlay} from "./overlay";
 
-export const getDateHTML = (cellElements: HTMLElement[]) => {
+export const getDateHTML = (cellElements: HTMLElement[], localization: IProtyle["localization"]) => {
     const cellValue = genCellValueByElement("date", cellElements[0]).date;
     const isNotTime = cellValue.isNotTime;
     let value = "";
@@ -32,19 +32,19 @@ export const getDateHTML = (cellElements: HTMLElement[]) => {
     <input type="${isNotTime ? "date" : "datetime-local"}" max="${isNotTime ? "9999-12-31" : "9999-12-31 23:59"}" value="${value2}" data-value="${cellValue.isNotEmpty2 ? dayjs(cellValue.content2).format("YYYY-MM-DD HH:mm") : ""}" style="margin-top: 8px;margin-bottom: 4px" class="b3-text-field fn__size200${cellValue.hasEndDate ? "" : " fn__none"}">
     <button class="b3-menu__separator"></button>
     <label class="b3-menu__item">
-        <span class="fn__flex-center">${window.siyuan.languages.endDate}</span>
+        <span class="fn__flex-center">${localization.text("endDate")}</span>
         <span class="fn__space fn__flex-1"></span>
         <input type="checkbox" class="b3-switch b3-switch--menu"${cellValue.hasEndDate ? " checked" : ""}>
     </label>
     <label class="b3-menu__item">
-        <span class="fn__flex-center">${window.siyuan.languages.includeTime}</span>
+        <span class="fn__flex-center">${localization.text("includeTime")}</span>
         <span class="fn__space fn__flex-1"></span>
         <input type="checkbox" class="b3-switch b3-switch--menu"${isNotTime ? "" : " checked"}>
     </label>
     <button class="b3-menu__separator"></button>
     <button class="b3-menu__item" data-type="clearDate">
         <svg class="b3-menu__icon"><use xlink:href="#iconTrashcan"></use></svg>
-        <span class="b3-menu__label">${window.siyuan.languages.clear}</span>
+        <span class="b3-menu__label">${localization.text("clear")}</span>
     </button>
 </div>
 </div>`;

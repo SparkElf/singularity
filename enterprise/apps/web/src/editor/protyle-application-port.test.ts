@@ -13,7 +13,7 @@ function createStorage() {
 }
 
 describe("createProtyleApplicationPort", () => {
-  it("persists display state under the authorized space and keys positions by content identity", () => {
+  it("persists display state under the authorized space and keys positions by content identity", async () => {
     const storage = createStorage();
     const identity = {
       documentId: "20260718000100-docum01",
@@ -27,7 +27,8 @@ describe("createProtyleApplicationPort", () => {
 
     application.settings.editor.setFontSize(18);
     application.settings.localFilePosition.set(identity, position);
-    application.settings.editor.persist();
+    await application.settings.recentEmojis.add("1f600");
+    await application.settings.editor.persist();
 
     const restored = createProtyleApplicationPort({
       spaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -39,12 +40,20 @@ describe("createProtyleApplicationPort", () => {
     });
 
     expect(restored.settings.editor.fontSize).toBe(18);
-    expect(restored.settings.hotkeys.insertRight).toBe("⌥.");
+    expect(restored.settings.features).toEqual({
+      aiWriting: false,
+      flashcardDeck: false,
+      wechatReminder: false,
+      widget: false,
+    });
+    expect(restored.settings.hotkeys.editor.general.insertRight).toBe("⌥.");
     expect(restored.settings.icons.file).toBe("1f4c4");
     expect(restored.settings.localFilePosition.get(identity)).toEqual(position);
     expect(restored.settings.navigation.openFilesUseCurrentTab).toBe(false);
+    expect(restored.settings.recentEmojis.values).toEqual(["1f600"]);
     expect(restored.localization.text("uploading")).toBe("上传中...");
     expect(otherNotebook.settings.localFilePosition.get(identity)).toBeUndefined();
+    expect(otherNotebook.settings.recentEmojis.values).toEqual([]);
     expect(Object.keys(restored).sort()).toEqual(["localization", "settings"]);
   });
 });

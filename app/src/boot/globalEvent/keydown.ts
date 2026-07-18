@@ -1332,7 +1332,7 @@ export const windowKeyDown = (app: App, event: KeyboardEvent) => {
         return;
     }
 
-    if (bindAVPanelKeydown(event)) {
+    if (bindAVPanelKeydown(event, protyle)) {
         event.preventDefault();
         return;
     }

@@ -2,6 +2,7 @@ import {Constants} from "../constants";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {setInlineStyle} from "../util/assets";
 import {fetchSyncPost} from "../util/fetch";
+import {addRecentEmoji, getRecentEmojis} from "./recent-emojis";
 
 const positionKey = (identity: {notebookId: string, documentId: string}) =>
     `${identity.notebookId}:${identity.documentId}`;
@@ -23,6 +24,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
     get editor() {
         const editor = window.siyuan.config.editor;
         return {
+            blockRefDynamicAnchorTextMaxLen: editor.blockRefDynamicAnchorTextMaxLen,
             codeLigatures: editor.codeLigatures,
             codeLineWrap: editor.codeLineWrap,
             codeSyntaxHighlightLineNum: editor.codeSyntaxHighlightLineNum,
@@ -74,9 +76,68 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
             paragraphBeginningSpace: window.siyuan.config.export.paragraphBeginningSpace,
         };
     },
-    get hotkeys() {
+    get features() {
         return {
-            insertRight: window.siyuan.config.keymap.editor.general.insertRight.custom,
+            aiWriting: true,
+            flashcardDeck: window.siyuan.config.flashcard.deck,
+            wechatReminder: window.siyuan.config.cloudRegion === 0,
+            widget: true,
+        };
+    },
+    get hotkeys() {
+        const keymap = window.siyuan.config.keymap;
+        return {
+            general: {
+                addToDatabase: keymap.general.addToDatabase.custom,
+                enter: keymap.general.enter.custom,
+                enterBack: keymap.general.enterBack.custom,
+                move: keymap.general.move.custom,
+                search: keymap.general.search.custom,
+            },
+            editor: {
+                general: {
+                    ai: keymap.editor.general.ai.custom,
+                    aiWriting: keymap.editor.general.aiWriting.custom,
+                    alignCenter: keymap.editor.general.alignCenter.custom,
+                    alignLeft: keymap.editor.general.alignLeft.custom,
+                    alignRight: keymap.editor.general.alignRight.custom,
+                    attr: keymap.editor.general.attr.custom,
+                    collapse: keymap.editor.general.collapse.custom,
+                    copyPlainText: keymap.editor.general.copyPlainText.custom,
+                    copyText: keymap.editor.general.copyText.custom,
+                    duplicate: keymap.editor.general.duplicate.custom,
+                    duplicateCompletely: keymap.editor.general.duplicateCompletely.custom,
+                    foldRecursive: keymap.editor.general.foldRecursive.custom,
+                    hLayout: keymap.editor.general.hLayout.custom,
+                    insertAfter: keymap.editor.general.insertAfter.custom,
+                    insertBefore: keymap.editor.general.insertBefore.custom,
+                    insertRight: keymap.editor.general.insertRight.custom,
+                    jumpToParent: keymap.editor.general.jumpToParent.custom,
+                    jumpToParentNext: keymap.editor.general.jumpToParentNext.custom,
+                    jumpToParentPrev: keymap.editor.general.jumpToParentPrev.custom,
+                    ltr: keymap.editor.general.ltr.custom,
+                    quickMakeCard: keymap.editor.general.quickMakeCard.custom,
+                    rtl: keymap.editor.general.rtl.custom,
+                    vLayout: keymap.editor.general.vLayout.custom,
+                },
+                heading: {
+                    heading1: keymap.editor.heading.heading1.custom,
+                    heading2: keymap.editor.heading.heading2.custom,
+                    heading3: keymap.editor.heading.heading3.custom,
+                    heading4: keymap.editor.heading.heading4.custom,
+                    heading5: keymap.editor.heading.heading5.custom,
+                    heading6: keymap.editor.heading.heading6.custom,
+                    paragraph: keymap.editor.heading.paragraph.custom,
+                },
+                insert: {
+                    check: keymap.editor.insert.check.custom,
+                    code: keymap.editor.insert.code.custom,
+                    list: keymap.editor.insert.list.custom,
+                    orderedList: keymap.editor.insert["ordered-list"].custom,
+                    quote: keymap.editor.insert.quote.custom,
+                    table: keymap.editor.insert.table.custom,
+                },
+            },
         };
     },
     get icons() {
@@ -101,6 +162,12 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
         return {
             openFilesUseCurrentTab: window.siyuan.config.fileTree.openFilesUseCurrentTab,
         };
+    },
+    recentEmojis: {
+        add: addRecentEmoji,
+        get values() {
+            return getRecentEmojis();
+        },
     },
     get toolbar() {
         const insert = window.siyuan.config.keymap.editor.insert;

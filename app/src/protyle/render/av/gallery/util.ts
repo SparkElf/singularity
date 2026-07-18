@@ -1,10 +1,10 @@
 import {transaction} from "../../../wysiwyg/transaction";
-import {Menu} from "../../../../plugin/Menu";
 import {hasClosestByClassName} from "../../../util/hasClosest";
 import {unicode2Emoji} from "../../../../emoji";
 import {getColIconByType} from "../col";
 import {avContextmenu} from "../action";
 import {Constants} from "../../../../constants";
+import {openAVMenu} from "../menu";
 
 export const setGalleryCover = (options: {
     view: IAVGallery
@@ -15,11 +15,15 @@ export const setGalleryCover = (options: {
     const avID = options.nodeElement.getAttribute("data-av-id");
     const blockID = options.nodeElement.getAttribute("data-node-id");
     const targetNameElement = options.target.querySelector(".b3-menu__accelerator");
-    const menu = new Menu();
+    const menuHandle = openAVMenu(options.protyle);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     menu.addItem({
         iconHTML: "",
         checked: options.view.coverFrom === 0,
-        label: window.siyuan.languages.calcOperatorNone,
+        label: options.protyle.localization.text("calcOperatorNone"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCoverFrom",
@@ -33,13 +37,13 @@ export const setGalleryCover = (options: {
                 data: options.view.coverFrom
             }]);
             options.view.coverFrom = 0;
-            targetNameElement.textContent = window.siyuan.languages.calcOperatorNone;
+            targetNameElement.textContent = options.protyle.localization.text("calcOperatorNone");
         }
     });
     menu.addItem({
         iconHTML: "",
         checked: options.view.coverFrom === 3,
-        label: window.siyuan.languages.contentBlock,
+        label: options.protyle.localization.text("contentBlock"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCoverFrom",
@@ -53,13 +57,13 @@ export const setGalleryCover = (options: {
                 data: options.view.coverFrom
             }]);
             options.view.coverFrom = 3;
-            targetNameElement.textContent = window.siyuan.languages.contentBlock;
+            targetNameElement.textContent = options.protyle.localization.text("contentBlock");
         }
     });
     menu.addItem({
         iconHTML: "",
         checked: options.view.coverFrom === 1,
-        label: window.siyuan.languages.contentImage,
+        label: options.protyle.localization.text("contentImage"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCoverFrom",
@@ -73,14 +77,14 @@ export const setGalleryCover = (options: {
                 data: options.view.coverFrom
             }]);
             options.view.coverFrom = 1;
-            targetNameElement.textContent = window.siyuan.languages.contentImage;
+            targetNameElement.textContent = options.protyle.localization.text("contentImage");
         }
     });
     let addedSeparator = false;
     options.view.fields.forEach(item => {
         if (item.type === "mAsset") {
             if (!addedSeparator) {
-                menu.addSeparator();
+                menu.addItem({type: "separator"});
                 addedSeparator = true;
             }
             menu.addItem({
@@ -117,7 +121,7 @@ export const setGalleryCover = (options: {
         }
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({x: rect.left, y: rect.bottom});
+    menu.popup({x: rect.left, y: rect.bottom});
 };
 
 export const setGallerySize = (options: {
@@ -126,7 +130,11 @@ export const setGallerySize = (options: {
     protyle: IProtyle,
     target: HTMLElement
 }) => {
-    const menu = new Menu();
+    const menuHandle = openAVMenu(options.protyle);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     const avID = options.nodeElement.getAttribute("data-av-id");
     const blockID = options.nodeElement.getAttribute("data-node-id");
     const viewID = options.nodeElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW);
@@ -134,7 +142,7 @@ export const setGallerySize = (options: {
     menu.addItem({
         iconHTML: "",
         checked: options.view.cardSize === 0,
-        label: window.siyuan.languages.small,
+        label: options.protyle.localization.text("small"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCardSize",
@@ -150,13 +158,13 @@ export const setGallerySize = (options: {
                 viewID
             }]);
             options.view.cardSize = 0;
-            targetNameElement.textContent = window.siyuan.languages.small;
+            targetNameElement.textContent = options.protyle.localization.text("small");
         }
     });
     menu.addItem({
         iconHTML: "",
         checked: options.view.cardSize === 1,
-        label: window.siyuan.languages.medium,
+        label: options.protyle.localization.text("medium"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCardSize",
@@ -172,13 +180,13 @@ export const setGallerySize = (options: {
                 viewID
             }]);
             options.view.cardSize = 1;
-            targetNameElement.textContent = window.siyuan.languages.medium;
+            targetNameElement.textContent = options.protyle.localization.text("medium");
         }
     });
     menu.addItem({
         iconHTML: "",
         checked: options.view.cardSize === 2,
-        label: window.siyuan.languages.large,
+        label: options.protyle.localization.text("large"),
         click() {
             transaction(options.protyle, [{
                 action: "setAttrViewCardSize",
@@ -194,11 +202,11 @@ export const setGallerySize = (options: {
                 viewID
             }]);
             options.view.cardSize = 2;
-            targetNameElement.textContent = window.siyuan.languages.large;
+            targetNameElement.textContent = options.protyle.localization.text("large");
         }
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({x: rect.left, y: rect.bottom});
+    menu.popup({x: rect.left, y: rect.bottom});
 };
 
 export const getCardAspectRatio = (ratio: number) => {
@@ -227,7 +235,11 @@ export const setGalleryRatio = (options: {
     protyle: IProtyle,
     target: HTMLElement
 }) => {
-    const menu = new Menu();
+    const menuHandle = openAVMenu(options.protyle);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     const avID = options.nodeElement.getAttribute("data-av-id");
     const blockID = options.nodeElement.getAttribute("data-node-id");
     const viewID = options.nodeElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW);
@@ -257,7 +269,7 @@ export const setGalleryRatio = (options: {
         });
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({x: rect.left, y: rect.bottom});
+    menu.popup({x: rect.left, y: rect.bottom});
 };
 
 export const openGalleryItemMenu = (options: {
@@ -275,12 +287,16 @@ export const openGalleryItemMenu = (options: {
     avContextmenu(options.protyle, cardElement, options.position);
 };
 
-export const editGalleryItem = (target: Element) => {
+export const editGalleryItem = (protyle: IProtyle, target: Element) => {
     const itemElement = hasClosestByClassName(target, "av__gallery-item");
     if (itemElement) {
         const fieldsElement = itemElement.querySelector(".av__gallery-fields");
         if (fieldsElement) {
-            target.setAttribute("aria-label", window.siyuan.languages[fieldsElement.classList.contains("av__gallery-fields--edit") ? "displayEmptyFields" : "hideEmptyFields"]);
+            target.setAttribute("aria-label", protyle.localization.text(
+                fieldsElement.classList.contains("av__gallery-fields--edit")
+                    ? "displayEmptyFields"
+                    : "hideEmptyFields",
+            ));
             fieldsElement.classList.toggle("av__gallery-fields--edit");
         }
     }

@@ -7,7 +7,7 @@ import {getRandomEmoji, openEmojiPanel, unicode2Emoji, updateFileTreeEmoji, upda
 import {upDownHint} from "../util/upDownHint";
 import {Dialog} from "../../dialog";
 import {Constants} from "../../constants";
-import {assetMenu} from "../../menus/protyle";
+import {openAssetMenu} from "../ui/assetMenu";
 import {previewImages} from "../preview/image";
 import {Menu} from "../../plugin/Menu";
 import {escapeHtml} from "../../util/escape";
@@ -396,18 +396,23 @@ export class Background {
                     break;
                 } else if (type === "asset" && !protyle.disabled) {
                     const rect = target.getBoundingClientRect();
-                    assetMenu(protyle, {
-                        x: target.parentElement.getBoundingClientRect().right,
-                        y: rect.bottom + 8,
-                        isLeft: true,
-                    }, (url) => {
-                        this.ial["title-img"] = `background-image:url("${url}")`;
-                        this.render(this.ial, protyle.block.rootID);
-                        fetchPost("/api/attr/setBlockAttrs", {
-                            id: protyle.block.rootID,
-                            attrs: {"title-img": this.ial["title-img"]}
-                        });
-                    }, Constants.SIYUAN_ASSETS_IMAGE);
+                    openAssetMenu({
+                        extensions: Constants.SIYUAN_ASSETS_IMAGE,
+                        onSelect: (url) => {
+                            this.ial["title-img"] = `background-image:url("${url}")`;
+                            this.render(this.ial, protyle.block.rootID);
+                            fetchPost("/api/attr/setBlockAttrs", {
+                                id: protyle.block.rootID,
+                                attrs: {"title-img": this.ial["title-img"]}
+                            });
+                        },
+                        position: {
+                            isLeft: true,
+                            x: target.parentElement.getBoundingClientRect().right,
+                            y: rect.bottom + 8,
+                        },
+                        protyle,
+                    });
                     event.preventDefault();
                     event.stopPropagation();
                     break;

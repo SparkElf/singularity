@@ -34,7 +34,13 @@ interface ITableOptions {
     }
 }
 
-const getGalleryHTML = (data: IAVGallery, e: HTMLElement, virtualData: IAVVirtualData, fileIcon: string) => {
+const getGalleryHTML = (
+    data: IAVGallery,
+    e: HTMLElement,
+    virtualData: IAVVirtualData,
+    fileIcon: string,
+    localization: IProtyle["localization"],
+) => {
     let galleryHTML = "";
     // body
     data.cards.forEach((item: IAVGalleryItem, rowIndex: number) => {
@@ -49,16 +55,16 @@ const getGalleryHTML = (data: IAVGallery, e: HTMLElement, virtualData: IAVVirtua
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        galleryHTML += getRowHTML({data, row: item, rowIndex, type: "gallery", fileIcon});
+        galleryHTML += getRowHTML({data, row: item, rowIndex, type: "gallery", fileIcon, localization});
     });
-    galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${window.siyuan.languages.newRow}</div>`;
+    galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${localization.text("newRow")}</div>`;
     return `<div class="av__gallery${data.cardSize === 0 ? " av__gallery--small" : (data.cardSize === 2 ? " av__gallery--big" : "")}">
     ${virtualData?.topSpacerHeight ? `<div class="av__spacer" style="height: ${virtualData.topSpacerHeight}px;"></div>` : ""}${galleryHTML}
 </div>
 <div class="av__gallery-load${data.cardCount > data.cards.length ? "" : " fn__none"}">
     <button class="b3-button av__button" data-type="av-load-more">
         <svg><use xlink:href="#iconArrowDown"></use></svg>
-        <span>${window.siyuan.languages.loadMore}</span>
+        <span>${localization.text("loadMore")}</span>
         <svg data-type="set-page-size" data-size="${data.pageSize}"><use xlink:href="#iconMore"></use></svg>
     </button>
 </div>`;
@@ -72,8 +78,8 @@ const renderGroupGallery = (options: ITableOptions) => {
     let avBodyHTML = "";
     options.data.view.groups.forEach((group: IAVGallery) => {
         if (group.groupHidden === 0) {
-            avBodyHTML += `${getGroupTitleHTML(group, group.cardCount)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body${group.groupFolded ? " fn__none" : ""}">${getGalleryHTML(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file)}</div>`;
+            avBodyHTML += `${getGroupTitleHTML(group, group.cardCount, options.protyle.localization)}
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body${group.groupFolded ? " fn__none" : ""}">${getGalleryHTML(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
         }
     });
     if (options.renderAll) {
@@ -130,7 +136,7 @@ export const afterRenderGallery = (options: ITableOptions) => {
         }
         if (itemElement) {
             itemElement.querySelector(".av__gallery-fields").classList.add("av__gallery-fields--edit");
-            itemElement.querySelector('.protyle-icon[data-type="av-gallery-edit"]').setAttribute("aria-label", window.siyuan.languages.hideEmptyFields);
+            itemElement.querySelector('.protyle-icon[data-type="av-gallery-edit"]').setAttribute("aria-label", options.protyle.localization.text("hideEmptyFields"));
         }
     });
     Object.keys(options.resetData.pageSizes).forEach((groupId) => {
@@ -173,7 +179,7 @@ export const renderGallery = async (options: {
     data?: IAV,
     load?: AVRenderLoad,
 }) => {
-    const load = options.load ?? beginAVRenderLoad(options.protyle, options.blockElement);
+    const load = options.load ?? beginAVRenderLoad(options.protyle, options.blockElement, "render");
     const searchInputElement = options.blockElement.querySelector('[data-type="av-search"]');
     const editIds: IIds[] = [];
     options.blockElement.querySelectorAll(".av__gallery-fields--edit").forEach(item => {
@@ -281,7 +287,13 @@ export const renderGallery = async (options: {
         });
         return;
     }
-    const bodyHTML = getGalleryHTML(view, options.blockElement, virtualData.all, options.protyle.settings.icons.file);
+    const bodyHTML = getGalleryHTML(
+        view,
+        options.blockElement,
+        virtualData.all,
+        options.protyle.settings.icons.file,
+        options.protyle.localization,
+    );
     if (options.renderAll) {
         options.blockElement.firstElementChild.outerHTML = `<div class="av__container fn__block">
     ${genTabHeaderHTML(options.protyle, data, resetData.isSearching || !!resetData.query, !options.protyle.disabled)}

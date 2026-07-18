@@ -69,7 +69,7 @@ const scrollInsertedContent = (protyle: IProtyle) => {
 // .av__row--util 等非数据行。此处按 data-index 递增，若目标行未渲染则按数据源生成占位行插入后再返回，
 // 使粘贴可以覆盖视口外（被虚拟滚动裁掉的）数据行。nextIndex 超出已有行数时返回 null 以终止遍历。
 // 占位行带 av__row--placeholder 标记，由调用方在粘贴循环结束后移除，以免破坏虚拟滚动状态。
-const getNextDataRow = (currentRowElement: Element): HTMLElement => {
+const getNextDataRow = (currentRowElement: Element, protyle: IProtyle): HTMLElement => {
     const nextSibling = currentRowElement.nextElementSibling as HTMLElement;
     if (nextSibling && nextSibling.classList.contains("av__row") &&
         !nextSibling.classList.contains("av__row--util") &&
@@ -87,7 +87,15 @@ const getNextDataRow = (currentRowElement: Element): HTMLElement => {
         return null;
     }
     const pinIndex = parseInt(bodyElement.querySelector(".av__row--header > .block__icons")?.getAttribute("data-pinindex") || "-1");
-    const rowHTML = getRowHTML({data: view, row: view.rows[nextIndex], rowIndex: nextIndex, pinIndex, type: "table"});
+    const rowHTML = getRowHTML({
+        data: view,
+        row: view.rows[nextIndex],
+        rowIndex: nextIndex,
+        pinIndex,
+        type: "table",
+        fileIcon: protyle.settings.icons.file,
+        localization: protyle.localization,
+    });
     const bottomElement = bodyElement.querySelector(".av__row--util");
     bottomElement.insertAdjacentHTML("beforebegin", rowHTML);
     const newRowElement = bottomElement.previousElementSibling as HTMLElement;
@@ -147,7 +155,7 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
                 if (!currentRowElement) {
                     currentRowElement = hasClosestByClassName(cellElements[0].parentElement, "av__row") as HTMLElement;
                 } else {
-                    currentRowElement = getNextDataRow(currentRowElement);
+                    currentRowElement = getNextDataRow(currentRowElement, protyle);
                 }
                 if (!currentRowElement) {
                     break;
@@ -211,7 +219,7 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
                     nextID: previousID,
                     isDetached: selectCellElement.dataset.detached === "true",
                 }]);
-                updateAttrViewCellAnimation(selectCellElement, {
+                updateAttrViewCellAnimation(protyle, selectCellElement, {
                     type: "block",
                     isDetached: false,
                     block: {content: contenteditableElement.firstElementChild.textContent, id: sourceId}
@@ -250,7 +258,7 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
                     if (!currentRowElement) {
                         currentRowElement = hasClosestByClassName(cellElements[0].parentElement, "av__row") as HTMLElement;
                     } else {
-                        currentRowElement = getNextDataRow(currentRowElement);
+                        currentRowElement = getNextDataRow(currentRowElement, protyle);
                     }
                     if (!currentRowElement) {
                         break;

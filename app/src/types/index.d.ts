@@ -621,9 +621,7 @@ interface ISiyuan {
     },
     dragElement?: HTMLElement,
     dragTitle?: string,
-    currentDragOverTabHeadersElement?: HTMLElement
-    touchDragActive?: boolean,
-    touchDragGhost?: HTMLElement | null,
+    currentDragOverTabHeadersElement?: HTMLElement,
     layout?: {
         layout?: import("../layout").Layout,
         centerLayout?: import("../layout").Layout,

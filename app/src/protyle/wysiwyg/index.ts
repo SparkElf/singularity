@@ -1055,7 +1055,7 @@ export class WYSIWYG {
                     if (lastCellElement) {
                         dragFillCellsValue(protyle, nodeElement, originData, originCellIds, lastOriginCellElement);
                         const allActiveCellsElement = bodyElement.querySelectorAll(".av__cell--active");
-                        addDragFill(allActiveCellsElement[allActiveCellsElement.length - 1]);
+                        addDragFill(allActiveCellsElement[allActiveCellsElement.length - 1], protyle.localization);
                     }
                     return false;
                 };
@@ -1127,7 +1127,7 @@ export class WYSIWYG {
                     if (lastCellElement) {
                         selectRow(nodeElement.querySelector(".av__firstcol"), "unselectAll");
                         focusBlock(nodeElement);
-                        addDragFill(lastCellElement);
+                        addDragFill(lastCellElement, protyle.localization);
                         this.preventClick = true;
                     }
                     return false;
@@ -2403,8 +2403,8 @@ export class WYSIWYG {
             if (selectElements.length > 1) {
                 // 多选块
                 hideElements(["util"], protyle);
-                protyle.gutter.renderMenu(protyle, selectElements[0]);
-                window.siyuan.menus.menu.popup({x, y});
+                const menu = protyle.gutter.renderMenu(protyle, selectElements[0])!;
+                menu.popup({x, y});
                 return;
             }
             const target = event.detail.target || event.target as HTMLElement;
@@ -2413,8 +2413,8 @@ export class WYSIWYG {
                 if (getSelection().rangeCount === 0) {
                     focusSideBlock(embedElement);
                 }
-                protyle.gutter.renderMenu(protyle, embedElement);
-                window.siyuan.menus.menu.popup({x, y});
+                const menu = protyle.gutter.renderMenu(protyle, embedElement)!;
+                menu.popup({x, y});
                 return false;
             }
 
@@ -2580,9 +2580,9 @@ export class WYSIWYG {
             } else if (protyle.toolbar.range.toString() === "") {
                 hideElements(["util"], protyle);
                 if (protyle.gutter) {
-                    protyle.gutter.renderMenu(protyle, nodeElement);
+                    const menu = protyle.gutter.renderMenu(protyle, nodeElement)!;
+                    menu.popup({x, y});
                 }
-                window.siyuan.menus.menu.popup({x, y});
                 protyle.toolbar?.element.classList.add("fn__none");
             }
         });
@@ -3248,9 +3248,9 @@ export class WYSIWYG {
 
             const menuElement = hasClosestByClassName(event.target, "protyle-action__menu");
             if (menuElement) {
-                protyle.gutter.renderMenu(protyle, menuElement.parentElement.parentElement);
+                const menu = protyle.gutter.renderMenu(protyle, menuElement.parentElement.parentElement)!;
                 const rect = menuElement.getBoundingClientRect();
-                window.siyuan.menus.menu.popup({
+                menu.popup({
                     x: rect.left,
                     y: rect.top,
                     isLeft: true

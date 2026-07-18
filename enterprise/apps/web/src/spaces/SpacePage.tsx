@@ -154,6 +154,7 @@ function createSpaceHostMediator(
       });
       return;
     case "activate-document":
+    case "open-ai-writing":
     case "persist-workspace-layout":
     case "toggle-document-fullscreen":
     case "update-document-statistics":

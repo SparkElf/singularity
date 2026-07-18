@@ -15,7 +15,6 @@ import {getFieldsByData, getViewIcon} from "./view";
 import {openMenuPanel} from "./openMenuPanel";
 import {getPageSize} from "./groups";
 import {clearSelect} from "../../util/clear";
-import {showMessage} from "../../../dialog/message";
 import {renderKanban} from "./kanban/render";
 import {bindAvSearch} from "./search";
 import {getBodyVirtualData, initVirtualScroll} from "./virtualScroll";
@@ -51,6 +50,7 @@ interface ITableOptions {
 }
 
 export const genTabHeaderHTML = (protyle: IProtyle, data: IAV, showSearch: boolean, editable: boolean) => {
+    const {localization} = protyle;
     let tabHTML = "";
     let viewData: IAVView;
     let hasFilter = false;
@@ -87,49 +87,55 @@ export const genTabHeaderHTML = (protyle: IProtyle, data: IAV, showSearch: boole
                 ${tabHTML}
             </div>
             <div class="fn__space"></div>
-            <span data-type="av-add" class="block__icon ariaLabel" data-position="8south" aria-label="${window.siyuan.languages.newView}">
+            <span data-type="av-add" class="block__icon ariaLabel" data-position="8south" aria-label="${localization.text("newView")}">
                 <svg><use xlink:href="#iconAdd"></use></svg>
             </span>
             <div class="fn__flex-1"></div>
             <div class="fn__space"></div>
-            <span data-type="av-switcher" aria-label="${window.siyuan.languages.allViews}" data-position="8south" class="ariaLabel block__icon${data.views.length > 0 ? "" : " fn__none"}">
+            <span data-type="av-switcher" aria-label="${localization.text("allViews")}" data-position="8south" class="ariaLabel block__icon${data.views.length > 0 ? "" : " fn__none"}">
                 <svg><use xlink:href="#iconDown"></use></svg>
                 <span class="fn__space"></span>
                 <small>${data.views.length}</small>
             </span>
             <div class="fn__space"></div>
-            <span data-type="av-filter" aria-label="${window.siyuan.languages.filter}" data-position="8south" class="ariaLabel block__icon${hasFilter ? " block__icon--active" : ""}">
+            <span data-type="av-filter" aria-label="${localization.text("filter")}" data-position="8south" class="ariaLabel block__icon${hasFilter ? " block__icon--active" : ""}">
                 <svg><use xlink:href="#iconFilter"></use></svg>
             </span>
             <div class="fn__space"></div>
-            <span data-type="av-sort" aria-label="${window.siyuan.languages.sort}" data-position="8south" class="ariaLabel block__icon${data.view.sorts.length > 0 ? " block__icon--active" : ""}">
+            <span data-type="av-sort" aria-label="${localization.text("sort")}" data-position="8south" class="ariaLabel block__icon${data.view.sorts.length > 0 ? " block__icon--active" : ""}">
                 <svg><use xlink:href="#iconSort"></use></svg>
             </span>
             <div class="fn__space"></div>
-            <button data-type="av-search-icon" aria-label="${window.siyuan.languages.search}" data-position="8south" class="ariaLabel block__icon">
+            <button data-type="av-search-icon" aria-label="${localization.text("search")}" data-position="8south" class="ariaLabel block__icon">
                 <svg><use xlink:href="#iconSearch"></use></svg>
             </button>
             <div style="position: relative" class="fn__flex">
-                <div contenteditable="plaintext-only" style="${showSearch ? "width:128px" : "width:0;padding-left: 0;padding-right: 0;"}" data-type="av-search" class="b3-text-field b3-text-field--text" placeholder="${window.siyuan.languages.search}"></div>
+                <div contenteditable="plaintext-only" style="${showSearch ? "width:128px" : "width:0;padding-left: 0;padding-right: 0;"}" data-type="av-search" class="b3-text-field b3-text-field--text" placeholder="${localization.text("search")}"></div>
             </div>
             <div class="fn__space"></div>
-            <span data-type="av-more" aria-label="${window.siyuan.languages.config}" data-position="8south" class="ariaLabel block__icon">
+            <span data-type="av-more" aria-label="${localization.text("config")}" data-position="8south" class="ariaLabel block__icon">
                 <svg><use xlink:href="#iconSettings"></use></svg>
             </span>
             <div class="fn__space"></div>
-            <span data-type="av-add-more" class="block__icon ariaLabel" data-position="8south" aria-label="${window.siyuan.languages.newRow}">
+            <span data-type="av-add-more" class="block__icon ariaLabel" data-position="8south" aria-label="${localization.text("newRow")}">
                 <svg><use xlink:href="#iconAdd"></use></svg>
             </span>
             <div class="fn__space"></div>
-            ${data.isMirror ? ` <span data-av-id="${data.id}" data-popover-url="/api/av/getMirrorDatabaseBlocks" class="popover__block block__icon block__icon--show ariaLabel" data-position="8south" aria-label="${window.siyuan.languages.mirrorTip}">
+            ${data.isMirror ? ` <span data-av-id="${data.id}" data-popover-url="/api/av/getMirrorDatabaseBlocks" class="popover__block block__icon block__icon--show ariaLabel" data-position="8south" aria-label="${localization.text("mirrorTip")}">
     <svg><use xlink:href="#iconSplitLR"></use></svg></span><div class="fn__space"></div>` : ""}
         </div>
-        <div contenteditable="${editable}" spellcheck="${protyle.settings.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${Lute.EscapeHTMLStr(data.name || "")}" data-tip="${window.siyuan.languages._kernel[267]}">${Lute.EscapeHTMLStr(data.name || "")}</div>
-        <div class="av__counter fn__none"></div>
+        <div contenteditable="${editable}" spellcheck="${protyle.settings.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${Lute.EscapeHTMLStr(data.name || "")}" data-tip="${localization.kernelText(267)}">${Lute.EscapeHTMLStr(data.name || "")}</div>
+        <div class="av__counter fn__none"><span></span> ${localization.text("selected")}</div>
     </div>`;
 };
 
-const getTableHTMLs = (data: IAVTable, e: HTMLElement, virtualData: IAVVirtualData, fileIcon: string) => {
+const getTableHTMLs = (
+    data: IAVTable,
+    e: HTMLElement,
+    virtualData: IAVVirtualData,
+    fileIcon: string,
+    localization: IProtyle["localization"],
+) => {
     let calcHTML = "";
     let contentHTML = '<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div></div>';
     let pinIndex = -1;
@@ -177,7 +183,7 @@ style="width: ${column.width || "200px"};">
             calcHTML += `<div data-col-id="${column.id}" data-dtype="${column.type}" class="av__calc" style="width: ${column.width || "200px"}">&nbsp;</div>`;
         } else {
             calcHTML += `<div class="av__calc${column.calc && column.calc.operator !== "" ? " av__calc--ashow" : ""}" data-col-id="${column.id}" data-dtype="${column.type}" data-operator="${column.calc?.operator || ""}" 
-style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use xlink:href="#iconDown"></use></svg><small>${window.siyuan.languages.calc}</small>`}</div>`;
+style="width: ${column.width || "200px"}">${getCalcValue(column, localization) || `<svg><use xlink:href="#iconDown"></use></svg><small>${localization.text("calc")}</small>`}</div>`;
         }
         if (column.calc && column.calc.operator !== "") {
             hasCalc = true;
@@ -190,7 +196,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
     contentHTML += `<div class="block__icons" style="min-height: auto" data-pinindex="${pinIndex}">
     <div class="block__icon block__icon--show" data-type="av-header-more"><svg><use xlink:href="#iconMore"></use></svg></div>
     <div class="fn__space"></div>
-    <div class="block__icon block__icon--show ariaLabel" aria-label="${window.siyuan.languages.newCol}" data-type="av-header-add" data-position="4south"><svg><use xlink:href="#iconAdd"></use></svg></div>
+    <div class="block__icon block__icon--show ariaLabel" aria-label="${localization.text("newCol")}" data-type="av-header-add" data-position="4south"><svg><use xlink:href="#iconAdd"></use></svg></div>
 </div>
 </div>`;
     if (virtualData?.topSpacerHeight) {
@@ -209,18 +215,18 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon});
+        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon, localization});
     });
     return `${contentHTML}<div class="av__row--util${data.rowCount > data.rows.length ? " av__readonly--show" : ""}">
     <div class="av__colsticky">
         <button class="b3-button av__button" data-type="av-add-bottom">
             <svg><use xlink:href="#iconAdd"></use></svg>
-            <span>${window.siyuan.languages.newRow}</span>
+            <span>${localization.text("newRow")}</span>
         </button>
         <span class="fn__space"></span>
         <button class="b3-button av__button${data.rowCount > data.rows.length ? "" : " fn__none"}" data-type="av-load-more">
             <svg><use xlink:href="#iconArrowDown"></use></svg>
-            <span>${window.siyuan.languages.loadMore}</span>
+            <span>${localization.text("loadMore")}</span>
             <svg data-type="set-page-size" data-size="${data.pageSize}"><use xlink:href="#iconMore"></use></svg>
         </button>
     </div>
@@ -228,7 +234,11 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
 <div class="av__row--footer${hasCalc ? " av__readonly--show" : ""}">${calcHTML}</div>`;
 };
 
-export const getGroupTitleHTML = (group: IAVView, counter: number) => {
+export const getGroupTitleHTML = (
+    group: IAVView,
+    counter: number,
+    localization: IProtyle["localization"],
+) => {
     let nameHTML = "";
     if (["mSelect", "select"].includes(group.groupValue.type)) {
         group.groupValue.mSelect.forEach((item) => {
@@ -246,8 +256,8 @@ export const getGroupTitleHTML = (group: IAVView, counter: number) => {
     </div>
     <span class="fn__space"></span>
     <span class="av__group-name">${nameHTML}</span>
-    ${(!counter || counter === 0) ? '<span class="fn__space"></span>' : `<span aria-label="${window.siyuan.languages.entryNum}" data-position="north" class="av__group-counter ariaLabel">${counter}</span>`}
-    <span class="av__group-icon av__group-icon--hover ariaLabel" data-type="av-add-top" data-position="north" aria-label="${window.siyuan.languages.newRow}"><svg><use xlink:href="#iconAdd"></use></svg></span>
+    ${(!counter || counter === 0) ? '<span class="fn__space"></span>' : `<span aria-label="${localization.text("entryNum")}" data-position="north" class="av__group-counter ariaLabel">${counter}</span>`}
+    <span class="av__group-icon av__group-icon--hover ariaLabel" data-type="av-add-top" data-position="north" aria-label="${localization.text("newRow")}"><svg><use xlink:href="#iconAdd"></use></svg></span>
 </div>`;
 };
 
@@ -259,8 +269,8 @@ const renderGroupTable = (options: ITableOptions) => {
     let avBodyHTML = "";
     options.data.view.groups.forEach((group: IAVTable) => {
         if (group.groupHidden === 0) {
-            avBodyHTML += `${getGroupTitleHTML(group, group.rowCount)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file)}</div>`;
+            avBodyHTML += `${getGroupTitleHTML(group, group.rowCount, options.protyle.localization)}
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
         }
     });
     if (options.renderAll) {
@@ -355,7 +365,7 @@ const afterRenderTable = (options: ITableOptions) => {
         if (!dragCellElement) {
             dragCellElement = options.blockElement.querySelector(`.av__row[data-id="${options.resetData.dragFillId.rowId}"] .av__cell[data-col-id="${options.resetData.dragFillId.colId}"]`);
         }
-        addDragFill(dragCellElement);
+        addDragFill(dragCellElement, options.protyle.localization);
     }
     options.resetData.activeIds.forEach(activeId => {
         let activeCellElement = options.blockElement.querySelector(`.av__body[data-group-id="${activeId.groupId}"] .av__row[data-id="${activeId.rowId}"] .av__cell[data-col-id="${activeId.colId}"]`);
@@ -407,7 +417,9 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
         if (e.getAttribute("data-render") === "true" || hasClosestByClassName(e, "av__gallery-content")) {
             continue;
         }
-        const load = inheritedLoad?.owner === e ? inheritedLoad : beginAVRenderLoad(protyle, e);
+        const load = inheritedLoad?.owner === e && inheritedLoad.namespace === "render"
+            ? inheritedLoad
+            : beginAVRenderLoad(protyle, e, "render");
         if (isMobile() || isTouchInput()) {
             e.classList.add("av--touch");
         }
@@ -570,7 +582,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             continue;
         }
         const avBodyHTML = `<div class="av__body" data-group-id="" data-page-size="${view.pageSize}" style="float: left">
-    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file)}
+    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file, protyle.localization)}
 </div>`;
         if (renderAll) {
             e.firstElementChild.outerHTML = `<div class="av__container">
@@ -818,7 +830,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
                     item.classList.remove("av__cell--active");
                     item.querySelector(".av__drag-fill")?.remove();
                 });
-                addDragFill(item.querySelector(".av__cell--select"));
+                addDragFill(item.querySelector(".av__cell--select"), protyle.localization);
             } else if (operation.action === "setAttrViewBlockView") {
                 const viewTabElement = item.querySelector(`.av__views > .layout-tab-bar > .item[data-id="${operation.id}"]`) as HTMLElement;
                 if (viewTabElement) {
@@ -846,7 +858,11 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
             avRender(item, protyle, (data: IAV) => {
                 if (operation.action === "insertAttrViewBlock" && operation.context?.ignoreTip !== "true") {
                     if (operation.context?.message) {
-                        showMessage(operation.context.message);
+                        protyle.host.dispatch({
+                            type: "notify",
+                            level: "info",
+                            message: operation.context.message,
+                        });
                     } else {
                         const groupQuery = operation.groupID ? `[data-group-id="${operation.groupID}"]` : "";
                         if (["gallery", "kanban"].includes(item.getAttribute("data-av-type"))) {
@@ -874,7 +890,11 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
                         operation.srcs.find((srcItem) => {
                             // 虚拟滚动/分页下条目可能不在 DOM 中，需通过渲染数据判断是否被过滤
                             if (!isItemInData(data, srcItem.itemID)) {
-                                showMessage(window.siyuan.languages.insertRowTip);
+                                protyle.host.dispatch({
+                                    type: "notify",
+                                    level: "info",
+                                    message: protyle.localization.text("insertRowTip"),
+                                });
                                 return true;
                             }
                         });

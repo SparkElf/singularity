@@ -1,6 +1,5 @@
 import {hasClosestBlock, hasClosestByClassName, hasTopClosestByAttribute, isInEmbedBlock} from "../../util/hasClosest";
 import {focusBlock} from "../../util/selection";
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {
     cellValueIsEmpty,
@@ -22,6 +21,7 @@ import {getCompressURL} from "../../../util/image";
 import {getAVSelectStat, getAvBodyData, resetAVRowSelect, updateAVRowSelect} from "./virtualScroll";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVOverlay} from "./overlay";
+import {openAVMenu} from "./menu";
 
 export const getRowHTML = (options: {
     data: IAVView
@@ -30,6 +30,7 @@ export const getRowHTML = (options: {
     type: TAVView
     pinIndex?: number
     fileIcon: string
+    localization: IProtyle["localization"]
 }) => {
     let html = "";
     if (options.type === "gallery") {
@@ -61,13 +62,13 @@ export const getRowHTML = (options: {
             }
             const isEmpty = cellValueIsEmpty(cell.value);
             // NOTE: innerHTML 中不能换行否则 https://github.com/siyuan-note/siyuan/issues/15132
-            let ariaLabel = escapeAttr(kanbanData.fields[fieldsIndex].name) || getColNameByType(kanbanData.fields[fieldsIndex].type);
+            let ariaLabel = escapeAttr(kanbanData.fields[fieldsIndex].name) || getColNameByType(kanbanData.fields[fieldsIndex].type, options.localization);
             if (kanbanData.fields[fieldsIndex].desc) {
                 ariaLabel += escapeAttr(`<div class="ft__on-surface">${kanbanData.fields[fieldsIndex].desc}</div>`);
             }
 
             if (cell.valueType === "checkbox" && !kanbanData.displayFieldName) {
-                cell.value.checkbox.content = kanbanData.fields[fieldsIndex].name || getColNameByType(kanbanData.fields[fieldsIndex].type);
+                cell.value.checkbox.content = kanbanData.fields[fieldsIndex].name || getColNameByType(kanbanData.fields[fieldsIndex].type, options.localization);
             }
             const cellHTML = `<div class="av__cell${checkClass}${kanbanData.displayFieldName ? "" : " ariaLabel"}" 
 data-wrap="${kanbanData.fields[fieldsIndex].wrap}" 
@@ -78,7 +79,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery", options.fileIcon)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery", options.fileIcon, options.localization)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -90,7 +91,7 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
             } else {
                 html += `<div class="av__gallery-field" data-empty="${isEmpty}">
     <div class="av__gallery-tip">
-        ${kanbanData.fields[fieldsIndex].icon ? unicode2Emoji(kanbanData.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(kanbanData.fields[fieldsIndex].type)}"></use></svg>`}${window.siyuan.languages.edit} ${Lute.EscapeHTMLStr(kanbanData.fields[fieldsIndex].name)}
+        ${kanbanData.fields[fieldsIndex].icon ? unicode2Emoji(kanbanData.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(kanbanData.fields[fieldsIndex].type)}"></use></svg>`}${options.localization.text("edit")} ${Lute.EscapeHTMLStr(kanbanData.fields[fieldsIndex].name)}
     </div>
     ${cellHTML}
 </div>`;
@@ -98,8 +99,8 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
         });
         html += `</div>
     <div class="av__gallery-actions">
-        <span class="protyle-icon protyle-icon--first ariaLabel" data-position="4north" aria-label="${window.siyuan.languages.displayEmptyFields}" data-type="av-gallery-edit"><svg><use xlink:href="#iconEdit"></use></svg></span>
-        <span class="protyle-icon protyle-icon--last ariaLabel" data-position="4north" aria-label="${window.siyuan.languages.more}" data-type="av-gallery-more"><svg><use xlink:href="#iconMore"></use></svg></span>
+        <span class="protyle-icon protyle-icon--first ariaLabel" data-position="4north" aria-label="${options.localization.text("displayEmptyFields")}" data-type="av-gallery-edit"><svg><use xlink:href="#iconEdit"></use></svg></span>
+        <span class="protyle-icon protyle-icon--last ariaLabel" data-position="4north" aria-label="${options.localization.text("more")}" data-type="av-gallery-more"><svg><use xlink:href="#iconMore"></use></svg></span>
     </div>
 </div>`;
         return html;
@@ -131,13 +132,13 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
             }
             const isEmpty = cellValueIsEmpty(cell.value);
             // NOTE: innerHTML 中不能换行否则 https://github.com/siyuan-note/siyuan/issues/15132
-            let ariaLabel = escapeAttr(kanbanData.fields[fieldsIndex].name) || getColNameByType(kanbanData.fields[fieldsIndex].type);
+            let ariaLabel = escapeAttr(kanbanData.fields[fieldsIndex].name) || getColNameByType(kanbanData.fields[fieldsIndex].type, options.localization);
             if (kanbanData.fields[fieldsIndex].desc) {
                 ariaLabel += escapeAttr(`<div class="ft__on-surface">${kanbanData.fields[fieldsIndex].desc}</div>`);
             }
 
             if (cell.valueType === "checkbox" && !kanbanData.displayFieldName) {
-                cell.value.checkbox.content = kanbanData.fields[fieldsIndex].name || getColNameByType(kanbanData.fields[fieldsIndex].type);
+                cell.value.checkbox.content = kanbanData.fields[fieldsIndex].name || getColNameByType(kanbanData.fields[fieldsIndex].type, options.localization);
             }
             const cellHTML = `<div class="av__cell${checkClass}${kanbanData.displayFieldName ? "" : " ariaLabel"}" 
 data-wrap="${kanbanData.fields[fieldsIndex].wrap}" 
@@ -148,7 +149,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban", options.fileIcon)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban", options.fileIcon, options.localization)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -160,7 +161,7 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
             } else {
                 html += `<div class="av__gallery-field" data-empty="${isEmpty}">
     <div class="av__gallery-tip">
-        ${kanbanData.fields[fieldsIndex].icon ? unicode2Emoji(kanbanData.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(kanbanData.fields[fieldsIndex].type)}"></use></svg>`}${window.siyuan.languages.edit} ${Lute.EscapeHTMLStr(kanbanData.fields[fieldsIndex].name)}
+        ${kanbanData.fields[fieldsIndex].icon ? unicode2Emoji(kanbanData.fields[fieldsIndex].icon, undefined, true) : `<svg><use xlink:href="#${getColIconByType(kanbanData.fields[fieldsIndex].type)}"></use></svg>`}${options.localization.text("edit")} ${Lute.EscapeHTMLStr(kanbanData.fields[fieldsIndex].name)}
     </div>
     ${cellHTML}
 </div>`;
@@ -168,8 +169,8 @@ ${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.ro
         });
         html += `</div>
     <div class="av__gallery-actions">
-        <span class="protyle-icon protyle-icon--first ariaLabel" data-position="4north" aria-label="${window.siyuan.languages.displayEmptyFields}" data-type="av-gallery-edit"><svg><use xlink:href="#iconEdit"></use></svg></span>
-        <span class="protyle-icon protyle-icon--last ariaLabel" data-position="4north" aria-label="${window.siyuan.languages.more}" data-type="av-gallery-more"><svg><use xlink:href="#iconMore"></use></svg></span>
+        <span class="protyle-icon protyle-icon--first ariaLabel" data-position="4north" aria-label="${options.localization.text("displayEmptyFields")}" data-type="av-gallery-edit"><svg><use xlink:href="#iconEdit"></use></svg></span>
+        <span class="protyle-icon protyle-icon--last ariaLabel" data-position="4north" aria-label="${options.localization.text("more")}" data-type="av-gallery-more"><svg><use xlink:href="#iconMore"></use></svg></span>
     </div>
 </div>`;
         return html;
@@ -201,7 +202,7 @@ ${cell.value?.isDetached ? ' data-detached="true"' : ""}
 style="width: ${column.width || "200px"};
 ${cell.valueType === "number" ? "text-align: right;" : ""}
 ${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon, "table", options.fileIcon)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon, "table", options.fileIcon, options.localization)}</div>`;
 
         if (options.pinIndex === index) {
             html += "</div>";
@@ -320,7 +321,7 @@ export const updateHeader = (rowElement: HTMLElement) => {
         return;
     }
     counterElement.classList.remove("fn__none");
-    counterElement.innerHTML = `${selectCount} ${window.siyuan.languages.selected}`;
+    counterElement.firstElementChild.textContent = selectCount.toString();
 };
 
 export const setPage = (blockElement: Element) => {
@@ -386,7 +387,7 @@ data-wrap="${item.dataset.wrap}"
 data-dtype="${item.dataset.dtype}" 
 style="width: ${item.style.width};${item.dataset.dtype === "number" ? "text-align: right;" : ""}" 
 ${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(colType, null), lineNumber, true, "table",
-    options.protyle.settings.icons.file)}</div>`;
+    options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
         if (pinIndex === index) {
             cellsHTML += "</div>";
         }
@@ -432,7 +433,14 @@ ${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(
                     }
                     if (updateIds.includes(cellItem.dataset.colId)) {
                         const cellValue = response.data.values[cellItem.dataset.colId];
-                        cellItem.innerHTML = renderCell(cellValue, 0, true, "table", options.protyle.settings.icons.file);
+                        cellItem.innerHTML = renderCell(
+                            cellValue,
+                            0,
+                            true,
+                            "table",
+                            options.protyle.settings.icons.file,
+                            options.protyle.localization,
+                        );
                         renderCellAttr(cellItem, cellValue);
                     }
                 });
@@ -667,10 +675,11 @@ export const setPageSize = (options: {
     avID: string,
     nodeElement: Element
 }) => {
-    const menu = new Menu(Constants.MENU_AV_PAGE_SIZE);
-    if (menu.isOpen) {
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_PAGE_SIZE);
+    if (!menuHandle) {
         return;
     }
+    const {menu} = menuHandle;
     const currentPageSize = options.target.dataset.size;
     menu.addItem({
         iconHTML: "",
@@ -745,7 +754,7 @@ export const setPageSize = (options: {
     menu.addItem({
         iconHTML: "",
         checked: currentPageSize === Constants.SIZE_DATABASE_MAZ_SIZE.toString(),
-        label: window.siyuan.languages.all,
+        label: options.protyle.localization.text("all"),
         click() {
             updatePageSize({
                 currentPageSize,
@@ -757,7 +766,7 @@ export const setPageSize = (options: {
         }
     });
     const rect = options.target.getBoundingClientRect();
-    menu.open({
+    menu.popup({
         x: rect.left,
         y: rect.bottom
     });

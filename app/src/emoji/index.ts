@@ -12,6 +12,7 @@ import {setPosition} from "../util/setPosition";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {getLuteInstance} from "../protyle/render/setLute";
 import * as dayjs from "dayjs";
+import {addRecentEmoji} from "../host/recent-emojis";
 
 export const getRandomEmoji = () => {
     const emojis = window.siyuan.emojis[getRandom(0, window.siyuan.emojis.length - 1)];
@@ -188,16 +189,6 @@ ${unicode2Emoji(emoji[0].unicode, undefined, false, true)}
         return `<div class="emojis__title">${window.siyuan.languages.emptyContent}</div>`;
     }
     return recentHTML + html;
-};
-
-export const addEmoji = (unicode: string) => {
-    window.siyuan.config.editor.emoji.unshift(unicode);
-    if (window.siyuan.config.editor.emoji.length > Constants.SIZE_UNDO) {
-        window.siyuan.config.editor.emoji.pop();
-    }
-    window.siyuan.config.editor.emoji = Array.from(new Set(window.siyuan.config.editor.emoji));
-
-    fetchPost("/api/setting/setEmoji", {emoji: window.siyuan.config.editor.emoji});
 };
 
 const genWeekdayOptions = (lang: string, weekdayType: string) => {
@@ -468,7 +459,7 @@ export const openEmojiPanel = (
             if (callback) {
                 callback(unicode);
             }
-            addEmoji(unicode);
+            addRecentEmoji(unicode);
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -621,7 +612,7 @@ export const openEmojiPanel = (
                 if (callback) {
                     callback(unicode);
                 }
-                addEmoji(unicode);
+                addRecentEmoji(unicode);
                 break;
             } else if (target.getAttribute("data-type")?.startsWith("tab-")) {
                 dialogElement.querySelectorAll('.emojis__tabheader [data-type|="tab"]').forEach((item: HTMLElement) => {

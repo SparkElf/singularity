@@ -43,7 +43,7 @@ data-field-id="${item.dataset.fieldId}"
 data-wrap="${item.dataset.wrap}" 
 data-dtype="${item.dataset.dtype}" 
 ${fieldType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(fieldType, null), lineNumber, false, type,
-    options.protyle.settings.icons.file)}</div>`;
+    options.protyle.settings.icons.file, options.protyle.localization)}</div>`;
         if (item.previousElementSibling.classList.contains("av__gallery-name")) {
             cellsHTML += `<div class="av__gallery-field av__gallery-field--name" data-empty="${item.parentElement.dataset.empty}">
     ${item.previousElementSibling.outerHTML}
@@ -110,7 +110,14 @@ ${fieldType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValu
                         if (cellValue.type === "checkbox" && cellItem.parentElement.querySelector(".av__gallery-tip")) {
                             cellValue.checkbox.content = cellItem.getAttribute("aria-label").split('<div class="ft__on-surface">')[0];
                         }
-                        cellItem.innerHTML = renderCell(cellValue, 0, false, type, options.protyle.settings.icons.file);
+                        cellItem.innerHTML = renderCell(
+                            cellValue,
+                            0,
+                            false,
+                            type,
+                            options.protyle.settings.icons.file,
+                            options.protyle.localization,
+                        );
                         renderCellAttr(cellItem, cellValue);
                     }
                 });

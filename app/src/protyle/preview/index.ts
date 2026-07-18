@@ -10,6 +10,7 @@ import {avRender} from "../render/av/render";
 import {getPadding} from "../ui/initUI";
 import {hasTopClosestByAttribute} from "../util/hasClosest";
 import {addScriptSync} from "../util/addScript";
+import {combineAbortSignals} from "../util/abortSignal";
 
 const assetExtension = (path: string) => {
     const fileName = path.substring(path.lastIndexOf("/") + 1);
@@ -161,7 +162,7 @@ export class Preview {
     public render(protyle: IProtyle) {
         this.renderController?.abort();
         this.renderController = new AbortController();
-        const signal = AbortSignal.any([protyle.requestSignal, this.renderController.signal]);
+        const signal = combineAbortSignals([protyle.requestSignal, this.renderController.signal]);
         const generation = ++this.renderGeneration;
         if (this.element.style.display === "none") {
             return;

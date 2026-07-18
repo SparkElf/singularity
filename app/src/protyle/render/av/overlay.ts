@@ -3,6 +3,7 @@ import type {ProtyleOverlayHandle} from "../../../../../enterprise/packages/prot
 export type AVOverlayKind = "cell-editor" | "panel";
 
 interface AVOverlayRegistration {
+    readonly controller: AbortController;
     readonly element: HTMLElement;
     readonly handle: ProtyleOverlayHandle;
 }
@@ -26,23 +27,45 @@ export const closeAVOverlay = (protyle: IProtyle, kind: AVOverlayKind) => {
         return;
     }
     ownerRegistrations.delete(kind);
+    registration.controller.abort();
     registration.handle.close();
+};
+
+export const closeOwnedAVOverlay = (protyle: IProtyle, kind: AVOverlayKind, element: Element) => {
+    const registration = registrationsFor(protyle).get(kind);
+    if (registration?.element === element) {
+        closeAVOverlay(protyle, kind);
+    }
 };
 
 export const currentAVOverlay = (protyle: IProtyle, kind: AVOverlayKind) => {
     const ownerRegistrations = registrationsFor(protyle);
     const registration = ownerRegistrations.get(kind);
     if (!registration?.element.isConnected) {
-        ownerRegistrations.delete(kind);
+        if (registration) {
+            closeAVOverlay(protyle, kind);
+        }
         return undefined;
     }
     return registration.element;
+};
+
+export const currentAVOverlaySignal = (protyle: IProtyle, kind: AVOverlayKind) => {
+    const registration = registrationsFor(protyle).get(kind);
+    if (!registration?.element.isConnected) {
+        if (registration) {
+            closeAVOverlay(protyle, kind);
+        }
+        return undefined;
+    }
+    return registration.controller.signal;
 };
 
 export const registerAVOverlay = (protyle: IProtyle, kind: AVOverlayKind, element: HTMLElement) => {
     closeAVOverlay(protyle, kind);
     const overlays = protyle.session!.runtime.overlays;
     const registration = {
+        controller: new AbortController(),
         element,
         handle: overlays.add(element),
     };

@@ -23,6 +23,7 @@ import {
 const GATEWAY_CONTROLLER_PATHS: string[] = [
   "/api/v1/organizations/:organizationId/spaces/:spaceId/kernel/api/*path",
   "/api/v1/organizations/:organizationId/spaces/:spaceId/assets/*path",
+  "/api/v1/organizations/:organizationId/spaces/:spaceId/emojis/*path",
   "/api/v1/organizations/:organizationId/spaces/:spaceId/upload",
   "/api/v1/organizations/:organizationId/spaces/:spaceId/exports/*path",
 ];

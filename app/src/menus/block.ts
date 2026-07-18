@@ -1,11 +1,11 @@
-import {MenuItem} from "./Menu";
 import {Dialog} from "../dialog";
 import {isMobile} from "../util/functions";
 import {fetchPost} from "../util/fetch";
 import {Constants} from "../constants";
+import type {ProtyleMenuSurface} from "../../../enterprise/packages/protyle-browser/src/contracts";
 
-export const transferBlockRef = (id: string) => {
-    window.siyuan.menus.menu.append(new MenuItem({
+export const transferBlockRef = (menu: ProtyleMenuSurface, id: string) => {
+    menu.addItem({
         id: "transferBlockRef",
         label: window.siyuan.languages.transferBlockRef,
         icon: "iconScrollHoriz",
@@ -40,5 +40,5 @@ export const transferBlockRef = (id: string) => {
                 renameDialog.destroy();
             });
         }
-    }).element);
+    });
 };

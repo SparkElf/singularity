@@ -14,6 +14,8 @@ import type {
     ProtyleWorkspaceCoreFactory,
 } from "../../../enterprise/packages/protyle-browser/src/contracts";
 
+export {cancelTouchDragBridgeGesture, installTouchDragBridge} from "./ui/touchDragBridge";
+
 export interface RealProtyleBrowserMenuOptions {
     readonly localization: ProtyleLocalizationPort;
     readonly portalRoot: HTMLElement;

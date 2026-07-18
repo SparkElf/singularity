@@ -104,6 +104,8 @@ export function createSpaceGatewayResourcePort(
       }
       return `${basePath}/${encodedPath}?${contentQuery(identity)}`;
     },
+    resolveEmoji: (identity, path) =>
+      `${basePath}/emojis/${encodeResourcePath(path)}?${contentQuery(identity)}`,
     resolveExport: (identity, path) =>
       `${basePath}/exports/${encodeResourcePath(path)}?${contentQuery(identity)}`,
   };

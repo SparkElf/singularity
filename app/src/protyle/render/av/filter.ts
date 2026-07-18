@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {escapeAttr, escapeHtml} from "../../../util/escape";
 import {getColIconByType} from "./col";
@@ -9,6 +8,7 @@ import {unicode2Emoji} from "../../../emoji";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {openAVMenu} from "./menu";
 
 export const getDefaultOperatorByType = (type: TAVCol) => {
     if (["select", "number", "date", "created", "updated"].includes(type)) {
@@ -149,7 +149,11 @@ export const addFilter = (options: {
     blockElement: Element,
     parentPath?: string
 }) => {
-    const menu = new Menu(Constants.MENU_AV_ADD_FILTER);
+    const menuHandle = openAVMenu(options.protyle, Constants.MENU_AV_ADD_FILTER);
+    if (!menuHandle) {
+        return;
+    }
+    const {menu} = menuHandle;
     // 定位目标分组：支持向指定分组内追加，同分组允许同列多条件（如 状态=完成 OR 状态=进行中）
     let targetGroupFilters: IAVFilter[];
     if (options.parentPath && options.parentPath !== "") {
@@ -187,27 +191,27 @@ export const addFilter = (options: {
                         data: oldFilters,
                         blockID
                     }]);
-                    options.menuElement.innerHTML = getFiltersHTML(options.data);
+                    options.menuElement.innerHTML = getFiltersHTML(options.data, options.protyle.localization);
                     setPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
                 }
             });
         }
     });
-    menu.open({
+    menu.popup({
         x: options.rect.left,
         y: options.rect.bottom,
         h: options.rect.height,
     });
 };
 
-export const getFiltersHTML = (data: IAV) => {
+export const getFiltersHTML = (data: IAV, localization: IProtyle["localization"]) => {
     let html = "";
     const fields = getFieldsByData(data);
     const measureEl = document.createElement("span");
     measureEl.style.cssText = "position:absolute;visibility:hidden;font-size:14px;white-space:nowrap;";
     document.body.appendChild(measureEl);
     let andOrTextWidth = 0;
-    [window.siyuan.languages.filterWhen, window.siyuan.languages.filterCombinationAnd, window.siyuan.languages.filterCombinationOr].forEach(t => {
+    [localization.text("filterWhen"), localization.text("filterCombinationAnd"), localization.text("filterCombinationOr")].forEach(t => {
         measureEl.textContent = t;
         andOrTextWidth = Math.max(andOrTextWidth, measureEl.offsetWidth);
     });
@@ -215,13 +219,13 @@ export const getFiltersHTML = (data: IAV) => {
     // 宽度需容纳文字 + b3-select 的左右 padding（8 + 26）+ 余量
     const andOrControlWidth = andOrTextWidth + 36;
     const genAndOrSelect = (groupPath: string, combination: string) =>
-        `<select class="b3-select" data-type="toggleCombination" data-path="${groupPath}" style="width:${andOrControlWidth}px;"><option value="and" ${combination === "and" ? "selected" : ""}>${window.siyuan.languages.filterCombinationAnd}</option><option value="or" ${combination === "or" ? "selected" : ""}>${window.siyuan.languages.filterCombinationOr}</option></select>`;
+        `<select class="b3-select" data-type="toggleCombination" data-path="${groupPath}" style="width:${andOrControlWidth}px;"><option value="and" ${combination === "and" ? "selected" : ""}>${localization.text("filterCombinationAnd")}</option><option value="or" ${combination === "or" ? "selected" : ""}>${localization.text("filterCombinationOr")}</option></select>`;
 
     const genWhenLabel = () =>
-        `<span class="av__filter-label ft__on-surface" style="width:${andOrControlWidth}px;">${window.siyuan.languages.filterWhen}</span>`;
+        `<span class="av__filter-label ft__on-surface" style="width:${andOrControlWidth}px;">${localization.text("filterWhen")}</span>`;
 
     const genAndOrLabel = (combination: string) =>
-        `<span class="av__filter-label ft__on-surface" style="width:${andOrControlWidth}px;">${combination === "or" ? window.siyuan.languages.filterCombinationOr : window.siyuan.languages.filterCombinationAnd}</span>`;
+        `<span class="av__filter-label ft__on-surface" style="width:${andOrControlWidth}px;">${combination === "or" ? localization.text("filterCombinationOr") : localization.text("filterCombinationAnd")}</span>`;
 
     const genNodeHTML = (node: IAVFilter, path: string, depth: number, groupPath: string, groupCombination: string, index: number = 0): string => {
         if (!node) {
@@ -242,8 +246,8 @@ export const getFiltersHTML = (data: IAV) => {
 
             const depthClass = `av__filter-group-children--depth${Math.min(depth, 3)}`;
             const addConditionBtn = depth >= 3
-                ? `<span class="block__icon block__icon--text ariaLabel" data-position="4north" data-type="addFilter" data-path="${path}" aria-label="${window.siyuan.languages.addFilterCondition}"><svg><use xlink:href="#iconAdd"></use></svg>${window.siyuan.languages.addFilterCondition}</span>`
-                : `<span class="block__icon block__icon--text ariaLabel" data-position="4north" data-type="addFilterCondition" data-path="${path}" data-depth="${depth}" aria-label="${window.siyuan.languages.addFilterCondition}"><svg><use xlink:href="#iconAdd"></use></svg>${window.siyuan.languages.addFilterCondition}<svg><use xlink:href="#iconDown"></use></svg></span>`;
+                ? `<span class="block__icon block__icon--text ariaLabel" data-position="4north" data-type="addFilter" data-path="${path}" aria-label="${localization.text("addFilterCondition")}"><svg><use xlink:href="#iconAdd"></use></svg>${localization.text("addFilterCondition")}</span>`
+                : `<span class="block__icon block__icon--text ariaLabel" data-position="4north" data-type="addFilterCondition" data-path="${path}" data-depth="${depth}" aria-label="${localization.text("addFilterCondition")}"><svg><use xlink:href="#iconAdd"></use></svg>${localization.text("addFilterCondition")}<svg><use xlink:href="#iconDown"></use></svg></span>`;
 
             const andOrHTML = 0 === index ? genWhenLabel() : 1 === index ? genAndOrSelect(groupPath, groupCombination) : genAndOrLabel(groupCombination);
             return `<div class="av__filter-group-item" data-path="${path}">
@@ -254,7 +258,7 @@ export const getFiltersHTML = (data: IAV) => {
         ${childrenHTML}
         <div class="av__filter-group-actions">${addConditionBtn}</div>
     </div>
-    <svg class="b3-menu__action ariaLabel" data-position="4west" data-type="moreFilter" data-path="${path}" aria-label="${window.siyuan.languages.more}"><use xlink:href="#iconMore"></use></svg>
+    <svg class="b3-menu__action ariaLabel" data-position="4west" data-type="moreFilter" data-path="${path}" aria-label="${localization.text("more")}"><use xlink:href="#iconMore"></use></svg>
 </div>`;
         }
 
@@ -276,9 +280,9 @@ export const getFiltersHTML = (data: IAV) => {
         ).join("");
         const fieldSelect = `<select class="b3-select fn__flex-1 av__filter-field" data-type="fieldSelect" data-path="${path}">${fieldOptions}</select>`;
         const fieldWrapper = `<span class="av__field-wrapper ariaLabel" data-position="4west" aria-label="${escapeAttr(colData.name)}">${iconHTML}${fieldSelect}</span>`;
-        const inlineHTML = genInlineFilterHTML(node, colData, path);
+        const inlineHTML = genInlineFilterHTML(node, colData, path, localization);
         const leafAndOrHTML = 0 === index ? genWhenLabel() : 1 === index ? genAndOrSelect(groupPath, groupCombination) : genAndOrLabel(groupCombination);
-        return `<div class="b3-menu__item av__filter-row" data-path="${path}" data-column="${node.column}">${leafAndOrHTML}<div class="fn__flex-1 av__filter-rowinner">${fieldWrapper}${inlineHTML}</div><svg class="b3-menu__action ariaLabel" data-position="4west" data-type="moreFilter" data-path="${path}" aria-label="${window.siyuan.languages.more}"><use xlink:href="#iconMore"></use></svg></div>`;
+        return `<div class="b3-menu__item av__filter-row" data-path="${path}" data-column="${node.column}">${leafAndOrHTML}<div class="fn__flex-1 av__filter-rowinner">${fieldWrapper}${inlineHTML}</div><svg class="b3-menu__action ariaLabel" data-position="4west" data-type="moreFilter" data-path="${path}" aria-label="${localization.text("more")}"><use xlink:href="#iconMore"></use></svg></div>`;
     };
 
     const isRootGroup = data.view.filters.length === 1 && (data.view.filters[0].filters || data.view.filters[0].combination);
@@ -296,18 +300,18 @@ export const getFiltersHTML = (data: IAV) => {
     <span class="block__icon" style="padding: 8px;margin-left: -4px;" data-type="go-config">
         <svg><use xlink:href="#iconLeft"></use></svg>
     </span>
-    <span class="b3-menu__label ft__center">${window.siyuan.languages.filter}</span>
+    <span class="b3-menu__label ft__center">${localization.text("filter")}</span>
 </button>
 <button class="b3-menu__separator"></button>
 ${html}
 <button class="b3-menu__item" data-type="addFilterCondition" data-path="" data-depth="0">
     <svg class="b3-menu__icon"><use xlink:href="#iconAdd"></use></svg>
-    <span class="b3-menu__label av__filter-add-label">${window.siyuan.languages.addFilterCondition}</span>
+    <span class="b3-menu__label av__filter-add-label">${localization.text("addFilterCondition")}</span>
     <svg class="av__filter-arrow"><use xlink:href="#iconDown"></use></svg>
 </button>
 <button class="b3-menu__item b3-menu__item--warning${leafCount > 0 ? "" : " fn__none"}" data-type="removeFilters">
     <svg class="b3-menu__icon"><use xlink:href="#iconTrashcan"></use></svg>
-    <span class="b3-menu__label">${window.siyuan.languages.removeFilters}</span>
+    <span class="b3-menu__label">${localization.text("removeFilters")}</span>
 </button>
 </div>`;
 };
@@ -355,45 +359,49 @@ export const convertGroupToFilter = (nodes: IAVFilter[], path: string): boolean 
 // ============ 内联化筛选编辑（替代 setFilter 弹层） ============
 
 // getOperatorSelectByType 按值类型生成操作符 <select> 的 option HTML，标记当前 operator 为 selected。
-const getOperatorSelectByType = (type: TAVCol, currentOperator: string): string => {
+const getOperatorSelectByType = (
+    type: TAVCol,
+    currentOperator: string,
+    localization: IProtyle["localization"],
+): string => {
     const opt = (value: string, label: string) => `<option ${value === currentOperator ? "selected" : ""} value="${value}">${label}</option>`;
     switch (type) {
         case "checkbox":
-            return opt("=", window.siyuan.languages.filterOperatorIs) + opt("!=", window.siyuan.languages.filterOperatorIsNot);
+            return opt("=", localization.text("filterOperatorIs")) + opt("!=", localization.text("filterOperatorIsNot"));
         case "block":
         case "mAsset":
         case "text":
         case "url":
         case "phone":
         case "email":
-            return opt("=", window.siyuan.languages.filterOperatorIs) + opt("!=", window.siyuan.languages.filterOperatorIsNot) +
-                opt("Contains", window.siyuan.languages.filterOperatorContains) + opt("Does not contains", window.siyuan.languages.filterOperatorDoesNotContain) +
-                opt("Starts with", window.siyuan.languages.filterOperatorStartsWith) + opt("Ends with", window.siyuan.languages.filterOperatorEndsWith) +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty);
+            return opt("=", localization.text("filterOperatorIs")) + opt("!=", localization.text("filterOperatorIsNot")) +
+                opt("Contains", localization.text("filterOperatorContains")) + opt("Does not contains", localization.text("filterOperatorDoesNotContain")) +
+                opt("Starts with", localization.text("filterOperatorStartsWith")) + opt("Ends with", localization.text("filterOperatorEndsWith")) +
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty"));
         case "template":
-            return opt("=", window.siyuan.languages.filterOperatorIs) + opt("!=", window.siyuan.languages.filterOperatorIsNot) +
-                opt("Contains", window.siyuan.languages.filterOperatorContains) + opt("Does not contains", window.siyuan.languages.filterOperatorDoesNotContain) +
-                opt("Starts with", window.siyuan.languages.filterOperatorStartsWith) + opt("Ends with", window.siyuan.languages.filterOperatorEndsWith) +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty) +
+            return opt("=", localization.text("filterOperatorIs")) + opt("!=", localization.text("filterOperatorIsNot")) +
+                opt("Contains", localization.text("filterOperatorContains")) + opt("Does not contains", localization.text("filterOperatorDoesNotContain")) +
+                opt("Starts with", localization.text("filterOperatorStartsWith")) + opt("Ends with", localization.text("filterOperatorEndsWith")) +
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty")) +
                 opt(">", "&gt;") + opt("<", "&lt;") + opt(">=", "&GreaterEqual;") + opt("<=", "&le;");
         case "date":
         case "created":
         case "updated":
-            return opt("=", window.siyuan.languages.filterOperatorIs) + opt(">", window.siyuan.languages.filterOperatorIsAfter) +
-                opt("<", window.siyuan.languages.filterOperatorIsBefore) + opt(">=", window.siyuan.languages.filterOperatorIsOnOrAfter) +
-                opt("<=", window.siyuan.languages.filterOperatorIsOnOrBefore) + opt("Is between", window.siyuan.languages.filterOperatorIsBetween) +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty);
+            return opt("=", localization.text("filterOperatorIs")) + opt(">", localization.text("filterOperatorIsAfter")) +
+                opt("<", localization.text("filterOperatorIsBefore")) + opt(">=", localization.text("filterOperatorIsOnOrAfter")) +
+                opt("<=", localization.text("filterOperatorIsOnOrBefore")) + opt("Is between", localization.text("filterOperatorIsBetween")) +
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty"));
         case "number":
             return opt("=", "=") + opt("!=", "!=") + opt(">", "&gt;") + opt("<", "&lt;") +
                 opt(">=", "&GreaterEqual;") + opt("<=", "&le;") +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty);
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty"));
         case "mSelect":
         case "relation":
-            return opt("Contains", window.siyuan.languages.filterOperatorContains) + opt("Does not contains", window.siyuan.languages.filterOperatorDoesNotContain) +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty);
+            return opt("Contains", localization.text("filterOperatorContains")) + opt("Does not contains", localization.text("filterOperatorDoesNotContain")) +
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty"));
         case "select":
-            return opt("=", window.siyuan.languages.filterOperatorIs) + opt("!=", window.siyuan.languages.filterOperatorIsNot) +
-                opt("Is empty", window.siyuan.languages.filterOperatorIsEmpty) + opt("Is not empty", window.siyuan.languages.filterOperatorIsNotEmpty);
+            return opt("=", localization.text("filterOperatorIs")) + opt("!=", localization.text("filterOperatorIsNot")) +
+                opt("Is empty", localization.text("filterOperatorIsEmpty")) + opt("Is not empty", localization.text("filterOperatorIsNotEmpty"));
         default:
             return "";
     }
@@ -435,21 +443,26 @@ const resolveFilterValueType = (filter: IAVFilter, colData: IAVColumn): { type: 
 
 // genInlineFilterHTML 生成单个叶子过滤条件的内联可编辑 HTML（operator select + 值控件）。
 // 替代原 genFilterItem 的只读 chip。colData 为该列配置（含 options/relation/rollup 等）。
-const genInlineFilterHTML = (filter: IAVFilter, colData: IAVColumn, path: string): string => {
+const genInlineFilterHTML = (
+    filter: IAVFilter,
+    colData: IAVColumn,
+    path: string,
+    localization: IProtyle["localization"],
+): string => {
     const {type: valueType, isRollup} = resolveFilterValueType(filter, colData);
     const operator = filter.operator;
     const isEmptyOp = operator === "Is empty" || operator === "Is not empty";
     const valueHidden = isEmptyOp ? " fn__none" : "";
 
     // 操作符 select
-    const operatorSelect = `<select class="b3-select" data-type="operation" data-path="${path}">${getOperatorSelectByType(valueType, operator)}</select>`;
+    const operatorSelect = `<select class="b3-select" data-type="operation" data-path="${path}">${getOperatorSelectByType(valueType, operator, localization)}</select>`;
 
     // 量化器 select（rollup/mAsset 才有）
     const quantifierSelect = (isRollup || valueType === "mAsset")
         ? `<select class="b3-select" data-type="quantifier" data-path="${path}">
-<option ${(!filter.quantifier || filter.quantifier === "Any") ? "selected" : ""} value="Any">${window.siyuan.languages.filterQuantifierAny}</option>
-<option ${filter.quantifier === "All" ? "selected" : ""} value="All">${window.siyuan.languages.filterQuantifierAll}</option>
-<option ${filter.quantifier === "None" ? "selected" : ""} value="None">${window.siyuan.languages.filterQuantifierNone}</option>
+<option ${(!filter.quantifier || filter.quantifier === "Any") ? "selected" : ""} value="Any">${localization.text("filterQuantifierAny")}</option>
+<option ${filter.quantifier === "All" ? "selected" : ""} value="All">${localization.text("filterQuantifierAll")}</option>
+<option ${filter.quantifier === "None" ? "selected" : ""} value="None">${localization.text("filterQuantifierNone")}</option>
 </select>`
         : "";
 
@@ -468,11 +481,11 @@ const genInlineFilterHTML = (filter: IAVFilter, colData: IAVColumn, path: string
         valueHTML = `<input class="b3-text-field b3-text-field--text av__filter-num" value="${content}" data-type="filterValue" data-path="${path}">`;
     } else if (valueType === "checkbox") {
         const isChecked = filterValue?.checkbox?.checked;
-        valueHTML = `<select class="b3-select" data-type="filterValue" data-path="${path}"><option value="true" ${isChecked ? "selected" : ""}>${window.siyuan.languages.checked}</option><option value="false" ${!isChecked ? "selected" : ""}>${window.siyuan.languages.unchecked}</option></select>`;
+        valueHTML = `<select class="b3-select" data-type="filterValue" data-path="${path}"><option value="true" ${isChecked ? "selected" : ""}>${localization.text("checked")}</option><option value="false" ${!isChecked ? "selected" : ""}>${localization.text("unchecked")}</option></select>`;
     } else if (["date", "created", "updated"].includes(valueType)) {
-        valueHTML = genInlineDateHTML(filter, valueType, path);
+        valueHTML = genInlineDateHTML(filter, valueType, path, localization);
     } else if (valueType === "select" || valueType === "mSelect") {
-        const {trigger, dropdown} = genInlineSelectHTML(filter, colData, path, valueType);
+        const {trigger, dropdown} = genInlineSelectHTML(filter, colData, path, valueType, localization);
         valueHTML = trigger;
         extraHTML = dropdown; // 下拉面板放 valueContainer 外，fixed 定位不影响行宽
     } else if (valueType === "relation") {
@@ -484,7 +497,12 @@ const genInlineFilterHTML = (filter: IAVFilter, colData: IAVColumn, path: string
 };
 
 // genInlineDateHTML 生成日期类型的内联控件（绝对/相对切换 + Is between 结束日期）。
-const genInlineDateHTML = (filter: IAVFilter, valueType: TAVCol, path: string): string => {
+const genInlineDateHTML = (
+    filter: IAVFilter,
+    valueType: TAVCol,
+    path: string,
+    localization: IProtyle["localization"],
+): string => {
     const dateValue = filter.value?.[valueType as "date"];
     const showToday1 = !filter.relativeDate?.direction;
     const showToday2 = !filter.relativeDate2?.direction;
@@ -503,23 +521,23 @@ const genInlineDateHTML = (filter: IAVFilter, valueType: TAVCol, path: string): 
 
     const dateBlock = (suffix: "" | "2", relativeDate: IAVRelativeDate, dateVal: any, showToday: boolean): string => {
         const dateTypeSel = `<select class="b3-select" data-type="dateType${suffix}" data-path="${path}">
-<option value="time"${!relativeDate ? " selected" : ""}>${window.siyuan.languages.includeTime}</option>
-<option value="custom"${relativeDate ? " selected" : ""}>${window.siyuan.languages.relativeToToday}</option>
+<option value="time"${!relativeDate ? " selected" : ""}>${localization.text("includeTime")}</option>
+<option value="custom"${relativeDate ? " selected" : ""}>${localization.text("relativeToToday")}</option>
 </select>`;
         const absDate = `<input value="${(dateVal && (dateVal.isNotEmpty || (suffix === "2" ? dateVal.isNotEmpty2 : valueType !== "date"))) ? formatAbsDate(suffix === "2" ? dateVal.content2 : dateVal.content) : ""}" type="date" max="9999-12-31" class="b3-text-field b3-text-field--text" data-type="absDate${suffix}" data-path="${path}" style="${relativeDate ? "display:none;" : ""}">`;
         const relDir = `<select class="b3-select" data-type="dataDirection${suffix}" data-path="${path}" style="${!relativeDate ? "display:none;" : ""}">
-<option value="-1"${relativeDate?.direction === -1 ? " selected" : ""}>${window.siyuan.languages.pastDate}</option>
-<option value="1"${relativeDate?.direction === 1 ? " selected" : ""}>${window.siyuan.languages.nextDate}</option>
-<option value="0"${showToday ? " selected" : ""}>${window.siyuan.languages.current}</option>
+<option value="-1"${relativeDate?.direction === -1 ? " selected" : ""}>${localization.text("pastDate")}</option>
+<option value="1"${relativeDate?.direction === 1 ? " selected" : ""}>${localization.text("nextDate")}</option>
+<option value="0"${showToday ? " selected" : ""}>${localization.text("current")}</option>
 </select>`;
         // “当前”方向下数量 count 无意义（后端按单位取今天/本周/本月/今年），故仅隐藏 relCount；
         // 但单位 relUnit 必须保留，以便用户选择天/周/月/年
         const relCount = `<input type="number" min="1" step="1" value="${relativeDate?.count || 1}" class="b3-text-field b3-text-field--text av__filter-num" data-type="relCount${suffix}" data-path="${path}" style="${(!relativeDate || showToday) ? "display:none;" : ""}">`;
         const relUnit = `<select class="b3-select" data-type="relUnit${suffix}" data-path="${path}" style="${!relativeDate ? "display:none;" : ""}">
-<option value="0"${relativeDate?.unit === 0 ? " selected" : ""}>${window.siyuan.languages.day}</option>
-<option value="1"${(!relativeDate || relativeDate?.unit === 1) ? " selected" : ""}>${window.siyuan.languages.week}</option>
-<option value="2"${relativeDate?.unit === 2 ? " selected" : ""}>${window.siyuan.languages.month}</option>
-<option value="3"${relativeDate?.unit === 3 ? " selected" : ""}>${window.siyuan.languages.year}</option>
+<option value="0"${relativeDate?.unit === 0 ? " selected" : ""}>${localization.text("day")}</option>
+<option value="1"${(!relativeDate || relativeDate?.unit === 1) ? " selected" : ""}>${localization.text("week")}</option>
+<option value="2"${relativeDate?.unit === 2 ? " selected" : ""}>${localization.text("month")}</option>
+<option value="3"${relativeDate?.unit === 3 ? " selected" : ""}>${localization.text("year")}</option>
 </select>`;
         return `<span class="av__filter-date-row">${dateTypeSel}${absDate}${relDir}${relCount}${relUnit}</span>`;
     };
@@ -530,11 +548,17 @@ const genInlineDateHTML = (filter: IAVFilter, valueType: TAVCol, path: string): 
 };
 
 // genInlineSelectHTML 生成 select/mSelect 的内联多选 chip 列表 + 搜索。
-const genInlineSelectHTML = (filter: IAVFilter, colData: IAVColumn, path: string, valueType: TAVCol): { trigger: string, dropdown: string } => {
+const genInlineSelectHTML = (
+    filter: IAVFilter,
+    colData: IAVColumn,
+    path: string,
+    valueType: TAVCol,
+    localization: IProtyle["localization"],
+): { trigger: string, dropdown: string } => {
     const isSingle = valueType === "select";
     const options = colData.options || [];
     const selectedValues = (filter.value?.mSelect || []).filter((s: IAVCellSelectValue) => s.content);
-    const placeholder = isSingle ? window.siyuan.languages.select : window.siyuan.languages.multiSelect;
+    const placeholder = isSingle ? localization.text("select") : localization.text("multiSelect");
 
     // 触发器：显示已选值的 chip（与表格单元格样式一致），无选中时显示 placeholder + 下拉箭头
     const selectedChips = selectedValues.map((item: IAVCellSelectValue) => {
@@ -545,7 +569,7 @@ const genInlineSelectHTML = (filter: IAVFilter, colData: IAVColumn, path: string
 
     // 下拉面板
     const searchInput = options.length > 5
-        ? `<input class="b3-text-field" placeholder="${window.siyuan.languages.search}" data-type="filterSearch" data-path="${path}">`
+        ? `<input class="b3-text-field" placeholder="${localization.text("search")}" data-type="filterSearch" data-path="${path}">`
         : "";
     const chips = options.map((option: { name: string; color: string; desc?: string }) => {
         const selected = selectedValues.some((s: IAVCellSelectValue) => s.content === option.name);
@@ -680,12 +704,13 @@ export const commitFilter = (data: IAV, path: string, newFilter: IAVFilter, prot
     }]);
 
     if (reRender && menuElement) {
-        menuElement.innerHTML = getFiltersHTML(data);
+        menuElement.innerHTML = getFiltersHTML(data, protyle.localization);
     }
 };
 
 // bindInlineFilterEvents 绑定内联筛选编辑的事件（事件委托到面板）。即时保存。
 export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, protyle: IProtyle, blockID: string, avID: string) => {
+    const {localization} = protyle;
     // 防重复绑定：事件委托绑在 panelElement 上，同一面板实例只需绑一次
     if (panelElement.dataset.filterEventsBound === "true") {
         return;
@@ -881,7 +906,7 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
         const triggerEl = menuElement.querySelector(`[data-type="selectTrigger"][data-path="${path}"]`) as HTMLElement;
         if (triggerEl && dropdown) {
             const isSingleSel = dropdown.dataset.single === "true";
-            const placeholderStr = isSingleSel ? window.siyuan.languages.select : window.siyuan.languages.multiSelect;
+            const placeholderStr = isSingleSel ? localization.text("select") : localization.text("multiSelect");
             const selectedChips: string[] = [];
             dropdown.querySelectorAll('[data-type="selectOption"]').forEach((c: HTMLElement) => {
                 const u = c.querySelector("use");
@@ -948,7 +973,7 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
                 }
                 let html = "";
                 (response.data.rows.values as IAVCellValue[] || []).forEach((item, index) => {
-                    html += `<div class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}" data-name="${escapeAttr(item.block?.content || "")}">${escapeHtml(item.block?.content || window.siyuan.languages.untitled)}</div>`;
+                    html += `<div class="b3-list-item${index === 0 ? " b3-list-item--focus" : ""}" data-name="${escapeAttr(item.block?.content || "")}">${escapeHtml(item.block?.content || localization.text("untitled"))}</div>`;
                 });
                 listEl.innerHTML = html;
                 listEl.style.display = html ? "" : "none";

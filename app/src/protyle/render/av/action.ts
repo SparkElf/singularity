@@ -1,4 +1,3 @@
-import {Menu} from "../../../plugin/Menu";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {transaction} from "../../wysiwyg/transaction";
 import {openFileAttr} from "../../../menus/commonMenuItem";
@@ -21,7 +20,6 @@ import {emitProtylePluginMenu} from "../../util/plugin";
 import {openMenuPanel} from "./openMenuPanel";
 import {hintRef} from "../../hint/extend";
 import {focusBlock, focusByRange} from "../../util/selection";
-import {showMessage} from "../../../dialog/message";
 import {previewAttrViewImages} from "../../preview/image";
 import {openEmojiPanel, unicode2Emoji} from "../../../emoji";
 import * as dayjs from "dayjs";
@@ -41,9 +39,11 @@ import {clearSelect} from "../../util/clear";
 import {removeCompressURL} from "../../../util/image";
 import {requestBlockFold} from "../../util/blockFoldRequest";
 import {protyleContentIdentity} from "../../util/contentLoad";
+import {closeAVMenu, openAVMenu} from "./menu";
 
 const foldTimeouts = new WeakMap<IProtyle, number>();
 export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLElement }) => {
+    const {localization} = protyle;
     if (isOnlyMeta(event)) {
         return false;
     }
@@ -59,7 +59,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
         if (type === "av-header-add" && !protyle.disabled) {
             const addMenu = addCol(protyle, blockElement);
             const addRect = target.getBoundingClientRect();
-            addMenu.open({
+            addMenu?.menu.popup({
                 x: addRect.left,
                 y: addRect.bottom,
                 h: addRect.height
@@ -109,13 +109,13 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.stopPropagation();
             return true;
         } else if (type === "block-more" && !protyle.disabled) {
-            window.siyuan.menus.menu.remove();
+            closeAVMenu(protyle);
             protyle.toolbar.range = document.createRange();
             protyle.toolbar.range.selectNodeContents(target);
             focusByRange(protyle.toolbar.range);
             if (viewType === "table") {
                 target.parentElement.classList.add("av__cell--select");
-                addDragFill(target.parentElement);
+                addDragFill(target.parentElement, localization);
             }
             hintRef(target.previousElementSibling.textContent.trim(), protyle, "av");
             event.preventDefault();
@@ -218,7 +218,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.stopPropagation();
             return true;
         } else if (type === "av-gallery-edit" && !protyle.disabled) {
-            editGalleryItem(target);
+            editGalleryItem(protyle, target);
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -277,7 +277,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.stopPropagation();
             return true;
         } else if (target.classList.contains("av__firstcol")) {
-            window.siyuan.menus.menu.remove();
+            closeAVMenu(protyle);
             selectRow(target, "toggle");
             event.preventDefault();
             event.stopPropagation();
@@ -328,7 +328,11 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             return true;
         } else if (type === "copy") {
             writeText(getCellText(hasClosestByClassName(target, "av__cell")));
-            showMessage(window.siyuan.languages.copied);
+            protyle.host.dispatch({
+                type: "notify",
+                level: "success",
+                message: localization.text("copied"),
+            });
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -352,6 +356,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
 };
 
 export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, position: IPosition) => {
+    const {localization} = protyle;
     hideElements(["hint"], protyle);
     if (rowElement.classList.contains("av__row--header")) {
         return false;
@@ -386,7 +391,8 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }
         updateHeader(rowElement);
     }
-    const menu = new Menu();
+    const menuHandle = openAVMenu(protyle)!;
+    const {menu} = menuHandle;
     const rowElements = blockElement.querySelectorAll(".av__row--select:not(.av__row--header), .av__gallery-item--select");
     const keyCellElement = rowElements[0].querySelector('.av__cell[data-dtype="block"]') as HTMLElement;
     const ids = Array.from(rowElements).map(item => item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-id"));
@@ -424,21 +430,21 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         const openSubmenus: IMenu[] = [{
             id: "insertRight",
             icon: "iconLayoutRight",
-            label: window.siyuan.languages.insertRight,
-            accelerator: `${updateHotkeyTip(protyle.settings.hotkeys.insertRight)}/${updateHotkeyTip("⌥" + window.siyuan.languages.click)}`,
+            label: localization.text("insertRight"),
+            accelerator: `${updateHotkeyTip(protyle.settings.hotkeys.editor.general.insertRight)}/${updateHotkeyTip("⌥" + localization.text("click"))}`,
             click: () => openDocument("split-right"),
         }, {
             id: "insertBottom",
             icon: "iconLayoutBottom",
-            label: window.siyuan.languages.insertBottom,
-            accelerator: "⇧⌘" + window.siyuan.languages.click,
+            label: localization.text("insertBottom"),
+            accelerator: "⇧⌘" + localization.text("click"),
             click: () => openDocument("split-bottom"),
         }];
         if (protyle.settings.navigation.openFilesUseCurrentTab) {
             openSubmenus.push({
                 id: "openInNewTab",
-                label: window.siyuan.languages.openInNewTab,
-                accelerator: "⌥⌘" + window.siyuan.languages.click,
+                label: localization.text("openInNewTab"),
+                accelerator: "⌥⌘" + localization.text("click"),
                 click: () => openDocument("new-tab"),
             });
         }
@@ -446,7 +452,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         openSubmenus.push({
             id: "attr",
             icon: "iconAttr",
-            label: window.siyuan.languages.attr,
+            label: localization.text("attr"),
             click: () => {
                 const notebookId = targetNotebookIds[0];
                 if (!notebookId) {
@@ -471,7 +477,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         });
         menu.addItem({
             id: "openBy",
-            label: window.siyuan.languages.openBy,
+            label: localization.text("openBy"),
             icon: "iconOpen",
             submenu: openSubmenus,
         });
@@ -485,7 +491,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     const copyMenu: IMenu[] = [{
         id: "copyKeyContent",
         iconHTML: "",
-        label: window.siyuan.languages.copyKeyContent,
+        label: localization.text("copyKeyContent"),
         click() {
             let text = "";
             rowElements.forEach((item, i) => {
@@ -504,7 +510,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         copyMenu.splice(1, 0, {
             id: "copyBlockRef",
             iconHTML: "",
-            label: window.siyuan.languages.copyBlockRef,
+            label: localization.text("copyBlockRef"),
             click: () => {
                 let text = "";
                 for (let i = 0; i < ids.length; i++) {
@@ -529,7 +535,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }, {
             id: "copyBlockEmbed",
             iconHTML: "",
-            label: window.siyuan.languages.copyBlockEmbed,
+            label: localization.text("copyBlockEmbed"),
             click: () => {
                 let text = "";
                 ids.forEach((id, index) => {
@@ -551,7 +557,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }, {
             id: "copyProtocol",
             iconHTML: "",
-            label: window.siyuan.languages.copyProtocol,
+            label: localization.text("copyProtocol"),
             click: () => {
                 const missingTargetIndex = ids.findIndex((_id, index) =>
                     rowElements[index].querySelector(".av__cell[data-dtype='block']").getAttribute("data-detached") !== "true" &&
@@ -583,7 +589,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }, {
             id: "copyProtocolInMd",
             iconHTML: "",
-            label: window.siyuan.languages.copyProtocolInMd,
+            label: localization.text("copyProtocolInMd"),
             click: () => {
                 let text = "";
                 for (let i = 0; i < ids.length; i++) {
@@ -613,7 +619,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }, {
             id: "copyHPath",
             iconHTML: "",
-            label: window.siyuan.languages.copyHPath,
+            label: localization.text("copyHPath"),
             click: async () => {
                 let text = "";
                 for (let i = 0; i < ids.length; i++) {
@@ -652,7 +658,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         }, {
             id: "copyID",
             iconHTML: "",
-            label: window.siyuan.languages.copyID,
+            label: localization.text("copyID"),
             click: () => {
                 let text = "";
                 ids.forEach((id, index) => {
@@ -677,7 +683,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     copyMenu.push({
         id: "duplicate",
         iconHTML: "",
-        label: window.siyuan.languages.duplicate,
+        label: localization.text("duplicate"),
         click: () => {
             duplicateRows(blockElement, protyle, rowElements);
         }
@@ -685,7 +691,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
 
     menu.addItem({
         id: "copy",
-        label: window.siyuan.languages.copy,
+        label: localization.text("copy"),
         icon: "iconCopy",
         type: "submenu",
         submenu: copyMenu
@@ -693,7 +699,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     if (!protyle.disabled) {
         menu.addItem({
             id: "addToDatabase",
-            label: window.siyuan.languages.addToDatabase,
+            label: localization.text("addToDatabase"),
             icon: "iconDatabase",
             click() {
                 openSearchAV(protyle, blockElement.getAttribute("data-av-id"), rowElements[0] as HTMLElement, (listItemElement) => {
@@ -735,13 +741,13 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
         });
         if (rowElements.length === 1) {
             if (keyCellElement.getAttribute("data-detached") !== "true") {
-                menu.addSeparator({id: "separator_1"});
+                menu.addItem({id: "separator_1", type: "separator"});
             }
             menu.addItem({
                 id: avType === "table" ? "insertRowBefore" : "insertItemBefore",
                 icon: "iconBefore",
                 label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages[avType === "table" ? "insertRowBefore" : "insertItemBefore"].replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
+${localization.text(avType === "table" ? "insertRowBefore" : "insertItemBefore").replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" value="1" placeholder="${localization.text("enterKey")}" class="b3-text-field b3-text-field--size"><span class="fn__space"></span>`)}
 </div>`,
                 bind(element) {
                     const inputElement = element.querySelector("input");
@@ -756,7 +762,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowBefore" : "insertItemBe
                             previousID: rowElements[0].previousElementSibling?.getAttribute("data-id"),
                             groupID: rowElements[0].parentElement.getAttribute("data-group-id")
                         });
-                        menu.close();
+                        menuHandle.close();
                     });
                     inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                         if (!event.isComposing && event.key === "Enter") {
@@ -767,7 +773,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowBefore" : "insertItemBe
                                 previousID: rowElements[0].previousElementSibling?.getAttribute("data-id"),
                                 groupID: rowElements[0].parentElement.getAttribute("data-group-id")
                             });
-                            menu.close();
+                            menuHandle.close();
                         }
                     });
                 }
@@ -776,7 +782,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowBefore" : "insertItemBe
                 id: avType === "table" ? "insertRowAfter" : "insertItemAfter",
                 icon: "iconAfter",
                 label: `<div class="fn__flex" style="align-items: center;">
-${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAfter"].replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" placeholder="${window.siyuan.languages.enterKey}" class="b3-text-field b3-text-field--size" value="1"><span class="fn__space"></span>`)}
+${localization.text(avType === "table" ? "insertRowAfter" : "insertItemAfter").replace("${x}", `<span class="fn__space"></span><input type="number" step="1" min="1" placeholder="${localization.text("enterKey")}" class="b3-text-field b3-text-field--size" value="1"><span class="fn__space"></span>`)}
 </div>`,
                 bind(element) {
                     const inputElement = element.querySelector("input");
@@ -791,7 +797,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
                             previousID: rowElements[0].getAttribute("data-id"),
                             groupID: rowElements[0].parentElement.getAttribute("data-group-id")
                         });
-                        menu.close();
+                        menuHandle.close();
                     });
                     inputElement.addEventListener("keydown", (event: KeyboardEvent) => {
                         if (!event.isComposing && event.key === "Enter") {
@@ -802,16 +808,16 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
                                 previousID: rowElements[0].getAttribute("data-id"),
                                 groupID: rowElements[0].parentElement.getAttribute("data-group-id")
                             });
-                            menu.close();
+                            menuHandle.close();
                         }
                     });
                 }
             });
-            menu.addSeparator({id: "separator_2"});
+            menu.addItem({id: "separator_2", type: "separator"});
             if (keyCellElement.getAttribute("data-detached") !== "true") {
                 menu.addItem({
                     id: "unbindBlock",
-                    label: window.siyuan.languages.unbindBlock,
+                    label: localization.text("unbindBlock"),
                     icon: "iconLinkOff",
                     click() {
                         updateCellsValue(protyle, blockElement, {
@@ -824,7 +830,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
         menu.addItem({
             id: "delete",
             icon: "iconTrashcan",
-            label: window.siyuan.languages.delete,
+            label: localization.text("delete"),
             click() {
                 deleteRow(blockElement, protyle);
             }
@@ -857,7 +863,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
                         label: escapeHtml(cellElement.getAttribute("aria-label").split('<div class="ft__on-surface">')[0]),
                         click() {
                             rowElement.querySelector(".av__gallery-fields").classList.add("av__gallery-fields--edit");
-                            rowElement.querySelector('[data-type="av-gallery-edit"]').setAttribute("aria-label", window.siyuan.languages.hideEmptyFields);
+                            rowElement.querySelector('[data-type="av-gallery-edit"]').setAttribute("aria-label", localization.text("hideEmptyFields"));
                             popTextCell(protyle, selectElements);
                         }
                     });
@@ -867,13 +873,15 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
         menu.addItem({
             id: "fields",
             icon: "iconAttr",
-            label: window.siyuan.languages.fields,
+            label: localization.text("fields"),
             type: "submenu",
             submenu: editAttrSubmenu
         });
     }
     emitProtylePluginMenu({
         plugins: protyle.plugins,
+        menu,
+        localization,
         type: "open-menu-av",
         detail: {
             protyle,
@@ -882,7 +890,7 @@ ${window.siyuan.languages[avType === "table" ? "insertRowAfter" : "insertItemAft
         },
         separatorPosition: "top",
     });
-    menu.open(position);
+    menu.popup(position);
     return true;
 };
 
@@ -901,7 +909,11 @@ export const updateAVName = (protyle: IProtyle, blockElement: Element) => {
         return;
     }
     if (newData.length > Constants.SIZE_TITLE) {
-        showMessage(window.siyuan.languages["_kernel"]["106"]);
+        protyle.host.dispatch({
+            type: "notify",
+            level: "info",
+            message: protyle.localization.kernelText(106),
+        });
         return false;
     }
     const newUpdated = dayjs().format("YYYYMMDDHHmmss");
@@ -939,7 +951,7 @@ export const updateAVName = (protyle: IProtyle, blockElement: Element) => {
     });
 };
 
-export const updateAttrViewCellAnimation = (cellElement: HTMLElement, value: IAVCellValue, headerValue?: {
+export const updateAttrViewCellAnimation = (protyle: IProtyle, cellElement: HTMLElement, value: IAVCellValue, headerValue?: {
     icon?: string,
     name?: string,
     pin?: boolean,
@@ -967,14 +979,14 @@ export const updateAttrViewCellAnimation = (cellElement: HTMLElement, value: IAV
                 };
             }
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                viewType, protyle.settings.icons.file);
+                viewType, protyle.settings.icons.file, protyle.localization);
             cellElement.parentElement.setAttribute("data-empty", cellValueIsEmpty(value).toString());
         } else {
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                "table", protyle.settings.icons.file);
+                "table", protyle.settings.icons.file, protyle.localization);
         }
         if (hasDragFill) {
-            addDragFill(cellElement);
+            addDragFill(cellElement, protyle.localization);
         }
         renderCellAttr(cellElement, value);
     }

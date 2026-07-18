@@ -145,6 +145,15 @@ export function parseKernelGatewayTarget(
     );
     surface = "api";
     upstreamPath = route.remainder.slice("/kernel/api".length);
+  } else if (route.remainder.startsWith("/emojis/")) {
+    if (
+      !onlyParameters(route.url.searchParams, ["notebookId", "documentId"])
+    ) {
+      throw new KernelGatewayAdmissionError(400);
+    }
+    identity = resourceIdentity(route.url.searchParams);
+    surface = "asset";
+    upstreamPath = route.remainder;
   } else if (route.remainder.startsWith("/assets/")) {
     const allowedParameters = route.url.searchParams.has("download")
       ? ["notebookId", "documentId", "download"]

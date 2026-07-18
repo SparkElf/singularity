@@ -37,7 +37,6 @@ import {processIOSPurchaseResponse} from "../util/iOSPurchase";
 import {nbsp2space} from "../protyle/util/normalizeText";
 import {armKeyboardLock, callMobileAppShowKeyboard, canInput, setWebViewFocusable} from "./util/mobileAppUtil";
 import {hideAllEditorElements} from "../protyle/ui/hideElements";
-import {initTouchDragBridge} from "../util/touchDragBridge";
 import {appearanceConfigApi} from "../config/tabs/appearanceRuntime";
 import {createProtyleEditorRegistry} from "../../../enterprise/packages/protyle-browser/src";
 
@@ -221,7 +220,6 @@ class App {
                     }
                 }
             });
-            initTouchDragBridge();
         });
     }
 }

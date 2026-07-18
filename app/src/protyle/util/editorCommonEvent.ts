@@ -43,6 +43,8 @@ import {clearSelect} from "./clear";
 import {dragoverTab} from "../render/av/view";
 import {setFold} from "./blockFold";
 import {isEncryptedBox} from "../../util/pathName";
+import {beginProtyleDrag, currentProtyleDrag, endProtyleDrag} from "../ui/dragState";
+import {touchDragOwner} from "../ui/touchDragState";
 
 const convertListItemSubtype = (listItem: Element, subtype: string) => {
     const actionElement = listItem.querySelector(".protyle-action");
@@ -663,21 +665,27 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
         if (target.tagName === "IMG") {
-            window.siyuan.dragElement = undefined;
+            endProtyleDrag(protyle);
             event.preventDefault();
             return;
         }
 
         if (target.classList) {
             if (hasClosestByClassName(target, "protyle-wysiwyg__embed")) {
-                window.siyuan.dragElement = undefined;
+                endProtyleDrag(protyle);
                 event.preventDefault();
             } else if (target.parentElement.parentElement.classList.contains("av__views")) {
-                window.siyuan.dragElement = target;
                 target.style.width = target.clientWidth + "px";
-                target.style.opacity = ".36";
-                event.dataTransfer.setData(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}ViewTab${Constants.ZWSP}${[target.previousElementSibling?.getAttribute("data-id")]}`,
-                    target.outerHTML);
+                beginProtyleDrag({
+                    data: target.previousElementSibling?.getAttribute("data-id") || "",
+                    dataTransfer: event.dataTransfer,
+                    element: target,
+                    html: target.outerHTML,
+                    opacity: ".36",
+                    protyle,
+                    subtype: "ViewTab",
+                    type: "NodeAttributeView",
+                });
                 return;
             } else if (target.classList.contains("protyle-action")) {
                 target.parentElement.classList.add("protyle-wysiwyg--select");
@@ -690,10 +698,11 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 ghostElement.append(cloneElement);
                 ghostElement.setAttribute("style", `position:fixed;opacity:.1;width:${target.parentElement.clientWidth}px;padding:0;`);
                 document.body.append(ghostElement);
-                if (window.siyuan.touchDragActive) {
-                    // 触屏保留 DOM ghost 供 touchDragBridge 跟随手指
+                if (touchDragOwner.active) {
                     event.dataTransfer.setDragImage(ghostElement, 0, 0);
-                    window.siyuan.touchDragGhost = ghostElement;
+                    const ghostHandle = protyle.runtime!.overlays.add(ghostElement);
+                    protyle.runtime!.overlays.bringToFront(ghostElement);
+                    touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
                 } else {
                     // 桌面端隐藏原生 ghost，改用自定义双区跟随框
                     const transparentImg = new Image();
@@ -703,16 +712,27 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                         ghostElement.remove();
                     });
                 }
-                window.siyuan.dragTitle = getContenteditableElement(target.parentElement)?.textContent?.trim() || "";
-
-                window.siyuan.dragElement = protyle.wysiwyg.element;
-                event.dataTransfer.setData(`${Constants.SIYUAN_DROP_GUTTER}NodeListItem${Constants.ZWSP}${target.parentElement.getAttribute("data-subtype")}${Constants.ZWSP}${[target.parentElement.getAttribute("data-node-id")]}`,
-                    protyle.wysiwyg.element.innerHTML);
+                beginProtyleDrag({
+                    data: target.parentElement.getAttribute("data-node-id")!,
+                    dataTransfer: event.dataTransfer,
+                    element: protyle.wysiwyg.element,
+                    html: protyle.wysiwyg.element.innerHTML,
+                    protyle,
+                    subtype: target.parentElement.getAttribute("data-subtype") || "",
+                    title: getContenteditableElement(target.parentElement)?.textContent?.trim() || "",
+                    type: "NodeListItem",
+                });
                 return;
             } else if (target.classList.contains("av__cell--header")) {
-                window.siyuan.dragElement = target;
-                event.dataTransfer.setData(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}Col${Constants.ZWSP}${[target.getAttribute("data-col-id")]}`,
-                    target.outerHTML);
+                beginProtyleDrag({
+                    data: target.getAttribute("data-col-id")!,
+                    dataTransfer: event.dataTransfer,
+                    element: target,
+                    html: target.outerHTML,
+                    protyle,
+                    subtype: "Col",
+                    type: "NodeAttributeView",
+                });
                 return;
             } else if (target.classList.contains("av__gallery-item")) {
                 const blockElement = hasClosestBlock(target);
@@ -771,27 +791,36 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     ghostElement.setAttribute("style", "left: 1px;top:100vh;position:fixed;opacity:.1;padding:0;z-index: 8");
                     document.body.append(ghostElement);
                     event.dataTransfer.setDragImage(ghostElement, -10, -10);
-                    if (window.siyuan.touchDragActive) {
-                        window.siyuan.touchDragGhost = ghostElement;
+                    if (touchDragOwner.active) {
+                        const ghostHandle = protyle.runtime!.overlays.add(ghostElement);
+                        protyle.runtime!.overlays.bringToFront(ghostElement);
+                        touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
                     } else {
                         setTimeout(() => {
                             ghostElement.remove();
                         });
                     }
-                    window.siyuan.dragElement = target;
                     const selectIds: string[] = [];
                     blockElement.querySelectorAll(".av__gallery-item--select").forEach(item => {
                         const bodyElement = hasClosestByClassName(item, "av__body") as HTMLElement;
                         const groupId = bodyElement.getAttribute("data-group-id");
                         selectIds.push(item.getAttribute("data-id") + (groupId ? `@${groupId}` : ""));
                     });
-                    event.dataTransfer.setData(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}GalleryItem${Constants.ZWSP}${selectIds}`,
-                        ghostElement.outerHTML);
+                    beginProtyleDrag({
+                        data: selectIds.join(","),
+                        dataTransfer: event.dataTransfer,
+                        element: target,
+                        html: ghostElement.outerHTML,
+                        protyle,
+                        subtype: "GalleryItem",
+                        type: "NodeAttributeView",
+                    });
                 }
                 return;
             }
         }
         // 选中编辑器中的文字进行拖拽
+        endProtyleDrag(protyle);
         event.dataTransfer.setData(Constants.SIYUAN_DROP_EDITOR, Constants.SIYUAN_DROP_EDITOR);
         protyle.element.style.userSelect = "auto";
         document.onmousemove = null;
@@ -802,7 +831,6 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         const isCopyDrag = protyle.lite || event.ctrlKey;
         counter = 0;
         hideDragTip();
-        window.siyuan.dragTitle = "";
         if (protyle.disabled || event.dataTransfer.getData(Constants.SIYUAN_DROP_EDITOR)) {
             // 只读模式/编辑器内选中文字拖拽
             event.preventDefault();
@@ -816,17 +844,22 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             }
         }
         if (gutterType.startsWith(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}ViewTab${Constants.ZWSP}`.toLowerCase())) {
-            const blockElement = hasClosestBlock(window.siyuan.dragElement);
-            if (blockElement) {
+            const drag = currentProtyleDrag(protyle);
+            if (drag?.transferType === gutterType && drag.identity.notebookId === protyle.notebookId) {
+                const blockElement = hasClosestBlock(drag.element);
+                if (!blockElement) {
+                    endProtyleDrag(protyle);
+                    return;
+                }
                 const avID = blockElement.getAttribute("data-av-id");
                 const blockID = blockElement.getAttribute("data-node-id");
-                const id = window.siyuan.dragElement.getAttribute("data-id");
+                const id = drag.element.getAttribute("data-id");
                 transaction(protyle, [{
                     action: "sortAttrViewView",
                     avID,
                     blockID,
                     id,
-                    previousID: window.siyuan.dragElement.previousElementSibling?.getAttribute("data-id"),
+                    previousID: drag.element.previousElementSibling?.getAttribute("data-id"),
                     data: "unRefresh"   // 不需要重新渲染
                 }], [{
                     action: "sortAttrViewView",
@@ -836,6 +869,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     previousID: gutterType.split(Constants.ZWSP).pop()
                 }]);
             }
+            endProtyleDrag(protyle);
             return;
         }
         let targetElement = editorElement.querySelector(".dragover__left, .dragover__right, .dragover__bottom, .dragover__top, .dragover__bottom--sibling, .dragover__top--sibling, .dragover__bottom--child, .dragover__top--child");
@@ -846,6 +880,12 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
         if (gutterType) {
             // gutter 或反链面板拖拽
+            const drag = currentProtyleDrag(protyle);
+            if (!drag || drag.transferType !== gutterType || drag.identity.notebookId !== protyle.notebookId) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             const sourceElements: Element[] = [];
             const gutterTypes = gutterType.replace(Constants.SIYUAN_DROP_GUTTER, "").split(Constants.ZWSP);
             const selectedIds = gutterTypes[2].split(",");
@@ -882,23 +922,11 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 selectedIds.forEach(item => {
                     queryClass += `[data-node-id="${item}"],`;
                 });
-                if (window.siyuan.dragElement) {
-                    window.siyuan.dragElement.querySelectorAll(queryClass.substring(0, queryClass.length - 1)).forEach(elementItem => {
-                        if (!isInEmbedBlock(elementItem)) {
-                            sourceElements.push(elementItem);
-                        }
-                    });
-                } else if (window.siyuan.config.system.workspaceDir.toLowerCase() === gutterTypes[3]) {
-                    // 跨窗口拖拽
-                    // 不能跨工作区域拖拽 https://github.com/siyuan-note/siyuan/issues/13582
-                    const targetProtyleElement = document.createElement("template");
-                    targetProtyleElement.innerHTML = `<div>${event.dataTransfer.getData(gutterType)}</div>`;
-                    targetProtyleElement.content.querySelectorAll(queryClass.substring(0, queryClass.length - 1)).forEach(elementItem => {
-                        if (!isInEmbedBlock(elementItem)) {
-                            sourceElements.push(elementItem);
-                        }
-                    });
-                }
+                drag.element.querySelectorAll(queryClass.substring(0, queryClass.length - 1)).forEach(elementItem => {
+                    if (!isInEmbedBlock(elementItem)) {
+                        sourceElements.push(elementItem);
+                    }
+                });
 
                 const sourceIds: string [] = [];
                 const srcs: IOperationSrcs[] = [];
@@ -1440,7 +1468,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
                 targetElement.classList.remove("dragover__bottom", "dragover__top", "dragover__left", "dragover__right");
             }
-        } else if (!window.siyuan.dragElement && (
+        } else if (!currentProtyleDrag(protyle) && (
             event.dataTransfer.types.includes("Files") || event.dataTransfer.types.includes("text/html")
         )) {
             event.preventDefault();
@@ -1461,10 +1489,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
             }
         }
-        if (window.siyuan.dragElement) {
-            window.siyuan.dragElement.style.opacity = "";
-            window.siyuan.dragElement = undefined;
-        }
+        endProtyleDrag(protyle);
         // Clean up all drag indicators unconditionally after drop/cancel
         cleanupDragIndicators(document);
     });
@@ -1554,7 +1579,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             const key = position === "bottom" ? "dragTipListItemAfter" : "dragTipListItemBefore";
             action = window.siyuan.languages[key].replace("${x}", targetText);
         }
-        showDragTip(window.siyuan.dragTitle || "", action, event.clientX, event.clientY);
+        showDragTip(currentProtyleDrag(protyle)?.title ?? "", action, event.clientX, event.clientY);
     };
     // 缓存当前目标的文本和列布局判断，避免优化路径每次 dragover 重复计算
     let cachedTargetText = "";
@@ -1573,8 +1598,16 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 gutterType = type;
             }
         }
+        const drag = currentProtyleDrag(protyle);
+        if (gutterType && (!drag || drag.transferType !== gutterType ||
+            drag.identity.notebookId !== protyle.notebookId)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "none";
+            hideDragTip();
+            return;
+        }
         if (gutterType.startsWith(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}ViewTab${Constants.ZWSP}`.toLowerCase())) {
-            dragoverTab(event);
+            dragoverTab(event, drag!.element);
             event.preventDefault();
             return;
         }
@@ -1590,7 +1623,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             hasClosestByClassName(event.target, "av__gallery-add");
         if (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_FILE)) {
             // 文档面板拖拽文档到编辑器
-            showDragTip(window.siyuan.dragTitle || "",
+            showDragTip(drag?.title ?? "",
                 isAvTarget ? window.siyuan.languages.addToDatabase :
                     (event.altKey ? window.siyuan.languages.dragTip2Heading : window.siyuan.languages.dragTipRef),
                 event.clientX, event.clientY);
@@ -1612,7 +1645,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             } else {
                 action = window.siyuan.languages.move;
             }
-            showDragTip(window.siyuan.dragTitle || "", action, event.clientX, event.clientY);
+            showDragTip(drag!.title, action, event.clientX, event.clientY);
         } else {
             hideDragTip();
         }
@@ -1631,7 +1664,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     clearSelect(["cell", "row"], protyle.wysiwyg.element);
                     targetElement.classList.add("av__cell--select");
                     if (blockElement.getAttribute("data-av-type") !== "gallery") {
-                        addDragFill(targetElement);
+                        addDragFill(targetElement, protyle.localization);
                     }
                     dragoverElement = targetElement;
                 }
@@ -1640,12 +1673,12 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        if (!gutterType && !window.siyuan.dragElement) {
+        const fileTreeIds = event.dataTransfer.getData(Constants.SIYUAN_DROP_FILE);
+        if (!gutterType && !drag && !fileTreeIds) {
             // https://github.com/siyuan-note/siyuan/issues/6436
             event.preventDefault();
             return;
         }
-        const fileTreeIds = (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_FILE) && window.siyuan.dragElement) ? window.siyuan.dragElement.innerText : "";
         if (event.altKey && fileTreeIds.indexOf("-") === -1) {
             // Alt=插入引用（行级）：走光标定位语义，清除全部拖拽指示。
             // 复用 cleanupDragIndicators 以覆盖列表专属指示类（--sibling/--child）与 --drag-* 变量，
@@ -1680,7 +1713,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
         // 非 Alt 路径：清除可能残留的 Alt 竖线指示
         hideCaretLine();
-        // 编辑器内文字拖拽或资源文件拖拽或按住 alt/shift 拖拽反链图标进入编辑器时不能运行 event.preventDefault()， 否则无光标; 需放在 !window.siyuan.dragElement 之后
+        // 编辑器内文字拖拽或资源文件拖拽或按住 alt/shift 拖拽反链图标进入编辑器时不能运行 event.preventDefault()，否则无光标。
         event.preventDefault();
         targetElement = hasClosestByClassName(event.target, "av__gallery-item") || hasClosestByClassName(event.target, "av__gallery-add") ||
             hasClosestByClassName(event.target, "av__row") || hasClosestByClassName(event.target, "av__row--util") ||
@@ -1779,8 +1812,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             targetElement = hasClosestByClassName(event.target, "av__cell");
             if (targetElement) {
                 const targetRowElement = hasClosestByClassName(targetElement, "av__row--header");
-                const dragRowElement = hasClosestByClassName(window.siyuan.dragElement, "av__row--header");
-                if (targetElement === window.siyuan.dragElement || !targetRowElement || !dragRowElement ||
+                const dragRowElement = hasClosestByClassName(drag!.element, "av__row--header");
+                if (targetElement === drag!.element || !targetRowElement || !dragRowElement ||
                     (targetRowElement && dragRowElement && targetRowElement !== dragRowElement)
                 ) {
                     targetElement = false;
@@ -1788,7 +1821,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             }
         } else if (targetElement && gutterType && gutterType.startsWith(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeViewRowMenu${Constants.ZWSP}`.toLowerCase())) {
             if ((!targetElement.classList.contains("av__row") && !targetElement.classList.contains("av__row--util")) ||
-                (window.siyuan.dragElement && !window.siyuan.dragElement.contains(targetElement))) {
+                !drag!.element.contains(targetElement)) {
                 // 行只能拖拽当前 av 中
                 targetElement = false;
             } else {
@@ -1816,7 +1849,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         } else if (targetElement && gutterType && gutterType.startsWith(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}GalleryItem${Constants.ZWSP}`.toLowerCase())) {
             const containerElement = hasClosestByClassName(event.target, "av__container");
             if (targetElement.classList.contains("av") || !containerElement ||
-                !containerElement.contains(window.siyuan.dragElement) || targetElement === window.siyuan.dragElement) {
+                !containerElement.contains(drag!.element) || targetElement === drag!.element) {
                 // gallery item 只能拖拽当前 av 中
                 targetElement = false;
             } else {
@@ -2057,7 +2090,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                             const key = (isHorizontal || cachedIsCol)
                                 ? (isFront ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetBack)
                                 : (isFront ? window.siyuan.languages.dragTipMoveTargetAbove : window.siyuan.languages.dragTipMoveTargetBelow);
-                            showDragTip(window.siyuan.dragTitle || "", key.replace("${x}", displayText),
+                            showDragTip(drag!.title, key.replace("${x}", displayText),
                                 event.clientX, event.clientY);
                         }
                     }
@@ -2067,12 +2100,12 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
 
             if (targetElement.classList.contains("av__cell")) {
                 if (event.clientX < nodeRect.left + nodeRect.width / 2 && event.clientX > nodeRect.left &&
-                    !targetElement.classList.contains("av__row") && targetElement.previousElementSibling !== window.siyuan.dragElement) {
+                    !targetElement.classList.contains("av__row") && targetElement.previousElementSibling !== drag!.element) {
                     targetElement.classList.add("dragover__left");
                 } else if (event.clientX > nodeRect.right - nodeRect.width / 2 && event.clientX <= nodeRect.right + 1 &&
-                    !targetElement.classList.contains("av__row") && targetElement !== window.siyuan.dragElement.previousElementSibling) {
-                    if (window.siyuan.dragElement.previousElementSibling.classList.contains("av__colsticky") &&
-                        targetElement === window.siyuan.dragElement.previousElementSibling.lastElementChild) {
+                    !targetElement.classList.contains("av__row") && targetElement !== drag!.element.previousElementSibling) {
+                    if (drag!.element.previousElementSibling.classList.contains("av__colsticky") &&
+                        targetElement === drag!.element.previousElementSibling.lastElementChild) {
                         // 拖拽到固定列的最后一个元素
                     } else {
                         targetElement.classList.add("dragover__right");
@@ -2123,7 +2156,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                         const key = isSbLeftEdge
                             ? window.siyuan.languages.dragTipMoveTargetFront
                             : window.siyuan.languages.dragTipMoveTargetBack;
-                        showDragTip(window.siyuan.dragTitle || "", key.replace("${x}", sbText),
+                        showDragTip(drag!.title, key.replace("${x}", sbText),
                             event.clientX, event.clientY);
                     }
                     return;
@@ -2139,7 +2172,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 addDragover(targetElement);
                 // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                 if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
-                    showDragTip(window.siyuan.dragTitle || "",
+                    showDragTip(drag!.title,
                         window.siyuan.languages.dragTipMoveTargetFront.replace("${x}", cachedTargetText),
                         event.clientX, event.clientY);
                 }
@@ -2149,7 +2182,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 addDragover(targetElement);
                 // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                 if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
-                    showDragTip(window.siyuan.dragTitle || "",
+                    showDragTip(drag!.title,
                         window.siyuan.languages.dragTipMoveTargetBack.replace("${x}", cachedTargetText),
                         event.clientX, event.clientY);
                 }
@@ -2163,7 +2196,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     addDragover(targetElement);
                     // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                     if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
-                        showDragTip(window.siyuan.dragTitle || "",
+                        showDragTip(drag!.title,
                             (cachedIsCol ? window.siyuan.languages.dragTipMoveTargetBack : window.siyuan.languages.dragTipMoveTargetBelow).replace("${x}", cachedTargetText),
                             event.clientX, event.clientY);
                     }
@@ -2172,7 +2205,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     addDragover(targetElement);
                     // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                     if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
-                        showDragTip(window.siyuan.dragTitle || "",
+                        showDragTip(drag!.title,
                             (cachedIsCol ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetAbove).replace("${x}", cachedTargetText),
                             event.clientX, event.clientY);
                     }
@@ -2268,7 +2301,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 const key = isCol
                     ? (isFront ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetBack)
                     : (isFront ? window.siyuan.languages.dragTipMoveTargetAbove : window.siyuan.languages.dragTipMoveTargetBelow);
-                showDragTip(window.siyuan.dragTitle || "", key.replace("${x}", targetText),
+                showDragTip(drag!.title, key.replace("${x}", targetText),
                     event.clientX, event.clientY);
             }
         }
@@ -2292,16 +2325,14 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         counter++;
     });
     editorElement.addEventListener("dragend", () => {
-        if (window.siyuan.dragElement) {
-            window.siyuan.dragElement.style.opacity = "";
-            window.siyuan.dragElement = undefined;
+        if (currentProtyleDrag(protyle)) {
+            endProtyleDrag(protyle);
             document.onmousemove = null;
         }
         // Clean up all drag indicators on cancel
         cleanupDragIndicators(editorElement);
         dragoverElement = undefined;
         hideDragTip();
-        window.siyuan.dragTitle = "";
     });
     // Fallback: document-level cleanup in case dragend doesn't bubble
     document.addEventListener("dragend", () => {

@@ -36,6 +36,7 @@ import {showMessage} from "../dialog/message";
 import {resolveAgentBlockMentions} from "./agentMentions";
 import {setPanelFocus} from "../layout/util";
 import {renderStatusbarCounter} from "../layout/status";
+import {AIChat} from "../ai/chat";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -200,6 +201,24 @@ const addBlocksToAgent = async (notebookId: string, blockIds: readonly string[])
     agentChat.insertBlockMentions(mentions);
 };
 
+const openAIWriting = (
+    app: App,
+    identity: {readonly blockId: string; readonly documentId: string; readonly notebookId: string},
+) => {
+    let blockElement: Element | undefined;
+    const editor = app.protyleEditors.find((candidate) => {
+        if (candidate.notebookId !== identity.notebookId || candidate.options.blockId !== identity.documentId) {
+            return false;
+        }
+        blockElement = candidate.wysiwyg.element.querySelector(`[data-node-id="${identity.blockId}"]`) ?? undefined;
+        return blockElement !== undefined;
+    });
+    if (!editor || !blockElement) {
+        throw new Error("[protyle-host:open-ai-writing] target editor block is unavailable");
+    }
+    AIChat(editor, blockElement);
+};
+
 const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
     switch (event.type) {
         case "open-document":
@@ -280,6 +299,9 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
                     error.message : window.siyuan.languages.unexpectedResponseError;
                 showMessage(message, 6000, "error");
             });
+            return;
+        case "open-ai-writing":
+            openAIWriting(app, event);
             return;
         case "open-asset":
             openAsset(
