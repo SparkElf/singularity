@@ -33,6 +33,7 @@ import {ipcRenderer} from "electron";
 import {hideTooltip, showTooltip} from "../../dialog/tooltip";
 import {selectOpenTab} from "./util";
 import {hideDragTip, showDragTip, transparentImgSrc} from "../../protyle/util/dragTip";
+import {encodeDocumentDragTargets, type ProtyleDocumentDragTarget} from "../../protyle/util/documentDrag";
 
 export class Files extends Model {
     public element: HTMLElement;
@@ -400,7 +401,7 @@ export class Files extends Model {
                     selectElements = [liElement];
                 }
                 let ids = "";
-                const documentTargets: Array<{id: string, notebookId: string}> = [];
+                const documentTargets: ProtyleDocumentDragTarget[] = [];
                 const ghostElement = document.createElement("ul");
                 selectElements.forEach((item: HTMLElement, index) => {
                     ghostElement.append(item.cloneNode(true));
@@ -417,7 +418,7 @@ export class Files extends Model {
                         const topULElement = hasTopClosestByTag(item, "UL");
                         const notebookId = topULElement ? topULElement.getAttribute("data-url") : undefined;
                         if (notebookId) {
-                            documentTargets.push({id: item.dataset.nodeId, notebookId});
+                            documentTargets.push({documentId: item.dataset.nodeId, notebookId});
                         } else {
                             console.error("[Singularity/ProtyleIdentity] dragged document has no notebook", {
                                 documentId: item.dataset.nodeId,
@@ -435,7 +436,7 @@ export class Files extends Model {
                     ghostElement.remove();
                 });
                 event.dataTransfer.setData(Constants.SIYUAN_DROP_FILE, ids);
-                event.dataTransfer.setData(Constants.SIYUAN_DROP_NOTEBOOK, JSON.stringify(documentTargets));
+                event.dataTransfer.setData(Constants.SIYUAN_DROP_NOTEBOOK, encodeDocumentDragTargets(documentTargets));
                 event.dataTransfer.dropEffect = "move";
                 window.siyuan.dragTitle = (selectElements[0] as HTMLElement)?.querySelector(".b3-list-item__text")?.textContent?.trim() || "";
                 window.siyuan.dragElement = document.createElement("div");

@@ -53,6 +53,7 @@ import {recordBeforeResizeTop} from "../protyle/util/resize";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {setTitle} from "../util/processTitle";
 import {Backlink} from "./dock/Backlink";
+import {parseDocumentDragTargets} from "../protyle/util/documentDrag";
 
 export class Wnd {
     private app: App;
@@ -240,24 +241,16 @@ export class Wnd {
             if (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_FILE)) {
                 // 文档树拖拽
                 setPanelFocus(it.parentElement);
-                const documentTargetsData = event.dataTransfer.getData(Constants.SIYUAN_DROP_NOTEBOOK);
-                let documentTargets: Array<{id: string, notebookId: string}>;
-                try {
-                    documentTargets = JSON.parse(documentTargetsData);
-                } catch {
-                    documentTargets = [];
-                }
-                if (!Array.isArray(documentTargets) || documentTargets.some(item =>
-                    !item || typeof item.id !== "string" || typeof item.notebookId !== "string")) {
-                    documentTargets = [];
-                }
+                const documentTargets = parseDocumentDragTargets(
+                    event.dataTransfer.getData(Constants.SIYUAN_DROP_NOTEBOOK),
+                );
                 if (documentTargets.length === 0) {
                     console.error("[Singularity/ProtyleIdentity] document drop has no notebook payload");
                 } else {
                     documentTargets.forEach(item => {
                         openFileById({
                             app,
-                            id: item.id,
+                            id: item.documentId,
                             notebookId: item.notebookId,
                             action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                         });
