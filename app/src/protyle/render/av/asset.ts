@@ -17,12 +17,13 @@ import {renameAsset} from "../../../editor/rename";
 import * as dayjs from "dayjs";
 import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";
-import {base64ToURL, getCompressURL, removeCompressURL} from "../../../util/image";
+import {base64ToURL, removeCompressURL} from "../../../util/image";
 import {confirmDialog} from "../../../dialog/confirmDialog";
 import {filesize} from "filesize";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
 import {openAVMenu} from "./menu";
+import {resolveProtyleAssetSource} from "../../util/assetSource";
 
 export const bindAssetEvent = (options: {
     protyle: IProtyle,
@@ -56,13 +57,17 @@ export const bindAssetEvent = (options: {
     });
 };
 
-export const getAssetHTML = (cellElements: HTMLElement[], localization: IProtyle["localization"]) => {
+export const getAssetHTML = (
+    cellElements: HTMLElement[],
+    localization: IProtyle["localization"],
+    protyle: IProtyle,
+) => {
     let html = "";
     genCellValueByElement("mAsset", cellElements[0]).mAsset.forEach((item, index) => {
         let contentHTML;
         if (item.type === "image") {
             contentHTML = `<span data-type="openAssetItem" class="fn__flex-1 ariaLabel" aria-label="${escapeAriaLabel(item.content)}">
-    <img style="max-height: 180px;max-width: 360px;border-radius: var(--b3-border-radius);margin: 4px 0;" src="${getCompressURL(encodeURI(item.content))}"/>
+    <img style="max-height: 180px;max-width: 360px;border-radius: var(--b3-border-radius);margin: 4px 0;" data-src="${escapeAttr(item.content)}" src="${escapeAttr(resolveProtyleAssetSource(protyle, item.content))}"/>
 </span>`;
         } else {
             contentHTML = `<span data-type="openAssetItem" class="fn__ellipsis b3-menu__label ariaLabel" aria-label="${escapeAriaLabel(item.content)}" style="max-width: 360px">${escapeHtml(item.name || item.content)}</span>`;
@@ -162,7 +167,7 @@ export const updateAssetCell = (options: {
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, options.protyle.settings.icons.file, localization);
+            item.innerHTML = genAVValueHTML(cellValue, options.protyle.settings.icons.file, localization, options.protyle);
         } else {
             updateAttrViewCellAnimation(options.protyle, item, cellValue);
         }
@@ -175,7 +180,7 @@ export const updateAssetCell = (options: {
     transaction(options.protyle, cellDoOperations, cellUndoOperations);
     const menuElement = currentAVOverlay(options.protyle, "panel")?.lastElementChild as HTMLElement;
     if (menuElement) {
-        menuElement.innerHTML = getAssetHTML(options.cellElements, localization);
+        menuElement.innerHTML = getAssetHTML(options.cellElements, localization, options.protyle);
         bindAssetEvent({
             protyle: options.protyle,
             menuElement,

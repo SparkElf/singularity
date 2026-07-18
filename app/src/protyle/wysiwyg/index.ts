@@ -99,6 +99,8 @@ import {BlockPanel} from "../../block/Panel";
 import {isEncryptedBox, parseSiYuanUriInfo} from "../../util/pathName";
 import {zoomOut} from "../util/zoom";
 import {requestBlockFold} from "../util/blockFoldRequest";
+import {escapeAttr} from "../../util/escape";
+import {resolveProtyleEmojiPath} from "../util/emojiPath";
 
 export class WYSIWYG {
     public lastHTMLs: { [key: string]: string } = {};
@@ -3408,7 +3410,7 @@ export class WYSIWYG {
                         if (unicode.startsWith("api/icon/getDynamicIcon")) {
                             emojiHTML = `<img class="callout-img" src="${unicode}"/>`;
                         } else if (unicode.indexOf(".") > -1) {
-                            emojiHTML = `<img class="callout-img" src="/emojis/${unicode}">`;
+                            emojiHTML = `<img class="callout-img" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}">`;
                         } else {
                             emojiHTML = unicode2Emoji(unicode);
                         }
@@ -3454,7 +3456,7 @@ export class WYSIWYG {
                             emojiHTML = `<img class="emoji" src="${unicode}"/>`;
                         } else if (unicode.indexOf(".") > -1) {
                             const emojiList = unicode.split(".");
-                            emojiHTML = `<img alt="${emojiList[0]}" class="emoji" src="/emojis/${unicode}" title="${emojiList[0]}">`;
+                            emojiHTML = `<img alt="${escapeAttr(emojiList[0])}" class="emoji" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}" title="${escapeAttr(emojiList[0])}">`;
                         } else {
                             emojiHTML = unicode2Emoji(unicode);
                         }

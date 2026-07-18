@@ -126,7 +126,7 @@ export const removeCellOption = (protyle: IProtyle, cellElements: HTMLElement[],
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
+            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization, protyle);
         } else {
             updateAttrViewCellAnimation(protyle, item, cellValue);
         }
@@ -243,6 +243,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                         cellValues[index],
                         protyle.settings.icons.file,
                         localization,
+                        protyle,
                     );
                 } else {
                     updateAttrViewCellAnimation(protyle, cellElement, cellValues[index]);
@@ -375,6 +376,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                                 cellValues[index],
                                 protyle.settings.icons.file,
                                 localization,
+                                protyle,
                             );
                         } else {
                             updateAttrViewCellAnimation(protyle, cellElement, cellValues[index]);
@@ -480,6 +482,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                                     cellValues[cellIndex],
                                     protyle.settings.icons.file,
                                     localization,
+                                    protyle,
                                 );
                             } else {
                                 updateAttrViewCellAnimation(protyle, cellElement, cellValues[cellIndex]);
@@ -664,7 +667,7 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization);
+            item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file, protyle.localization, protyle);
         } else {
             updateAttrViewCellAnimation(protyle, item, cellValue);
         }

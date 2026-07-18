@@ -1,27 +1,22 @@
 import {preserveBlockRefNotebookIDs} from "../util/blockRefIdentity";
 
-// Lute 配置由显式应用 settings 提供，跨编辑器共享同一应用实例的 Lute。
-// AgentChat 不复用此共享单例，而是通过 getAgentLute 构建独立实例，使渲染不受编辑器设置影响。
-let luteInstance: Lute | undefined;
+export const getLute = (options: IProtyleLuteOptions, settings: TProtyleApplicationSettingsPort): Lute =>
+    setLute(options, settings);
 
-/**
- * 获取（首次调用时创建）共享 Lute 单例。
- *
- * 仅在首次创建时应用 options/settings，后续调用直接返回已缓存的实例。
- */
-export const getLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPort): Lute => {
-    if (!luteInstance) {
-        luteInstance = setLute(options, settings);
+export const configureProtyleLuteEmojis = (
+    lute: Lute,
+    groups: TProtyleApplicationSettingsPort["emojis"],
+    resolveEmojiPath: (path: string) => string,
+) => {
+    const customGroup = groups.find((group) => group.id === "custom");
+    if (!customGroup) {
+        return;
     }
-    return luteInstance;
-};
-
-/**
- * 直接获取已初始化的共享 Lute 单例。
- * 供 emoji 等无需传入 options 的场景使用；尚未创建时返回 undefined。
- */
-export const getLuteInstance = (): Lute | undefined => {
-    return luteInstance;
+    const emojis: IObject = {};
+    customGroup.items.forEach((item) => {
+        emojis[item.keywords] = resolveEmojiPath(item.unicode);
+    });
+    lute.PutEmojis(emojis);
 };
 
 /**
@@ -82,10 +77,8 @@ export const getAgentLute = (options: ILuteOptions): Lute => {
     return lute;
 };
 
-/**
- * 根据显式应用 settings 与传入选项构建一个新的 Lute 实例，供共享单例初始化使用。
- */
-const setLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPort) => {
+/** 根据当前编辑器的 settings 与资源解析器构建独立 Lute 实例。 */
+const setLute = (options: IProtyleLuteOptions, settings: TProtyleApplicationSettingsPort) => {
     const lute: Lute = Lute.New();
     const spinBlockDOM = lute.SpinBlockDOM.bind(lute);
     lute.SpinBlockDOM = (html: string) => preserveBlockRefNotebookIDs(html, spinBlockDOM(html));
@@ -97,7 +90,6 @@ const setLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPor
     lute.SetHeadingID(false);
     lute.SetYamlFrontMatter(false);
     lute.PutEmojis(options.emojis);
-    lute.SetEmojiSite(options.emojiSite);
     lute.SetHeadingAnchor(options.headingAnchor);
     lute.SetInlineMathAllowDigitAfterOpenMarker(true);
     lute.SetToC(false);
@@ -129,14 +121,7 @@ const setLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPor
         lute.SetImageLazyLoading(options.lazyLoadImage);
     }
     lute.SetBlockRef(true);
-    const customEmojis = settings.emojis[0]?.items;
-    if (customEmojis && customEmojis.length > 0) {
-        const emojis: IObject = {};
-        customEmojis.forEach(item => {
-            emojis[item.keywords] = options.emojiSite + "/" + item.unicode;
-        });
-        lute.PutEmojis(emojis);
-    }
+    configureProtyleLuteEmojis(lute, settings.emojis, options.resolveEmojiPath);
     lute.SetUnorderedListMarker("-");
     lute.SetDataTask(true);
     lute.SetExportNormalizeTaskListMarker(true);

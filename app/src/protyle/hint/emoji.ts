@@ -1,5 +1,5 @@
 import {escapeAttr} from "../../util/escape";
-import {protyleContentIdentity} from "../util/contentLoad";
+import {resolveProtyleEmojiPath} from "../util/emojiPath";
 
 type EmojiGroup = TProtyleApplicationSettingsPort["emojis"][number];
 type EmojiItem = EmojiGroup["items"][number];
@@ -63,7 +63,7 @@ export const unicodeToEmoji = (
         return Lute.Sanitize(`<img class="${escapeAttr(className)}" ${lazy ? "data-" : ""}src="${escapeAttr(unicode)}"/>`);
     }
     if (unicode.includes(".")) {
-        const source = protyle.session!.runtime.resources.resolveEmoji(protyleContentIdentity(protyle), unicode);
+        const source = resolveProtyleEmojiPath(protyle, unicode);
         return Lute.Sanitize(`<img class="${escapeAttr(className)}" ${lazy ? "data-" : ""}src="${escapeAttr(source)}"/>`);
     }
     const emoji = unicode.split("-").map((part) => String.fromCodePoint(parseInt(part, 16))).join("");
@@ -73,7 +73,7 @@ export const unicodeToEmoji = (
 export const emojiInsertionHTML = (protyle: IProtyle, unicode: string) => {
     if (unicode.includes(".")) {
         const name = unicode.split(".")[0];
-        const source = protyle.session!.runtime.resources.resolveEmoji(protyleContentIdentity(protyle), unicode);
+        const source = resolveProtyleEmojiPath(protyle, unicode);
         return `<img alt="${escapeAttr(name)}" class="emoji" src="${escapeAttr(source)}" title="${escapeAttr(name)}"> `;
     }
     return protyle.lute.SpinBlockDOM(unicodeToEmoji(protyle, unicode) + " ");
