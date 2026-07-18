@@ -18,9 +18,9 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// FillBlockRefNotebookIDs 将渲染后的块引用绑定到目标块树声明的权威笔记本。
+// FillBlockRefContentIdentities 将渲染后的块引用绑定到目标块树声明的权威内容身份。
 // contentStore 为空时查询普通块树库，否则只查询指定加密笔记本的块树库。
-func FillBlockRefNotebookIDs(dom, contentStore string) string {
+func FillBlockRefContentIdentities(dom, contentStore string) string {
 	if !strings.Contains(dom, "block-ref") {
 		return dom
 	}
@@ -28,7 +28,7 @@ func FillBlockRefNotebookIDs(dom, contentStore string) string {
 	context := &nethtml.Node{Type: nethtml.ElementNode, Data: "div", DataAtom: atom.Div}
 	nodes, err := nethtml.ParseFragment(strings.NewReader(dom), context)
 	if err != nil {
-		logging.LogErrorf("parse block DOM before binding block reference notebooks failed: %s", err)
+		logging.LogErrorf("parse block DOM before binding block reference content identities failed: %s", err)
 		return ""
 	}
 
@@ -47,17 +47,22 @@ func FillBlockRefNotebookIDs(dom, contentStore string) string {
 	}
 	targets, queryErr := treenode.GetBlockTreesInBoxStrict(ids, contentStore)
 	if queryErr != nil {
-		logging.LogErrorf("resolve block reference notebooks in content store [%s] failed: %s", contentStore, queryErr)
+		logging.LogErrorf("resolve block reference content identities in content store [%s] failed: %s", contentStore, queryErr)
 	}
 
 	changed := false
 	for _, ref := range refs {
 		id, _ := htmlAttr(ref, "data-id")
 		notebookID := ""
+		documentID := ""
 		if target := targets[id]; target != nil {
 			notebookID = target.BoxID
+			documentID = target.RootID
 		}
 		if setAuthoritativeHTMLAttr(ref, "data-notebook-id", notebookID) {
+			changed = true
+		}
+		if setAuthoritativeHTMLAttr(ref, "data-document-id", documentID) {
 			changed = true
 		}
 	}
@@ -75,27 +80,27 @@ func FillBlockRefNotebookIDs(dom, contentStore string) string {
 	return output.String()
 }
 
-// FillTransactionBlockRefNotebookIDs 在事务持久化完成后统一生成响应中的块引用身份。
-func FillTransactionBlockRefNotebookIDs(transactions []*Transaction) {
+// FillTransactionBlockRefContentIdentities 在事务持久化完成后统一生成响应中的块引用身份。
+func FillTransactionBlockRefContentIdentities(transactions []*Transaction) {
 	for _, transaction := range transactions {
 		if transaction == nil {
 			continue
 		}
-		fillOperationBlockRefNotebookIDs(transaction.DoOperations, transaction.Notebook)
-		fillOperationBlockRefNotebookIDs(transaction.UndoOperations, transaction.Notebook)
+		fillOperationBlockRefContentIdentities(transaction.DoOperations, transaction.Notebook)
+		fillOperationBlockRefContentIdentities(transaction.UndoOperations, transaction.Notebook)
 	}
 }
 
-func fillOperationBlockRefNotebookIDs(operations []*Operation, contentStore string) {
+func fillOperationBlockRefContentIdentities(operations []*Operation, contentStore string) {
 	for _, operation := range operations {
 		if operation == nil {
 			continue
 		}
 		if dom, ok := operation.Data.(string); ok {
-			operation.Data = FillBlockRefNotebookIDs(dom, contentStore)
+			operation.Data = FillBlockRefContentIdentities(dom, contentStore)
 		}
 		if dom, ok := operation.RetData.(string); ok {
-			operation.RetData = FillBlockRefNotebookIDs(dom, contentStore)
+			operation.RetData = FillBlockRefContentIdentities(dom, contentStore)
 		}
 	}
 }

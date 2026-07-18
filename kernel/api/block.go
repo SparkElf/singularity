@@ -492,7 +492,13 @@ func checkBlocksExist(c *gin.Context) {
 			ids = append(ids, id)
 		}
 	}
-	ret.Data = treenode.ExistBlockTrees(ids)
+	boxID, err := requiredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	ret.Data = treenode.ExistBlockTreesInBox(ids, boxID)
 }
 
 func getDocInfo(c *gin.Context) {

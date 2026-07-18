@@ -36,6 +36,24 @@ type derivedContentStoreFixture struct {
 	defTrees   map[string]*parse.Tree
 }
 
+func TestBlockRefDOMCarriesTargetContentIdentity(t *testing.T) {
+	fixture := setupDerivedContentStoreFixture(t)
+	dom := `<span data-type="block-ref" data-id="` + fixture.refBlockID + `" data-notebook-id="wrong" data-document-id="wrong">Reference</span>`
+
+	got := FillBlockRefContentIdentities(dom, fixture.boxA)
+	for _, attribute := range []string{
+		`data-notebook-id="` + fixture.boxA + `"`,
+		`data-document-id="` + fixture.refRootID + `"`,
+	} {
+		if !strings.Contains(got, attribute) {
+			t.Fatalf("rendered block reference %q does not contain %q", got, attribute)
+		}
+	}
+	if strings.Contains(got, `="wrong"`) {
+		t.Fatalf("rendered block reference retained caller-provided identity: %q", got)
+	}
+}
+
 func TestGetHPathByIDForNotebookReadsSelectedContentStore(t *testing.T) {
 	fixture := setupDerivedContentStoreFixture(t)
 	const (
