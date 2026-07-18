@@ -23,6 +23,83 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
+func TestRenameDocReturnsPersistedCanonicalTitle(t *testing.T) {
+	util.SetBooted()
+	const (
+		boxID  = "20990719100000-renamex"
+		rootID = "20990719100001-renamex"
+	)
+	boxConf := kernelconf.NewBoxConf()
+	boxConf.Name = "Rename response"
+	if err := (&model.Box{ID: boxID}).SaveConf(boxConf); err != nil {
+		t.Fatalf("create rename notebook fixture: %v", err)
+	}
+	tree := treenode.NewTree(boxID, "/"+rootID+".sy", "/Original", "Original")
+	if err := model.PerformTxSync(&model.Transaction{
+		DoOperations: []*model.Operation{{Action: "create", Data: tree}},
+	}); err != nil {
+		t.Fatalf("create rename document fixture: %v", err)
+	}
+
+	previousMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(previousMode) })
+	router := gin.New()
+	router.Use(ContentResponseLifecycle)
+	router.POST("/api/filetree/renameDoc", renameDoc)
+	rename := func(title string) (result struct {
+		Code int                   `json:"code"`
+		Msg  string                `json:"msg"`
+		Data model.RenameDocResult `json:"data"`
+	}) {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{
+			"notebook": boxID,
+			"path":     "/" + rootID + ".sy",
+			"title":    title,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/filetree/renameDoc", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode rename response: %v", err)
+		}
+		if response.Code != http.StatusOK || result.Code != 0 {
+			t.Fatalf("rename response = status %d, %#v", response.Code, result)
+		}
+		return
+	}
+
+	result := rename("  Alpha/Beta 👩‍💻  ")
+	if result.Data.Title != "Alpha／Beta 👩‍💻" || result.Data.Empty {
+		t.Fatalf("canonical rename result = %#v", result.Data)
+	}
+	persisted, err := model.LoadTreeByBlockID(rootID)
+	if err != nil {
+		t.Fatalf("load renamed document: %v", err)
+	}
+	if persisted.Root.IALAttr("title") != result.Data.Title {
+		t.Fatalf("persisted title = %q, response title = %q", persisted.Root.IALAttr("title"), result.Data.Title)
+	}
+
+	emptyResult := rename(" \t\n ")
+	if !emptyResult.Data.Empty || emptyResult.Data.Title == "" {
+		t.Fatalf("empty rename result = %#v", emptyResult.Data)
+	}
+	persisted, err = model.LoadTreeByBlockID(rootID)
+	if err != nil {
+		t.Fatalf("load empty-title document: %v", err)
+	}
+	if persisted.Root.IALAttr("title") != emptyResult.Data.Title ||
+		persisted.Root.IALAttr(model.NodeAttrTitleEmpty) != "true" {
+		t.Fatalf("persisted empty title = %q, ial = %#v", persisted.Root.IALAttr("title"), persisted.Root.IAL)
+	}
+}
+
 func TestGetHPathByIDUsesDeclaredNotebook(t *testing.T) {
 	encryptedID := setupEncryptedResponseTest(t, 1)[0]
 	util.SetBooted()
