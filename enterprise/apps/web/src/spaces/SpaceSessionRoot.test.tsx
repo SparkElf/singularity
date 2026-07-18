@@ -4,12 +4,18 @@ import type { ProtyleSession } from "@singularity/protyle-browser";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
+import type {
+  SpaceProtyleMenuSurfaceFactory,
+  SpaceProtyleRuntime,
+} from "@/spaces/space-session.ts";
 import { SpaceSessionRoot } from "@/spaces/SpaceSessionRoot.tsx";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const createTestProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory = () => {
+  throw new Error("Menu creation is outside the session lifecycle test scope");
+};
 
 function readyBootstrap(spaceId: string): SpaceRuntimeBootstrap & {
   readonly kernelState: "ready";
@@ -43,6 +49,7 @@ describe("SpaceSessionRoot", () => {
     const { rerender } = render(
       <SpaceSessionRoot
         bootstrap={readyBootstrap(SPACE_A)}
+        createProtyleMenuSurface={createTestProtyleMenuSurface}
         onAccessLost={onAccessLost}
         onHostEvent={vi.fn()}
         retryRuntime={retryRuntime}
@@ -61,6 +68,7 @@ describe("SpaceSessionRoot", () => {
     rerender(
       <SpaceSessionRoot
         bootstrap={readyBootstrap(SPACE_B)}
+        createProtyleMenuSurface={createTestProtyleMenuSurface}
         onAccessLost={onAccessLost}
         onHostEvent={vi.fn()}
         retryRuntime={retryRuntime}
@@ -96,6 +104,7 @@ describe("SpaceSessionRoot", () => {
     render(
       <SpaceSessionRoot
         bootstrap={readyBootstrap(SPACE_A)}
+        createProtyleMenuSurface={createTestProtyleMenuSurface}
         onAccessLost={onAccessLost}
         onHostEvent={vi.fn()}
         retryRuntime={vi.fn()}
@@ -130,6 +139,7 @@ describe("SpaceSessionRoot", () => {
     render(
       <SpaceSessionRoot
         bootstrap={readyBootstrap(SPACE_A)}
+        createProtyleMenuSurface={createTestProtyleMenuSurface}
         onAccessLost={onAccessLost}
         onHostEvent={vi.fn()}
         retryRuntime={vi.fn()}
@@ -162,6 +172,7 @@ describe("SpaceSessionRoot", () => {
     render(
       <SpaceSessionRoot
         bootstrap={readyBootstrap(SPACE_A)}
+        createProtyleMenuSurface={createTestProtyleMenuSurface}
         onAccessLost={vi.fn()}
         onHostEvent={onHostEvent}
         retryRuntime={vi.fn()}

@@ -5,26 +5,18 @@ import ts from "typescript";
 import {
   auditProductionClosure,
   collectModuleLoads,
+  formatAuditReport,
 } from "./protyle-vite-closure-audit.mjs";
 
 describe("Vite Protyle production closure audit", () => {
-  test("loads the real Core through the dedicated public package entry", () => {
+  test("loads the real Core through the dedicated public package entry with no violations", () => {
     const report = auditProductionClosure();
     assert.ok(report.productionFiles.includes("enterprise/apps/web/src/main.tsx"));
     assert.ok(report.productionFiles.includes("enterprise/packages/protyle-browser/src/core.ts"));
     assert.ok(report.productionFiles.includes("app/src/protyle/browser-entry.ts"));
     assert.ok(report.productionFiles.includes("app/src/protyle/index.ts"));
-    assert.ok(!report.violations.some((item) => item.ruleId === "core-entry-missing"));
-    assert.ok(!report.violations.some((item) => item.ruleId === "core-composition-root"));
-    assert.ok(!report.violations.some((item) =>
-      item.file === "enterprise/packages/protyle-browser/src/core.ts" &&
-      item.ruleId === "source-escape"));
-  });
-
-  test("audits the connected Core only as part of the production graph", () => {
-    const report = auditProductionClosure();
     assert.deepEqual(report.candidateFiles, []);
-    assert.ok(report.violations.every((item) => item.phase === "production"));
+    assert.deepEqual(report.violations, [], formatAuditReport(report));
   });
 
   test("collects non-literal dynamic and CommonJS loads as auditable violations", () => {
@@ -39,6 +31,37 @@ describe("Vite Protyle production closure audit", () => {
     assert.deepEqual(
       loads.map((load) => [load.kind, load.specifier]),
       [["dynamic", null], ["require", null]],
+    );
+  });
+
+  test("distinguishes erased type-only loads from runtime module edges", () => {
+    const source = ts.createSourceFile(
+      "fixture.ts",
+      [
+        'import type { Contract } from "./contract.ts";',
+        'export type { Result } from "./result.ts";',
+        'type Deferred = import("./deferred.ts").Deferred;',
+        'import type Legacy = require("./legacy.ts");',
+        'import { type MenuSurface, openMenu } from "./menu.ts";',
+      ].join("\n"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+
+    assert.deepEqual(
+      collectModuleLoads(source).map((load) => [
+        load.kind,
+        load.specifier,
+        load.typeOnly,
+      ]),
+      [
+        ["static", "./contract.ts", true],
+        ["re-export", "./result.ts", true],
+        ["type-import", "./deferred.ts", true],
+        ["require", "./legacy.ts", true],
+        ["static", "./menu.ts", false],
+      ],
     );
   });
 

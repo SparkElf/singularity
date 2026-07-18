@@ -16,6 +16,7 @@ import { useCsrfStore } from "@/auth/csrf-store.ts";
 import {
   createSpaceProtyleSession,
   type ReadySpaceRuntimeBootstrap,
+  type SpaceProtyleMenuSurfaceFactory,
   type SpaceProtyleRuntime,
 } from "@/spaces/space-session.ts";
 
@@ -36,6 +37,7 @@ export interface SpaceSessionRootProps {
   readonly children: (
     session: ProtyleSession<SpaceProtyleRuntime> | null,
   ) => ReactNode;
+  readonly createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory;
   readonly onAccessLost: (
     event: RuntimeErrorEvent,
     bootstrap: ReadySpaceRuntimeBootstrap,
@@ -85,6 +87,7 @@ async function disposeOwnedSession(
 export function SpaceSessionRoot({
   bootstrap,
   children,
+  createProtyleMenuSurface,
   onAccessLost,
   onHostEvent,
   retryRuntime,
@@ -158,6 +161,7 @@ export function SpaceSessionRoot({
 
       const session = createSpaceProtyleSession({
         bootstrap: targetBootstrap,
+        createProtyleMenuSurface,
         getCsrfToken: readSessionCsrfToken,
         onHostEvent: (event) => {
           const active = activeSessionRef.current;
@@ -273,7 +277,7 @@ export function SpaceSessionRoot({
         }
       });
     };
-  }, [bootstrap]);
+  }, [bootstrap, createProtyleMenuSurface]);
 
   return (
     <div className="contents" data-space-session-state={phase}>

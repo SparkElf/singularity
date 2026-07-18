@@ -84,6 +84,7 @@ import {
 } from "@/spaces/ContentDirectory.tsx";
 import type {
   ReadySpaceRuntimeBootstrap,
+  SpaceProtyleMenuSurfaceFactory,
   SpaceProtyleRuntime,
 } from "@/spaces/space-session.ts";
 import { ProtyleHost } from "@/editor/ProtyleHost.tsx";
@@ -105,6 +106,7 @@ export type SpaceProtyleFactoryProvider = (
 
 export interface SpacePageProps {
   readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
+  readonly createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory;
 }
 
 function isReadySpaceRuntime(
@@ -495,7 +497,10 @@ function WorkspaceFrame({
   );
 }
 
-export function SpacePage({ createProtyleFactoryForSpace }: SpacePageProps) {
+export function SpacePage({
+  createProtyleFactoryForSpace,
+  createProtyleMenuSurface,
+}: SpacePageProps) {
   const location = useLocation();
   const params = useParams();
   const organizationId = params.organizationId ?? "";
@@ -881,6 +886,7 @@ export function SpacePage({ createProtyleFactoryForSpace }: SpacePageProps) {
     >
       <SpaceSessionRoot
         bootstrap={readyBootstrap}
+        createProtyleMenuSurface={createProtyleMenuSurface}
         onAccessLost={handleSessionAccessLost}
         onHostEvent={handleHostEvent}
         retryRuntime={retrySessionRuntime}

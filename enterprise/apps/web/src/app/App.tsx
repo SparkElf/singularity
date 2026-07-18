@@ -18,13 +18,18 @@ import {
   SpacePage,
   type SpaceProtyleFactoryProvider,
 } from "@/spaces/SpacePage.tsx";
+import type { SpaceProtyleMenuSurfaceFactory } from "@/spaces/space-session.ts";
 import { SpacesPage } from "@/spaces/SpacesPage.tsx";
 
 export interface AppProps {
   readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
+  readonly createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory;
 }
 
-export function App({ createProtyleFactoryForSpace }: AppProps) {
+export function App({
+  createProtyleFactoryForSpace,
+  createProtyleMenuSurface,
+}: AppProps) {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -36,6 +41,7 @@ export function App({ createProtyleFactoryForSpace }: AppProps) {
         element={
           <SpacePage
             createProtyleFactoryForSpace={createProtyleFactoryForSpace}
+            createProtyleMenuSurface={createProtyleMenuSurface}
           />
         }
       />

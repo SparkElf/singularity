@@ -11,9 +11,7 @@ import {
   type ProtyleRuntime,
   type ProtyleSession,
 } from "@singularity/protyle-browser";
-import { createRealProtyleBrowserMenu } from "@singularity/protyle-browser/core";
 
-import { protyleLocalization } from "@/editor/protyle-application-port.ts";
 import { createSpaceGatewayResourcePort } from "@/spaces/gateway-paths.ts";
 import {
   createSpaceGatewayTransport,
@@ -23,6 +21,15 @@ import {
 export type ReadySpaceRuntimeBootstrap = SpaceRuntimeBootstrap & {
   readonly kernelState: "ready";
 };
+
+export interface SpaceProtyleMenuSurface extends ProtyleMenuSurface {
+  dispose: () => void;
+}
+
+export type SpaceProtyleMenuSurfaceFactory = (options: {
+  readonly portalRoot: HTMLElement;
+  readonly requestClose: () => void;
+}) => SpaceProtyleMenuSurface;
 
 export type SpaceProtyleRuntime = Omit<
   ProtyleRuntime<
@@ -40,6 +47,7 @@ export type SpaceProtyleRuntime = Omit<
 
 export interface CreateSpaceProtyleSessionOptions {
   readonly bootstrap: ReadySpaceRuntimeBootstrap;
+  readonly createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory;
   readonly getCsrfToken: (signal: AbortSignal) => Promise<string>;
   readonly onHostEvent: (event: ProtyleHostDispatchEvent) => void;
   readonly portalRoot: HTMLElement;
@@ -63,8 +71,7 @@ export function createSpaceProtyleSession(
     editors: createProtyleEditorRegistry<ProtyleController>(),
     host,
     menu: createProtyleMenuPort(
-      (close) => createRealProtyleBrowserMenu({
-        localization: protyleLocalization,
+      (close) => options.createProtyleMenuSurface({
         portalRoot: options.portalRoot,
         requestClose: close,
       }),
