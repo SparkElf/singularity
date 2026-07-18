@@ -14,12 +14,12 @@ import {escapeHtml} from "../../util/escape";
 import {zoomOut} from "../util/zoom";
 import {hideElements} from "../ui/hideElements";
 import {avRender} from "../render/av/render";
-import {genAssetHTML} from "./assets";
-import {contentPathBasename} from "./path";
+import {assetDisplayName, contentPathBasename, contentPathExtension} from "./path";
 import {unicodeToEmoji} from "./emoji";
 import {beginHintRequest, reportHintRequestFailure, requestHint} from "./request";
 import type {HintSearchReferenceResponse, HintSearchTagResponse, HintTemplateResponse} from "./protocol";
 import {registerAVBlockTarget} from "../render/av/blockTarget";
+import {createAssetBlockDOM} from "../util/assetBlockDOM";
 
 const createEmptyParagraph = (protyle: IProtyle, id: string) => {
     const element = document.createElement("div");
@@ -621,7 +621,13 @@ export const hintRenderWidget = (value: string, protyle: IProtyle) => {
 
 export const hintRenderAssets = (value: string, protyle: IProtyle) => {
     focusByRange(protyle.toolbar.range);
-    insertHTML(genAssetHTML(value), protyle);
+    const name = assetDisplayName(value);
+    insertHTML(createAssetBlockDOM({
+        path: value,
+        imageAlt: name,
+        linkLabel: `${name}${contentPathExtension(value)}`,
+        showNetworkMark: false,
+    }), protyle);
     hideElements(["util"], protyle);
 };
 
