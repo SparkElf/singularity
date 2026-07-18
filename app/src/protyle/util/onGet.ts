@@ -9,7 +9,7 @@ import {preventScroll} from "../scroll/preventScroll";
 import {removeLoading} from "../ui/initUI";
 import {foldPassiveType} from "../wysiwyg/renderBacklink";
 import {avRender} from "../render/av/render";
-import {hideTooltip} from "../../dialog/tooltip";
+import {hideTooltip} from "../ui/tooltip";
 import {stickyRow} from "../render/av/row";
 import {getContenteditableElement} from "../wysiwyg/getBlock";
 import {
@@ -479,7 +479,7 @@ export const disabledProtyle = (protyle: IProtyle) => {
             protyle.breadcrumb.element.parentElement.querySelector('[data-type="outdent"]').classList.add("fn__none");
         }
     }
-    hideTooltip();
+    hideTooltip(protyle);
 };
 
 /** 解除编辑器禁用 */
@@ -540,7 +540,7 @@ export const enableProtyle = (protyle: IProtyle) => {
             protyle.breadcrumb.element.parentElement.querySelector('[data-type="outdent"]').classList.remove("fn__none");
         }
     }
-    hideTooltip();
+    hideTooltip(protyle);
 };
 
 const focusElementById = (protyle: IProtyle, action: string[], load: ProtyleContentLoad,

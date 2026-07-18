@@ -21,7 +21,7 @@ import {commonHotkey} from "../wysiwyg/commonHotkey";
 import {nbsp2space} from "../util/normalizeText";
 import {genEmptyElement} from "../../block/util";
 import {transaction} from "../wysiwyg/transaction";
-import {hideTooltip} from "../../dialog/tooltip";
+import {hideTooltip} from "../ui/tooltip";
 import {commonClick} from "../wysiwyg/commonClick";
 import {openTitleMenu} from "./openTitleMenu";
 import {enableLuteMarkdownSyntax, restoreLuteMarkdownSyntax} from "../util/paste";
@@ -325,7 +325,7 @@ export class Title {
             focusByOffset(this.editElement, offset.start, offset.end);
             return false;
         }
-        hideTooltip();
+        hideTooltip(protyle);
         this.timeout = window.setTimeout(() => {
             const fileName = replaceFileName(this.editElement.textContent);
             fetchPost("/api/filetree/renameDoc", {

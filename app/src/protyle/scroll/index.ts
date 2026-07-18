@@ -2,7 +2,7 @@ import {Constants} from "../../constants";
 import {onGet} from "../util/onGet";
 import {hasClosestByClassName} from "../util/hasClosest";
 import {goEnd, goHome} from "../wysiwyg/commonHotkey";
-import {showTooltip} from "../../dialog/tooltip";
+import {showTooltip} from "../ui/tooltip";
 import {
     beginProtyleContentLoad,
     currentProtyleContentLoad,
@@ -39,7 +39,7 @@ export class Scroll {
         this.inputElement = this.element.firstElementChild as HTMLInputElement;
         this.inputElement.addEventListener("input", () => {
             this.element.setAttribute("aria-label", `Blocks ${this.inputElement.value}/${protyle.block.blockCount}`);
-            showTooltip(this.element.getAttribute("aria-label"), this.element);
+            showTooltip(protyle, this.element.getAttribute("aria-label"), this.element);
         }, {signal: protyle.requestSignal});
         this.inputElement.addEventListener("change", () => {
             this.setIndex(protyle);
@@ -92,7 +92,7 @@ export class Scroll {
                 action: [Constants.CB_GET_FOCUSFIRST, Constants.CB_GET_UNCHANGEID],
                 load,
                 afterCB: () => {
-                    showTooltip(this.element.getAttribute("aria-label"), this.element);
+                    showTooltip(protyle, this.element.getAttribute("aria-label"), this.element);
                 }
             });
             setTimeout(() => {
