@@ -276,15 +276,26 @@ export class ProtyleDOMMenu implements ProtyleMenuSurface {
                 if (element.disabled) {
                     return;
                 }
-                const keepOpen = item.click?.(element, event);
                 event.preventDefault();
                 event.stopPropagation();
-                if (keepOpen instanceof Promise) {
-                    void keepOpen.catch((error) => {
-                        console.error("[protyle.menu] item action failed", error);
-                    });
+                let keepOpen: ReturnType<NonNullable<ProtyleMenuItem["click"]>>;
+                try {
+                    keepOpen = item.click?.(element, event);
+                } catch (error) {
+                    console.error("[protyle.menu] item action failed", error);
+                    this.close();
+                    return;
                 }
-                if (keepOpen !== true) {
+                if (keepOpen instanceof Promise) {
+                    void keepOpen.then((resolved) => {
+                        if (resolved !== true) {
+                            this.close();
+                        }
+                    }).catch((error) => {
+                        console.error("[protyle.menu] item action failed", error);
+                        this.close();
+                    });
+                } else if (keepOpen !== true) {
                     this.close();
                 }
             }, {signal: this.controller.signal});
