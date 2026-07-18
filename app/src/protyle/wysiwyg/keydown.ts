@@ -36,7 +36,7 @@ import {
     isEndOfBlock,
     isNotEditBlock,
 } from "./getBlock";
-import {isIncludesHotKey, matchHotKey} from "../util/hotKey";
+import {matchHotKey} from "../util/hotKey";
 import {enter, softEnter} from "./enter";
 import {clearTableCell, fixTable} from "../util/table";
 import {
@@ -1089,7 +1089,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         // 代码块修改语言 https://github.com/siyuan-note/siyuan/issues/14126
         // 列表插入末尾子项 https://github.com/siyuan-note/siyuan/issues/11164
         // 提示块修改类型和标题 https://github.com/siyuan-note/siyuan/issues/16678
-        if (selectText === "" && matchHotKey("⌥↩", event) && !isIncludesHotKey("⌥↩")) {
+        if (selectText === "" && matchHotKey("⌥↩", event) && !protyle.settings.hotkeys.includes("⌥↩")) {
             const selectElements = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
@@ -2016,14 +2016,14 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             }
 
             if (!range.toString()) {
-                if (event.key === "ArrowRight" && isEndOfBlock(range) && !isIncludesHotKey("⌥⇧→")) {
+                if (event.key === "ArrowRight" && isEndOfBlock(range) && !protyle.settings.hotkeys.includes("⌥⇧→")) {
                     event.preventDefault();
                     event.stopPropagation();
                     return;
                 }
                 const nodeEditableElement = getContenteditableElement(nodeElement);
                 const position = getSelectionOffset(nodeEditableElement, protyle.wysiwyg.element, range);
-                if (position.start === 0 && range.startOffset === 0 && event.key === "ArrowLeft" && !isIncludesHotKey("⌥⇧←")) {
+                if (position.start === 0 && range.startOffset === 0 && event.key === "ArrowLeft" && !protyle.settings.hotkeys.includes("⌥⇧←")) {
                     event.preventDefault();
                     event.stopPropagation();
                     return;

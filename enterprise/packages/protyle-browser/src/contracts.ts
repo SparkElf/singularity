@@ -758,6 +758,7 @@ export interface ProtyleApplicationSettings {
     readonly add: (unicode: string) => void | Promise<void>;
   };
   readonly hotkeys: {
+    readonly includes: (hotkey: string) => boolean;
     readonly general: {
       readonly addToDatabase: string;
       readonly enter: string;

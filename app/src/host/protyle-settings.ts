@@ -8,6 +8,25 @@ import coverEntries from "../../appearance/covers/manifest.json";
 const positionKey = (identity: {notebookId: string, documentId: string}) =>
     `${identity.notebookId}:${identity.documentId}`;
 
+const includesConfiguredHotkey = (hotkey: string) => {
+    let included = false;
+    Object.keys(window.siyuan.config.keymap).some(key => {
+        const group = window.siyuan.config.keymap[key as "editor"];
+        return Object.keys(group).some(entryName => {
+            const entry = group[entryName as "general"];
+            if (typeof entry.custom === "string") {
+                included = entry.custom === hotkey;
+            } else {
+                included = Object.keys(entry).some(keyName =>
+                    (entry[keyName] as Config.IKey).custom === hotkey
+                );
+            }
+            return included;
+        });
+    });
+    return included;
+};
+
 /**
  * Legacy desktop composition owns these values while it is still present.
  * The extracted enterprise Core receives the same shape from its own
@@ -108,6 +127,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
     get hotkeys() {
         const keymap = window.siyuan.config.keymap;
         return {
+            includes: includesConfiguredHotkey,
             general: {
                 addToDatabase: keymap.general.addToDatabase.custom,
                 enter: keymap.general.enter.custom,
