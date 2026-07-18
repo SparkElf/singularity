@@ -1,4 +1,4 @@
-import {getIconByType} from "../../editor/getIcon";
+import {getIconByType} from "../util/getIconByType";
 import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
 import {MenuItem} from "../../menus/Menu";
@@ -11,7 +11,7 @@ import {uploadFiles} from "../upload";
 import {hasClosestBlock, hasTopClosestByClassName} from "../util/hasClosest";
 import {needSubscribe} from "../../util/needSubscribe";
 import {isMobile} from "../../util/functions";
-import {zoomOut} from "../../menus/protyle";
+import {zoomOut} from "../util/zoom";
 import {getEditorRange} from "../util/selection";
 import {saveLayout} from "../../layout/util";
 import {onGet} from "../util/onGet";
@@ -22,7 +22,8 @@ import {Menu} from "../../plugin/Menu";
 import {getNoContainerElement} from "../wysiwyg/getBlock";
 import {openTitleMenu} from "../header/openTitleMenu";
 import {emitProtylePluginMenu} from "../util/plugin";
-import {isInAndroid, isInHarmony, isIPad, isMac, updateHotkeyTip} from "../util/compatibility";
+import {isMac, isTouchInput} from "../util/browserPlatform";
+import {updateHotkeyTip} from "../util/keyboard";
 import {isEncryptedBox} from "../../util/pathName";
 import {resize} from "../util/resize";
 import {listIndent, listOutdent} from "../wysiwyg/list";
@@ -39,7 +40,7 @@ export class Breadcrumb {
         const element = document.createElement("div");
         element.className = "protyle-breadcrumb";
         let padHTML = "";
-        if (isIPad() || isInAndroid() || isInHarmony()) {
+        if (isTouchInput()) {
             padHTML = `<button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.undo}" data-type="undo"><svg><use xlink:href="#iconUndo"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.redo}" data-type="redo"><svg><use xlink:href="#iconRedo"></use></svg></button>
 <button class="block__icon fn__flex-center ariaLabel" disabled aria-label="${window.siyuan.languages.outdent}" data-type="outdent"><svg><use xlink:href="#iconOutdent"></use></svg></button>
@@ -294,8 +295,7 @@ ${padHTML}
                     window.siyuan.menus.menu.remove();
                 });
                 window.siyuan.menus.menu.append(uploadMenu);
-                if (!isInAndroid() && !isInHarmony()) {
-                    window.siyuan.menus.menu.append(new MenuItem({
+                window.siyuan.menus.menu.append(new MenuItem({
                         id: this.mediaRecorder?.isRecording ? "endRecord" : "startRecord",
                         current: this.mediaRecorder && this.mediaRecorder.isRecording,
                         icon: "iconRecord",
@@ -333,7 +333,6 @@ ${padHTML}
                             }
                         }
                     }).element);
-                }
             }
             if (!protyle.disabled) {
                 window.siyuan.menus.menu.append(new MenuItem({

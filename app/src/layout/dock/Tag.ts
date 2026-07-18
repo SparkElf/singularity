@@ -51,6 +51,7 @@ export class Tag extends Model {
         this.tree = new Tree({
             element: this.element.lastElementChild as HTMLElement,
             data: null,
+            renderContext: app,
             click(element: HTMLElement, event?: MouseEvent) {
                 const labelName = element.getAttribute("data-label");
                 if (event) {

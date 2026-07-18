@@ -107,6 +107,7 @@ func performTransactions(c *gin.Context) {
 		ret.Msg = "transaction failed: " + err.Error()
 		return
 	}
+	model.FillTransactionBlockRefNotebookIDs(transactions)
 
 	ret.Data = transactions
 
@@ -299,6 +300,7 @@ func performUndo(c *gin.Context) {
 	}
 
 	tx := replay.Transaction
+	model.FillTransactionBlockRefNotebookIDs([]*model.Transaction{tx})
 	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 
@@ -355,6 +357,7 @@ func performRedo(c *gin.Context) {
 	}
 
 	tx := replay.Transaction
+	model.FillTransactionBlockRefNotebookIDs([]*model.Transaction{tx})
 	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 

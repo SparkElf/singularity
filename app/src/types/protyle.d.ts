@@ -314,27 +314,14 @@ declare const webkitAudioContext: {
 
 /** @link https://ld246.com/article/1549638745630#options-upload */
 interface IUpload {
-    /** 上传 url */
-    url?: string;
     /** 上传文件最大 Byte */
     max?: number;
-    /** 剪切板中包含图片地址时，使用此 url 重新上传 */
-    linkToImgUrl?: string;
-    /** CORS 上传验证，头为 X-Upload-Token */
-    token?: string;
     /** 文件上传类型，同 [input accept](https://www.w3schools.com/tags/att_input_accept.asp) */
     accept?: string;
-    /** 跨站点访问控制。默认值: false */
-    withCredentials?: boolean;
-    /** 请求头设置 */
-    headers?: Record<string, string>;
     /** 额外请求参数 */
     extraData?: { [key: string]: string | Blob };
     /** 上传字段名。默认值：file[] */
     fieldName?: string;
-
-    /** 每次上传前都会重新设置请求头 */
-    setHeaders?(): IObject;
 
     /** 上传成功回调 */
     success?(editor: HTMLDivElement, msg: string): void;
@@ -348,17 +335,12 @@ interface IUpload {
     /** 校验，成功时返回 true 否则返回错误信息 */
     validate?(files: File[]): string | boolean;
 
-    /** 自定义上传，当发生错误时返回错误信息 */
-    handler?(files: File[]): string | null;
-
     /** 对服务端返回的数据进行转换，以满足内置的数据结构 */
     format?(files: File[], responseText: string): string;
 
     /** 将上传的文件处理后再返回  */
     file?(files: File[]): File[];
 
-    /** 图片地址上传后的回调  */
-    linkToImgCallback?(responseText: string): void;
 }
 
 interface IScrollAttr {
@@ -515,6 +497,11 @@ interface IProtyleOptions {
     lite?: boolean;
 }
 
+/** Options.merge 负责补齐默认值，下游编辑器直接消费该完整合同。 */
+type IResolvedProtyleOptions = IProtyleOptions & {
+    action: TProtyleAction[];
+};
+
 type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginPort<
     IProtyleOptions | undefined,
     Array<string | IMenuItem>,
@@ -523,11 +510,49 @@ type TProtylePluginPort = import("../../../enterprise/packages/protyle-browser/s
 
 type TProtyleEditorRegistry = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleEditorRegistry<IProtyle>;
 
+type TProtyleRuntime = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleRuntime<
+    IProtyle,
+    IProtyleOptions | undefined,
+    Array<string | IMenuItem>,
+    IWebSocketData,
+    import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleMenuSurface,
+    HTMLElement
+>;
+
+/** Core 入口保留 Factory 的 Runtime 泛型；具体能力由 bound Session 的唯一实例提供。 */
+type TProtyleSession = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSession<any>;
+
+type TProtyleSubscription = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSubscription;
+
+type TProtyleApplicationSettingsPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleApplicationSettings;
+
+type TProtyleLocalizationPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleLocalizationPort;
+
+/**
+ * Protyle 仍需的最小应用边界。内容运行时能力由 bound Session 提供；该端口只承接未迁移的
+ * local-only 表面以及编辑器显示设置，不代表完整的旧 App。
+ */
+type ProtyleApplicationPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleApplicationPort<
+    IProtyleOptions | undefined,
+    Array<string | IMenuItem>,
+    IProtyle
+>;
+
+/** 旧壳调用点的结构化过渡类型；缺少新设置时由 Core 显式拒绝，不回退到全局状态。 */
+type TProtyleLegacyApplicationPort = {
+    readonly localization: TProtyleLocalizationPort;
+    readonly protyleEditors: TProtyleEditorRegistry;
+    readonly protyleHost: TProtyleHostPort;
+    readonly protylePlugins: TProtylePluginPort;
+};
+
 type TProtyleHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort;
 
 type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSurface;
 
 type TProtyleParticipation = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleParticipation;
+
+type TProtyleReadOnlyState = import("../protyle/runtime/readOnly").ProtyleReadOnlyState;
 
 type TProtyleBoundContent = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleBoundContent;
 
@@ -538,8 +563,15 @@ type TProtyleBoundLifecycle = {
     participation: TProtyleParticipation,
     content: TProtyleBoundContent,
     initialLoad: "automatic" | "owner",
+    session: TProtyleSession,
+    hostReadOnly: boolean,
     signal?: AbortSignal,
     onBacklinkChange?: () => void,
+};
+
+/** 旧构造点只用于迁移期类型检查；bound 实例没有 Session 时会在 Core 边界显式失败。 */
+type TProtyleLegacyBoundLifecycle = Omit<TProtyleBoundLifecycle, "session"> & {
+    session?: never,
 };
 
 type TProtyleLocalOnlyLifecycle = {
@@ -557,18 +589,30 @@ interface IProtyle {
         styleElement: HTMLStyleElement
     }
     getInstance: () => import("../protyle").Protyle,
+    /** Registry entries own the same lifecycle surface as the public Core controller. */
+    destroy: () => void,
+    focus: () => void,
+    setHostReadOnly: (readOnly: boolean) => void,
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
     uiEventController?: AbortController,
     ownerSignal?: AbortSignal,
+    requestSignal: AbortSignal,
+    readonlyState: TProtyleReadOnlyState,
+    /** 旧调用方的类型视图；新的内容能力必须从 session/runtime 读取。 */
     app: import("../index").App,
+    application: ProtyleApplicationPort | TProtyleLegacyApplicationPort,
+    localization: TProtyleLocalizationPort,
+    settings: TProtyleApplicationSettingsPort,
     editors: TProtyleEditorRegistry,
     host: TProtyleHostPort,
     plugins: TProtylePluginPort,
+    runtime?: TProtyleRuntime,
+    session?: TProtyleSession,
+    transport?: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleTransport<IWebSocketData>,
     surface: TProtyleSurface,
     participation: TProtyleParticipation,
     content: TProtyleBoundContent | TProtyleLocalOnlyContent,
-    ws?: import("../layout/Model").Model,
     id: string,
     destroyed?: boolean,
     query?: {
@@ -602,7 +646,7 @@ interface IProtyle {
     title?: import("../protyle/header/Title").Title,
     background?: import("../protyle/header/Background").Background,
     contentElement?: HTMLElement,
-    options: IProtyleOptions;
+    options: IResolvedProtyleOptions;
     lute?: Lute;
     toolbar?: import("../protyle/toolbar").Toolbar,
     preview?: import("../protyle/preview").Preview;

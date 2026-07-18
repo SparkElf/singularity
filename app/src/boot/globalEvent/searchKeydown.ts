@@ -17,7 +17,7 @@ import {writeText} from "../../protyle/util/compatibility";
 import {getUnRefList} from "../../search/unRef";
 import {toggleAssetHistory, toggleReplaceHistory, toggleSearchHistory} from "../../search/toggleHistory";
 import {EmbeddedProtyleOwner} from "../../protyle/EmbeddedProtyleOwner";
-import {buildSiYuanBlockUri} from "../../util/siyuanUri";
+import {buildSiYuanBlockUri} from "../../protyle/util/blockUri";
 
 export const searchKeydown = (app: App, event: KeyboardEvent) => {
     if (getSelection().rangeCount === 0) {

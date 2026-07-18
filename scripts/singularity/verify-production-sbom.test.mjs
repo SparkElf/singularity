@@ -37,7 +37,13 @@ function runtimePackage(component) {
   };
 }
 
-function runPolicy({ apiComponents, runtimePackages = apiComponents.map(runtimePackage), webComponents = [] }) {
+function runPolicy({
+  apiComponents,
+  runtimePackages = apiComponents.map(runtimePackage),
+  workerComponents = validWorkerComponents(),
+  workerRuntimePackages = workerComponents.map(runtimePackage),
+  webComponents = [],
+}) {
   const directory = mkdtempSync(resolve(tmpdir(), "singularity-production-sbom-"));
   temporaryDirectories.push(directory);
   const apiPath = resolve(directory, "api.cdx.json");
@@ -45,23 +51,26 @@ function runPolicy({ apiComponents, runtimePackages = apiComponents.map(runtimeP
   const dockerPath = resolve(binDirectory, "docker");
   const outputPath = resolve(directory, "result.json");
   const webPath = resolve(directory, "web.cdx.json");
+  const workerPath = resolve(directory, "worker.cdx.json");
   mkdirSync(binDirectory);
   writeFileSync(
     dockerPath,
     "#!/usr/bin/env node\n" +
-      `const expected=${JSON.stringify([
+      `const expectedPrefix=${JSON.stringify([
         "run",
         "--rm",
         "--network=none",
         "--pull=never",
         "--read-only",
         "--entrypoint=/nodejs/bin/node",
-        "fixture:local",
-        "-e",
       ])};\n` +
+      `const runtimes=${JSON.stringify({
+        "fixture:api": runtimePackages,
+        "fixture:worker": workerRuntimePackages,
+      })};\n` +
       "const args=process.argv.slice(2);\n" +
-      "if(expected.some((value,index)=>args[index]!==value)){process.exit(91);}\n" +
-      `process.stdout.write(${JSON.stringify(JSON.stringify(runtimePackages))});\n`,
+      "if(expectedPrefix.some((value,index)=>args[index]!==value)||args[7]!==\"-e\"||runtimes[args[6]]===undefined){process.exit(91);}\n" +
+      "process.stdout.write(JSON.stringify(runtimes[args[6]]));\n",
     { encoding: "utf8", mode: 0o755 },
   );
   chmodSync(dockerPath, 0o755);
@@ -75,14 +84,23 @@ function runPolicy({ apiComponents, runtimePackages = apiComponents.map(runtimeP
     JSON.stringify({ bomFormat: "CycloneDX", components: webComponents, specVersion: "1.7" }),
     "utf8",
   );
+  writeFileSync(
+    workerPath,
+    JSON.stringify({ bomFormat: "CycloneDX", components: workerComponents, specVersion: "1.7" }),
+    "utf8",
+  );
   const result = spawnSync(
     process.execPath,
     [
       scriptPath,
       "--api-image",
-      "fixture:local",
+      "fixture:api",
       "--api",
       apiPath,
+      "--worker-image",
+      "fixture:worker",
+      "--worker",
+      workerPath,
       "--web",
       webPath,
       "--output",
@@ -108,6 +126,10 @@ function validApiComponents() {
   ];
 }
 
+function validWorkerComponents() {
+  return [npmComponent("worker-runtime", "0.1.0")];
+}
+
 function readYaml(path) {
   const document = parseDocument(readFileSync(resolve(repositoryRoot, path), "utf8"), {
     prettyErrors: true,
@@ -125,7 +147,7 @@ function normalizeRunCommand(run) {
   return run.replace(/\\\s+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-test("production SBOM policy accepts the API runtime closure and static Web image", () => {
+test("production SBOM policy accepts API and Worker runtime closures and static Web image", () => {
   const { report, result } = runPolicy({ apiComponents: validApiComponents() });
 
   assert.equal(result.status, 0, result.stderr);
@@ -133,6 +155,24 @@ test("production SBOM policy accepts the API runtime closure and static Web imag
   assert.equal(report.apiNpmPackageCount, 3);
   assert.equal(report.apiRuntimePackageCount, 3);
   assert.equal(report.webNpmPackageCount, 0);
+  assert.equal(report.workerNpmPackageCount, 1);
+  assert.equal(report.workerRuntimePackageCount, 1);
+});
+
+test("production SBOM policy rejects tool packages in the Worker runtime", () => {
+  const { report, result } = runPolicy({
+    apiComponents: validApiComponents(),
+    workerComponents: [...validWorkerComponents(), npmComponent("typescript")],
+  });
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(report.violations, [
+    {
+      image: "worker",
+      package: "pkg:npm/typescript@1.0.0",
+      reason: "forbidden production dependency",
+    },
+  ]);
 });
 
 test("production SBOM policy rejects tool and optional database packages", async (t) => {
@@ -256,7 +296,7 @@ test("shared Trivy policy performs full license analysis without scanning genera
   assert.deepEqual(trivyConfig.scan["skip-dirs"], ["artifacts/supply-chain"]);
 });
 
-test("L0 workflow preserves all three raw, canonical, and license report pairings", () => {
+test("L0 workflow preserves source plus all three image report pairings", () => {
   const steps = readSupplyChainSteps();
   const licensePolicy = normalizeRunCommand(
     steps.find((candidate) => candidate.id === "license_policy").run,
@@ -264,6 +304,7 @@ test("L0 workflow preserves all three raw, canonical, and license report pairing
   const mappings = [
     ["source", "source.trivy.cdx.json", "source.cdx.json", "source-licenses.json"],
     ["api", "api.trivy.cdx.json", "api.cdx.json", "api-licenses.json"],
+    ["worker", "worker.trivy.cdx.json", "worker.cdx.json", "worker-licenses.json"],
     ["web", "web.trivy.cdx.json", "web.cdx.json", "web-licenses.json"],
   ];
 
@@ -286,17 +327,18 @@ test("L0 workflow preserves all three raw, canonical, and license report pairing
   }
 });
 
-test("L0 vulnerability policy consumes the enterprise, API, and Web scan reports", () => {
+test("L0 vulnerability policy consumes the enterprise, API, Worker, and Web scan reports", () => {
   const steps = readSupplyChainSteps();
   const enterpriseStep = steps.find((candidate) => candidate.id === "enterprise_vulnerability");
   const apiStep = steps.find((candidate) => candidate.id === "api_vulnerability");
+  const workerStep = steps.find((candidate) => candidate.id === "worker_vulnerability");
   const webStep = steps.find((candidate) => candidate.id === "web_vulnerability");
   const policyRun = normalizeRunCommand(
     steps.find((candidate) => candidate.id === "vulnerability_policy").run,
   );
   const reportPaths = [...policyRun.matchAll(/--report ([^ ]+)/gu)].map((match) => match[1]);
 
-  for (const step of [enterpriseStep, apiStep, webStep]) {
+  for (const step of [enterpriseStep, apiStep, workerStep, webStep]) {
     assert.equal(step.with.scanners, "vuln");
     assert.equal(step.with.severity, "HIGH,CRITICAL");
     assert.equal(step.with["ignore-unfixed"], false);
@@ -310,6 +352,10 @@ test("L0 vulnerability policy consumes the enterprise, API, and Web scan reports
   assert.equal(apiStep.with["image-ref"], "${{ env.API_IMAGE }}");
   assert.equal(apiStep.with["vuln-type"], "os,library");
   assert.equal(apiStep.with.output, "artifacts/supply-chain/api-vulnerabilities.json");
+  assert.equal(workerStep.with["scan-type"], "image");
+  assert.equal(workerStep.with["image-ref"], "${{ env.WORKER_IMAGE }}");
+  assert.equal(workerStep.with["vuln-type"], "os,library");
+  assert.equal(workerStep.with.output, "artifacts/supply-chain/worker-vulnerabilities.json");
   assert.equal(webStep.with["scan-type"], "image");
   assert.equal(webStep.with["image-ref"], "${{ env.WEB_IMAGE }}");
   assert.equal(webStep.with["vuln-type"], "os,library");
@@ -317,11 +363,12 @@ test("L0 vulnerability policy consumes the enterprise, API, and Web scan reports
   assert.deepEqual(reportPaths, [
     "artifacts/supply-chain/enterprise-vulnerabilities.json",
     "artifacts/supply-chain/api-vulnerabilities.json",
+    "artifacts/supply-chain/worker-vulnerabilities.json",
     "artifacts/supply-chain/web-vulnerabilities.json",
   ]);
 });
 
-test("L0 workflow gates the raw API and Web SBOM production closure result", () => {
+test("L0 workflow gates the raw API, Worker, and Web SBOM production closure result", () => {
   const steps = readSupplyChainSteps();
   const policyStep = steps.find((candidate) => candidate.id === "production_sbom_policy");
   const outcomeStep = steps.find((candidate) => candidate.name === "Enforce supply-chain outcomes");
@@ -329,6 +376,8 @@ test("L0 workflow gates the raw API and Web SBOM production closure result", () 
   assert.equal(policyStep["continue-on-error"], true);
   assert.match(policyStep.run, /--api-image "\$API_IMAGE"/);
   assert.match(policyStep.run, /--api artifacts\/supply-chain\/api\.trivy\.cdx\.json/);
+  assert.match(policyStep.run, /--worker-image "\$WORKER_IMAGE"/);
+  assert.match(policyStep.run, /--worker artifacts\/supply-chain\/worker\.trivy\.cdx\.json/);
   assert.match(policyStep.run, /--web artifacts\/supply-chain\/web\.trivy\.cdx\.json/);
   assert.equal(outcomeStep.env.PRODUCTION_SBOM_POLICY, "${{ steps.production_sbom_policy.outcome }}");
   assert.match(outcomeStep.run, /"\$PRODUCTION_SBOM_POLICY"/);
@@ -353,6 +402,10 @@ test("L0 workflow enforces every independently continuing supply-chain outcome",
     ["web_sbom", "WEB_SBOM"],
     ["web_sbom_evidence", "WEB_SBOM_EVIDENCE"],
     ["web_vulnerability", "WEB_VULNERABILITY"],
+    ["worker_license", "WORKER_LICENSE"],
+    ["worker_sbom", "WORKER_SBOM"],
+    ["worker_sbom_evidence", "WORKER_SBOM_EVIDENCE"],
+    ["worker_vulnerability", "WORKER_VULNERABILITY"],
   ];
   const continuingStepIds = steps
     .filter((step) => step["continue-on-error"] === true)

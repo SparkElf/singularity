@@ -1,10 +1,11 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
 import {focusByOffset} from "../util/selection";
-import {setCodeTheme} from "./util";
 import {escapeHtml} from "../../util/escape";
+import {setCodeTheme, type ProtyleRendererContext} from "./renderContext";
 
-export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, zoom = 1) => {
+export const highlightRender = (element: Element, context: ProtyleRendererContext,
+                                cdn = Constants.PROTYLE_CDN, zoom = 1) => {
     let codeElements: NodeListOf<Element>;
     let isPreview = false;
     if (element.classList.contains("code-block")) {
@@ -29,7 +30,7 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
         return;
     }
 
-    setCodeTheme(cdn);
+    setCodeTheme(context.settings.appearance, cdn);
 
     addScript(`${cdn}/js/highlight.js/highlight.min.js?v=11.11.2`, "protyleHljsScript").then(() => {
         addScript(`${cdn}/js/highlight.js/third-languages.js?v=2.0.1`, "protyleHljsThirdScript").then(() => {
@@ -40,8 +41,8 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                 block.setAttribute("data-render", "true");
                 const iconElements = block.parentElement.querySelectorAll(".protyle-icon");
                 if (iconElements.length === 2) {
-                    iconElements[0].setAttribute("aria-label", window.siyuan.languages.copy);
-                    iconElements[1].setAttribute("aria-label", window.siyuan.languages.more);
+                    iconElements[0].setAttribute("aria-label", context.localization.text("copy"));
+                    iconElements[1].setAttribute("aria-label", context.localization.text("more"));
                 }
                 const wbrElement = block.querySelector("wbr");
                 let startIndex = 0;
@@ -75,7 +76,7 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                 const ligatures = block.parentElement.getAttribute("ligatures");
                 const lineNumber = block.parentElement.getAttribute("linenumber");
                 const hljsElement = block.lastElementChild ? block.lastElementChild as HTMLElement : block;
-                if (autoEnter === "true" || (autoEnter !== "false" && window.siyuan.config.editor.codeLineWrap)) {
+                if (autoEnter === "true" || (autoEnter !== "false" && context.settings.editor.codeLineWrap)) {
                     hljsElement.style.setProperty("white-space", "pre-wrap");
                     hljsElement.style.setProperty("word-break", "break-word");
                 } else {
@@ -83,18 +84,18 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
                     hljsElement.style.setProperty("white-space", "pre");
                     hljsElement.style.setProperty("word-break", "initial");
                 }
-                if (ligatures === "true" || (ligatures !== "false" && window.siyuan.config.editor.codeLigatures)) {
+                if (ligatures === "true" || (ligatures !== "false" && context.settings.editor.codeLigatures)) {
                     hljsElement.style.fontVariantLigatures = "normal";
                 } else {
                     hljsElement.style.fontVariantLigatures = "none";
                 }
                 const codeText = hljsElement.textContent;
                 if (block.firstElementChild) {
-                    if (!isPreview && (lineNumber === "true" || (lineNumber !== "false" && window.siyuan.config.editor.codeSyntaxHighlightLineNum))) {
+                    if (!isPreview && (lineNumber === "true" || (lineNumber !== "false" && context.settings.editor.codeSyntaxHighlightLineNum))) {
                         // 需要先添加 class 以防止抖动 https://ld246.com/article/1648116585443
                         block.firstElementChild.className = "protyle-linenumber__rows";
                         block.firstElementChild.setAttribute("contenteditable", "false");
-                        lineNumberRender(block, zoom);
+                        lineNumberRender(block, context, zoom);
                         block.style.display = "";
                     } else {
                         block.firstElementChild.className = "fn__none";
@@ -117,12 +118,12 @@ export const highlightRender = (element: Element, cdn = Constants.PROTYLE_CDN, z
     });
 };
 
-export const lineNumberRender = (hljsElement: HTMLElement, zoom = 1) => {
+export const lineNumberRender = (hljsElement: HTMLElement, context: ProtyleRendererContext, zoom = 1) => {
     const lineNumber = hljsElement.parentElement.getAttribute("lineNumber");
     if (lineNumber === "false") {
         return;
     }
-    if (!window.siyuan.config.editor.codeSyntaxHighlightLineNum && lineNumber !== "true") {
+    if (!context.settings.editor.codeSyntaxHighlightLineNum && lineNumber !== "true") {
         return;
     }
     const codeElement = hljsElement.lastElementChild as HTMLElement;
@@ -130,7 +131,7 @@ export const lineNumberRender = (hljsElement: HTMLElement, zoom = 1) => {
         return;
     }
     // clientHeight 总是取的整数
-    hljsElement.parentElement.style.lineHeight = `${((parseInt(hljsElement.parentElement.style.fontSize) || window.siyuan.config.editor.fontSize) * 1.625 * 0.85).toFixed(0)}px`;
+    hljsElement.parentElement.style.lineHeight = `${((parseInt(hljsElement.parentElement.style.fontSize) || context.settings.editor.fontSize) * 1.625 * 0.85).toFixed(0)}px`;
     const lineList = codeElement.textContent.split(/\r\n|\r|\n|\u2028|\u2029/g);
     if (lineList[lineList.length - 1] === "" && lineList.length > 1) {
         lineList.pop();

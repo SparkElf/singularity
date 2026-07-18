@@ -11,9 +11,9 @@ import {transaction, turnsIntoOneTransaction, updateTransaction} from "./transac
 import {breakList, genListItemElement, listOutdent, updateListOrder} from "./list";
 import {highlightRender} from "../render/highlightRender";
 import {Constants} from "../../constants";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {hideElements} from "../ui/hideElements";
-import {isIPad, setStorageVal} from "../util/compatibility";
+import {isIPad} from "../util/browserPlatform";
 import {mathRender} from "../render/mathRender";
 import {isMobile} from "../../util/functions";
 import {processRender} from "../util/processCode";
@@ -78,11 +78,11 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
             blockElement = protyle.wysiwyg.element.querySelector(`[data-node-id="${blockElement.getAttribute("data-node-id")}"]`);
             const languageElement = blockElement.querySelector(".protyle-action__language");
             if (languageElement) {
-                if (window.siyuan.storage[Constants.LOCAL_CODELANG] && languageElement.textContent === "") {
-                    languageElement.textContent = window.siyuan.storage[Constants.LOCAL_CODELANG];
+                if (protyle.settings.toolbar.codeLanguage && languageElement.textContent === "") {
+                    languageElement.textContent = protyle.settings.toolbar.codeLanguage;
                 } else if (!Constants.SIYUAN_RENDER_CODE_LANGUAGES.includes(languageElement.textContent)) {
-                    window.siyuan.storage[Constants.LOCAL_CODELANG] = languageElement.textContent;
-                    setStorageVal(Constants.LOCAL_CODELANG, window.siyuan.storage[Constants.LOCAL_CODELANG]);
+                    protyle.settings.toolbar.setCodeLanguage(languageElement.textContent);
+                    void protyle.settings.toolbar.persist();
                 }
                 if (Constants.SIYUAN_RENDER_CODE_LANGUAGES.includes(languageElement.textContent)) {
                     blockElement.dataset.content = "";
@@ -90,13 +90,13 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
                     blockElement.className = "render-node";
                     blockElement.innerHTML = `<div spin="1"></div><div class="protyle-attr" contenteditable="false">${Constants.ZWSP}</div>`;
                     protyle.toolbar.showRender(protyle, blockElement);
-                    processRender(blockElement);
+                    processRender(blockElement, protyle);
                 } else {
-                    highlightRender(blockElement);
+                    highlightRender(blockElement, protyle);
                 }
             } else {
                 protyle.toolbar.showRender(protyle, blockElement);
-                processRender(blockElement);
+                processRender(blockElement, protyle);
             }
             updateTransaction(protyle, blockElement, oldHTML);
             return true;
@@ -116,7 +116,7 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
         range.collapse(false);
         range.insertNode(wbrElement);
         editableElement.parentElement.removeAttribute("data-render");
-        highlightRender(blockElement);
+        highlightRender(blockElement, protyle);
         updateTransaction(protyle, blockElement, oldHTML);
         scrollCenter(protyle);
         return true;
@@ -316,7 +316,7 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
         if (item.dataset.type === "NodeBlockQueryEmbed") {
             blockRender(protyle, item);
         } else {
-            mathRender(item);
+            mathRender(item, protyle);
         }
         currentElement = item;
         selectsElement.push(item);
@@ -336,11 +336,11 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
         });
         currentElement.insertAdjacentElement("afterend", item);
         if (item.classList.contains("code-block")) {
-            highlightRender(item);
+            highlightRender(item, protyle);
         } else if (item.dataset.type === "NodeBlockQueryEmbed") {
             blockRender(protyle, item);
         } else {
-            mathRender(currentElement.nextElementSibling);
+            mathRender(currentElement.nextElementSibling, protyle);
         }
         currentElement = item;
         selectsElement.push(item);
@@ -354,7 +354,7 @@ export const enter = async (blockElement: HTMLElement, range: Range, protyle: IP
             parentElement.insertAdjacentHTML("afterend", calloutHTML);
             parentElement = parentElement.nextElementSibling as HTMLElement;
             parentElement.previousElementSibling.remove();
-            mathRender(protyle.wysiwyg.element);
+            mathRender(protyle.wysiwyg.element, protyle);
             updateTransaction(protyle, parentElement, parentHTML);
             focusByWbr(protyle.wysiwyg.element, range);
             scrollCenter(protyle);
@@ -491,8 +491,8 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
             }
             listItemElement.insertAdjacentElement("afterend", newElement);
             blockRender(protyle, newElement);
-            mathRender(newElement);
-            processRender(newElement);
+            mathRender(newElement, protyle);
+            processRender(newElement, protyle);
             if (listItemElement.getAttribute("data-subtype") === "o") {
                 updateListOrder(listItemElement.parentElement);
             }
@@ -573,15 +573,15 @@ const listEnter = (protyle: IProtyle, blockElement: HTMLElement, range: Range) =
     newEditableElement.parentElement.outerHTML = protyle.lute.SpinBlockDOM(newEditableElement.parentElement.outerHTML);
     listItemElement.insertAdjacentElement("afterend", newElement);
     blockRender(protyle, newElement);
-    mathRender(newElement);
-    processRender(newElement);
+    mathRender(newElement, protyle);
+    processRender(newElement, protyle);
     // https://github.com/siyuan-note/siyuan/issues/3850
     // https://github.com/siyuan-note/siyuan/issues/6018
     // img 后有文字，在 img 后换行
     editableElement.parentElement.outerHTML = protyle.lute.SpinBlockDOM(editableElement.parentElement.outerHTML);
     blockRender(protyle, listItemElement);
-    mathRender(listItemElement);
-    processRender(listItemElement);
+    mathRender(listItemElement, protyle);
+    processRender(listItemElement, protyle);
     if (listItemElement.getAttribute("data-subtype") === "o") {
         updateListOrder(listItemElement.parentElement);
     }

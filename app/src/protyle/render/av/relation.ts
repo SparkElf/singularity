@@ -1,7 +1,6 @@
 import {Menu} from "../../../plugin/Menu";
 import {hasClosestByClassName, hasTopClosestByClassName} from "../../util/hasClosest";
-import {UDLRHint, upDownHint} from "../../../util/upDownHint";
-import {fetchPost} from "../../../util/fetch";
+import {UDLRHint, upDownHint} from "../../util/upDownHint";
 import {escapeHtml, escapeLessThans} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
 import {updateCellsValue} from "./cell";
@@ -14,7 +13,8 @@ import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";
 import {isMobile} from "../../../util/functions";
 import {showMessage} from "../../../dialog/message";
-import {writeText} from "../../util/compatibility";
+import {writeText} from "../../util/clipboard";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 
 interface IAVItem {
     avID: string;
@@ -26,11 +26,21 @@ interface IAVItem {
     viewLayout: string;
 }
 
-const genSearchList = (element: Element, keyword: string, avId?: string, excludes = true, cb?: () => void) => {
-    fetchPost("/api/av/searchAttributeView", {
+const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string, avId?: string, excludes = true,
+                       cb?: () => void) => {
+    const load = beginAVRenderLoad(protyle, element);
+    void requestAVRender<{data: {results: Array<IAVItem & {children: IAVItem[]}>}}>(
+        protyle,
+        load,
+        "/api/av/searchAttributeView",
+        {
         keyword,
         excludes: (excludes && avId) ? [avId] : undefined
-    }, (response) => {
+        },
+    ).then((response) => {
+        if (!load.isCurrent()) {
+            return;
+        }
         let html = "";
         response.data.results.forEach((item: IAVItem & { children: IAVItem[] }, index: number) => {
             const hasChildren = item.children && item.children.length > 0 && excludes;
@@ -63,6 +73,8 @@ const genSearchList = (element: Element, keyword: string, avId?: string, exclude
         if (cb) {
             cb();
         }
+    }).catch((error) => {
+        reportAVLoadFailure(load, "attribute view search", error);
     });
 };
 
@@ -76,7 +88,8 @@ const setDatabase = (avId: string, element: HTMLElement, item: HTMLElement) => {
     }
 };
 
-export const openSearchAV = (avId: string, target: HTMLElement, cb?: (element: HTMLElement) => void, excludes = true) => {
+export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElement,
+                             cb?: (element: HTMLElement) => void, excludes = true) => {
     window.siyuan.menus.menu.remove();
     const menu = new Menu();
     menu.addItem({
@@ -114,10 +127,10 @@ export const openSearchAV = (avId: string, target: HTMLElement, cb?: (element: H
                 if (event.isComposing) {
                     return;
                 }
-                genSearchList(listElement, inputElement.value, avId, excludes);
+                genSearchList(protyle, listElement, inputElement.value, avId, excludes);
             });
             inputElement.addEventListener("compositionend", () => {
-                genSearchList(listElement, inputElement.value, avId, excludes);
+                genSearchList(protyle, listElement, inputElement.value, avId, excludes);
             });
             element.lastElementChild.addEventListener("click", (event) => {
                 let clickTarget = event.target as HTMLElement;
@@ -147,7 +160,7 @@ export const openSearchAV = (avId: string, target: HTMLElement, cb?: (element: H
                     clickTarget = clickTarget.parentElement;
                 }
             });
-            genSearchList(listElement, "", avId, excludes, () => {
+            genSearchList(protyle, listElement, "", avId, excludes, () => {
                 const rect = target.getBoundingClientRect();
                 menu.open({
                     x: rect.left,
@@ -294,11 +307,20 @@ const genSelectItemHTML = (options: {
     }
 };
 
-const filterItem = (menuElement: Element, cellElement: HTMLElement, keyword: string) => {
-    fetchPost("/api/av/getAttributeViewPrimaryKeyValues", {
+const filterItem = (protyle: IProtyle, menuElement: HTMLElement, cellElement: HTMLElement, keyword: string) => {
+    const load = beginAVRenderLoad(protyle, menuElement);
+    void requestAVRender<{data: {rows: {values: IAVCellValue[]}}}>(
+        protyle,
+        load,
+        "/api/av/getAttributeViewPrimaryKeyValues",
+        {
         id: menuElement.firstElementChild.getAttribute("data-av-id"),
         keyword,
-    }, response => {
+        },
+    ).then((response) => {
+        if (!load.isCurrent()) {
+            return;
+        }
         const cells = response.data.rows.values as IAVCellValue[] || [];
         let html = "";
         let selectHTML = "";
@@ -337,6 +359,8 @@ ${keyword ? genSelectItemHTML({
         }) : (html ? "" : genSelectItemHTML({type: "empty"}))}`;
         menuElement.querySelector(".b3-menu__items .b3-menu__item:not(.fn__none)").classList.add("b3-menu__item--current");
         updateCopyRelatedItems(menuElement);
+    }).catch((error) => {
+        reportAVLoadFailure(load, "attribute view relation values", error);
     });
 };
 
@@ -346,10 +370,18 @@ export const bindRelationEvent = (options: {
     blockElement: Element,
     cellElements: HTMLElement[]
 }) => {
-    fetchPost("/api/av/getAttributeViewPrimaryKeyValues", {
+    const load = beginAVRenderLoad(options.protyle, options.menuElement);
+    void requestAVRender<{data: {
+        blockIDs: string[];
+        name: string;
+        rows: {values: IAVCellValue[]};
+    }}>(options.protyle, load, "/api/av/getAttributeViewPrimaryKeyValues", {
         id: options.menuElement.firstElementChild.getAttribute("data-av-id"),
         keyword: "",
-    }, response => {
+    }).then((response) => {
+        if (!load.isCurrent()) {
+            return;
+        }
         const cells = response.data.rows.values as IAVCellValue[] || [];
         let html = "";
         let selectHTML = "";
@@ -404,12 +436,12 @@ ${html || genSelectItemHTML({type: "empty"})}`;
             if (event.isComposing) {
                 return;
             }
-            filterItem(options.menuElement, options.cellElements[0], inputElement.value);
+            filterItem(options.protyle, options.menuElement, options.cellElements[0], inputElement.value);
             event.stopPropagation();
         });
         inputElement.addEventListener("compositionend", (event) => {
             event.stopPropagation();
-            filterItem(options.menuElement, options.cellElements[0], inputElement.value);
+            filterItem(options.protyle, options.menuElement, options.cellElements[0], inputElement.value);
         });
         updateCopyRelatedItems(options.menuElement);
         options.menuElement.querySelector('[data-type="copyRelatedItems"]').addEventListener("click", () => {
@@ -431,6 +463,8 @@ ${html || genSelectItemHTML({type: "empty"})}`;
                 showMessage(window.siyuan.languages.copied);
             }
         });
+    }).catch((error) => {
+        reportAVLoadFailure(load, "attribute view relation menu", error);
     });
 };
 

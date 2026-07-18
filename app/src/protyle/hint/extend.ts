@@ -1,7 +1,7 @@
 import {fetchPost} from "../../util/fetch";
 import {insertHTML} from "../util/insertHTML";
-import {getIconByType} from "../../editor/getIcon";
-import {updateHotkeyTip} from "../util/compatibility";
+import {getIconByType} from "../util/getIconByType";
+import {updateHotkeyTip} from "../util/keyboard";
 import {blockRender} from "../render/blockRender";
 import {Constants} from "../../constants";
 import {processRender} from "../util/processCode";
@@ -15,7 +15,7 @@ import {getAssetName, getDisplayName, isEncryptedBox, pathPosix} from "../../uti
 import {genEmptyElement} from "../../block/util";
 import {updateListOrder} from "../wysiwyg/list";
 import {escapeHtml} from "../../util/escape";
-import {zoomOut} from "../../menus/protyle";
+import {zoomOut} from "../util/zoom";
 import {hideElements} from "../ui/hideElements";
 import {genAssetHTML} from "../../asset/renderAssets";
 import {unicode2Emoji} from "../../emoji";
@@ -420,7 +420,7 @@ export const hintTag = (key: string, protyle: IProtyle): IHintData[] => {
     return [];
 };
 
-export const genHintItemHTML = (item: IBlock) => {
+export const genHintItemHTML = (item: IBlock & {box: string; id: string}) => {
     let iconHTML;
     if (item.type === "NodeDocument" && item.ial.icon) {
         iconHTML = unicode2Emoji(item.ial.icon, "b3-list-item__graphic popover__block", true);
@@ -446,7 +446,7 @@ export const genHintItemHTML = (item: IBlock) => {
         countHTML = `<span class="popover__block counter b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.ref}">${item.refCount}</span>`;
     }
     // data-node-id 用于获取引用面板
-    return `${attrHTML}<div class="b3-list-item__first" data-node-id="${item.id}">
+    return `${attrHTML}<div class="b3-list-item__first" data-node-id="${item.id}" data-notebook-id="${item.box}">
     ${iconHTML}
     <span class="b3-list-item__text">${item.content}</span>${countHTML}
 </div>
@@ -482,16 +482,16 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
 <span class="b3-list-item__text">${window.siyuan.languages.newFile} <mark>${response.data.k}</mark></span></div>`,
             });
         }
-        response.data.blocks.forEach((item: IBlock) => {
-            let value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="d">${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
+        response.data.blocks.forEach((item: IBlock & {box: string; id: string}) => {
+            let value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="d">${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
             if (source === "search") {
-                value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${key}${Constants.ZWSP}${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
+                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${key}${Constants.ZWSP}${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
             } else if (source === "av") {
                 let refText = item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "");
                 if (nodeElement) {
                     refText = item.ial["custom-sy-av-s-text-" + nodeElement.getAttribute("data-av-id")] || refText;
                 }
-                value = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${refText}</span>`;
+                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${refText}</span>`;
             }
             dataList.push({
                 value,
@@ -567,8 +567,8 @@ export const hintRenderTemplate = (value: string, protyle: IProtyle, nodeElement
             item.remove();
         });
         blockRender(protyle, protyle.wysiwyg.element);
-        processRender(protyle.wysiwyg.element);
-        highlightRender(protyle.wysiwyg.element);
+        processRender(protyle.wysiwyg.element, protyle);
+        highlightRender(protyle.wysiwyg.element, protyle);
         avRender(protyle.wysiwyg.element, protyle);
         hideElements(["util"], protyle);
     });

@@ -31,6 +31,7 @@ export class MobileBookmarks {
         this.tree = new Tree({
             element: this.element.querySelector(".bookmarkList") as HTMLElement,
             data: null,
+            renderContext: app,
             click: (element: HTMLElement, event?: MouseEvent) => {
                 const id = element.getAttribute("data-node-id");
                 if (event) {

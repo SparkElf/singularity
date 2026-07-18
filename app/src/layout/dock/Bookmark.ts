@@ -54,6 +54,7 @@ export class Bookmark extends Model {
         this.tree = new Tree({
             element: this.element.lastElementChild as HTMLElement,
             data: null,
+            renderContext: app,
             click: (element: HTMLElement, event?: MouseEvent) => {
                 if (event) {
                     const actionElement = hasClosestByClassName(event.target as HTMLElement, "b3-list-item__action");

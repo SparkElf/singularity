@@ -3,10 +3,12 @@ import {unicode2Emoji} from "../../../emoji";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
 import {focusBlock} from "../../util/selection";
-import {upDownHint} from "../../../util/upDownHint";
+import {upDownHint} from "../../util/upDownHint";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {hasClosestByClassName} from "../../util/hasClosest";
 import {Constants} from "../../../constants";
+import {currentAVDrag} from "./dragState";
+import {closeAVOverlay} from "./overlay";
 
 // countFilterLeaves 递归统计过滤节点树中的叶子数量（分组不计入）。
 const countFilterLeaves = (filters: IAVFilter[]): number => {
@@ -37,7 +39,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
         icon: "iconEdit",
         label: window.siyuan.languages.rename,
         click() {
-            document.querySelector(".av__panel")?.remove();
+            closeAVOverlay(options.protyle, "panel");
             openMenuPanel({
                 protyle: options.protyle,
                 blockElement: options.blockElement,
@@ -53,7 +55,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
         icon: "iconSettings",
         label: window.siyuan.languages.config,
         click() {
-            document.querySelector(".av__panel")?.remove();
+            closeAVOverlay(options.protyle, "panel");
             openMenuPanel({
                 protyle: options.protyle,
                 blockElement: options.blockElement,
@@ -67,7 +69,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
         icon: "iconCopy",
         label: window.siyuan.languages.duplicate,
         click() {
-            document.querySelector(".av__panel")?.remove();
+            closeAVOverlay(options.protyle, "panel");
             const id = Lute.NewNodeID();
             transaction(options.protyle, [{
                 action: "duplicateAttrViewView",
@@ -89,7 +91,7 @@ export const openViewMenu = (options: { protyle: IProtyle, blockElement: HTMLEle
             icon: "iconTrashcan",
             label: window.siyuan.languages.delete,
             click() {
-                document.querySelector(".av__panel")?.remove();
+                closeAVOverlay(options.protyle, "panel");
                 transaction(options.protyle, [{
                     action: "removeAttrViewView",
                     avID: options.blockElement.dataset.avId,
@@ -432,8 +434,12 @@ export const getFieldsByData = (data: IAV) => {
     return data.viewType === "table" ? (data.view as IAVTable).columns : (data.view as IAVGallery).fields;
 };
 
-export const dragoverTab = (event: DragEvent) => {
-    const viewTabElement = window.siyuan.dragElement.parentElement;
+export const dragoverTab = (protyle: IProtyle, event: DragEvent) => {
+    const dragElement = currentAVDrag(protyle);
+    if (!dragElement) {
+        return;
+    }
+    const viewTabElement = dragElement.parentElement;
     if (viewTabElement.scrollWidth > viewTabElement.clientWidth) {
         const viewTabRect = viewTabElement.getBoundingClientRect();
         if (event.clientX < viewTabRect.left) {
@@ -448,23 +454,23 @@ export const dragoverTab = (event: DragEvent) => {
             });
         }
     }
-    const target = hasClosestByClassName(document.elementFromPoint(event.clientX, window.siyuan.dragElement.getBoundingClientRect().top + 10), "item");
+    const target = hasClosestByClassName(document.elementFromPoint(event.clientX, dragElement.getBoundingClientRect().top + 10), "item");
     if (!target) {
         return;
     }
-    if (viewTabElement !== window.siyuan.dragElement.parentElement || (target === window.siyuan.dragElement)) {
+    if (viewTabElement !== dragElement.parentElement || target === dragElement) {
         return;
     }
     const targetRect = target.getBoundingClientRect();
     if (targetRect.left + targetRect.width / 2 < event.clientX) {
-        if (target.nextElementSibling && target.nextElementSibling === window.siyuan.dragElement) {
+        if (target.nextElementSibling && target.nextElementSibling === dragElement) {
             return;
         }
-        target.after(window.siyuan.dragElement);
+        target.after(dragElement);
     } else {
-        if (target.previousElementSibling && target.previousElementSibling === window.siyuan.dragElement) {
+        if (target.previousElementSibling && target.previousElementSibling === dragElement) {
             return;
         }
-        target.before(window.siyuan.dragElement);
+        target.before(dragElement);
     }
 };

@@ -2,7 +2,7 @@ import {closePanel} from "../util/closePanel";
 import {getCurrentEditor, openMobileFileById} from "../editor";
 import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
-import {getIconByType} from "../../editor/getIcon";
+import {getIconByType} from "../../protyle/util/getIconByType";
 import {preventScroll} from "../../protyle/scroll/preventScroll";
 import {openModel} from "./model";
 import {getDisplayName, getNotebookIcon, getNotebookName, isEncryptedBox, movePathTo, pathPosix} from "../../util/pathName";

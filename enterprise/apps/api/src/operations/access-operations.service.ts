@@ -1,18 +1,32 @@
 import { randomUUID } from "node:crypto";
 
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import type { OnModuleInit } from "@nestjs/common";
 import type {
   AccessOperation,
   AccessOperationResult,
+  AuditTargetType,
   InitializeAccessOperation,
   SetKernelStateAccessOperation,
   SetSpaceMemberAccessOperation,
 } from "@singularity/contracts";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
+import {
+  KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
+  type KernelDeploymentChangedEvent,
+} from "@singularity/kernel-client";
 
+import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
 import { IdentityService } from "../identity/identity.service.js";
+import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { SpaceAccessService } from "../spaces/space-access.service.js";
+import { CLOCK } from "../tokens.js";
+import { HandlesAccessOperation } from "./access-operation-handler.decorator.js";
+import {
+  AccessOperationDiscovery,
+  type AccessOperationHandlerRegistry,
+} from "./access-operation-discovery.js";
 
 type Transaction = Prisma.TransactionClient;
 type OperationOutcome = AccessOperationResult["outcome"];
@@ -21,60 +35,40 @@ type OperationBaseResult<Outcome extends OperationOutcome> = {
   outcome: Outcome;
 };
 
+async function publishKernelDeploymentChange(
+  transaction: Prisma.TransactionClient,
+  event: KernelDeploymentChangedEvent,
+): Promise<void> {
+  await transaction.$executeRaw(
+    Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(event)})`,
+  );
+}
+
 @Injectable()
-export class AccessOperationsService {
+export class AccessOperationsService implements OnModuleInit {
   readonly #logger = new Logger("AccessOperationsService");
+  #handlers!: AccessOperationHandlerRegistry;
 
   constructor(
     private readonly database: DatabaseRuntime,
     private readonly identity: IdentityService,
     private readonly spaces: SpaceAccessService,
+    @Inject(CLOCK)
     private readonly clock: Clock,
+    private readonly accessChanges: AccessChangedPublisher,
+    private readonly audit: AuditWriter,
+    private readonly handlerDiscovery: AccessOperationDiscovery,
   ) {}
+
+  onModuleInit(): void {
+    this.#handlers = this.handlerDiscovery.handlers();
+  }
 
   async execute(command: AccessOperation): Promise<AccessOperationResult> {
     const operationId = randomUUID();
     try {
-      let result: AccessOperationResult;
-      switch (command.operation) {
-        case "initialize":
-          result = await this.#initialize(operationId, command);
-          break;
-        case "create-user":
-          result = await this.#createUser(operationId, command);
-          break;
-        case "create-space":
-          result = await this.#createSpace(operationId, command);
-          break;
-        case "set-kernel-state":
-          result = await this.#setKernelState(operationId, command);
-          break;
-        case "set-space-member":
-          result = await this.#setSpaceMember(operationId, command);
-          break;
-        case "revoke-space-member":
-          result = await this.#revokeSpaceMember(operationId, command);
-          break;
-        case "disable-organization":
-          result = await this.#disableOrganization(operationId, command.organizationId);
-          break;
-        case "disable-space":
-          result = await this.#disableSpace(operationId, command.spaceId);
-          break;
-        case "revoke-organization-member":
-          result = await this.#revokeOrganizationMember(
-            operationId,
-            command.organizationId,
-            command.userId,
-          );
-          break;
-        case "disable-user":
-          result = await this.#disableUser(operationId, command.userId);
-          break;
-        case "revoke-user-sessions":
-          result = await this.#revokeUserSessions(operationId, command.userId);
-          break;
-      }
+      const handler = this.#handlers.get(command.operation)!;
+      const result = await handler.execute(operationId, command);
       this.#log(command, result);
       return result;
     } catch {
@@ -84,7 +78,8 @@ export class AccessOperationsService {
     }
   }
 
-  async #initialize(
+  @HandlesAccessOperation("initialize")
+  private async initialize(
     operationId: string,
     command: InitializeAccessOperation,
   ): Promise<AccessOperationResult> {
@@ -140,6 +135,20 @@ export class AccessOperationsService {
             version: null,
           },
         });
+        await this.#appendPermissionChange(transaction, operationId, {
+          occurredAt: now,
+          organizationId: organization.id,
+          spaceId: null,
+          targetId: user.id,
+          targetType: "membership",
+        });
+        await this.#appendPermissionChange(transaction, operationId, {
+          occurredAt: now,
+          organizationId: organization.id,
+          spaceId: space.id,
+          targetId: user.id,
+          targetType: "membership",
+        });
         return {
           operationId,
           organizationId: organization.id,
@@ -163,7 +172,8 @@ export class AccessOperationsService {
     }
   }
 
-  async #createUser(
+  @HandlesAccessOperation("create-user")
+  private async createUser(
     operationId: string,
     command: Extract<AccessOperation, { operation: "create-user" }>,
   ): Promise<AccessOperationResult> {
@@ -185,6 +195,12 @@ export class AccessOperationsService {
           organizationId: command.organizationId,
           passwordDigest,
         });
+        await this.#appendPermissionChange(transaction, operationId, {
+          organizationId: command.organizationId,
+          spaceId: null,
+          targetId: userId,
+          targetType: "membership",
+        });
         return { operationId, outcome: "created", userId };
       });
     } catch (error) {
@@ -195,7 +211,8 @@ export class AccessOperationsService {
     }
   }
 
-  async #createSpace(
+  @HandlesAccessOperation("create-space")
+  private async createSpace(
     operationId: string,
     command: Extract<AccessOperation, { operation: "create-space" }>,
   ): Promise<AccessOperationResult> {
@@ -220,13 +237,21 @@ export class AccessOperationsService {
         name: command.name,
         organizationId: command.organizationId,
       });
-      return typeof spaceId === "string"
-        ? this.#result(operationId, spaceId)
-        : { operationId, outcome: "created", spaceId: spaceId.spaceId };
+      if (typeof spaceId === "string") {
+        return this.#result(operationId, spaceId);
+      }
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: command.organizationId,
+        spaceId: spaceId.spaceId,
+        targetId: command.adminUserId,
+        targetType: "membership",
+      });
+      return { operationId, outcome: "created", spaceId: spaceId.spaceId };
     });
   }
 
-  async #setKernelState(
+  @HandlesAccessOperation("set-kernel-state")
+  private async setKernelState(
     operationId: string,
     command: SetKernelStateAccessOperation,
   ): Promise<AccessOperationResult> {
@@ -236,7 +261,7 @@ export class AccessOperationsService {
       }
       const space = await transaction.space.findUnique({
         where: { id: command.spaceId },
-        select: { status: true },
+        select: { organizationId: true, status: true },
       });
       if (space?.status !== "active") {
         return this.#result(operationId, "conflict");
@@ -244,6 +269,33 @@ export class AccessOperationsService {
       if (!(await this.#lockKernelInstance(transaction, command.spaceId))) {
         return this.#result(operationId, "not-found");
       }
+      const endpointRows = await transaction.$queryRaw<
+        Array<{ deploymentHandle: string; kernelInstanceId: string; spaceId: string }>
+      >(
+        Prisma.sql`
+          SELECT
+            kernel."deployment_handle" AS "deploymentHandle",
+            endpoint."kernel_instance_id" AS "kernelInstanceId",
+            endpoint."space_id" AS "spaceId"
+          FROM "kernel_runtime_endpoints" AS endpoint
+          INNER JOIN "kernel_instances" AS kernel
+            ON kernel."id" = endpoint."kernel_instance_id"
+            AND kernel."space_id" = endpoint."space_id"
+          WHERE endpoint."kernel_instance_id" = (
+            SELECT "id" FROM "kernel_instances" WHERE "space_id" = ${command.spaceId}::uuid
+          )
+            AND kernel."deployment_handle" IS NOT NULL
+          LIMIT 1
+        `,
+      );
+      await transaction.$executeRaw(
+        Prisma.sql`
+          DELETE FROM "kernel_runtime_endpoints"
+          WHERE "kernel_instance_id" = (
+            SELECT "id" FROM "kernel_instances" WHERE "space_id" = ${command.spaceId}::uuid
+          )
+        `,
+      );
       await transaction.kernelInstance.update({
         where: { spaceId: command.spaceId },
         data:
@@ -259,11 +311,28 @@ export class AccessOperationsService {
                 version: command.version,
               },
       });
+      const endpoint = endpointRows[0];
+      if (endpoint !== undefined) {
+        await publishKernelDeploymentChange(transaction, {
+          deploymentHandle: endpoint.deploymentHandle,
+          kernelInstanceId: endpoint.kernelInstanceId,
+          kind: "remove",
+          requestId: operationId,
+          spaceId: endpoint.spaceId,
+        });
+      }
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: space.organizationId,
+        spaceId: command.spaceId,
+        targetId: command.spaceId,
+        targetType: "space",
+      });
       return this.#result(operationId, "updated");
     });
   }
 
-  async #setSpaceMember(
+  @HandlesAccessOperation("set-space-member")
+  private async setSpaceMember(
     operationId: string,
     command: SetSpaceMemberAccessOperation,
   ): Promise<AccessOperationResult> {
@@ -341,6 +410,21 @@ export class AccessOperationsService {
           },
           data: { role: command.role, status: "active" },
         });
+        await this.accessChanges.publish(transaction, {
+          kind: "close",
+          reason: "forbidden",
+          requestId: operationId,
+          selectors: [
+            { kind: "space", value: command.spaceId },
+            { kind: "user", value: command.userId },
+          ],
+        });
+        await this.#appendPermissionChange(transaction, operationId, {
+          organizationId: ownership.organizationId,
+          spaceId: command.spaceId,
+          targetId: command.userId,
+          targetType: "membership",
+        });
         return this.#result(operationId, "updated");
       }
       await transaction.spaceMembership.create({
@@ -352,11 +436,27 @@ export class AccessOperationsService {
           userId: command.userId,
         },
       });
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId: operationId,
+        selectors: [
+          { kind: "space", value: command.spaceId },
+          { kind: "user", value: command.userId },
+        ],
+      });
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: ownership.organizationId,
+        spaceId: command.spaceId,
+        targetId: command.userId,
+        targetType: "membership",
+      });
       return this.#result(operationId, "created");
     });
   }
 
-  async #revokeSpaceMember(
+  @HandlesAccessOperation("revoke-space-member")
+  private async revokeSpaceMember(
     operationId: string,
     command: Extract<AccessOperation, { operation: "revoke-space-member" }>,
   ): Promise<AccessOperationResult> {
@@ -386,69 +486,130 @@ export class AccessOperationsService {
         command.spaceId,
         command.userId,
       );
-      await transaction.spaceMembership.updateMany({
+      const revoked = await transaction.spaceMembership.updateMany({
         where: { spaceId: command.spaceId, userId: command.userId },
         data: { status: "inactive" },
       });
+      if (revoked.count > 0) {
+        await this.accessChanges.publish(transaction, {
+          kind: "close",
+          reason: "forbidden",
+          requestId: operationId,
+          selectors: [
+            { kind: "space", value: command.spaceId },
+            { kind: "user", value: command.userId },
+          ],
+        });
+        await this.#appendPermissionChange(transaction, operationId, {
+          organizationId: ownership.organizationId,
+          spaceId: command.spaceId,
+          targetId: command.userId,
+          targetType: "membership",
+        });
+      }
       return this.#result(operationId, "revoked");
     });
   }
 
-  async #disableOrganization(
+  @HandlesAccessOperation("disable-organization")
+  private async disableOrganization(
     operationId: string,
-    organizationId: string,
+    command: Extract<
+      AccessOperation,
+      { operation: "disable-organization" }
+    >,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockOrganization(transaction, organizationId))) {
+      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
         return this.#result(operationId, "not-found");
       }
       await transaction.organization.update({
-        where: { id: organizationId },
+        where: { id: command.organizationId },
         data: { status: "disabled" },
+      });
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId: operationId,
+        selectors: [{ kind: "organization", value: command.organizationId }],
+      });
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: command.organizationId,
+        spaceId: null,
+        targetId: command.organizationId,
+        targetType: "organization",
       });
       return this.#result(operationId, "updated");
     });
   }
 
-  async #disableSpace(
+  @HandlesAccessOperation("disable-space")
+  private async disableSpace(
     operationId: string,
-    spaceId: string,
+    command: Extract<AccessOperation, { operation: "disable-space" }>,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockSpace(transaction, spaceId))) {
+      if (!(await this.#lockSpace(transaction, command.spaceId))) {
+        return this.#result(operationId, "not-found");
+      }
+      const space = await transaction.space.findUnique({
+        where: { id: command.spaceId },
+        select: { organizationId: true },
+      });
+      if (space === null) {
         return this.#result(operationId, "not-found");
       }
       await transaction.space.update({
-        where: { id: spaceId },
+        where: { id: command.spaceId },
         data: { status: "disabled" },
+      });
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId: operationId,
+        selectors: [{ kind: "space", value: command.spaceId }],
+      });
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: space.organizationId,
+        spaceId: command.spaceId,
+        targetId: command.spaceId,
+        targetType: "space",
       });
       return this.#result(operationId, "updated");
     });
   }
 
-  async #revokeOrganizationMember(
+  @HandlesAccessOperation("revoke-organization-member")
+  private async revokeOrganizationMember(
     operationId: string,
-    organizationId: string,
-    userId: string,
+    command: Extract<
+      AccessOperation,
+      { operation: "revoke-organization-member" }
+    >,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockUser(transaction, userId))) {
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
-      if (!(await this.#lockOrganization(transaction, organizationId))) {
+      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
         return this.#result(operationId, "not-found");
       }
       if (
         !(await this.#lockOrganizationMembership(
           transaction,
-          organizationId,
-          userId,
+          command.organizationId,
+          command.userId,
         ))
       ) {
         return this.#result(operationId, "not-found");
       }
       const membership = await transaction.organizationMembership.findUnique({
-        where: { organizationId_userId: { organizationId, userId } },
+        where: {
+          organizationId_userId: {
+            organizationId: command.organizationId,
+            userId: command.userId,
+          },
+        },
         select: { role: true, status: true },
       });
       if (membership?.role === "owner" && membership.status === "active") {
@@ -460,8 +621,8 @@ export class AccessOperationsService {
           FROM "spaces" AS space
           INNER JOIN "space_memberships" AS membership
             ON membership."space_id" = space."id"
-          WHERE membership."organization_id" = ${organizationId}
-            AND membership."user_id" = ${userId}
+          WHERE membership."organization_id" = ${command.organizationId}
+            AND membership."user_id" = ${command.userId}
           ORDER BY space."id"
           FOR UPDATE OF space
         `,
@@ -470,55 +631,152 @@ export class AccessOperationsService {
         Prisma.sql`
           SELECT "id"
           FROM "space_memberships"
-          WHERE "organization_id" = ${organizationId}
-            AND "user_id" = ${userId}
+          WHERE "organization_id" = ${command.organizationId}
+            AND "user_id" = ${command.userId}
           ORDER BY "space_id", "id"
           FOR UPDATE
         `,
       );
       await transaction.organizationMembership.update({
-        where: { organizationId_userId: { organizationId, userId } },
+        where: {
+          organizationId_userId: {
+            organizationId: command.organizationId,
+            userId: command.userId,
+          },
+        },
         data: { status: "inactive" },
       });
       await transaction.spaceMembership.updateMany({
-        where: { organizationId, userId },
+        where: {
+          organizationId: command.organizationId,
+          userId: command.userId,
+        },
         data: { status: "inactive" },
+      });
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId: operationId,
+        selectors: [
+          { kind: "organization", value: command.organizationId },
+          { kind: "user", value: command.userId },
+        ],
+      });
+      await this.#appendPermissionChange(transaction, operationId, {
+        organizationId: command.organizationId,
+        spaceId: null,
+        targetId: command.userId,
+        targetType: "membership",
       });
       return this.#result(operationId, "revoked");
     });
   }
 
-  async #disableUser(
+  @HandlesAccessOperation("disable-user")
+  private async disableUser(
     operationId: string,
-    userId: string,
+    command: Extract<AccessOperation, { operation: "disable-user" }>,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockUser(transaction, userId))) {
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
+      const organizationIds = await this.#activeOrganizationIdsForUser(
+        transaction,
+        command.userId,
+      );
+      const now = this.clock.now();
       const outcome = await this.identity.disableUserInTransaction(
         transaction,
-        userId,
-        this.clock.now(),
+        command.userId,
+        now,
+        operationId,
       );
+      if (outcome === "updated") {
+        for (const organizationId of organizationIds) {
+          await this.#appendPermissionChange(transaction, operationId, {
+            occurredAt: now,
+            organizationId,
+            spaceId: null,
+            targetId: command.userId,
+            targetType: "user",
+          });
+        }
+      }
       return this.#result(operationId, outcome);
     });
   }
 
-  async #revokeUserSessions(
+  @HandlesAccessOperation("revoke-user-sessions")
+  private async revokeUserSessions(
     operationId: string,
-    userId: string,
+    command: Extract<AccessOperation, { operation: "revoke-user-sessions" }>,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockUser(transaction, userId))) {
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
+      const organizationIds = await this.#activeOrganizationIdsForUser(
+        transaction,
+        command.userId,
+      );
+      const now = this.clock.now();
       const outcome = await this.identity.revokeUserSessionsInTransaction(
         transaction,
-        userId,
-        this.clock.now(),
+        command.userId,
+        now,
+        operationId,
       );
+      if (outcome === "revoked") {
+        for (const organizationId of organizationIds) {
+          await this.#appendPermissionChange(transaction, operationId, {
+            occurredAt: now,
+            organizationId,
+            spaceId: null,
+            targetId: command.userId,
+            targetType: "session",
+          });
+        }
+      }
       return this.#result(operationId, outcome);
+    });
+  }
+
+  async #activeOrganizationIdsForUser(
+    transaction: Transaction,
+    userId: string,
+  ): Promise<readonly string[]> {
+    const memberships = await transaction.organizationMembership.findMany({
+      where: {
+        status: "active",
+        userId,
+        organization: { status: "active" },
+      },
+      orderBy: { organizationId: "asc" },
+      select: { organizationId: true },
+    });
+    return memberships.map((membership) => membership.organizationId);
+  }
+
+  async #appendPermissionChange(
+    transaction: Transaction,
+    operationId: string,
+    input: {
+      readonly occurredAt?: Date;
+      readonly organizationId: string;
+      readonly spaceId: string | null;
+      readonly targetId: string;
+      readonly targetType: AuditTargetType;
+    },
+  ): Promise<void> {
+    await this.audit.appendPermissionChange(transaction, {
+      actorUserId: null,
+      occurredAt: input.occurredAt ?? this.clock.now(),
+      organizationId: input.organizationId,
+      requestId: operationId,
+      spaceId: input.spaceId,
+      targetId: input.targetId,
+      targetType: input.targetType,
     });
   }
 

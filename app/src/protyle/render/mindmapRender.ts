@@ -1,9 +1,9 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
 import {hasClosestByClassName} from "../util/hasClosest";
-import {genIconHTML} from "./util";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
-export const mindmapRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const mindmapRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let mindmapElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "mindmap" && element.getAttribute("data-render") !== "true") {
         mindmapElements = [element];
@@ -22,7 +22,7 @@ export const mindmapRender = (element: Element, cdn = Constants.PROTYLE_CDN) => 
         mindmapElements.forEach((e: HTMLDivElement) => {
             e.setAttribute("data-render", "true");
             if (!e.firstElementChild.classList.contains("protyle-icons")) {
-                e.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement));
+                e.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement));
             }
             const renderElement = e.firstElementChild.nextElementSibling as HTMLElement;
             if (!e.getAttribute("data-content")) {
@@ -35,7 +35,7 @@ export const mindmapRender = (element: Element, cdn = Constants.PROTYLE_CDN) => 
                 } else {
                     renderElement.lastElementChild.classList.remove("ft__error");
                 }
-                window.echarts.init(renderElement.lastElementChild, window.siyuan.config.appearance.mode === 1 ? "dark" : undefined, {
+                window.echarts.init(renderElement.lastElementChild, context.settings.appearance.theme === "dark" ? "dark" : undefined, {
                     width,
                 }).setOption({
                     series: [

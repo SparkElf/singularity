@@ -29,6 +29,8 @@ import {
   startTestApiApplication,
   type TestApiApplication,
 } from "./support/test-app.js";
+import { testAuditConfiguration } from "./support/audit-configuration.js";
+import { truncateTestDatabase } from "./support/database.js";
 
 const password = "correct horse battery staple";
 
@@ -77,6 +79,7 @@ async function runProductionOperation(
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const exitCode = await runAccessOperationsApplication({
+    auditConfiguration: testAuditConfiguration(),
     databaseUrl,
     stderr,
     stdin: Readable.from([JSON.stringify(command)]),
@@ -91,19 +94,6 @@ async function runProductionOperation(
     stderr: streamText(stderr),
     stdout: stdoutText,
   };
-}
-
-async function cleanDatabase(database: DatabaseClient): Promise<void> {
-  await database.$transaction(async (transaction) => {
-    await transaction.kernelInstance.deleteMany();
-    await transaction.authSession.deleteMany();
-    await transaction.spaceMembership.deleteMany();
-    await transaction.space.deleteMany();
-    await transaction.organizationMembership.deleteMany();
-    await transaction.organization.deleteMany();
-    await transaction.user.deleteMany();
-    await transaction.systemInstallation.deleteMany();
-  });
 }
 
 function createdInstallation(result: AccessOperationResult): {
@@ -150,7 +140,7 @@ describe("controlled access operations with PostgreSQL", () => {
   });
 
   afterEach(async () => {
-    await cleanDatabase(database);
+    await truncateTestDatabase(database);
     logger.clear();
   });
 

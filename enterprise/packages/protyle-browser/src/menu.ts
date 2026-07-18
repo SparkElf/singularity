@@ -1,7 +1,7 @@
 import type { ProtyleMenuHandle, ProtyleMenuPort } from "./contracts.ts";
 
 export function createProtyleMenuPort<TMenu>(
-  openMenu: () => TMenu,
+  openMenu: (close: () => void) => TMenu,
   closeMenu: (menu: TMenu) => void,
 ): ProtyleMenuPort<TMenu> {
   const handles = new Set<ProtyleMenuHandle<TMenu>>();
@@ -13,10 +13,12 @@ export function createProtyleMenuPort<TMenu>(
         throw new Error("[protyle.menu] cannot open a menu after disposal");
       }
 
-      const menu = openMenu();
+      let menu!: TMenu;
       let closed = false;
       const handle: ProtyleMenuHandle<TMenu> = {
-        menu,
+        get menu() {
+          return menu;
+        },
         close: () => {
           if (closed) {
             return;
@@ -27,6 +29,13 @@ export function createProtyleMenuPort<TMenu>(
         },
       };
       handles.add(handle);
+      try {
+        menu = openMenu(handle.close);
+      } catch (error) {
+        closed = true;
+        handles.delete(handle);
+        throw error;
+      }
       return handle;
     },
     dispose: () => {
@@ -34,7 +43,17 @@ export function createProtyleMenuPort<TMenu>(
         return;
       }
       disposed = true;
-      handles.forEach((handle) => handle.close());
+      const failures: unknown[] = [];
+      Array.from(handles).forEach((handle) => {
+        try {
+          handle.close();
+        } catch (error) {
+          failures.push(error);
+        }
+      });
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "[protyle.menu] menu disposal failed");
+      }
     },
   };
 }

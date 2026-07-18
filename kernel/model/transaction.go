@@ -1945,7 +1945,7 @@ func (tx *Transaction) doUpdate(operation *Operation) (ret *TxErr) {
 				})
 			}
 			updatedNode.SetIALAttr("fold", "1")
-			insertDom = tx.luteEngine.RenderNodeBlockDOM(updatedNode)
+			insertDom = FillBlockRefNotebookIDs(tx.luteEngine.RenderNodeBlockDOM(updatedNode), tx.Notebook)
 		}
 
 		evt := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)

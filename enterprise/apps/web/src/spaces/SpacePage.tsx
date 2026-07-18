@@ -1,13 +1,16 @@
 import {
   type ComponentType,
   type ReactNode,
+  useCallback,
   useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
 import type {
   AuthorizedSpaceSummary,
   SpaceRuntimePathParameters,
+  SpaceRuntimeBootstrap,
 } from "@singularity/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,6 +27,7 @@ import { Link, Navigate, useLocation, useParams } from "react-router";
 import { NetworkFailureError, isApiProblem } from "@/api/http.ts";
 import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
 import { SPACES_PATH, locationTarget } from "@/auth/return-to.ts";
+import { clearClientSession } from "@/auth/session-state.ts";
 import { useLogout } from "@/auth/use-logout.ts";
 import {
   Alert,
@@ -68,10 +72,98 @@ import {
   EXPLICIT_SPACE_LIST_STATE,
   spacePagePath,
 } from "@/spaces/space-route.ts";
+import {
+  SpaceSessionRoot,
+  type ProtyleMediatorEvent,
+  type RuntimeErrorEvent,
+} from "@/spaces/SpaceSessionRoot.tsx";
+import {
+  ContentDirectory,
+  type ContentDirectoryAccessLoss,
+  type ContentDirectoryStatus,
+} from "@/spaces/ContentDirectory.tsx";
+import type {
+  ReadySpaceRuntimeBootstrap,
+  SpaceProtyleRuntime,
+} from "@/spaces/space-session.ts";
+import { ProtyleHost } from "@/editor/ProtyleHost.tsx";
+import type {
+  ProtyleFactory,
+  ProtyleSession,
+} from "@singularity/protyle-browser";
+import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
+import { contentDirectorySpaceQueryKey } from "@/spaces/content-directory-api.ts";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
+
+export type SpaceProtyleFactoryProvider = (
+  spaceId: string,
+) => ProtyleFactory<SpaceProtyleRuntime>;
+
+export interface SpacePageProps {
+  readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
+}
+
+function isReadySpaceRuntime(
+  runtime: SpaceRuntimeBootstrap | undefined,
+): runtime is ReadySpaceRuntimeBootstrap {
+  return runtime?.kernelState === "ready";
+}
+
+function createSpaceHostMediator(
+  queryClient: ReturnType<typeof useQueryClient>,
+  selectDocument: (selection: {
+    readonly documentId: string;
+    readonly notebookId: string;
+    readonly spaceId: string;
+  }) => void,
+  clearSelection: () => void,
+  event: ProtyleMediatorEvent,
+  bootstrap: ReadySpaceRuntimeBootstrap,
+): void {
+  switch (event.type) {
+    case "open-document":
+      selectDocument({
+        documentId: event.documentId,
+        notebookId: event.notebookId,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "close-document": {
+      const selection = useContentSelectionStore.getState().selection;
+      if (
+        selection?.spaceId === bootstrap.spaceId &&
+        selection.notebookId === event.notebookId &&
+        selection.documentId === event.documentId
+      ) {
+        clearSelection();
+      }
+      return;
+    }
+    case "refresh-outline":
+    case "refresh-backlinks":
+    case "set-document-title":
+    case "set-document-icon":
+      void queryClient.invalidateQueries({
+        queryKey: contentDirectorySpaceQueryKey({
+          organizationId: bootstrap.organizationId,
+          spaceId: bootstrap.spaceId,
+        }),
+      });
+      return;
+    case "activate-document":
+    case "persist-workspace-layout":
+    case "toggle-document-fullscreen":
+    case "update-document-statistics":
+    case "open-graph":
+    case "notify":
+      return;
+    default:
+      throw new Error(`[protyle.host] event ${event.type} has no React mediator`);
+  }
+}
 
 function subscribeToVisibility(callback: () => void): () => void {
   document.addEventListener("visibilitychange", callback);
@@ -136,6 +228,101 @@ interface WorkspaceFrameProps {
 interface WorkspaceSpaceLinkProps {
   active: boolean;
   space: AuthorizedSpaceSummary;
+}
+
+interface ReadyWorkspaceProps {
+  readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
+  readonly identity: SpaceRuntimePathParameters;
+  readonly onDirectoryAccessLost: (category: ContentDirectoryAccessLoss) => void;
+  readonly onDirectoryStatusChange: (status: ContentDirectoryStatus) => void;
+  readonly readOnly: boolean;
+  readonly session: ProtyleSession<SpaceProtyleRuntime> | null;
+  readonly status: ContentDirectoryStatus;
+}
+
+function ReadyWorkspace({
+  createProtyleFactoryForSpace,
+  identity,
+  onDirectoryAccessLost,
+  onDirectoryStatusChange,
+  readOnly,
+  session,
+  status,
+}: ReadyWorkspaceProps) {
+  const selection = useContentSelectionStore((state) =>
+    state.selection?.spaceId === identity.spaceId ? state.selection : null,
+  );
+  const factory = useMemo(
+    () => createProtyleFactoryForSpace(identity.spaceId),
+    [createProtyleFactoryForSpace, identity.spaceId],
+  );
+  const [editorAttempt, setEditorAttempt] = useState(0);
+  const [editorError, setEditorError] = useState(false);
+  const [editorRetrying, setEditorRetrying] = useState(false);
+
+  useEffect(() => {
+    setEditorAttempt(0);
+    setEditorError(false);
+  }, [selection?.documentId, selection?.notebookId, session?.spaceId]);
+
+  const retryEditor = async () => {
+    if (!session || editorRetrying) {
+      return;
+    }
+    setEditorRetrying(true);
+    try {
+      await session.retrySubmission();
+      setEditorError(false);
+      setEditorAttempt((current) => current + 1);
+    } catch {
+      setEditorError(true);
+    } finally {
+      setEditorRetrying(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex h-full min-h-0 w-full overflow-hidden rounded-md border bg-background"
+      data-content-directory-status={status}
+    >
+      <ContentDirectory
+        identity={identity}
+        onAccessLost={onDirectoryAccessLost}
+        onStatusChange={onDirectoryStatusChange}
+      />
+      <main className="min-h-0 min-w-0 flex-1" data-content-workspace>
+        {session && selection ? (
+          <div className="relative h-full min-h-0">
+            <ProtyleHost
+              key={`${session.spaceId}:${selection.notebookId}:${selection.documentId}:${editorAttempt}`}
+              documentId={selection.documentId}
+              factory={factory}
+              notebookId={selection.notebookId}
+              onError={() => setEditorError(true)}
+              readOnly={readOnly}
+              session={session}
+            />
+            {editorError ? (
+              <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 rounded-md border bg-background/95 p-3 text-sm shadow-sm">
+                <span className="text-muted-foreground">内容服务暂时不可用，当前编辑器未提交本次操作。</span>
+                <Button disabled={editorRetrying} onClick={() => void retryEditor()} size="sm" variant="outline">
+                  {editorRetrying ? <Spinner aria-label="正在重试编辑器" /> : null}
+                  重试
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <WorkspaceState
+            description="从左侧目录选择一个文档后开始工作。"
+            icon={BookOpenIcon}
+            title="选择文档"
+          />
+        )}
+      </main>
+    </div>
+  );
 }
 
 function WorkspaceSpaceLink({ active, space }: WorkspaceSpaceLinkProps) {
@@ -267,7 +454,7 @@ function WorkspaceFrame({
             </div>
           ) : null}
 
-          <section className="flex min-h-0 flex-1 items-center justify-center p-6 max-sm:p-4">
+          <section className="flex min-h-0 flex-1 items-stretch justify-center p-2 max-sm:p-2">
             {children}
           </section>
         </SidebarInset>
@@ -276,13 +463,15 @@ function WorkspaceFrame({
   );
 }
 
-export function SpacePage() {
+export function SpacePage({ createProtyleFactoryForSpace }: SpacePageProps) {
   const location = useLocation();
   const params = useParams();
   const organizationId = params.organizationId ?? "";
   const spaceId = params.spaceId ?? "";
   const identity: SpaceRuntimePathParameters = { organizationId, spaceId };
   const queryClient = useQueryClient();
+  const selectDocument = useContentSelectionStore((state) => state.selectDocument);
+  const clearSelection = useContentSelectionStore((state) => state.clearSelection);
   const spacesQuery = useAuthorizedSpaces();
   const runtimeQuery = useQuery({
     enabled: organizationId !== "" && spaceId !== "",
@@ -307,6 +496,72 @@ export function SpacePage() {
   const pageVisible = usePageVisible();
   const routeKey = `${organizationId}:${spaceId}`;
   const [pollState, setPollState] = useState({ attempts: 0, routeKey });
+  const [sessionFailure, setSessionFailure] = useState<{
+    readonly category: "forbidden" | "unauthenticated";
+    readonly routeKey: string;
+  } | null>(null);
+  const [directoryStatus, setDirectoryStatus] = useState<ContentDirectoryStatus>("loading");
+  const currentSessionFailure = sessionFailure?.routeKey === routeKey
+    ? sessionFailure
+    : null;
+  const handleSessionAccessLost = useCallback(async (
+    event: RuntimeErrorEvent,
+    failedBootstrap: ReadySpaceRuntimeBootstrap,
+  ) => {
+    if (event.category !== "unauthenticated" && event.category !== "forbidden") {
+      return;
+    }
+    const failedRouteKey = `${failedBootstrap.organizationId}:${failedBootstrap.spaceId}`;
+    const category = event.category === "unauthenticated"
+      ? "unauthenticated"
+      : "forbidden";
+    setSessionFailure({ category, routeKey: failedRouteKey });
+    if (category === "unauthenticated") {
+      clearClientSession(queryClient);
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({
+        exact: true,
+        queryKey: authorizedSpacesQueryKey,
+      }),
+      queryClient.invalidateQueries({
+        exact: true,
+        queryKey: spaceRuntimeQueryKey(failedBootstrap),
+      }),
+    ]);
+  }, [queryClient]);
+  const handleDirectoryAccessLost = useCallback(async (
+    category: ContentDirectoryAccessLoss,
+  ) => {
+    setSessionFailure({ category, routeKey });
+    if (category === "unauthenticated") {
+      clearClientSession(queryClient);
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({
+        exact: true,
+        queryKey: authorizedSpacesQueryKey,
+      }),
+      queryClient.invalidateQueries({
+        exact: true,
+        queryKey: spaceRuntimeQueryKey(identity),
+      }),
+    ]);
+  }, [identity, queryClient, routeKey]);
+  const handleHostEvent = useCallback(
+    (event: ProtyleMediatorEvent, bootstrap: ReadySpaceRuntimeBootstrap) => {
+      createSpaceHostMediator(
+        queryClient,
+        selectDocument,
+        clearSelection,
+        event,
+        bootstrap,
+      );
+    },
+    [clearSelection, queryClient, selectDocument],
+  );
   const pollAttempts =
     pollState.routeKey === routeKey ? pollState.attempts : 0;
   const runtimeNotFound =
@@ -321,7 +576,8 @@ export function SpacePage() {
     !spacesQuery.isPaused;
   const authorizedSpaces =
     hasCurrentAuthorization ? spacesQuery.data.spaces : [];
-  const spaces = runtimeNotFound
+  const hideCurrentSpace = runtimeNotFound || currentSessionFailure?.category === "forbidden";
+  const spaces = hideCurrentSpace
     ? authorizedSpaces.filter(
         (space) =>
           space.organizationId !== organizationId || space.spaceId !== spaceId,
@@ -385,6 +641,7 @@ export function SpacePage() {
   }
 
   if (
+    currentSessionFailure?.category === "unauthenticated" ||
     isApiProblem(spacesQuery.error, "unauthenticated") ||
     isApiProblem(runtimeQuery.error, "unauthenticated")
   ) {
@@ -393,10 +650,26 @@ export function SpacePage() {
 
   const runtimeMatchesRoute =
     runtime?.organizationId === organizationId && runtime.spaceId === spaceId;
-  const role = runtime && runtimeMatchesRoute && currentSpace ? runtime.role : null;
+  const role = runtime && runtimeMatchesRoute && currentSpace && !currentSessionFailure
+    ? runtime.role
+    : null;
+  const readyBootstrap =
+    isReadySpaceRuntime(runtime) &&
+    runtimeMatchesRoute &&
+    currentSpace &&
+    !currentSessionFailure
+      ? runtime
+      : null;
   const retryRuntime = () => {
     setPollState({ attempts: 0, routeKey });
     void refetchRuntime();
+  };
+  const retrySessionRuntime = async () => {
+    const result = await refetchRuntime();
+    if (!result.isSuccess) {
+      throw result.error ?? new Error("Space runtime retry failed");
+    }
+    return result.data;
   };
   const actions = (
     <div className="flex flex-wrap justify-center gap-2">
@@ -422,6 +695,21 @@ export function SpacePage() {
       />
     );
   } else if (runtimeNotFound) {
+    content = (
+      <WorkspaceState
+        actions={
+          <Button asChild variant="outline">
+            <Link state={EXPLICIT_SPACE_LIST_STATE} to={SPACES_PATH}>
+              返回空间列表
+            </Link>
+          </Button>
+        }
+        description="该空间不存在，或你已不再拥有访问权限。"
+        icon={SearchXIcon}
+        title="找不到该空间"
+      />
+    );
+  } else if (currentSessionFailure?.category === "forbidden") {
     content = (
       <WorkspaceState
         actions={
@@ -534,12 +822,15 @@ export function SpacePage() {
         title="空间正在启动"
       />
     );
+  } else if (runtime?.kernelState === "ready") {
+    content = null;
   } else {
     content = (
       <WorkspaceState
-        description="当前内容服务可用。"
-        icon={BookOpenIcon}
-        title="空间已就绪"
+        actions={actions}
+        description="服务返回了无法处理的结果，请重试。"
+        icon={WifiOffIcon}
+        title="无法加载空间"
       />
     );
   }
@@ -556,7 +847,25 @@ export function SpacePage() {
       role={role}
       spaces={spaces}
     >
-      {content}
+      <SpaceSessionRoot
+        bootstrap={readyBootstrap}
+        onAccessLost={handleSessionAccessLost}
+        onHostEvent={handleHostEvent}
+        retryRuntime={retrySessionRuntime}
+      >
+        {(session) =>
+          readyBootstrap ? (
+            <ReadyWorkspace
+              createProtyleFactoryForSpace={createProtyleFactoryForSpace}
+              identity={readyBootstrap}
+              onDirectoryAccessLost={handleDirectoryAccessLost}
+              onDirectoryStatusChange={setDirectoryStatus}
+              readOnly={readyBootstrap.role === "viewer"}
+              session={session}
+              status={directoryStatus}
+            />
+          ) : content}
+      </SpaceSessionRoot>
     </WorkspaceFrame>
   );
 }

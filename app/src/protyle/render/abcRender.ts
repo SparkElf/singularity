@@ -1,8 +1,8 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
-import {genIconHTML} from "./util";
 import {hasClosestByClassName} from "../util/hasClosest";
-import {looseJsonParse} from "../../util/functions";
+import {looseJsonParse} from "../util/looseJsonParse";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
 const ABCJS_PARAMS_KEY = "%%params";
 
@@ -24,7 +24,7 @@ const getAbcParams = (abcString: string): any => {
     return params;
 };
 
-export const abcRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const abcRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let abcElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "abc" && element.getAttribute("data-render") !== "true") {
         abcElements = [element];
@@ -39,7 +39,7 @@ export const abcRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
         abcElements.forEach((e: HTMLDivElement) => {
             e.setAttribute("data-render", "true");
             if (!e.firstElementChild.classList.contains("protyle-icons")) {
-                e.insertAdjacentHTML("afterbegin", genIconHTML(wysiwygElement));
+                e.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiwygElement));
             }
             const renderElement = e.firstElementChild.nextElementSibling as HTMLElement;
             renderElement.innerHTML = `<span style="position: absolute;left:0;top:0;width: 1px;">${Constants.ZWSP}</span><div contenteditable="false"></div>`;

@@ -12,7 +12,7 @@ import {setStorageVal} from "../protyle/util/compatibility";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../util/escape";
 import {showMessage} from "../dialog/message";
 import {Menu} from "../plugin/Menu";
-import {upDownHint} from "../util/upDownHint";
+import {upDownHint} from "../protyle/util/upDownHint";
 
 export const fillContent = (protyle: IProtyle, data: string, elements: Element[]) => {
     if (!data) {
@@ -22,8 +22,8 @@ export const fillContent = (protyle: IProtyle, data: string, elements: Element[]
     protyle.toolbar.range.collapse(true);
     insertHTML(protyle.lute.SpinBlockDOM(data), protyle, true, true);
     blockRender(protyle, protyle.wysiwyg.element);
-    processRender(protyle.wysiwyg.element);
-    highlightRender(protyle.wysiwyg.element);
+    processRender(protyle.wysiwyg.element, protyle);
+    highlightRender(protyle.wysiwyg.element, protyle);
 };
 
 const editDialog = (customName: string, customMemo: string) => {

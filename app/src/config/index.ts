@@ -129,6 +129,6 @@ export const openBazaarReadme = async (app: App, bazaarType: TBazaarType, itemNa
 
     openSettingDialog(app, "bazaar");
     bazaar.switchBazaarTab(app, bazaarType, from);
-    renderReadme(bazaarType, from, resource);
+    renderReadme(app, bazaarType, from, resource);
     /// #endif
 };

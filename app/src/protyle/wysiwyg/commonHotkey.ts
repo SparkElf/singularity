@@ -1,18 +1,19 @@
 import {matchHotKey} from "../util/hotKey";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
-import {isMac, writeText} from "../util/compatibility";
+import {isMac} from "../util/browserPlatform";
+import {writeText} from "../util/clipboard";
 import {focusBlock, getSelectionOffset, setFirstNodeRange, setLastNodeRange,} from "../util/selection";
 import {getContenteditableElement, getNextBlock} from "./getBlock";
 import {hideElements} from "../ui/hideElements";
-import {countBlockWord} from "../../layout/status";
-import {scrollCenter} from "../../util/highlightById";
+import {countBlockStatistics} from "../util/statistics";
+import {scrollCenter} from "../util/highlightById";
 import {transaction, updateTransaction} from "./transaction";
 import {onGet} from "../util/onGet";
 import {Constants} from "../../constants";
 import * as dayjs from "dayjs";
 import {net2LocalAssets} from "../breadcrumb/action";
 import {processClonePHElement} from "../render/util";
-import {copyTextByType} from "../toolbar/util";
+import {copyBlockText} from "../util/copyBlockText";
 import {hasClosestByTag, hasTopClosestByClassName} from "../util/hasClosest";
 import {removeEmbed} from "./removeEmbed";
 import {clearBlockElement} from "../util/clear";
@@ -59,9 +60,11 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocolMd", protyle.notebookId);
+            void copyBlockText(protyle, selectElements.map(item => item.getAttribute("data-node-id")), "protocolMd")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         } else {
-            copyTextByType([protyle.block.rootID], "protocolMd", protyle.notebookId);
+            void copyBlockText(protyle, [protyle.block.rootID], "protocolMd")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         }
         event.preventDefault();
         event.stopPropagation();
@@ -74,9 +77,11 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "id");
+            void copyBlockText(protyle, selectElements.map(item => item.getAttribute("data-node-id")), "id")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         } else {
-            copyTextByType([protyle.block.rootID], "id");
+            void copyBlockText(protyle, [protyle.block.rootID], "id")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         }
         event.preventDefault();
         event.stopPropagation();
@@ -88,9 +93,11 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "protocol", protyle.notebookId);
+            void copyBlockText(protyle, selectElements.map(item => item.getAttribute("data-node-id")), "protocol")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         } else {
-            copyTextByType([protyle.block.rootID], "protocol", protyle.notebookId);
+            void copyBlockText(protyle, [protyle.block.rootID], "protocol")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         }
         event.preventDefault();
         event.stopPropagation();
@@ -103,9 +110,11 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
             if (selectElements.length === 0) {
                 selectElements.push(nodeElement);
             }
-            copyTextByType(selectElements.map(item => item.getAttribute("data-node-id")), "blockEmbed");
+            void copyBlockText(protyle, selectElements.map(item => item.getAttribute("data-node-id")), "blockEmbed")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         } else {
-            copyTextByType([protyle.block.rootID], "blockEmbed");
+            void copyBlockText(protyle, [protyle.block.rootID], "blockEmbed")
+                .catch((error) => console.error("[protyle.transport] copy block text failed", error));
         }
         event.preventDefault();
         event.stopPropagation();
@@ -158,7 +167,7 @@ export const upSelect = (options: {
     options.protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").forEach(item => {
         ids.push(item.getAttribute("data-node-id"));
     });
-    countBlockWord(ids, options.protyle.block.rootID);
+    countBlockStatistics(options.protyle, ids);
     options.event.stopPropagation();
     options.event.preventDefault();
 };
@@ -212,7 +221,7 @@ export const downSelect = (options: {
     options.protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").forEach(item => {
         ids.push(item.getAttribute("data-node-id"));
     });
-    countBlockWord(ids, options.protyle.block.rootID);
+    countBlockStatistics(options.protyle, ids);
     options.event.stopPropagation();
     options.event.preventDefault();
 };

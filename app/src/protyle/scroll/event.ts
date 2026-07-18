@@ -1,17 +1,86 @@
 import {Constants} from "../../constants";
-import {hideElements} from "../ui/hideElements";
-import {fetchPost} from "../../util/fetch";
 import {onGet} from "../util/onGet";
-import {isMobile} from "../../util/functions";
 import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {stickyRow} from "../render/av/row";
 import {trimAVRowsSync} from "../render/av/virtualScroll";
-import {isEncryptedBox} from "../../util/pathName";
+import {isIPhone, isNarrowViewport} from "../util/browserPlatform";
+import {beginProtyleContentLoad, requestProtyleContent} from "../util/contentLoad";
 
-let getIndexTimeout: number;
-const avScrollPending = new WeakSet<HTMLElement>();
 export const scrollEvent = (protyle: IProtyle, element: HTMLElement) => {
+    let getIndexTimeout: number;
+    let dragActive = false;
+    const avScrollPending = new WeakSet<HTMLElement>();
+    const signal = protyle.requestSignal;
+    const endDrag = () => {
+        dragActive = false;
+    };
+    protyle.element.addEventListener("dragstart", () => {
+        dragActive = true;
+    }, {capture: true, signal});
+    protyle.element.addEventListener("dragend", endDrag, {capture: true, signal});
+    protyle.element.addEventListener("drop", endDrag, {capture: true, signal});
+    signal.addEventListener("abort", () => {
+        clearTimeout(getIndexTimeout);
+    }, {once: true});
+
+    const hideGutter = () => {
+        if (protyle.gutter && !isIPhone()) {
+            protyle.gutter.element.classList.add("fn__none");
+            protyle.gutter.element.innerHTML = "";
+        }
+    };
+
+    const loadDynamicPage = (
+        id: string,
+        mode: 1 | 2,
+        action: TProtyleAction,
+        freezeWidth: boolean,
+    ) => {
+        const load = beginProtyleContentLoad(protyle);
+        const restoreLayout = () => {
+            protyle.wysiwyg.element.removeAttribute("data-top");
+            if (freezeWidth) {
+                protyle.contentElement.style.overflow = "";
+                protyle.contentElement.style.width = "";
+            }
+        };
+        load.signal.addEventListener("abort", restoreLayout, {once: true});
+        if (freezeWidth) {
+            // 禁用滚动时会产生抖动 https://ld246.com/article/1666717094418
+            protyle.contentElement.style.width = protyle.contentElement.offsetWidth + "px";
+            protyle.contentElement.style.overflow = "hidden";
+        }
+        protyle.wysiwyg.element.setAttribute("data-top", element.scrollTop.toString());
+        void requestProtyleContent<IWebSocketData>(protyle, "/api/filetree/getDoc", {
+            id,
+            mode,
+            size: protyle.settings.editor.dynamicLoadBlocks,
+        }, load).then((response) => {
+            if (!load.isCurrent()) {
+                return;
+            }
+            load.signal.removeEventListener("abort", restoreLayout);
+            restoreLayout();
+            onGet({
+                data: response,
+                protyle,
+                action: [action, Constants.CB_GET_UNCHANGEID],
+                load,
+            });
+        }).catch((error) => {
+            load.signal.removeEventListener("abort", restoreLayout);
+            if (!load.isCurrent()) {
+                return;
+            }
+            restoreLayout();
+            console.error("[protyle.transport] dynamic page load failed", error);
+        });
+    };
+
     element.addEventListener("scroll", () => {
+        if (signal.aborted) {
+            return;
+        }
         const elementRect = element.getBoundingClientRect();
         if (!protyle.toolbar.element.classList.contains("fn__none")) {
             const initY = protyle.toolbar.element.getAttribute("data-inity").split(Constants.ZWSP);
@@ -37,22 +106,28 @@ export const scrollEvent = (protyle: IProtyle, element: HTMLElement) => {
             avScrollPending.add(item);
             requestAnimationFrame(() => {
                 avScrollPending.delete(item);
+                if (signal.aborted || !item.isConnected) {
+                    return;
+                }
                 stickyRow(item, element, "all");
                 trimAVRowsSync(item, elementRect);
             });
         });
 
-        if (!protyle.element.classList.contains("block__edit") && !isMobile()) {
+        if (!protyle.element.classList.contains("block__edit") && !isNarrowViewport()) {
             protyle.contentElement.setAttribute("data-scrolltop", element.scrollTop.toString());
         }
 
-        if (!window.siyuan.dragElement) { // https://ld246.com/article/1649638389841
-            hideElements(["gutterOnly"], protyle);
+        if (!dragActive) { // https://ld246.com/article/1649638389841
+            hideGutter();
         }
 
         if (protyle.scroll && !protyle.scroll.element.classList.contains("fn__none")) {
             clearTimeout(getIndexTimeout);
             getIndexTimeout = window.setTimeout(() => {
+                if (signal.aborted) {
+                    return;
+                }
                 let targetElement = document.elementFromPoint(elementRect.left + elementRect.width / 2, elementRect.top + 10);
                 if (targetElement.classList.contains("protyle-wysiwyg")) {
                     // 恰好定位到块的中间时
@@ -88,27 +163,12 @@ export const scrollEvent = (protyle: IProtyle, element: HTMLElement) => {
             }
             if (element.scrollTop < element.clientHeight &&
                 protyle.wysiwyg.element.firstElementChild.getAttribute("data-eof") !== "1") {
-                // 禁用滚动时会产生抖动 https://ld246.com/article/1666717094418
-                protyle.contentElement.style.width = (protyle.contentElement.offsetWidth) + "px";
-                protyle.contentElement.style.overflow = "hidden";
-                protyle.wysiwyg.element.setAttribute("data-top", element.scrollTop.toString());
-                const getDocParam: IObject = {
-                    id: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
-                    mode: 1,
-                    size: window.siyuan.config.editor.dynamicLoadBlocks,
-                };
-                if (isEncryptedBox(protyle.notebookId)) {
-                    getDocParam.notebook = protyle.notebookId;
-                }
-                fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                    protyle.contentElement.style.overflow = "";
-                    protyle.contentElement.style.width = "";
-                    onGet({
-                        data: getResponse,
-                        protyle,
-                        action: [Constants.CB_GET_BEFORE, Constants.CB_GET_UNCHANGEID],
-                    });
-                });
+                loadDynamicPage(
+                    protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
+                    1,
+                    Constants.CB_GET_BEFORE,
+                    true,
+                );
             }
         } else if ((element.scrollTop > element.scrollHeight - element.clientHeight * 1.8) &&
             protyle.wysiwyg.element.lastElementChild &&
@@ -118,27 +178,18 @@ export const scrollEvent = (protyle: IProtyle, element: HTMLElement) => {
                 element.scrollTop = protyle.scroll.lastScrollTop;
                 return;
             }
-            protyle.wysiwyg.element.setAttribute("data-top", element.scrollTop.toString());
-            const getDocParam: IObject = {
-                id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
-                mode: 2,
-                size: window.siyuan.config.editor.dynamicLoadBlocks,
-            };
-            if (isEncryptedBox(protyle.notebookId)) {
-                getDocParam.notebook = protyle.notebookId;
-            }
-            fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                onGet({
-                    data: getResponse,
-                    protyle,
-                    action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
-                });
-            });
+            loadDynamicPage(
+                protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
+                2,
+                Constants.CB_GET_APPEND,
+                false,
+            );
         }
         protyle.scroll.lastScrollTop = Math.max(element.scrollTop, 0);
     }, {
         capture: false,
         passive: true,
-        once: false
+        once: false,
+        signal,
     });
 };

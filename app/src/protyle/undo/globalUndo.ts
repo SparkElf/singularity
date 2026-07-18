@@ -1,8 +1,7 @@
 import {Constants} from "../../constants";
-import {fetchSyncPost} from "../../util/fetch";
-import {confirmDialog} from "../../dialog/confirmDialog";
-import {showMessage} from "../../dialog/message";
 import {GlobalUndoState, UndoDocumentIdentity} from "./globalUndoState";
+import {protyleContentIdentity} from "../util/contentLoad";
+import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
 
 // 本地镜像：按 notebook + rootID 缓存 {canUndo, canRedo}，按钮态零 fetch 读取。
 // 在编辑（add 落点）、撤销/重做响应、WS 广播（context.undoState）时更新。
@@ -24,24 +23,18 @@ interface UndoOwnerScope {
 
 const createOwnerScope = (protyle: IProtyle, identity: UndoDocumentIdentity): UndoOwnerScope => {
     const controller = new AbortController();
-    const sourceSignals = Array.from(new Set([
-        protyle.ownerSignal,
-        protyle.uiEventController?.signal,
-    ].filter((signal): signal is AbortSignal => !!signal)));
     const abort = () => controller.abort();
-    sourceSignals.forEach((signal) => {
-        if (signal.aborted) {
-            abort();
-        } else {
-            signal.addEventListener("abort", abort, {once: true});
-        }
-    });
+    if (protyle.requestSignal.aborted) {
+        abort();
+    } else {
+        protyle.requestSignal.addEventListener("abort", abort, {once: true});
+    }
     if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
         abort();
     }
     return {
         signal: controller.signal,
-        release: () => sourceSignals.forEach((signal) => signal.removeEventListener("abort", abort)),
+        release: () => protyle.requestSignal.removeEventListener("abort", abort),
     };
 };
 
@@ -57,9 +50,6 @@ export const getMirror = (notebookId: string, rootID: string) => {
 // 从 WS 广播 context.undoState 批量更新镜像（多窗口/多端同步）
 export const syncMirrorFromBroadcast = (notebook: string,
                                         undoState: { [rootID: string]: { canUndo: boolean; canRedo: boolean } }) => {
-    if (!undoState) {
-        return;
-    }
     globalUndoState.sync(notebook, undoState);
 };
 
@@ -69,15 +59,16 @@ export const initMirror = async (protyle: IProtyle) => {
     if (!identity) {
         return;
     }
+    const contentIdentity = protyleContentIdentity(protyle);
     const initialization = globalUndoState.beginInitialization(identity);
     const owner = createOwnerScope(protyle, identity);
     try {
-        const response = await postUndoRequest("/api/transactions/undoState", {
+        const response = await postUndoRequest(protyle, contentIdentity, "/api/transactions/undoState", {
             notebook: identity.notebookId,
             rootID: identity.rootID,
-        }, owner.signal);
+        }, "read", owner.signal);
         const data = response.data;
-        if (data && !owner.signal.aborted &&
+        if (!owner.signal.aborted &&
             globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
             globalUndoState.applyInitialization(initialization, {
                 canUndo: !!data.canUndo,
@@ -86,8 +77,7 @@ export const initMirror = async (protyle: IProtyle) => {
         }
     } catch (error) {
         if (!owner.signal.aborted) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.warn(`[global-undo] mirror initialization failed: ${message}`);
+            reportRequestError(protyle, "initialize", error);
         }
     } finally {
         owner.release();
@@ -121,32 +111,150 @@ export const refreshUndoButtons = (protyle: IProtyle) => {
     }
 };
 
-// 解析 rootID 列表为文档名，用于跨文档撤销确认提示
-const postUndoRequest = async (url: string, data: IObject, signal: AbortSignal): Promise<IWebSocketData> => {
-    const response = await fetchSyncPost(url, data, undefined, {processResponse: false, signal});
+const postUndoRequest = async (protyle: IProtyle, identity: ProtyleContentIdentity,
+                               url: string, data: IObject, intent: "read" | "write",
+                               signal: AbortSignal): Promise<IWebSocketData> => {
+    const response = await (protyle.session!.runtime as TProtyleRuntime).transport.request<IWebSocketData>(
+        url,
+        data,
+        {identity, intent, signal},
+    );
     if (response.code !== 0) {
-        throw new Error(response.msg || `${url} failed with code ${response.code}`);
+        throw new Error(response.msg);
     }
     return response;
 };
 
-const reportRequestError = (action: "undo" | "redo", error: unknown) => {
+const reportRequestError = (protyle: IProtyle, action: "initialize" | "undo" | "redo", error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[global-undo] ${action} failed: ${message}`);
-    showMessage(message, 0, "error");
+    protyle.host.dispatch({type: "notify", level: "error", message});
 };
 
-const resolveRootNames = async (identity: UndoDocumentIdentity, rootIDs: string[],
+// 解析 rootID 列表为文档名，用于跨文档撤销确认提示
+const resolveRootNames = async (protyle: IProtyle, contentIdentity: ProtyleContentIdentity,
+                                identity: UndoDocumentIdentity, rootIDs: string[],
                                 signal: AbortSignal): Promise<string[]> => {
     const names: string[] = [];
     for (const id of rootIDs) {
-        const response = await postUndoRequest("/api/filetree/getHPathByID", {
+        const response = await postUndoRequest(protyle, contentIdentity, "/api/filetree/getHPathByID", {
             id,
             notebook: identity.notebookId,
-        }, signal);
-        names.push(response.data ? response.data as string : id);
+        }, "read", signal);
+        names.push(response.data as string);
     }
     return names;
+};
+
+const confirmCrossDocumentUndo = (protyle: IProtyle, names: string[], signal: AbortSignal) => {
+    if (signal.aborted) {
+        return Promise.resolve(false);
+    }
+    const text = protyle.localization.text;
+    const overlay = document.createElement("div");
+    const titleId = `protyle-undo-confirm-${protyle.id}`;
+    overlay.className = "b3-dialog b3-dialog--open";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", titleId);
+
+    const scrim = document.createElement("div");
+    scrim.className = "b3-dialog__scrim";
+    scrim.dataset.action = "cancel";
+    const container = document.createElement("div");
+    container.className = "b3-dialog__container";
+    container.style.width = "min(520px, calc(100vw - 32px))";
+    const title = document.createElement("div");
+    title.id = titleId;
+    title.className = "b3-dialog__header";
+    title.textContent = text("undo");
+    const body = document.createElement("div");
+    body.className = "b3-dialog__body";
+    const content = document.createElement("div");
+    content.className = "b3-dialog__content ft__breakword";
+    const message = document.createElement("div");
+    message.textContent = text("undoCrossDocConfirm");
+    const list = document.createElement("ul");
+    list.style.margin = "8px 0 0";
+    names.forEach((name) => {
+        const item = document.createElement("li");
+        item.textContent = name;
+        list.append(item);
+    });
+    content.append(message, list);
+
+    const actions = document.createElement("div");
+    actions.className = "b3-dialog__action";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "b3-button b3-button--cancel";
+    cancel.dataset.action = "cancel";
+    cancel.textContent = text("cancel");
+    const spacer = document.createElement("div");
+    spacer.className = "fn__space";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "b3-button b3-button--text";
+    confirm.dataset.action = "confirm";
+    confirm.textContent = text("confirm");
+    actions.append(cancel, spacer, confirm);
+    body.append(content, actions);
+    container.append(title, body);
+    overlay.append(scrim, container);
+
+    const overlays = (protyle.session!.runtime as TProtyleRuntime).overlays;
+    return new Promise<boolean>((resolve, reject) => {
+        const handle = overlays.add(overlay);
+        let settled = false;
+        const cleanup = () => {
+            signal.removeEventListener("abort", abort);
+            overlay.removeEventListener("click", click);
+            overlay.removeEventListener("keydown", keydown);
+        };
+        const settle = (confirmed: boolean) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            handle.close();
+            resolve(confirmed);
+        };
+        const abort = () => settle(false);
+        const click = (event: MouseEvent) => {
+            const action = (event.target as Element).closest<HTMLElement>("[data-action]")?.dataset.action;
+            if (action === "confirm") {
+                settle(true);
+            } else if (action === "cancel") {
+                settle(false);
+            }
+        };
+        const keydown = (event: KeyboardEvent) => {
+            if (event.key === "Escape" && !event.repeat) {
+                event.preventDefault();
+                event.stopPropagation();
+                settle(false);
+            }
+        };
+        signal.addEventListener("abort", abort, {once: true});
+        overlay.addEventListener("click", click);
+        overlay.addEventListener("keydown", keydown);
+        try {
+            protyle.element.append(overlay);
+            overlays.bringToFront(overlay);
+        } catch (error) {
+            settled = true;
+            cleanup();
+            handle.close();
+            reject(error);
+            return;
+        }
+        if (signal.aborted) {
+            settle(false);
+        } else {
+            confirm.focus();
+        }
+    });
 };
 
 const focusRootIDs = (editors: TProtyleEditorRegistry, identity: UndoDocumentIdentity,
@@ -173,7 +281,8 @@ const applyReplayResponse = (action: "undo" | "redo", protyle: IProtyle,
         return;
     }
     if (data.failed) {
-        showMessage(data.msg || `${action} failed`, 0, "error");
+        console.warn(`[global-undo] ${action} rejected: ${data.msg}`);
+        protyle.host.dispatch({type: "notify", level: "error", message: data.msg});
         return;
     }
     const replayOperations: IOperation[] = data.doOperations || [];
@@ -185,7 +294,7 @@ const applyReplayResponse = (action: "undo" | "redo", protyle: IProtyle,
         refreshUndoButtons(protyle);
         return;
     }
-    const mutatedRootIDs: string[] = data.mutatedRootIDs || [];
+    const mutatedRootIDs: string[] = data.mutatedRootIDs;
     if (mutatedRootIDs.length > 1) {
         // 跨文档重放由 kernel 广播刷新所有相关文档，不能在单个 Protyle 中乐观应用。
         refreshUndoButtons(protyle);
@@ -199,9 +308,6 @@ const applyReplayResponse = (action: "undo" | "redo", protyle: IProtyle,
 
 // 请求撤销：读镜像判可撤销 → 跨文档提示 → 调 kernel undo → 本地乐观应用 + 更新镜像
 export const requestUndo = async (protyle: IProtyle) => {
-    if (!protyle) {
-        return;
-    }
     const identity = currentDocumentIdentity(protyle);
     if (!identity) {
         return;
@@ -211,20 +317,28 @@ export const requestUndo = async (protyle: IProtyle) => {
     if (!state.canUndo) {
         return; // 语义 B：栈空不做事
     }
+    const contentIdentity = protyleContentIdentity(protyle);
     const session = protyle.id;
     const owner = createOwnerScope(protyle, identity);
     try {
         await globalUndoState.runRequest(identity, async () => {
-            const stateResponse = await postUndoRequest("/api/transactions/undoState", {
+            const stateResponse = await postUndoRequest(protyle, contentIdentity,
+                "/api/transactions/undoState", {
                 notebook: identity.notebookId,
                 rootID: identity.rootID,
-            }, owner.signal);
-            const peekMutatedRootIDs: string[] = stateResponse.data?.peekMutatedRootIDs || [];
+            }, "read", owner.signal);
+            const peekMutatedRootIDs: string[] = stateResponse.data.peekMutatedRootIDs;
             if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
                 return;
             }
             if (peekMutatedRootIDs.length > 1) {
-                const names = await resolveRootNames(identity, peekMutatedRootIDs, owner.signal);
+                const names = await resolveRootNames(
+                    protyle,
+                    contentIdentity,
+                    identity,
+                    peekMutatedRootIDs,
+                    owner.signal,
+                );
                 if (!globalUndoState.isCurrent(identity, currentDocumentIdentity(protyle))) {
                     return;
                 }
@@ -237,14 +351,7 @@ export const requestUndo = async (protyle: IProtyle) => {
                 inputElement.addEventListener("beforeinput", blockInput, true);
                 let confirmed = false;
                 try {
-                    confirmed = await new Promise<boolean>((resolve) => {
-                        confirmDialog(`⚠️ ${window.siyuan.languages.undo}`,
-                            `${window.siyuan.languages.undoCrossDocConfirm}<div style="margin-top: 8px;">${names.map(name => `• ${name}`).join("<br>")}</div>`,
-                            () => resolve(true),
-                            () => resolve(false),
-                            false,
-                            owner.signal);
-                    });
+                    confirmed = await confirmCrossDocumentUndo(protyle, names, owner.signal);
                 } finally {
                     inputElement.removeEventListener("keydown", blockInput, true);
                     inputElement.removeEventListener("beforeinput", blockInput, true);
@@ -255,18 +362,18 @@ export const requestUndo = async (protyle: IProtyle) => {
             }
             // Owner cancellation only detaches this UI from the response. A mutation already admitted by the
             // kernel may still commit; its transaction broadcast is authoritative for later mirror convergence.
-            return postUndoRequest("/api/transactions/undo", {
+            return postUndoRequest(protyle, contentIdentity, "/api/transactions/undo", {
                 notebook: identity.notebookId,
                 rootID: identity.rootID,
                 app: Constants.SIYUAN_APPID,
                 session,
-            }, owner.signal);
+            }, "write", owner.signal);
         }, () => currentDocumentIdentity(protyle), response => {
             applyReplayResponse("undo", protyle, identity, response);
         }, owner.signal);
     } catch (error) {
         if (!owner.signal.aborted) {
-            reportRequestError("undo", error);
+            reportRequestError(protyle, "undo", error);
         }
     } finally {
         owner.release();
@@ -275,9 +382,6 @@ export const requestUndo = async (protyle: IProtyle) => {
 
 // 请求重做：对称，redo 不提示（其逆已在 undo 中确认）
 export const requestRedo = async (protyle: IProtyle) => {
-    if (!protyle) {
-        return;
-    }
     const identity = currentDocumentIdentity(protyle);
     if (!identity) {
         return;
@@ -287,21 +391,29 @@ export const requestRedo = async (protyle: IProtyle) => {
     if (!state.canRedo) {
         return;
     }
+    const contentIdentity = protyleContentIdentity(protyle);
     const session = protyle.id;
     const owner = createOwnerScope(protyle, identity);
     try {
         // As with undo, aborting the response wait cannot roll back a kernel mutation that was already admitted.
-        await globalUndoState.runRequest(identity, () => postUndoRequest("/api/transactions/redo", {
-            notebook: identity.notebookId,
-            rootID: identity.rootID,
-            app: Constants.SIYUAN_APPID,
-            session,
-        }, owner.signal), () => currentDocumentIdentity(protyle), response => {
+        await globalUndoState.runRequest(identity, () => postUndoRequest(
+            protyle,
+            contentIdentity,
+            "/api/transactions/redo",
+            {
+                notebook: identity.notebookId,
+                rootID: identity.rootID,
+                app: Constants.SIYUAN_APPID,
+                session,
+            },
+            "write",
+            owner.signal,
+        ), () => currentDocumentIdentity(protyle), response => {
             applyReplayResponse("redo", protyle, identity, response);
         }, owner.signal);
     } catch (error) {
         if (!owner.signal.aborted) {
-            reportRequestError("redo", error);
+            reportRequestError(protyle, "redo", error);
         }
     } finally {
         owner.release();

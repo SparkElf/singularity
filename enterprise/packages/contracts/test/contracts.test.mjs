@@ -5,9 +5,15 @@ import { spaceRoles } from "@singularity/authorization";
 
 import {
   ACCESS_OPERATION_INPUT_MAX_BYTES,
+  AUDIT_EVENT_OPENAPI_SCHEMA,
   API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
+  ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
+  ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
+  ORGANIZATION_SPACE_OBSERVABILITY_CONTROLLER_PATH,
+  ORGANIZATION_SPACE_SHARES_CONTROLLER_PATH,
+  PUBLIC_SHARE_CONTROLLER_PATH,
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
   SPACE_RUNTIME_CONTROLLER_PATH,
   SPACE_RUNTIME_PATH_TEMPLATE,
@@ -17,10 +23,18 @@ import {
   accessOperationResultSchemaByOperation,
   accessOperationSchema,
   apiProblemSchema,
+  auditEventsQuerySchema,
+  auditEventsResponseSchema,
+  auditTargetTypes,
   authorizedSpacesResponseSchema,
   buildSpaceRuntimePath,
+  createDocumentShareRequestSchema,
   kernelInstanceStates,
   loginRequestSchema,
+  managedDocumentSharesResponseSchema,
+  spaceBackupSchema,
+  spaceObservabilitySchema,
+  spaceRestoreSchema,
   spaceRuntimeBootstrapSchema,
 } from "../dist/index.js";
 
@@ -180,6 +194,174 @@ describe("HTTP contracts", () => {
     assert.deepEqual(
       SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA.properties.kernelState.enum,
       [...kernelInstanceStates],
+    );
+  });
+
+  test("publishes one strict document-share request and response contract", () => {
+    const expiresAt = "2026-08-18T00:00:00.000Z";
+    assert.deepEqual(
+      createDocumentShareRequestSchema.parse({
+        documentId: "20260718010101-abcdefg",
+        expiresAt,
+        notebookId: "20260718010102-hijklmn",
+        password: null,
+      }),
+      {
+        documentId: "20260718010101-abcdefg",
+        expiresAt,
+        notebookId: "20260718010102-hijklmn",
+        password: null,
+      },
+    );
+    assert.equal(
+      createDocumentShareRequestSchema.safeParse({
+        documentId: "20260718010101-abcdefg",
+        expiresAt,
+        notebookId: "20260718010102-hijklmn",
+        snapshot: true,
+      }).success,
+      false,
+    );
+    assert.equal(
+      managedDocumentSharesResponseSchema.safeParse({
+        shares: [
+          {
+            createdAt: "2026-07-18T00:00:00.000Z",
+            documentId: "20260718010101-abcdefg",
+            expiresAt,
+            hasPassword: false,
+            notebookId: "20260718010102-hijklmn",
+            organizationId,
+            revokedAt: null,
+            shareId: operationId,
+            spaceId,
+          },
+        ],
+      }).success,
+      true,
+    );
+    assert.equal(
+      ORGANIZATION_SPACE_SHARES_CONTROLLER_PATH,
+      "/api/v1/organizations/:organizationId/spaces/:spaceId/shares",
+    );
+    assert.equal(PUBLIC_SHARE_CONTROLLER_PATH, "/api/v1/shares/:shareToken");
+  });
+
+  test("normalizes audit pagination and exposes every control-plane target", () => {
+    assert.deepEqual(auditEventsQuerySchema.parse({}), {
+      beforeSequence: null,
+      limit: 50,
+    });
+    assert.deepEqual(
+      auditEventsQuerySchema.parse({ beforeSequence: "42", limit: "200" }),
+      { beforeSequence: 42n, limit: 200 },
+    );
+    assert.equal(
+      auditEventsQuerySchema.safeParse({ beforeSequence: "0" }).success,
+      false,
+    );
+    assert.equal(
+      auditEventsResponseSchema.safeParse({
+        events: [
+          {
+            action: "permission.change",
+            actorUserId: userId,
+            auditEventId: operationId,
+            keyVersion: "audit-v1",
+            mac: "a".repeat(64),
+            occurredAt: "2026-07-18T00:00:00.000Z",
+            organizationId,
+            outcome: "succeeded",
+            previousMac: null,
+            requestId,
+            sequence: "1",
+            spaceId: null,
+            targetId: operationId,
+            targetType: "group",
+          },
+        ],
+      }).success,
+      true,
+    );
+    assert.deepEqual(
+      AUDIT_EVENT_OPENAPI_SCHEMA.properties.targetType.enum,
+      [...auditTargetTypes],
+    );
+    assert.equal(
+      ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
+      "/api/v1/organizations/:organizationId/audit-events",
+    );
+  });
+
+  test("keeps backup and restore lifecycle states explicit", () => {
+    assert.equal(
+      spaceBackupSchema.safeParse({
+        backupId: operationId,
+        completedAt: null,
+        createdAt: "2026-07-18T00:00:00.000Z",
+        formatVersion: null,
+        kernelVersion: null,
+        organizationId,
+        sha256: null,
+        sizeBytes: null,
+        sourceSpaceId: spaceId,
+        status: "queued",
+      }).success,
+      true,
+    );
+    assert.equal(
+      spaceRestoreSchema.safeParse({
+        activatedAt: null,
+        backupId: operationId,
+        createdAt: "2026-07-18T00:00:00.000Z",
+        organizationId,
+        restoreId: requestId,
+        sourceSpaceId: spaceId,
+        status: "ready-for-activation",
+        targetSpaceId: userId,
+      }).success,
+      true,
+    );
+    assert.equal(
+      ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
+      "/api/v1/organizations/:organizationId/spaces/:spaceId/backups",
+    );
+  });
+
+  test("requires observability responses to distinguish fresh, stale, and unavailable", () => {
+    const sampledAt = "2026-07-18T00:00:00.000Z";
+    assert.equal(
+      spaceObservabilitySchema.safeParse({
+        capacity: {
+          assetBytes: "2",
+          dataBytes: "10",
+          fileCount: "3",
+          sampleDurationMilliseconds: 4,
+          sampledAt,
+          status: "fresh",
+        },
+        health: {
+          kernelVersion: "3.7.2",
+          sampledAt,
+          status: "ready",
+        },
+        organizationId,
+        spaceId,
+      }).success,
+      true,
+    );
+    assert.equal(
+      spaceObservabilitySchema.safeParse({
+        capacity: { status: "unavailable" },
+        health: { reason: "no-sample", status: "unavailable" },
+        organizationId,
+        spaceId,
+      }).success,
+      false,
+    );
+    assert.equal(
+      ORGANIZATION_SPACE_OBSERVABILITY_CONTROLLER_PATH,
+      "/api/v1/organizations/:organizationId/spaces/:spaceId/observability",
     );
   });
 });

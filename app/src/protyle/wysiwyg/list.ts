@@ -7,7 +7,7 @@ import {moveToPrevious, removeBlock} from "./remove";
 import {hasClosestByClassName, isBlockElement} from "../util/hasClosest";
 import {getParentBlock} from "./getBlock";
 import {setFold} from "../util/blockFold";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 
 const getLastChildBlock = (element: Element) => {
     if (!element || !element.lastElementChild) {

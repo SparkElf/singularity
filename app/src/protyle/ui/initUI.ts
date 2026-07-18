@@ -2,9 +2,7 @@ import {setEditMode} from "../util/setEditMode";
 import {scrollEvent} from "../scroll/event";
 import {isMobile} from "../../util/functions";
 import {Constants} from "../../constants";
-import {isMac} from "../util/compatibility";
-import {setInlineStyle} from "../../util/assets";
-import {fetchPost} from "../../util/fetch";
+import {isMac} from "../util/browserPlatform";
 import {lineNumberRender} from "../render/highlightRender";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {genUUID} from "../../util/genID";
@@ -64,7 +62,7 @@ export const initUI = (protyle: IProtyle) => {
         const pinElement = protyle.toolbar.subElement.querySelector('.block__icons [data-type="pin"]');
         if (pinElement) {
             pinElement.querySelector("svg use").setAttribute("xlink:href", "#iconUnpin");
-            pinElement.setAttribute("aria-label", window.siyuan.languages.unpin);
+            pinElement.setAttribute("aria-label", protyle.localization.text("unpin"));
             protyle.toolbar.subElement.firstElementChild.setAttribute("data-drag", "true");
         }
     });
@@ -79,48 +77,62 @@ export const initUI = (protyle: IProtyle) => {
     let wheelTimeout: number;
     const wheelId = genUUID();
     const isMacOS = isMac();
+    let fontSize = protyle.settings.editor.fontSize;
+    const applyFontSize = () => {
+        document.documentElement.style.setProperty("--b3-font-size-editor", `${fontSize}px`);
+        protyle.settings.editor.setFontSize(fontSize);
+    };
+    const persistFontSize = () => {
+        const persistence = protyle.settings.editor.persist();
+        if (persistence) {
+            void persistence.catch((error) => {
+                console.error("[protyle.settings] editor font size persistence failed", error);
+            });
+        }
+    };
+    protyle.requestSignal.addEventListener("abort", () => {
+        clearTimeout(wheelTimeout);
+        hideMessage(wheelId);
+    }, {once: true});
     protyle.contentElement.addEventListener("mousewheel", (event: WheelEvent) => {
-        if (!window.siyuan.config.editor.fontSizeScrollZoom || (isMacOS && !event.metaKey) || (!isMacOS && !event.ctrlKey) || event.deltaX !== 0) {
+        if (!protyle.settings.editor.fontSizeScrollZoom || (isMacOS && !event.metaKey) ||
+            (!isMacOS && !event.ctrlKey) || event.deltaX !== 0) {
             return;
         }
         event.stopPropagation();
         if (event.deltaY < 0) {
-            if (window.siyuan.config.editor.fontSize < 72) {
-                window.siyuan.config.editor.fontSize++;
+            if (fontSize < 72) {
+                fontSize++;
             } else {
                 return;
             }
         } else if (event.deltaY > 0) {
-            if (window.siyuan.config.editor.fontSize > 9) {
-                window.siyuan.config.editor.fontSize--;
+            if (fontSize > 9) {
+                fontSize--;
             } else {
                 return;
             }
         }
-        setInlineStyle();
+        applyFontSize();
         clearTimeout(wheelTimeout);
-        showMessage(`${window.siyuan.languages.fontSize} ${window.siyuan.config.editor.fontSize}px<span class="fn__space"></span>
-<button class="b3-button b3-button--white">${window.siyuan.languages.reset} 16px</button>`, undefined, undefined, wheelId);
+        showMessage(`${protyle.localization.text("fontSize")} ${fontSize}px<span class="fn__space"></span>
+<button class="b3-button b3-button--white">${protyle.localization.text("reset")} 16px</button>`, undefined, undefined, wheelId);
         wheelTimeout = window.setTimeout(() => {
-            fetchPost("/api/setting/setEditor", window.siyuan.config.editor, (response) => {
-                window.siyuan.config.editor = response.data;
-            });
+            persistFontSize();
             protyle.wysiwyg.element.querySelectorAll(".code-block .protyle-linenumber__rows").forEach((block: HTMLElement) => {
-                lineNumberRender(block.parentElement);
+                lineNumberRender(block.parentElement, protyle);
             });
             document.querySelector(`#message [data-id="${wheelId}"] button`)?.addEventListener("click", () => {
-                window.siyuan.config.editor.fontSize = 16;
-                setInlineStyle();
-                fetchPost("/api/setting/setEditor", window.siyuan.config.editor, (response) => {
-                    window.siyuan.config.editor = response.data;
-                });
+                fontSize = 16;
+                applyFontSize();
+                persistFontSize();
                 hideMessage(wheelId);
                 protyle.wysiwyg.element.querySelectorAll(".code-block .protyle-linenumber__rows").forEach((block: HTMLElement) => {
-                    lineNumberRender(block.parentElement);
+                    lineNumberRender(block.parentElement, protyle);
                 });
             });
         }, Constants.TIMEOUT_LOAD);
-    }, {passive: true});
+    }, {passive: true, signal: protyle.requestSignal});
     protyle.contentElement.addEventListener("click", (event: MouseEvent & { target: HTMLElement }) => {
         hideElements(["hint", "util"], protyle);
         // wysiwyg 元素下方点击无效果 https://github.com/siyuan-note/siyuan/issues/12009
@@ -182,7 +194,7 @@ export const initUI = (protyle: IProtyle) => {
             }
             protyle.toolbar.range = range;
         }
-    });
+    }, {signal: protyle.requestSignal});
     let overAttr = false;
     protyle.uiEventController = new AbortController();
     protyle.element.addEventListener("mouseover", (event: KeyboardEvent & {
@@ -336,7 +348,7 @@ export const getPadding = (protyle: IProtyle) => {
     if (!isMobile()) {
         let isFullWidth = protyle.wysiwyg.element.getAttribute(Constants.CUSTOM_SY_FULLWIDTH);
         if (!isFullWidth) {
-            isFullWidth = window.siyuan.config.editor.fullWidth ? "true" : "false";
+            isFullWidth = protyle.settings.editor.fullWidth ? "true" : "false";
         }
         let padding = (protyle.element.clientWidth - Constants.SIZE_EDITOR_WIDTH) / 2;
         if (isFullWidth === "false" && padding > 96) {

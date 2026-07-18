@@ -15,6 +15,7 @@ import {avRender} from "../../protyle/render/av/render";
 import {setTitle} from "../../util/processTitle";
 import {isEncryptedBox} from "../../util/pathName";
 import {mobileEditorOwner} from "./mobileEditorOwner";
+import {closeAllDialogs} from "../../dialog";
 
 const forwardStack: IMobileBackStack[] = [];
 
@@ -151,8 +152,8 @@ const focusStack = (backStack: IMobileBackStack, onLoaded: () => void) => {
         protyle.block.action = backStack.callback;
         protyle.wysiwyg.element.setAttribute("data-doc-type", getResponse.data.type);
         protyle.wysiwyg.element.innerHTML = getResponse.data.content;
-        processRender(protyle.wysiwyg.element);
-        highlightRender(protyle.wysiwyg.element);
+        processRender(protyle.wysiwyg.element, protyle);
+        highlightRender(protyle.wysiwyg.element, protyle);
         avRender(protyle.wysiwyg.element, protyle);
         blockRender(protyle, protyle.wysiwyg.element, backStack.scrollTop);
         if (getResponse.data.isSyncing) {
@@ -223,7 +224,7 @@ export const goBack = () => {
         closePanel();
         return;
     } else if (window.siyuan.dialogs.length !== 0) {
-        hideElements(["dialog"]);
+        closeAllDialogs();
         closePanel();
         return;
     }

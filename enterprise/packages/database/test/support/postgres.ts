@@ -25,6 +25,9 @@ const testDatabaseQueryTimeoutMilliseconds = 5_000;
 const testDatabaseStatementTimeoutMilliseconds = 4_000;
 const schemaNamePattern = /^[a-z][a-z0-9_]{0,62}$/;
 
+export const DEFAULT_TEST_DATABASE_URL =
+  "postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test";
+
 export interface IsolatedPostgres {
   databaseUrl: string;
   schemaName: string;
@@ -104,10 +107,7 @@ export async function createPostgresHandshakeBlackhole(): Promise<PostgresHandsh
 }
 
 function getBaseTestDatabaseUrl(): URL {
-  const configuredUrl = process.env.SINGULARITY_TEST_DATABASE_URL;
-  if (configuredUrl === undefined) {
-    throw new Error("SINGULARITY_TEST_DATABASE_URL is required");
-  }
+  const configuredUrl = testDatabaseUrl();
 
   const url = new URL(configuredUrl);
   const databaseName = decodeURIComponent(url.pathname.slice(1));
@@ -121,6 +121,10 @@ function getBaseTestDatabaseUrl(): URL {
   url.searchParams.delete("query_timeout");
   url.searchParams.delete("statement_timeout");
   return url;
+}
+
+export function testDatabaseUrl(): string {
+  return process.env.SINGULARITY_TEST_DATABASE_URL ?? DEFAULT_TEST_DATABASE_URL;
 }
 
 function createSchemaName(purpose: string): string {

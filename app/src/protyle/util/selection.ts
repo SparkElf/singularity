@@ -7,9 +7,8 @@ import {
     isNotEditBlock
 } from "../wysiwyg/getBlock";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByTag} from "./hasClosest";
-import {countBlockWord, countSelectWord} from "../../layout/status";
+import {countBlockStatistics, countSelectionStatistics} from "./statistics";
 import {hideElements} from "../ui/hideElements";
-import {genRenderFrame} from "../render/util";
 import {Constants} from "../../constants";
 
 const selectIsEditor = (editor: Element, range?: Range) => {
@@ -58,7 +57,7 @@ export const selectAll = (protyle: IProtyle, nodeElement: Element, range: Range)
                     range.setStart(cellElement.firstChild, 0);
                     range.setEndAfter(cellElement.lastChild);
                     protyle.toolbar.render(protyle, range);
-                    countSelectWord(range, protyle.block.rootID);
+                    countSelectionStatistics(protyle, range);
                     return true;
                 }
             }
@@ -104,7 +103,7 @@ export const selectAll = (protyle: IProtyle, nodeElement: Element, range: Range)
                 // 列表回车后，左键全选无法选中
                 focusByRange(range);
                 protyle.toolbar.render(protyle, range);
-                countSelectWord(range, protyle.block.rootID);
+                countSelectionStatistics(protyle, range);
                 return true;
             }
         }
@@ -123,7 +122,7 @@ export const selectAll = (protyle: IProtyle, nodeElement: Element, range: Range)
             ids.push(nodeId);
         }
     });
-    countBlockWord(ids, protyle.block.rootID);
+    countBlockStatistics(protyle, ids);
 };
 
 // https://github.com/siyuan-note/siyuan/issues/8196
@@ -664,6 +663,18 @@ export const focusByRange = (range: Range) => {
     selection.addRange(range);
 };
 
+const ensureRenderCursor = (renderElement: Element) => {
+    if (renderElement.querySelector(".protyle-cursor")) {
+        return;
+    }
+    const type = renderElement.getAttribute("data-type");
+    if (type === "NodeBlockQueryEmbed") {
+        renderElement.insertAdjacentHTML("afterbegin", `<div class="protyle-cursor">${Constants.ZWSP}</div>`);
+    } else if (type === "NodeMathBlock" || renderElement.getAttribute("data-subtype") === "math") {
+        renderElement.firstElementChild.innerHTML = `<span></span><span class="protyle-cursor">${Constants.ZWSP}</span>`;
+    }
+};
+
 export const focusBlock = (element: Element, parentElement?: HTMLElement, toStart = true): false | Range => {
     if (!element) {
         return false;
@@ -678,12 +689,12 @@ export const focusBlock = (element: Element, parentElement?: HTMLElement, toStar
             range.selectNodeContents(element.firstElementChild);
             setRange = true;
         } else if (type === "NodeBlockQueryEmbed") {
-            genRenderFrame(element);
+            ensureRenderCursor(element);
             range.setStart(element.querySelector(".protyle-cursor").firstChild, 0);
             range.collapse(true);
             setRange = true;
         } else if (type === "NodeMathBlock") {
-            genRenderFrame(element);
+            ensureRenderCursor(element);
             range.setStart(element.firstElementChild.lastElementChild.firstChild, 0);
             setRange = true;
         } else if (type === "NodeHTMLBlock") {
@@ -823,4 +834,3 @@ export const focusSideBlock = (updateElement: Element) => {
     }
     focusByRange(range);
 };
-

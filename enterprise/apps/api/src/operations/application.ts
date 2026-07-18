@@ -1,9 +1,12 @@
+import "reflect-metadata";
+
 import type { Writable } from "node:stream";
 
 import type { INestApplicationContext, LoggerService } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 
 import { CoreModule } from "../core.module.js";
+import type { AuditConfiguration } from "../audit/audit-writer.service.js";
 import { SystemClock } from "../identity/clock.js";
 import { AccessOperationsService } from "./access-operations.service.js";
 import type { AccessOperationInput } from "./runner.js";
@@ -13,6 +16,7 @@ import {
 } from "./runner.js";
 
 export interface AccessOperationsApplicationOptions {
+  auditConfiguration: AuditConfiguration;
   databaseUrl: string | undefined;
   stderr: Writable;
   stdin: AccessOperationInput;
@@ -46,8 +50,10 @@ export async function runAccessOperationsApplication(
   try {
     context = await NestFactory.createApplicationContext(
       CoreModule.register({
+        auditConfiguration: options.auditConfiguration,
         clock: new SystemClock(),
         configuration: {
+          oidcClientSecretFiles: {},
           publicOrigin: "https://operations.invalid",
           trustedProxyCidrs: [],
         },

@@ -9,6 +9,8 @@ import {
   type ApiProblemCode,
   DATABASE_READINESS_PATH,
   DATABASE_UNAVAILABLE_RESPONSE,
+  RUNTIME_ACCESS_LOST_HEADER_NAME,
+  RUNTIME_ACCESS_LOST_HEADER_VALUE,
 } from "@singularity/contracts";
 
 import { KdfAdmissionError } from "./identity/password-hasher.js";
@@ -22,6 +24,13 @@ export class ApiProblemError extends Error {
   ) {
     super(code);
     this.name = "ApiProblemError";
+  }
+}
+
+class RuntimeAccessLostError extends ApiProblemError {
+  constructor() {
+    super("not-found", 404);
+    this.name = "RuntimeAccessLostError";
   }
 }
 
@@ -130,6 +139,12 @@ export class ApiProblemFilter implements ExceptionFilter {
     }
 
     reply.status(status).header("Cache-Control", "no-store");
+    if (exception instanceof RuntimeAccessLostError) {
+      reply.header(
+        RUNTIME_ACCESS_LOST_HEADER_NAME,
+        RUNTIME_ACCESS_LOST_HEADER_VALUE,
+      );
+    }
     if (retryAfter !== undefined) {
       reply.header("Retry-After", Math.max(1, Math.ceil(retryAfter)));
     }
@@ -147,6 +162,10 @@ export function forbidden(): ApiProblemError {
 
 export function notFound(): ApiProblemError {
   return new ApiProblemError("not-found", 404);
+}
+
+export function runtimeAccessLost(): ApiProblemError {
+  return new RuntimeAccessLostError();
 }
 
 export function validationFailed(): ApiProblemError {

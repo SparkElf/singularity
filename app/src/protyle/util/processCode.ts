@@ -9,6 +9,7 @@ import {plantumlRender} from "../render/plantumlRender";
 import {htmlRender} from "../render/htmlRender";
 import {Constants} from "../../constants";
 import {escapeHtml} from "../../util/escape";
+import type {ProtyleRendererContext} from "../render/renderContext";
 
 export const processPasteCode = (html: string, text: string, originalTextHTML: string, protyle: IProtyle) => {
     const tempElement = document.createElement("div");
@@ -47,7 +48,7 @@ export const processPasteCode = (html: string, text: string, originalTextHTML: s
     return false;
 };
 
-const RENDER_MAP: Record<string, (previewPanel: Element) => void> = {
+const RENDER_MAP: Record<string, (previewPanel: Element, context: ProtyleRendererContext) => void> = {
     abc: abcRender,
     plantuml: plantumlRender,
     mermaid: mermaidRender,
@@ -58,18 +59,18 @@ const RENDER_MAP: Record<string, (previewPanel: Element) => void> = {
     math: mathRender,
 };
 
-export const processRender = (previewPanel: Element) => {
+export const processRender = (previewPanel: Element, context: ProtyleRendererContext) => {
     const language = previewPanel.getAttribute("data-subtype");
     if (RENDER_MAP[language]) {
-        RENDER_MAP[language](previewPanel);
+        RENDER_MAP[language](previewPanel, context);
         return;
     }
     if (previewPanel.getAttribute("data-type") === "NodeHTMLBlock") {
-        htmlRender(previewPanel);
+        htmlRender(previewPanel, context);
         return;
     }
     for (const render of Object.values(RENDER_MAP)) {
-        render(previewPanel);
+        render(previewPanel, context);
     }
-    htmlRender(previewPanel);
+    htmlRender(previewPanel, context);
 };

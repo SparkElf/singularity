@@ -36,11 +36,26 @@ enum MembershipStatus {
   @@map("membership_status")
 }
 
-enum SpaceStatus {
+enum UserGroupStatus {
   active
   disabled
 
+  @@map("user_group_status")
+}
+
+enum SpaceStatus {
+  active
+  archived
+  disabled
+
   @@map("space_status")
+}
+
+enum OidcProviderStatus {
+  active
+  disabled
+
+  @@map("oidc_provider_status")
 }
 
 enum SpaceRole {
@@ -59,13 +74,89 @@ enum KernelInstanceStatus {
   @@map("kernel_instance_status")
 }
 
+enum WorkerJobKind {
+  archive_audit  @map("archive-audit")
+  backup_space   @map("backup-space")
+  restore_space  @map("restore-space")
+  sample_kernel  @map("sample-kernel")
+
+  @@map("worker_job_kind")
+}
+
+enum WorkerJobStatus {
+  queued
+  running
+  succeeded
+  failed
+
+  @@map("worker_job_status")
+}
+
+enum SpaceBackupStatus {
+  queued
+  running
+  succeeded
+  failed
+
+  @@map("space_backup_status")
+}
+
+enum SpaceRestoreStatus {
+  queued
+  restoring
+  ready_for_activation @map("ready-for-activation")
+  activated
+  failed
+
+  @@map("space_restore_status")
+}
+
+enum AuditAction {
+  authentication_login @map("authentication.login")
+  content_delete       @map("content.delete")
+  content_edit         @map("content.edit")
+  content_export       @map("content.export")
+  permission_change    @map("permission.change")
+  share_create         @map("share.create")
+  share_password_change @map("share.password-change")
+  share_revoke         @map("share.revoke")
+  backup_create        @map("backup.create")
+  restore_create       @map("restore.create")
+  restore_activate     @map("restore.activate")
+
+  @@map("audit_action")
+}
+
+enum AuditOutcome {
+  denied
+  failed
+  succeeded
+
+  @@map("audit_outcome")
+}
+
+enum KernelObservationStatus {
+  ready
+  unavailable
+
+  @@map("kernel_observation_status")
+}
+
 model User {
   id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   loginIdentifier         String                   @unique(map: "users_login_identifier_key") @map("login_identifier")
-  passwordDigest          String                   @map("password_digest")
+  passwordDigest          String?                  @map("password_digest")
   status                  UserStatus
   authSessions            AuthSession[]
+  acceptedInvitations     OrganizationInvitation[] @relation("AcceptedInvitationUser")
+  createdInvitations      OrganizationInvitation[] @relation("CreatedInvitationUser")
+  groupMemberships        UserGroupMembership[]    @relation("UserGroupMembershipUser")
+  oidcIdentities          OidcIdentity[]
   organizationMemberships OrganizationMembership[]
+  auditEvents              AuditEvent[]              @relation("AuditEventActorUser")
+  createdDocumentShares    DocumentShare[]           @relation("DocumentShareCreatedByUser")
+  createdSpaceBackups      SpaceBackup[]             @relation("SpaceBackupCreatedByUser")
+  createdSpaceRestores     SpaceRestoreJob[]         @relation("SpaceRestoreCreatedByUser")
 
   @@map("users")
 }
@@ -92,11 +183,21 @@ model AuthSession {
 }
 
 model Organization {
-  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String
-  status      OrganizationStatus
-  memberships OrganizationMembership[]
-  spaces      Space[]
+  id            String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  status        OrganizationStatus
+  invitations   OrganizationInvitation[]
+  memberships   OrganizationMembership[]
+  oidcProviders OidcProvider[]
+  spaces        Space[]
+  userGroups    UserGroup[]
+  auditArchives AuditArchive[]
+  auditEvents   AuditEvent[]
+  auditSequence OrganizationAuditSequence?
+  documentShares DocumentShare[]
+  spaceBackups  SpaceBackup[]
+  spaceRestores SpaceRestoreJob[]
+  workerJobs    WorkerJob[]
 
   @@map("organizations")
 }
@@ -109,7 +210,13 @@ model OrganizationMembership {
   status           MembershipStatus
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_memberships_organization_id_fkey")
   user             User              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_memberships_user_id_fkey")
+  groupMemberships UserGroupMembership[] @relation("UserGroupMembershipOrganizationMembership")
+  oidcIdentities    OidcIdentity[]
   spaceMemberships SpaceMembership[] @relation("SpaceMembershipOrganizationMembership")
+  auditEvents       AuditEvent[]      @relation("AuditEventActorMembership")
+  createdDocumentShares DocumentShare[] @relation("DocumentShareCreatedByMembership")
+  createdSpaceBackups SpaceBackup[]   @relation("SpaceBackupCreatedByMembership")
+  createdSpaceRestores SpaceRestoreJob[] @relation("SpaceRestoreCreatedByMembership")
 
   @@unique([organizationId, userId], map: "organization_memberships_organization_id_user_id_key")
   @@index([userId], map: "organization_memberships_user_id_idx")
@@ -123,11 +230,139 @@ model Space {
   status         SpaceStatus
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "spaces_organization_id_fkey")
   memberships    SpaceMembership[] @relation("SpaceMembershipSpace")
+  groupGrants    SpaceGroupGrant[] @relation("SpaceGroupGrantSpace")
   kernelInstance KernelInstance?
+  auditEvents    AuditEvent[]              @relation("AuditEventSpace")
+  capacityObservations SpaceCapacityObservation[]
+  documentShares DocumentShare[]           @relation("DocumentShareSpace")
+  sourceBackups SpaceBackup[]               @relation("SpaceBackupSourceSpace")
+  sourceRestores SpaceRestoreJob[]          @relation("SpaceRestoreSourceSpace")
+  targetRestores SpaceRestoreJob[]          @relation("SpaceRestoreTargetSpace")
 
   @@unique([id, organizationId], map: "spaces_id_organization_id_key")
   @@index([organizationId], map: "spaces_organization_id_idx")
   @@map("spaces")
+}
+
+model OrganizationInvitation {
+  id                 String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                     @map("organization_id") @db.Uuid
+  loginIdentifier    String                     @map("login_identifier")
+  role               OrganizationRole
+  tokenDigest        String                     @unique(map: "organization_invitations_token_digest_key") @map("token_digest")
+  expiresAt          DateTime                   @map("expires_at") @db.Timestamptz(3)
+  acceptedAt         DateTime?                  @map("accepted_at") @db.Timestamptz(3)
+  revokedAt          DateTime?                  @map("revoked_at") @db.Timestamptz(3)
+  invitedByUserId    String                     @map("invited_by_user_id") @db.Uuid
+  acceptedByUserId   String?                    @map("accepted_by_user_id") @db.Uuid
+  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization       Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_invitations_organization_id_fkey")
+  invitedBy          User                       @relation("CreatedInvitationUser", fields: [invitedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_invitations_invited_by_user_id_fkey")
+  acceptedBy         User?                      @relation("AcceptedInvitationUser", fields: [acceptedByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_invitations_accepted_by_user_id_fkey")
+  oidcAttempts       OidcAuthorizationAttempt[]
+
+  @@unique([id, organizationId], map: "organization_invitations_id_organization_id_key")
+  @@index([organizationId, loginIdentifier], map: "organization_invitations_organization_id_login_identifier_idx")
+  @@index([expiresAt], map: "organization_invitations_expires_at_idx")
+  @@map("organization_invitations")
+}
+
+model UserGroup {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                @map("organization_id") @db.Uuid
+  name           String
+  status         UserGroupStatus
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "user_groups_organization_id_fkey")
+  memberships    UserGroupMembership[] @relation("UserGroupMembershipGroup")
+  spaceGrants    SpaceGroupGrant[]     @relation("SpaceGroupGrantGroup")
+
+  @@unique([id, organizationId], map: "user_groups_id_organization_id_key")
+  @@unique([organizationId, name], map: "user_groups_organization_id_name_key")
+  @@index([organizationId], map: "user_groups_organization_id_idx")
+  @@map("user_groups")
+}
+
+model UserGroupMembership {
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId         String                 @map("organization_id") @db.Uuid
+  groupId                String                 @map("group_id") @db.Uuid
+  userId                 String                 @map("user_id") @db.Uuid
+  group                  UserGroup              @relation("UserGroupMembershipGroup", fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "user_group_memberships_group_id_organization_id_fkey")
+  user                   User                   @relation("UserGroupMembershipUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "user_group_memberships_user_id_fkey")
+  organizationMembership OrganizationMembership @relation("UserGroupMembershipOrganizationMembership", fields: [organizationId, userId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "user_group_memberships_organization_id_user_id_fkey")
+
+  @@unique([groupId, userId], map: "user_group_memberships_group_id_user_id_key")
+  @@index([organizationId, userId], map: "user_group_memberships_organization_id_user_id_idx")
+  @@map("user_group_memberships")
+}
+
+model SpaceGroupGrant {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  spaceId        String      @map("space_id") @db.Uuid
+  groupId        String      @map("group_id") @db.Uuid
+  role           SpaceRole
+  space          Space       @relation("SpaceGroupGrantSpace", fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_group_grants_space_id_organization_id_fkey")
+  group          UserGroup   @relation("SpaceGroupGrantGroup", fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_group_grants_group_id_organization_id_fkey")
+
+  @@unique([spaceId, groupId], map: "space_group_grants_space_id_group_id_key")
+  @@index([organizationId, groupId], map: "space_group_grants_organization_id_group_id_idx")
+  @@map("space_group_grants")
+}
+
+model OidcProvider {
+  id                    String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId        String                     @map("organization_id") @db.Uuid
+  name                  String
+  issuer                String
+  clientId              String                     @map("client_id")
+  clientSecretReference String?                    @map("client_secret_reference")
+  status                OidcProviderStatus
+  organization          Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "oidc_providers_organization_id_fkey")
+  identities            OidcIdentity[]
+  authorizationAttempts OidcAuthorizationAttempt[]
+
+  @@unique([id, organizationId], map: "oidc_providers_id_organization_id_key")
+  @@unique([organizationId, name], map: "oidc_providers_organization_id_name_key")
+  @@unique([organizationId, issuer, clientId], map: "oidc_providers_organization_id_issuer_client_id_key")
+  @@index([organizationId], map: "oidc_providers_organization_id_idx")
+  @@map("oidc_providers")
+}
+
+model OidcIdentity {
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId         String                 @map("organization_id") @db.Uuid
+  providerId             String                 @map("provider_id") @db.Uuid
+  userId                 String                 @map("user_id") @db.Uuid
+  subject                String
+  provider               OidcProvider           @relation(fields: [providerId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "oidc_identities_provider_id_organization_id_fkey")
+  user                   User                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "oidc_identities_user_id_fkey")
+  organizationMembership OrganizationMembership @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "oidc_identities_organization_id_user_id_fkey")
+
+  @@unique([providerId, subject], map: "oidc_identities_provider_id_subject_key")
+  @@unique([providerId, userId], map: "oidc_identities_provider_id_user_id_key")
+  @@index([userId], map: "oidc_identities_user_id_idx")
+  @@map("oidc_identities")
+}
+
+model OidcAuthorizationAttempt {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                  @map("organization_id") @db.Uuid
+  providerId     String                  @map("provider_id") @db.Uuid
+  invitationId   String?                 @map("invitation_id") @db.Uuid
+  browserBindingDigest String            @map("browser_binding_digest")
+  stateDigest    String                  @unique(map: "oidc_authorization_attempts_state_digest_key") @map("state_digest")
+  nonceDigest    String                  @map("nonce_digest")
+  codeVerifier   String                  @map("code_verifier")
+  returnTo       String                  @map("return_to")
+  expiresAt      DateTime                @map("expires_at") @db.Timestamptz(3)
+  consumedAt     DateTime?               @map("consumed_at") @db.Timestamptz(3)
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  provider       OidcProvider            @relation(fields: [providerId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "oidc_authorization_attempts_provider_id_organization_id_fkey")
+  invitation     OrganizationInvitation? @relation(fields: [invitationId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "oidc_authorization_attempts_invitation_id_organization_id_fkey")
+
+  @@index([expiresAt], map: "oidc_authorization_attempts_expires_at_idx")
+  @@map("oidc_authorization_attempts")
 }
 
 model SpaceMembership {
@@ -150,9 +385,221 @@ model KernelInstance {
   id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   spaceId          String               @unique(map: "kernel_instances_space_id_key") @map("space_id") @db.Uuid
   status           KernelInstanceStatus
-  deploymentHandle String?              @map("deployment_handle")
+  deploymentHandle String?              @unique(map: "kernel_instances_deployment_handle_key") @map("deployment_handle")
   version          String?
   space            Space                @relation(fields: [spaceId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "kernel_instances_space_id_fkey")
+  runtimeEndpoint  KernelRuntimeEndpoint?
+  capacityObservations SpaceCapacityObservation[]
+  healthObservations KernelHealthObservation[]
 
+  @@unique([id, spaceId], map: "kernel_instances_id_space_id_key")
   @@map("kernel_instances")
+}
+
+/// Network coordinates for a live restored Kernel. TLS material stays in
+/// process configuration; the profile is an explicit selector, not a handle
+/// or hostname-derived fallback.
+model KernelRuntimeEndpoint {
+  kernelInstanceId String        @id @map("kernel_instance_id") @db.Uuid
+  spaceId          String        @map("space_id") @db.Uuid
+  hostname         String
+  port             Int
+  serverName       String        @map("server_name")
+  tlsProfile       String        @map("tls_profile")
+  kernelInstance   KernelInstance @relation(fields: [kernelInstanceId, spaceId], references: [id, spaceId], onDelete: Restrict, onUpdate: Cascade, map: "kernel_runtime_endpoints_kernel_instance_id_space_id_fkey")
+
+  @@unique([kernelInstanceId, spaceId], map: "kernel_runtime_endpoints_kernel_instance_id_space_id_key")
+  @@index([spaceId], map: "kernel_runtime_endpoints_space_id_idx")
+  @@map("kernel_runtime_endpoints")
+}
+
+model DocumentShare {
+  id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String                 @map("organization_id") @db.Uuid
+  spaceId             String                 @map("space_id") @db.Uuid
+  notebookId          String                 @map("notebook_id")
+  documentId          String                 @map("document_id")
+  tokenDigest         String                 @unique(map: "document_shares_token_digest_key") @map("token_digest")
+  passwordDigest      String?                @map("password_digest")
+  passwordVersion     Int                    @default(1) @map("password_version")
+  expiresAt           DateTime               @map("expires_at") @db.Timestamptz(3)
+  revokedAt           DateTime?              @map("revoked_at") @db.Timestamptz(3)
+  createdByUserId     String                 @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization        Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "document_shares_organization_id_fkey")
+  space               Space                  @relation("DocumentShareSpace", fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "document_shares_space_id_organization_id_fkey")
+  createdBy            User                   @relation("DocumentShareCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "document_shares_created_by_user_id_fkey")
+  createdByMembership OrganizationMembership @relation("DocumentShareCreatedByMembership", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "document_shares_organization_id_created_by_user_id_fkey")
+  challenges          ShareChallenge[]
+
+  @@index([organizationId, spaceId, createdAt], map: "document_shares_organization_id_space_id_created_at_idx")
+  @@map("document_shares")
+}
+
+model ShareChallenge {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shareId           String        @map("share_id") @db.Uuid
+  tokenDigest       String        @unique(map: "share_challenges_token_digest_key") @map("token_digest")
+  passwordVersion   Int           @map("password_version")
+  absoluteExpiresAt DateTime      @map("absolute_expires_at") @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  share             DocumentShare @relation(fields: [shareId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "share_challenges_share_id_fkey")
+
+  @@index([shareId, absoluteExpiresAt], map: "share_challenges_share_id_absolute_expires_at_idx")
+  @@map("share_challenges")
+}
+
+model OrganizationAuditSequence {
+  organizationId String       @id @map("organization_id") @db.Uuid
+  lastSequence   BigInt       @default(0) @map("last_sequence")
+  lastMac        String?      @map("last_mac")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "organization_audit_sequences_organization_id_fkey")
+
+  @@map("organization_audit_sequences")
+}
+
+model AuditEvent {
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String                  @map("organization_id") @db.Uuid
+  sequence        BigInt
+  spaceId         String?                 @map("space_id") @db.Uuid
+  actorUserId     String?                 @map("actor_user_id") @db.Uuid
+  action          AuditAction
+  targetType      String                  @map("target_type")
+  targetId        String                  @map("target_id")
+  outcome         AuditOutcome
+  occurredAt      DateTime                @map("occurred_at") @db.Timestamptz(3)
+  requestId       String                  @map("request_id") @db.Uuid
+  previousMac     String?                 @map("previous_mac")
+  mac             String
+  keyVersion      String                  @map("key_version")
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "audit_events_organization_id_fkey")
+  space           Space?                  @relation("AuditEventSpace", fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "audit_events_space_id_organization_id_fkey")
+  actor            User?                  @relation("AuditEventActorUser", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "audit_events_actor_user_id_fkey")
+  actorMembership OrganizationMembership? @relation("AuditEventActorMembership", fields: [organizationId, actorUserId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "audit_events_organization_id_actor_user_id_fkey")
+
+  @@unique([organizationId, sequence], map: "audit_events_organization_id_sequence_key")
+  @@index([organizationId, spaceId, sequence], map: "audit_events_organization_id_space_id_sequence_idx")
+  @@index([actorUserId], map: "audit_events_actor_user_id_idx")
+  @@map("audit_events")
+}
+
+model AuditArchive {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  fromSequence    BigInt       @map("from_sequence")
+  throughSequence BigInt       @map("through_sequence")
+  firstMac        String       @map("first_mac")
+  lastMac         String       @map("last_mac")
+  objectKey       String       @unique(map: "audit_archives_object_key_key") @map("object_key")
+  sha256          String
+  sizeBytes       BigInt       @map("size_bytes")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "audit_archives_organization_id_fkey")
+
+  @@unique([organizationId, fromSequence, throughSequence], map: "audit_archives_organization_id_sequence_range_key")
+  @@map("audit_archives")
+}
+
+model WorkerJob {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  kind           WorkerJobKind
+  status         WorkerJobStatus
+  payload        Json            @db.JsonB
+  requestId      String          @map("request_id") @db.Uuid
+  attempt        Int             @default(0)
+  availableAt    DateTime        @map("available_at") @db.Timestamptz(3)
+  workerId       String?         @map("worker_id")
+  leaseExpiresAt DateTime?       @map("lease_expires_at") @db.Timestamptz(3)
+  errorCode      String?         @map("error_code")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
+  completedAt    DateTime?       @map("completed_at") @db.Timestamptz(3)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "worker_jobs_organization_id_fkey")
+
+  @@index([status, kind, availableAt, createdAt], map: "worker_jobs_claim_idx")
+  @@index([organizationId, createdAt], map: "worker_jobs_organization_id_created_at_idx")
+  @@map("worker_jobs")
+}
+
+model SpaceBackup {
+  id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String                 @map("organization_id") @db.Uuid
+  sourceSpaceId       String                 @map("source_space_id") @db.Uuid
+  status              SpaceBackupStatus
+  objectKey           String?                @unique(map: "space_backups_object_key_key") @map("object_key")
+  formatVersion       Int?                   @map("format_version")
+  kernelVersion       String?                @map("kernel_version")
+  sha256              String?
+  sizeBytes           BigInt?                @map("size_bytes")
+  createdByUserId     String                 @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt         DateTime?              @map("completed_at") @db.Timestamptz(3)
+  organization        Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "space_backups_organization_id_fkey")
+  sourceSpace         Space                  @relation("SpaceBackupSourceSpace", fields: [sourceSpaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_backups_source_space_id_organization_id_fkey")
+  createdBy           User                   @relation("SpaceBackupCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "space_backups_created_by_user_id_fkey")
+  createdByMembership OrganizationMembership @relation("SpaceBackupCreatedByMembership", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "space_backups_organization_id_created_by_user_id_fkey")
+  restores            SpaceRestoreJob[]
+
+  @@unique([id, organizationId, sourceSpaceId], map: "space_backups_id_organization_id_source_space_id_key")
+  @@index([organizationId, sourceSpaceId, createdAt], map: "space_backups_organization_id_source_space_id_created_at_idx")
+  @@map("space_backups")
+}
+
+model SpaceRestoreJob {
+  id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String                 @map("organization_id") @db.Uuid
+  backupId            String                 @map("backup_id") @db.Uuid
+  sourceSpaceId       String                 @map("source_space_id") @db.Uuid
+  targetSpaceId       String?                @unique(map: "space_restore_jobs_target_space_id_key") @map("target_space_id") @db.Uuid
+  status              SpaceRestoreStatus
+  workerJobId         String?                @map("worker_job_id") @db.Uuid
+  workerAttempt       Int?                   @map("worker_attempt")
+  createdByUserId     String                 @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt         DateTime?              @map("completed_at") @db.Timestamptz(3)
+  activatedAt         DateTime?              @map("activated_at") @db.Timestamptz(3)
+  failureCode         String?                @map("failure_code")
+  organization        Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_organization_id_fkey")
+  backup              SpaceBackup            @relation(fields: [backupId, organizationId, sourceSpaceId], references: [id, organizationId, sourceSpaceId], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_backup_scope_fkey")
+  sourceSpace         Space                  @relation("SpaceRestoreSourceSpace", fields: [sourceSpaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_source_space_id_organization_id_fkey")
+  targetSpace         Space?                 @relation("SpaceRestoreTargetSpace", fields: [targetSpaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_target_space_id_organization_id_fkey")
+  createdBy           User                   @relation("SpaceRestoreCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_created_by_user_id_fkey")
+  createdByMembership OrganizationMembership @relation("SpaceRestoreCreatedByMembership", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "space_restore_jobs_organization_id_created_by_user_id_fkey")
+
+  @@index([organizationId, sourceSpaceId, createdAt], map: "space_restore_jobs_source_created_idx")
+  @@index([workerJobId, workerAttempt], map: "space_restore_jobs_worker_claim_idx")
+  @@map("space_restore_jobs")
+}
+
+model KernelHealthObservation {
+  id               String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kernelInstanceId String                  @map("kernel_instance_id") @db.Uuid
+  status           KernelObservationStatus
+  kernelVersion    String                  @map("kernel_version")
+  sampledAt        DateTime                @map("sampled_at") @db.Timestamptz(3)
+  errorCode        String?                 @map("error_code")
+  kernelInstance   KernelInstance          @relation(fields: [kernelInstanceId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "kernel_health_observations_kernel_instance_id_fkey")
+
+  @@index([kernelInstanceId, sampledAt], map: "kernel_health_observations_kernel_instance_id_sampled_at_idx")
+  @@map("kernel_health_observations")
+}
+
+model SpaceCapacityObservation {
+  id                         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kernelInstanceId           String         @map("kernel_instance_id") @db.Uuid
+  spaceId                    String         @map("space_id") @db.Uuid
+  dataBytes                  BigInt         @map("data_bytes")
+  assetBytes                 BigInt         @map("asset_bytes")
+  fileCount                  BigInt         @map("file_count")
+  sampleDurationMilliseconds Int            @map("sample_duration_milliseconds")
+  sampledAt                  DateTime       @map("sampled_at") @db.Timestamptz(3)
+  errorCode                  String?        @map("error_code")
+  kernelInstance             KernelInstance @relation(fields: [kernelInstanceId, spaceId], references: [id, spaceId], onDelete: Restrict, onUpdate: Cascade, map: "space_capacity_observations_kernel_instance_id_space_id_fkey")
+  space                      Space          @relation(fields: [spaceId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "space_capacity_observations_space_id_fkey")
+
+  @@index([kernelInstanceId, sampledAt], map: "space_capacity_observations_kernel_instance_id_sampled_at_idx")
+  @@index([spaceId, sampledAt], map: "space_capacity_observations_space_id_sampled_at_idx")
+  @@map("space_capacity_observations")
 }

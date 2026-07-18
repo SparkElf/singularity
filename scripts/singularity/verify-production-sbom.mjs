@@ -18,6 +18,8 @@ function readArgumentValue(args, index, option) {
 function parseArguments(args) {
   let apiImage;
   let apiPath;
+  let workerImage;
+  let workerPath;
   let outputPath;
   let webPath;
   for (let index = 0; index < args.length; index += 1) {
@@ -27,6 +29,12 @@ function parseArguments(args) {
       index += 1;
     } else if (argument === "--api") {
       apiPath = readArgumentValue(args, index, argument);
+      index += 1;
+    } else if (argument === "--worker-image") {
+      workerImage = readArgumentValue(args, index, argument);
+      index += 1;
+    } else if (argument === "--worker") {
+      workerPath = readArgumentValue(args, index, argument);
       index += 1;
     } else if (argument === "--output") {
       outputPath = readArgumentValue(args, index, argument);
@@ -38,13 +46,21 @@ function parseArguments(args) {
       throw new Error("Unknown argument: " + String(argument));
     }
   }
-  if (apiImage === undefined || apiPath === undefined || outputPath === undefined || webPath === undefined) {
+  if (
+    apiImage === undefined ||
+    apiPath === undefined ||
+    workerImage === undefined ||
+    workerPath === undefined ||
+    outputPath === undefined ||
+    webPath === undefined
+  ) {
     throw new Error(
       "Usage: verify-production-sbom.mjs --api-image <image> --api <api.cdx.json> " +
+        "--worker-image <image> --worker <worker.cdx.json> " +
         "--web <web.cdx.json> --output <result.json>",
     );
   }
-  return { apiImage, apiPath, outputPath, webPath };
+  return { apiImage, apiPath, outputPath, webPath, workerImage, workerPath };
 }
 
 function readSbom(path) {
@@ -63,12 +79,12 @@ function npmPurl(name, version) {
   return "pkg:npm/" + encodedName + "@" + encodeURIComponent(version);
 }
 
-function readApiRuntimePackages(image) {
+function readRuntimePackages(image, root, imageName) {
   const program = [
     'const { existsSync, readFileSync, realpathSync } = require("node:fs");',
     'const { createRequire } = require("node:module");',
     'const { join } = require("node:path");',
-    'const root = "/opt/singularity-api/package.json";',
+    `const root = ${JSON.stringify(root)};`,
     'const queue = [root];',
     'const seen = new Set();',
     'const packages = [];',
@@ -125,16 +141,16 @@ function readApiRuntimePackages(image) {
     { encoding: "utf8" },
   );
   if (result.status !== 0) {
-    throw new Error("Unable to enumerate the API runtime dependency graph");
+    throw new Error(`Unable to enumerate the ${imageName} runtime dependency graph`);
   }
   let packages;
   try {
     packages = JSON.parse(result.stdout);
   } catch {
-    throw new Error("API runtime dependency graph returned invalid JSON");
+    throw new Error(`${imageName} runtime dependency graph returned invalid JSON`);
   }
   if (!Array.isArray(packages) || packages.length === 0) {
-    throw new Error("API runtime dependency graph is empty");
+    throw new Error(`${imageName} runtime dependency graph is empty`);
   }
   const packagesByPurl = new Map();
   for (const component of packages) {
@@ -143,7 +159,7 @@ function readApiRuntimePackages(image) {
       typeof component.version !== "string" ||
       component.purl !== npmPurl(component.name, component.version)
     ) {
-      throw new Error("API runtime dependency graph contains an invalid package identity");
+      throw new Error(`${imageName} runtime dependency graph contains an invalid package identity`);
     }
     packagesByPurl.set(component.purl, component);
   }
@@ -170,7 +186,7 @@ function readNpmPackage(component) {
   return { name, purl: component.purl, version: component.version };
 }
 
-function analyzeApi(components, runtimePackages) {
+function analyzeNodeRuntime(image, components, runtimePackages, requireApiArgon) {
   const packages = components.map(readNpmPackage).filter((value) => value !== null);
   const actualPurls = new Set(packages.map((component) => component.purl));
   const runtimePurls = new Set(runtimePackages.map((component) => component.purl));
@@ -179,16 +195,16 @@ function analyzeApi(components, runtimePackages) {
   for (const component of runtimePackages) {
     if (forbiddenProductionPackages.has(component.name)) {
       violations.push({
-        image: "api",
+        image,
         package: component.purl,
         reason: "forbidden production dependency",
       });
     }
-    if (component.name === allowedApiArgonNativePackage) {
+    if (requireApiArgon && component.name === allowedApiArgonNativePackage) {
       allowedArgonPurls.add(component.purl);
-    } else if (component.name.startsWith("@node-rs/argon2-")) {
+    } else if (requireApiArgon && component.name.startsWith("@node-rs/argon2-")) {
       violations.push({
-        image: "api",
+        image,
         package: component.purl,
         reason: "non-linux-x64-gnu Argon2 native package",
       });
@@ -196,17 +212,17 @@ function analyzeApi(components, runtimePackages) {
   }
   for (const purl of runtimePurls) {
     if (!actualPurls.has(purl)) {
-      violations.push({ image: "api", package: purl, reason: "runtime package missing from raw SBOM" });
+      violations.push({ image, package: purl, reason: "runtime package missing from raw SBOM" });
     }
   }
   for (const purl of actualPurls) {
     if (!runtimePurls.has(purl)) {
-      violations.push({ image: "api", package: purl, reason: "raw SBOM package is unreachable from the runtime root" });
+      violations.push({ image, package: purl, reason: "raw SBOM package is unreachable from the runtime root" });
     }
   }
-  if (allowedArgonPurls.size !== 1) {
+  if (requireApiArgon && allowedArgonPurls.size !== 1) {
     violations.push({
-      image: "api",
+      image,
       package: allowedApiArgonNativePackage,
       reason: "expected exactly one Linux x64 GNU Argon2 native package version",
     });
@@ -226,10 +242,21 @@ function analyzeWeb(components) {
   };
 }
 
-const { apiImage, apiPath, outputPath, webPath } = parseArguments(process.argv.slice(2));
-const api = analyzeApi(readSbom(apiPath).components, readApiRuntimePackages(apiImage));
+const { apiImage, apiPath, outputPath, webPath, workerImage, workerPath } = parseArguments(process.argv.slice(2));
+const api = analyzeNodeRuntime(
+  "api",
+  readSbom(apiPath).components,
+  readRuntimePackages(apiImage, "/opt/singularity-api/package.json", "API"),
+  true,
+);
+const worker = analyzeNodeRuntime(
+  "worker",
+  readSbom(workerPath).components,
+  readRuntimePackages(workerImage, "/opt/singularity-worker/package.json", "Worker"),
+  false,
+);
 const web = analyzeWeb(readSbom(webPath).components);
-const violations = [...api.violations, ...web.violations].sort((left, right) =>
+const violations = [...api.violations, ...worker.violations, ...web.violations].sort((left, right) =>
   (left.image + "\u0000" + left.package + "\u0000" + left.reason).localeCompare(
     right.image + "\u0000" + right.package + "\u0000" + right.reason,
   ),
@@ -240,6 +267,8 @@ const report = {
   passed: violations.length === 0,
   violations,
   webNpmPackageCount: web.packageCount,
+  workerNpmPackageCount: worker.packageCount,
+  workerRuntimePackageCount: worker.runtimePackageCount,
 };
 writeFileSync(resolve(repositoryRoot, outputPath), JSON.stringify(report, null, 2) + "\n", "utf8");
 process.stdout.write(

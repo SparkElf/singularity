@@ -5,7 +5,7 @@ import {Constants} from "../constants";
 import {fetchPost} from "../util/fetch";
 import {onGet} from "../protyle/util/onGet";
 import {addLoading} from "../protyle/ui/initUI";
-import {highlightById, scrollCenter} from "../util/highlightById";
+import {highlightById, scrollCenter} from "../protyle/util/highlightById";
 import {isInEmbedBlock} from "../protyle/util/hasClosest";
 import {setEditMode} from "../protyle/util/setEditMode";
 import {hideElements} from "../protyle/ui/hideElements";
@@ -190,6 +190,7 @@ export const openMobileFileById = (app: App, notebookId: string, id: string,
                 participation: "live",
                 content: {mode: "bound", notebookId},
                 initialLoad: "automatic",
+                hostReadOnly: window.siyuan.config.readonly,
                 signal,
             });
         }

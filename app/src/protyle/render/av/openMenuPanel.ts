@@ -1,5 +1,7 @@
 import {transaction} from "../../wysiwyg/transaction";
-import {fetchPost} from "../../../util/fetch";
+import {beginAVDrag, currentAVDrag, endAVDrag} from "./dragState";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {closeAVOverlay, currentAVOverlay, registerAVOverlay} from "./overlay";
 import {
     addCol,
     bindEditEvent,
@@ -12,7 +14,14 @@ import {
 } from "./col";
 import {setPosition} from "../../../util/setPosition";
 import {hasClosestByAttribute, hasClosestByClassName} from "../../util/hasClosest";
-import {addColOptionOrCell, bindSelectEvent, getSelectHTML, removeCellOption, setColOption} from "./select";
+import {
+    addColOptionOrCell,
+    bindSelectEvent,
+    getSelectHTML,
+    type IAVSelectPanelState,
+    removeCellOption,
+    setColOption
+} from "./select";
 import {
     addFilter,
     addFilterGroup,
@@ -89,9 +98,9 @@ export const openMenuPanel = (options: {
     data?: IAV,
     cb?: (avPanelElement: Element) => void
 }) => {
-    let avPanelElement = document.querySelector(".av__panel");
+    let avPanelElement = currentAVOverlay(options.protyle, "panel");
     if (avPanelElement) {
-        avPanelElement.remove();
+        closeAVOverlay(options.protyle, "panel");
         return;
     }
     const avID = options.blockElement.getAttribute("data-av-id");
@@ -109,10 +118,11 @@ export const openMenuPanel = (options: {
     };
     // 接收视图数据并构建面板 DOM、绑定事件。fetch 回调与 options.data 复用两条路径都走这里
     const renderData = (responseData: IAV) => {
+        const selectState: IAVSelectPanelState = {cellValues: []};
         const response = {data: responseData} as IWebSocketData;
-        avPanelElement = document.querySelector(".av__panel");
+        avPanelElement = currentAVOverlay(options.protyle, "panel");
         if (avPanelElement) {
-            avPanelElement.remove();
+            closeAVOverlay(options.protyle, "panel");
             return;
         }
         window.siyuan.menus.menu.remove();
@@ -133,7 +143,7 @@ export const openMenuPanel = (options: {
         } else if (options.type === "filters") {
             html = getFiltersHTML(data);
         } else if (options.type === "select") {
-            html = getSelectHTML(fields, options.cellElements, true, options.blockElement);
+            html = getSelectHTML(fields, options.cellElements, selectState, true, options.blockElement);
         } else if (options.type === "asset") {
             html = getAssetHTML(options.cellElements);
         } else if (options.type === "edit") {
@@ -174,11 +184,12 @@ export const openMenuPanel = (options: {
             }
         }
 
-        document.body.insertAdjacentHTML("beforeend", `<div class="av__panel" style="z-index: ${++window.siyuan.zIndex};">
-    <div class="b3-dialog__scrim" data-type="close"></div>
-    <div class="b3-menu${options.type === "filters" ? " av__filter-panel" : ""}" ${["select", "date", "asset", "relation", "rollup"].includes(options.type) ? `style="${["select", "asset", "relation"].includes(options.type) ? "max-height: calc(100vh - 32px);display: flex;flex-direction: column;" : ""}min-width: 200px;${isMobile() ? "max-width: 90vw;" : "max-width: 50vw;"}"` : ""}>${html}</div>
-</div>`);
-        avPanelElement = document.querySelector(".av__panel");
+        avPanelElement = document.createElement("div");
+        avPanelElement.className = "av__panel";
+        avPanelElement.innerHTML = `<div class="b3-dialog__scrim" data-type="close"></div>
+<div class="b3-menu${options.type === "filters" ? " av__filter-panel" : ""}" ${["select", "date", "asset", "relation", "rollup"].includes(options.type) ? `style="${["select", "asset", "relation"].includes(options.type) ? "max-height: calc(100vh - 32px);display: flex;flex-direction: column;" : ""}min-width: 200px;${isMobile() ? "max-width: 90vw;" : "max-width: 50vw;"}"` : ""}>${html}</div>`;
+        document.body.append(avPanelElement);
+        registerAVOverlay(options.protyle, "panel", avPanelElement);
         let closeCB: () => void;
         const menuElement = avPanelElement.lastElementChild as HTMLElement;
         let tabRect = options.blockElement.querySelector(`.av__views, .av__row[data-col-id="${options.colId}"] > .block__logo`)?.getBoundingClientRect();
@@ -196,7 +207,7 @@ export const openMenuPanel = (options: {
             const cellRect = (lastElement || options.cellElements[options.cellElements.length - 1]).getBoundingClientRect();
 
             if (options.type === "select") {
-                bindSelectEvent(options.protyle, data, menuElement, options.cellElements, options.blockElement);
+                bindSelectEvent(options.protyle, data, menuElement, options.cellElements, options.blockElement, selectState);
             } else if (options.type === "date") {
                 closeCB = bindDateEvent({
                     protyle: options.protyle,
@@ -252,26 +263,18 @@ export const openMenuPanel = (options: {
         }
         let counter = 0;
         avPanelElement.addEventListener("dragstart", (event: DragEvent) => {
-            window.siyuan.dragElement = event.target as HTMLElement;
-            window.siyuan.dragElement.style.opacity = ".38";
+            beginAVDrag(options.protyle, event.target as HTMLElement, ".38");
             return;
         });
         avPanelElement.addEventListener("drop", (event) => {
             counter = 0;
-            if (!window.siyuan.dragElement) {
+            const sourceElement = endAVDrag(options.protyle);
+            if (!sourceElement) {
                 event.preventDefault();
                 event.stopPropagation();
                 return;
             }
-            window.siyuan.dragElement.style.opacity = "";
-            const sourceElement = window.siyuan.dragElement;
-            window.siyuan.dragElement = undefined;
-            if (options.protyle && options.protyle.disabled) {
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-            }
-            if (!options.protyle && window.siyuan.config.readonly) {
+            if (options.protyle.disabled) {
                 event.preventDefault();
                 event.stopPropagation();
                 return;
@@ -403,8 +406,8 @@ export const openMenuPanel = (options: {
                 }]);
                 const oldScroll = menuElement.querySelector(".b3-menu__items").scrollTop;
                 if (options.cellElements) {
-                    menuElement.innerHTML = getSelectHTML(fields, options.cellElements, false, options.blockElement);
-                    bindSelectEvent(options.protyle, data, menuElement, options.cellElements, options.blockElement);
+                    menuElement.innerHTML = getSelectHTML(fields, options.cellElements, selectState, false, options.blockElement);
+                    bindSelectEvent(options.protyle, data, menuElement, options.cellElements, options.blockElement, selectState);
                 } else {
                     menuElement.innerHTML = getEditHTML({
                         protyle: options.protyle,
@@ -541,7 +544,7 @@ export const openMenuPanel = (options: {
             if (!targetElement) {
                 targetElement = hasClosestByAttribute(document.elementFromPoint(event.clientX, event.clientY - 1), "draggable", "true");
             }
-            if (!targetElement || targetElement === window.siyuan.dragElement) {
+            if (!targetElement || targetElement === currentAVDrag(options.protyle)) {
                 return;
             }
             event.preventDefault();
@@ -572,10 +575,7 @@ export const openMenuPanel = (options: {
             counter++;
         });
         avPanelElement.addEventListener("dragend", () => {
-            if (window.siyuan.dragElement) {
-                window.siyuan.dragElement.style.opacity = "";
-                window.siyuan.dragElement = undefined;
-            }
+            endAVDrag(options.protyle);
         });
         // 过滤分组 AND/OR 切换（select 的 change 事件，不走 click 分发）
         avPanelElement.addEventListener("change", (event: Event) => {
@@ -611,7 +611,7 @@ export const openMenuPanel = (options: {
         // 多选排序
         avPanelElement.addEventListener("mousedown", (event: MouseEvent & { target: HTMLElement }) => {
             if (event.button === 1 && !hasClosestByClassName(event.target, "b3-menu")) {
-                document.querySelector(".av__panel").dispatchEvent(new CustomEvent("click", {detail: "close"}));
+                avPanelElement.dispatchEvent(new CustomEvent("click", {detail: "close"}));
             }
             if (event.button !== 0 || options.type !== "select") return;
             const selectedElement = event.target.closest(".b3-chip--middle") as HTMLElement;
@@ -623,6 +623,7 @@ export const openMenuPanel = (options: {
             const documentSelf = document;
             documentSelf.ondragstart = () => false;
             let ghostElement: HTMLElement;
+            let closeGhost: () => void;
             const diffPosition = {x: 0, y: 0};
             documentSelf.onmousemove = (moveEvent: MouseEvent & { target: HTMLElement }) => {
                 moveEvent.preventDefault();
@@ -633,7 +634,9 @@ export const openMenuPanel = (options: {
                     ghostElement.setAttribute("id", "dragGhost");
                     ghostElement.style.pointerEvents = "none";
                     ghostElement.style.position = "fixed";
-                    ghostElement.style.zIndex = (window.siyuan.zIndex++).toString();
+                    const ghostHandle = options.protyle.session!.runtime.overlays.add(ghostElement);
+                    options.protyle.session!.runtime.overlays.bringToFront(ghostElement);
+                    closeGhost = () => ghostHandle.close();
                     selectedElement.style.opacity = ".38";
                     const selectedRect = selectedElement.getBoundingClientRect();
                     diffPosition.x = moveEvent.clientX - selectedRect.left;
@@ -660,7 +663,7 @@ export const openMenuPanel = (options: {
                 documentSelf.ondragstart = null;
                 documentSelf.onselectstart = null;
                 documentSelf.onselect = null;
-                ghostElement?.remove();
+                closeGhost?.();
                 selectedElement.style.opacity = "";
                 document.body.style.cursor = "";
                 const newValue: IAVCellSelectValue[] = [];
@@ -693,7 +696,7 @@ export const openMenuPanel = (options: {
                         // 过滤面板先关闭过滤条件
                     } else {
                         closeCB?.();
-                        avPanelElement.remove();
+                        closeAVOverlay(options.protyle, "panel");
                         setTimeout(() => {
                             focusBlock(options.blockElement);
                         }, Constants.TIMEOUT_TRANSITION);  // 单选使用 enter 修改选项后会滚动
@@ -1019,7 +1022,7 @@ export const openMenuPanel = (options: {
                     event.stopPropagation();
                     break;
                 } else if (type === "newCol") {
-                    avPanelElement.remove();
+                    closeAVOverlay(options.protyle, "panel");
                     const addMenu = addCol(options.protyle, options.blockElement);
                     addMenu.open({
                         x: tabRect.right,
@@ -1079,7 +1082,7 @@ export const openMenuPanel = (options: {
                         id,
                         blockID
                     }]);
-                    avPanelElement.remove();
+                    closeAVOverlay(options.protyle, "panel");
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1090,7 +1093,7 @@ export const openMenuPanel = (options: {
                         id: data.viewID,
                         blockID
                     }]);
-                    avPanelElement.remove();
+                    closeAVOverlay(options.protyle, "panel");
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1297,7 +1300,7 @@ export const openMenuPanel = (options: {
                     event.stopPropagation();
                     break;
                 } else if (type === "goSearchAV") {
-                    openSearchAV(avID, target, undefined, false);
+                    openSearchAV(options.protyle, avID, target, undefined, false);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1518,7 +1521,7 @@ export const openMenuPanel = (options: {
                     event.stopPropagation();
                     break;
                 } else if (type === "setColOption") {
-                    setColOption(options.protyle, data, target, options.blockElement, isCustomAttr, options.cellElements);
+                    setColOption(options.protyle, data, target, options.blockElement, isCustomAttr, selectState, options.cellElements);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1533,16 +1536,16 @@ export const openMenuPanel = (options: {
                     menuElement.querySelector(".b3-menu__item--current")?.classList.remove("b3-menu__item--current");
                     target.classList.add("b3-menu__item--current");
                     if (target.querySelector(".b3-menu__checked")) {
-                        removeCellOption(options.protyle, options.cellElements, menuElement.querySelector(`.b3-chips .b3-chip[data-content="${escapeAttr(target.dataset.name)}"]`), options.blockElement);
+                        removeCellOption(options.protyle, options.cellElements, menuElement.querySelector(`.b3-chips .b3-chip[data-content="${escapeAttr(target.dataset.name)}"]`), options.blockElement, selectState);
                     } else {
-                        addColOptionOrCell(options.protyle, data, options.cellElements, target, menuElement, options.blockElement);
+                        addColOptionOrCell(options.protyle, data, options.cellElements, target, menuElement, options.blockElement, selectState);
                     }
                     window.siyuan.menus.menu.remove();
                     event.preventDefault();
                     event.stopPropagation();
                     break;
                 } else if (type === "removeCellOption") {
-                    removeCellOption(options.protyle, options.cellElements, target.parentElement, options.blockElement);
+                    removeCellOption(options.protyle, options.cellElements, target.parentElement, options.blockElement, selectState);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1587,7 +1590,7 @@ export const openMenuPanel = (options: {
                 } else if (type === "openAssetItem") {
                     const assetLink = target.parentElement.dataset.content;
                     if (target.parentElement.dataset.type === "image") {
-                        previewAttrViewImages(assetLink, avID, options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
+                        previewAttrViewImages(options.protyle, assetLink, avID, options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
                             options.blockElement.querySelector('[data-type="av-search"]')?.textContent.trim() || "");
                     } else {
                         openLink(options.protyle, assetLink, event, event.ctrlKey || event.metaKey);
@@ -1623,14 +1626,14 @@ export const openMenuPanel = (options: {
                         hasEndDate: false,
                         isNotTime: colData.date ? !colData.date.fillSpecificTime : true,
                     }, options.cellElements);
-                    avPanelElement.remove();
+                    closeAVOverlay(options.protyle, "panel");
                     event.preventDefault();
                     event.stopPropagation();
                     break;
                 } else if (type === "av-add") {
                     window.siyuan.menus.menu.remove();
                     addView(options.protyle, options.blockElement);
-                    avPanelElement.remove();
+                    closeAVOverlay(options.protyle, "panel");
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1894,7 +1897,15 @@ export const openMenuPanel = (options: {
     if (options.data) {
         renderData(options.data);
     } else {
-        fetchPost("/api/av/renderAttributeView", fetchPayload, response => renderData(response.data as IAV));
+        const load = beginAVRenderLoad(options.protyle, options.blockElement as HTMLElement);
+        void requestAVRender<{data: IAV}>(options.protyle, load, "/api/av/renderAttributeView", fetchPayload)
+            .then((response) => {
+                if (load.isCurrent()) {
+                    renderData(response.data);
+                }
+            }).catch((error) => {
+                reportAVLoadFailure(load, "attribute view panel", error);
+            });
     }
 };
 

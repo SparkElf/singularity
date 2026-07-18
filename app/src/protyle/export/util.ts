@@ -1,4 +1,4 @@
-import {showMessage} from "../../dialog/message";
+import {hideMessage, showMessage} from "../../dialog/message";
 import {fetchPost} from "../../util/fetch";
 import {Dialog} from "../../dialog";
 import {addScript} from "../util/addScript";
@@ -6,12 +6,14 @@ import {isMobile} from "../../util/functions";
 import {Constants} from "../../constants";
 import {highlightRender, lineNumberRender} from "../render/highlightRender";
 import {processRender} from "../util/processCode";
-import {isIPhone, isSafari, saveExportFile, setStorageVal} from "../util/compatibility";
+import {isIPhone, isSafari} from "../util/browserPlatform";
+import {downloadExportFile} from "../util/download";
+import type {ProtyleRendererContext} from "../render/renderContext";
 
 export const afterExport = (exportPath: string, msgId: string) => {
 };
 
-export const exportImage = (id: string, notebookId: string) => {
+export const exportImage = (context: ProtyleRendererContext, id: string, notebookId: string) => {
     const exportDialog = new Dialog({
         disableAnimation: true,
         title: window.siyuan.languages.exportAsImage,
@@ -42,7 +44,7 @@ export const exportImage = (id: string, notebookId: string) => {
         resizeCallback() {
             previewElement.querySelectorAll(".code-block .protyle-linenumber__rows").forEach((item: HTMLElement) => {
                 if ((item.nextElementSibling as HTMLElement).style.wordBreak === "break-word") {
-                    lineNumberRender(item.parentElement);
+                    lineNumberRender(item.parentElement, context);
                 }
             });
         }
@@ -58,7 +60,6 @@ export const exportImage = (id: string, notebookId: string) => {
         containerElement.style.height = "";
         const contentElement = exportDialog.element.querySelector(".b3-dialog__content") as HTMLElement;
         contentElement.style.overflow = "hidden";
-        setStorageVal(Constants.LOCAL_EXPORTIMG, window.siyuan.storage[Constants.LOCAL_EXPORTIMG]);
         const plantumlElements = previewElement.querySelectorAll("[data-subtype='plantuml']");
         for (let i = 0; i < plantumlElements.length; i++) {
             const objectElement = plantumlElements[i].querySelector("object");
@@ -86,7 +87,11 @@ export const exportImage = (id: string, notebookId: string) => {
                 formData.append("type", "image/png");
                 formData.append("notebook", notebookId);
                 fetchPost("/api/export/exportAsFile", formData, (response) => {
-                    saveExportFile(response.data.file, msgId);
+                    try {
+                        downloadExportFile(response.data.file);
+                    } finally {
+                        hideMessage(msgId);
+                    }
                 });
                 exportDialog.destroy();
             });
@@ -147,8 +152,8 @@ export const exportImage = (id: string, notebookId: string) => {
         previewElement.querySelectorAll(".code-block").forEach(item => {
             item.setAttribute("linewrap", "true");
         });
-        processRender(previewElement);
-        highlightRender(previewElement);
+        processRender(previewElement, context);
+        highlightRender(previewElement, context);
         previewElement.querySelectorAll("table").forEach((item: HTMLElement) => {
             if (item.clientWidth > item.parentElement.clientWidth) {
                 item.setAttribute("style", `margin-bottom:${item.parentElement.clientWidth * item.clientHeight / item.clientWidth - item.parentElement.clientHeight + 1}px;transform: scale(${item.parentElement.clientWidth / item.clientWidth});transform-origin: top left;`);

@@ -1,5 +1,11 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import type { PoolConfig } from "pg";
+import {
+  Client,
+  escapeIdentifier,
+  type ClientConfig,
+  type Notification,
+  type PoolConfig,
+} from "pg";
 
 import { Prisma, PrismaClient } from "./generated/prisma/client.js";
 
@@ -19,6 +25,7 @@ export class DatabaseConfigurationError extends Error {
 }
 
 function parseDatabaseUrl(databaseUrl: string | undefined): {
+  notificationConfig: ClientConfig;
   poolConfig: PoolConfig;
   schema: string | undefined;
 } {
@@ -48,17 +55,17 @@ function parseDatabaseUrl(databaseUrl: string | undefined): {
   url.searchParams.delete("statement_timeout");
   url.searchParams.delete("options");
 
+  const connectionConfig = {
+    connectionString: url.toString(),
+    connectionTimeoutMillis: DATABASE_CONNECTION_TIMEOUT_MS,
+    query_timeout: DATABASE_QUERY_TIMEOUT_MS,
+    statement_timeout: DATABASE_STATEMENT_TIMEOUT_MS,
+    ...(schema === undefined ? {} : { options: `-c search_path=${schema}` }),
+  } satisfies ClientConfig;
+
   return {
-    poolConfig: {
-      connectionString: url.toString(),
-      connectionTimeoutMillis: DATABASE_CONNECTION_TIMEOUT_MS,
-      max: DATABASE_POOL_MAX_CONNECTIONS,
-      query_timeout: DATABASE_QUERY_TIMEOUT_MS,
-      statement_timeout: DATABASE_STATEMENT_TIMEOUT_MS,
-      ...(schema === undefined
-        ? {}
-        : { options: `-c search_path=${schema}` }),
-    },
+    notificationConfig: connectionConfig,
+    poolConfig: { ...connectionConfig, max: DATABASE_POOL_MAX_CONNECTIONS },
     schema,
   };
 }
@@ -75,11 +82,20 @@ export class DatabaseClient extends PrismaClient {
   }
 }
 
+export interface DatabaseNotificationSubscription {
+  close(): Promise<void>;
+}
+
 export class DatabaseRuntime {
+  readonly #notificationSubscriptions =
+    new Set<DatabaseNotificationSubscription>();
+  readonly #notificationConfig: ClientConfig | undefined;
   readonly #state: DatabaseClient | DatabaseConfigurationError;
 
   constructor(databaseUrl: string | undefined) {
     try {
+      const { notificationConfig } = parseDatabaseUrl(databaseUrl);
+      this.#notificationConfig = notificationConfig;
       this.#state = new DatabaseClient(databaseUrl);
     } catch (error) {
       if (error instanceof DatabaseConfigurationError) {
@@ -99,7 +115,59 @@ export class DatabaseRuntime {
     return this.#state;
   }
 
+  async listen(
+    channel: string,
+    onNotification: (payload: string) => void,
+    onError: (error: Error) => void,
+  ): Promise<DatabaseNotificationSubscription> {
+    if (this.#notificationConfig === undefined) {
+      throw this.#state;
+    }
+
+    const client = new Client(this.#notificationConfig);
+    let closed = false;
+    let subscription: DatabaseNotificationSubscription;
+    const close = async (): Promise<void> => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      this.#notificationSubscriptions.delete(subscription);
+      client.removeAllListeners();
+      await client.end();
+    };
+    subscription = { close };
+    client.on("notification", (notification: Notification) => {
+      if (
+        !closed &&
+        notification.channel === channel &&
+        notification.payload !== undefined
+      ) {
+        onNotification(notification.payload);
+      }
+    });
+    client.on("error", (error: Error) => {
+      if (!closed) {
+        onError(error);
+      }
+    });
+
+    try {
+      await client.connect();
+      await client.query(`LISTEN ${escapeIdentifier(channel)}`);
+    } catch (error) {
+      await close();
+      throw error;
+    }
+    this.#notificationSubscriptions.add(subscription);
+    return subscription;
+  }
+
   async onApplicationShutdown(): Promise<void> {
+    const notificationSubscriptions = [...this.#notificationSubscriptions];
+    await Promise.allSettled(
+      notificationSubscriptions.map((subscription) => subscription.close()),
+    );
     if (!(this.#state instanceof DatabaseConfigurationError)) {
       await this.#state.$disconnect();
     }

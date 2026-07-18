@@ -3,10 +3,23 @@ import {getColIconByType} from "./col";
 import {escapeHtml} from "../../../util/escape";
 import {setPosition} from "../../../util/setPosition";
 import {getFieldsByData} from "./view";
-import {fetchSyncPost} from "../../../util/fetch";
 import {Menu} from "../../../plugin/Menu";
 import {objEquals} from "../../../util/functions";
 import {Constants} from "../../../constants";
+import {protyleContentIdentity} from "../../util/contentLoad";
+
+const setAttrViewGroup = (protyle: IProtyle, blockID: string, avID: string, group: IAVGroup) => {
+    const identity = protyleContentIdentity(protyle);
+    return protyle.transport!.request<IWebSocketData>("/api/av/setAttrViewGroup", {
+        blockID,
+        avID,
+        group,
+    }, {
+        identity,
+        intent: "write",
+        signal: protyle.requestSignal,
+    });
+};
 
 export const getPageSize = (blockElement: Element) => {
     const groupPageSize: {
@@ -47,11 +60,8 @@ export const setGroupMethod = async (options: {
         } : null,
         hideEmpty: true,
     } : {field: null, method: null, order: null, range: null, hideEmpty: null};
-    const response = await fetchSyncPost("/api/av/setAttrViewGroup", {
-        blockID,
-        avID: options.blockElement.getAttribute("data-av-id"),
-        group: data
-    });
+    const response = await setAttrViewGroup(options.protyle, blockID,
+        options.blockElement.getAttribute("data-av-id"), data);
     options.data.view = response.data.view;
     options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
     bindGroupsEvent({
@@ -173,11 +183,8 @@ export const bindGroupsNumber = (options: {
             return;
         }
         Object.assign(options.data.view.group.range, range);
-        const response = await fetchSyncPost("/api/av/setAttrViewGroup", {
-            blockID,
-            avID: options.blockElement.getAttribute("data-av-id"),
-            group: options.data.view.group
-        });
+        const response = await setAttrViewGroup(options.protyle, blockID,
+            options.blockElement.getAttribute("data-av-id"), options.data.view.group);
         options.data.view = response.data.view;
     };
 };
@@ -280,11 +287,8 @@ export const bindGroupsEvent = (options: {
     const blockID = options.blockElement.getAttribute("data-node-id");
     checkElement.addEventListener("change", async () => {
         options.data.view.group.hideEmpty = checkElement.checked;
-        const response = await fetchSyncPost("/api/av/setAttrViewGroup", {
-            blockID,
-            avID: options.blockElement.getAttribute("data-av-id"),
-            group: options.data.view.group
-        });
+        const response = await setAttrViewGroup(options.protyle, blockID,
+            options.blockElement.getAttribute("data-av-id"), options.data.view.group);
         options.data.view = response.data.view;
         options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
         bindGroupsEvent({
@@ -319,11 +323,8 @@ export const goGroupsDate = (options: {
             async click() {
                 options.data.view.group.method = item;
                 options.target.querySelector(".b3-menu__accelerator").textContent = label;
-                const response = await fetchSyncPost("/api/av/setAttrViewGroup", {
-                    blockID,
-                    avID: options.blockElement.getAttribute("data-av-id"),
-                    group: options.data.view.group
-                });
+                const response = await setAttrViewGroup(options.protyle, blockID,
+                    options.blockElement.getAttribute("data-av-id"), options.data.view.group);
                 options.data.view = response.data.view;
                 options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
                 bindGroupsEvent({
@@ -369,11 +370,8 @@ export const goGroupsSort = (options: {
             async click() {
                 options.target.querySelector(".b3-menu__accelerator").textContent = label;
                 options.data.view.group.order = item;
-                const response = await fetchSyncPost("/api/av/setAttrViewGroup", {
-                    blockID,
-                    avID: options.blockElement.getAttribute("data-av-id"),
-                    group: options.data.view.group
-                });
+                const response = await setAttrViewGroup(options.protyle, blockID,
+                    options.blockElement.getAttribute("data-av-id"), options.data.view.group);
                 options.data.view = response.data.view;
                 options.menuElement.innerHTML = getGroupsHTML(getFieldsByData(options.data), options.data.view);
                 bindGroupsEvent({

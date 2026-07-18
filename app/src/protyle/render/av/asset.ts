@@ -5,16 +5,14 @@ import {getSearch, isMobile} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {uploadFiles} from "../../upload";
 import {isLocalPath, pathPosix} from "../../../util/pathName";
-import {MenuItem} from "../../../menus/Menu";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "../../../menus/util";
 import {setPosition} from "../../../util/setPosition";
 import {previewAttrViewImages} from "../../preview/image";
 import {genAVValueHTML} from "./blockAttr";
 import {hideMessage, showMessage} from "../../../dialog/message";
-import {fetchPost} from "../../../util/fetch";
 import {hasClosestBlock} from "../../util/hasClosest";
 import {genCellValueByElement, getTypeByCellElement} from "./cell";
-import {writeText} from "../../util/compatibility";
+import {writeText} from "../../util/clipboard";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {renameAsset} from "../../../editor/rename";
 import * as dayjs from "dayjs";
@@ -23,6 +21,8 @@ import {getFieldIdByCellElement} from "./row";
 import {base64ToURL, getCompressURL, removeCompressURL} from "../../../util/image";
 import {confirmDialog} from "../../../dialog/confirmDialog";
 import {filesize} from "filesize";
+import {protyleContentIdentity} from "../../util/contentLoad";
+import {closeAVOverlay, currentAVOverlay} from "./overlay";
 
 export const bindAssetEvent = (options: {
     protyle: IProtyle,
@@ -161,7 +161,7 @@ export const updateAssetCell = (options: {
             data: oldValue
         });
         if (item.classList.contains("custom-attr__avvalue")) {
-            item.innerHTML = genAVValueHTML(cellValue);
+            item.innerHTML = genAVValueHTML(cellValue, options.protyle.settings.icons.file);
         } else {
             updateAttrViewCellAnimation(item, cellValue);
         }
@@ -172,7 +172,7 @@ export const updateAssetCell = (options: {
         data: dayjs().format("YYYYMMDDHHmmss"),
     });
     transaction(options.protyle, cellDoOperations, cellUndoOperations);
-    const menuElement = document.querySelector(".av__panel > .b3-menu") as HTMLElement;
+    const menuElement = currentAVOverlay(options.protyle, "panel")?.lastElementChild as HTMLElement;
     if (menuElement) {
         menuElement.innerHTML = getAssetHTML(options.cellElements);
         bindAssetEvent({
@@ -333,7 +333,7 @@ export const editAssetItem = (options: {
             icon: "iconEdit",
             click() {
                 renameAsset(decodeURI(linkAddress));
-                document.querySelector(".av__panel")?.remove();
+                closeAVOverlay(options.protyle, "panel");
             }
         });
     }
@@ -351,6 +351,7 @@ export const editAssetItem = (options: {
                 label: window.siyuan.languages.insertRight,
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
+                    documentId: options.protyle.block.rootID,
                     notebookId: options.protyle.notebookId,
                     assetPath,
                     page,
@@ -362,6 +363,7 @@ export const editAssetItem = (options: {
                 label: window.siyuan.languages.openBy,
                 click: () => options.protyle.host.dispatch({
                     type: "open-asset",
+                    documentId: options.protyle.block.rootID,
                     notebookId: options.protyle.notebookId,
                     assetPath,
                     page,
@@ -387,6 +389,7 @@ export const editAssetItem = (options: {
             label: window.siyuan.languages.cardPreview,
             click() {
                 previewAttrViewImages(
+                    options.protyle,
                     linkAddress,
                     options.blockElement.getAttribute("data-av-id"),
                     options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
@@ -396,16 +399,16 @@ export const editAssetItem = (options: {
         });
     }
     if (openSubMenu.length > 0) {
-        window.siyuan.menus.menu.append(new MenuItem({
+        menu.addItem({
             id: "openBy",
             label: window.siyuan.languages.openBy,
             icon: "iconOpen",
             submenu: openSubMenu
-        }).element);
+        });
     }
     if (linkAddress?.startsWith("assets/")) {
-        window.siyuan.menus.menu.append(new MenuItem(exportAsset(decodeURI(linkAddress))).element);
-        window.siyuan.menus.menu.append(new MenuItem(writeAssetToClipboard(decodeURI(linkAddress))).element);
+        menu.addItem(exportAsset(decodeURI(linkAddress)));
+        menu.addItem(writeAssetToClipboard(decodeURI(linkAddress)));
     }
     const rect = options.rect;
     menu.open({
@@ -474,14 +477,22 @@ export const dragUpload = (files: ILocalFiles[], protyle: IProtyle, cellElement:
 
     confirmDialog(msg ? window.siyuan.languages.upload : "", msg, () => {
         const msgId = showMessage(window.siyuan.languages.uploading, 0);
-        fetchPost("/api/asset/insertLocalAssets", {
+        const identity = protyleContentIdentity(protyle);
+        void protyle.transport!.request<IWebSocketData>("/api/asset/insertLocalAssets", {
             assetPaths,
             isUpload: true,
             id: protyle.block.rootID
-        }, (response) => {
+        }, {
+            identity,
+            intent: "write",
+            signal: protyle.requestSignal,
+        }).then((response) => {
+            hideMessage(msgId);
+            if (protyle.requestSignal.aborted || protyle.destroyed || !cellElement.isConnected) {
+                return;
+            }
             const blockElement = hasClosestBlock(cellElement);
             if (blockElement) {
-                hideMessage(msgId);
                 const addValue: IAVCellAssetValue[] = [];
                 Object.keys(response.data.succMap).forEach(key => {
                     const type = pathPosix().extname(key).toLowerCase();
@@ -505,6 +516,15 @@ export const dragUpload = (files: ILocalFiles[], protyle: IProtyle, cellElement:
                     blockElement,
                     cellElements: [cellElement],
                     addValue
+                });
+            }
+        }).catch((error) => {
+            hideMessage(msgId);
+            if (!protyle.requestSignal.aborted) {
+                console.error("[protyle.transport] local asset insertion failed", {
+                    documentId: identity.documentId,
+                    notebookId: identity.notebookId,
+                    error,
                 });
             }
         });

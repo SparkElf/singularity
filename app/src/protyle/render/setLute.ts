@@ -1,17 +1,17 @@
-// Lute 配置全部读取全局 window.siyuan.config / window.siyuan.emojis，跨编辑器一致，
-// 因此所有 Protyle 编辑器共用同一个 Lute 实例，将内存与初始化开销从 O(编辑器数) 降为 O(1)。
+import {preserveBlockRefNotebookIDs} from "../util/blockRefIdentity";
+
+// Lute 配置由显式应用 settings 提供，跨编辑器共享同一应用实例的 Lute。
 // AgentChat 不复用此共享单例，而是通过 getAgentLute 构建独立实例，使渲染不受编辑器设置影响。
 let luteInstance: Lute | undefined;
 
 /**
  * 获取（首次调用时创建）共享 Lute 单例。
  *
- * 仅在首次创建时应用 options，后续调用直接返回已缓存的实例 ——
- * Lute 配置本就源于全局 config，跨编辑器一致，无需按编辑器区分。
+ * 仅在首次创建时应用 options/settings，后续调用直接返回已缓存的实例。
  */
-export const getLute = (options: ILuteOptions): Lute => {
+export const getLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPort): Lute => {
     if (!luteInstance) {
-        luteInstance = setLute(options);
+        luteInstance = setLute(options, settings);
     }
     return luteInstance;
 };
@@ -27,7 +27,7 @@ export const getLuteInstance = (): Lute | undefined => {
 /**
  * 为智能体（AgentChat）构建独立的 Lute 实例。
  *
- * 与共享单例不同：不读取 window.siyuan.config.editor.markdown 的语法开关，
+ * 与共享单例不同：不读取应用编辑器 settings 的语法开关，
  * 而是把所有 Markdown 行内语法（斜体/粗体/删除线/上下标/标签/行内公式/标记）硬编码启用，
  * 使 LLM 输出始终按标准 Markdown 渲染，不受用户「编辑器 → Markdown 语法设置」的影响。
  * 每次调用都返回新实例，与编辑器渲染相互隔离。
@@ -83,12 +83,14 @@ export const getAgentLute = (options: ILuteOptions): Lute => {
 };
 
 /**
- * 根据全局配置与传入选项构建一个新的 Lute 实例，供共享单例初始化使用。
+ * 根据显式应用 settings 与传入选项构建一个新的 Lute 实例，供共享单例初始化使用。
  */
-const setLute = (options: ILuteOptions) => {
+const setLute = (options: ILuteOptions, settings: TProtyleApplicationSettingsPort) => {
     const lute: Lute = Lute.New();
-    lute.SetSpellcheck(window.siyuan.config.editor.spellcheck);
-    lute.SetProtyleMarkNetImg(window.siyuan.config.editor.displayNetImgMark);
+    const spinBlockDOM = lute.SpinBlockDOM.bind(lute);
+    lute.SpinBlockDOM = (html: string) => preserveBlockRefNotebookIDs(html, spinBlockDOM(html));
+    lute.SetSpellcheck(settings.editor.spellcheck);
+    lute.SetProtyleMarkNetImg(settings.editor.displayNetImgMark);
     lute.SetFileAnnotationRef(true);
     lute.SetHTMLTag2TextMark(true);
     lute.SetTextMark(true);
@@ -112,24 +114,25 @@ const setLute = (options: ILuteOptions) => {
     lute.SetTag(true);
     lute.SetSuperBlock(true);
     lute.SetCallout(true);
-    lute.SetInlineAsterisk(window.siyuan.config.editor.markdown.inlineAsterisk);
-    lute.SetInlineUnderscore(window.siyuan.config.editor.markdown.inlineUnderscore);
-    lute.SetSup(window.siyuan.config.editor.markdown.inlineSup);
-    lute.SetSub(window.siyuan.config.editor.markdown.inlineSub);
-    lute.SetTag(window.siyuan.config.editor.markdown.inlineTag);
-    lute.SetInlineMath(window.siyuan.config.editor.markdown.inlineMath);
+    lute.SetInlineAsterisk(settings.editor.markdown.inlineAsterisk);
+    lute.SetInlineUnderscore(settings.editor.markdown.inlineUnderscore);
+    lute.SetSup(settings.editor.markdown.inlineSup);
+    lute.SetSub(settings.editor.markdown.inlineSub);
+    lute.SetTag(settings.editor.markdown.inlineTag);
+    lute.SetInlineMath(settings.editor.markdown.inlineMath);
     lute.SetGFMStrikethrough1(false);
-    lute.SetGFMStrikethrough(window.siyuan.config.editor.markdown.inlineStrikethrough);
-    lute.SetMark(window.siyuan.config.editor.markdown.inlineMark);
+    lute.SetGFMStrikethrough(settings.editor.markdown.inlineStrikethrough);
+    lute.SetMark(settings.editor.markdown.inlineMark);
     lute.SetSpin(true);
     lute.SetProtyleWYSIWYG(true);
     if (options.lazyLoadImage) {
         lute.SetImageLazyLoading(options.lazyLoadImage);
     }
     lute.SetBlockRef(true);
-    if (window.siyuan.emojis[0].items.length > 0) {
+    const customEmojis = settings.emojis[0]?.items;
+    if (customEmojis && customEmojis.length > 0) {
         const emojis: IObject = {};
-        window.siyuan.emojis[0].items.forEach(item => {
+        customEmojis.forEach(item => {
             emojis[item.keywords] = options.emojiSite + "/" + item.unicode;
         });
         lute.PutEmojis(emojis);

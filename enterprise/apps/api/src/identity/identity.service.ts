@@ -1,13 +1,15 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
 
+import { AuditWriter } from "../audit/audit-writer.service.js";
+import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { forbidden, unauthenticated } from "../problem.js";
 import type { Clock } from "./clock.js";
+import { CLOCK } from "../tokens.js";
 import { LoginRateLimiter } from "./login-rate-limiter.js";
 import { KdfAdmissionError, PasswordHasher } from "./password-hasher.js";
 import {
   createSessionToken,
-  isMatchingDigest,
   isMatchingOpaqueToken,
   SESSION_ABSOLUTE_MILLISECONDS,
   SESSION_IDLE_MILLISECONDS,
@@ -26,7 +28,7 @@ export interface LoginResult extends AuthenticatedSession {
 
 interface RenewedSessionRow {
   authSessionId: string;
-  csrfDigest: string;
+  expiresAt: Date;
   userId: string;
 }
 
@@ -44,7 +46,10 @@ export class IdentityService {
     private readonly database: DatabaseRuntime,
     private readonly passwordHasher: PasswordHasher,
     private readonly loginRateLimiter: LoginRateLimiter,
+    @Inject(CLOCK)
     private readonly clock: Clock,
+    private readonly accessChanges: AccessChangedPublisher,
+    private readonly audit: AuditWriter,
   ) {}
 
   hashPassword(password: string): Promise<string> {
@@ -71,7 +76,7 @@ export class IdentityService {
 
     let passwordMatches = false;
     try {
-      if (candidate === null) {
+      if (candidate === null || candidate.passwordDigest === null) {
         await this.passwordHasher.verifyDummy(input.password);
       } else {
         passwordMatches = await this.passwordHasher.verifyPassword(
@@ -104,6 +109,19 @@ export class IdentityService {
       throw unauthenticated();
     }
 
+    return this.issueSessionForUser({
+      currentTokenValue: input.currentTokenValue,
+      requestId: input.requestId,
+      userId: candidate.id,
+    });
+  }
+
+  async issueSessionForUser(input: {
+    currentTokenValue: string | undefined;
+    requestId: string;
+    userId: string;
+  }): Promise<LoginResult> {
+    const database = this.database.client;
     const now = this.clock.now();
     const absoluteExpiresAt = new Date(
       now.getTime() + SESSION_ABSOLUTE_MILLISECONDS,
@@ -119,11 +137,11 @@ export class IdentityService {
         ? null
         : await database.authSession.findUnique({
             where: { tokenDigest: currentSession.tokenDigest },
-            select: { userId: true },
+            select: { id: true, userId: true },
           });
 
     const issued = await database.$transaction(async (transaction) => {
-      const userIds = [...new Set([candidate.id, currentOwner?.userId])]
+      const userIds = [...new Set([input.userId, currentOwner?.userId])]
         .filter((value): value is string => value !== undefined)
         .sort();
       await transaction.$queryRaw(
@@ -132,7 +150,7 @@ export class IdentityService {
         )}) ORDER BY "id" FOR UPDATE`,
       );
       const lockedUser = await transaction.user.findUnique({
-        where: { id: candidate.id },
+        where: { id: input.userId },
         select: { status: true },
       });
       if (lockedUser?.status !== "active") {
@@ -150,6 +168,14 @@ export class IdentityService {
           data: { revokedAt: now },
         });
         rotated = revoked.count > 0;
+        if (rotated) {
+          await this.accessChanges.publish(transaction, {
+            kind: "close",
+            reason: "unauthenticated",
+            requestId: input.requestId,
+            selectors: [{ kind: "auth-session", value: currentOwner.id }],
+          });
+        }
       }
 
       const created = await transaction.authSession.create({
@@ -158,10 +184,32 @@ export class IdentityService {
           csrfDigest: newSession.csrfDigest,
           idleExpiresAt,
           tokenDigest: newSession.tokenDigest,
-          userId: candidate.id,
+          userId: input.userId,
         },
         select: { id: true, userId: true },
       });
+      const memberships = await transaction.organizationMembership.findMany({
+        where: {
+          status: "active",
+          userId: input.userId,
+          organization: { status: "active" },
+        },
+        orderBy: { organizationId: "asc" },
+        select: { organizationId: true },
+      });
+      for (const membership of memberships) {
+        await this.audit.append(transaction, {
+          action: "authentication.login",
+          actorUserId: input.userId,
+          occurredAt: now,
+          organizationId: membership.organizationId,
+          outcome: "succeeded",
+          requestId: input.requestId,
+          spaceId: null,
+          targetId: created.id,
+          targetType: "session",
+        });
+      }
       return { created, rotated };
     });
 
@@ -236,8 +284,9 @@ export class IdentityService {
     const nextIdleExpiresAt = new Date(
       now.getTime() + SESSION_IDLE_MILLISECONDS,
     );
-    const rows = await this.database.client.$queryRaw<RenewedSessionRow[]>(
-      Prisma.sql`
+    const rows = await this.database.client.$transaction(async (transaction) => {
+      const renewedRows = await transaction.$queryRaw<RenewedSessionRow[]>(
+        Prisma.sql`
         WITH candidate_session AS MATERIALIZED (
           SELECT "user_id"
           FROM "auth_sessions"
@@ -263,14 +312,21 @@ export class IdentityService {
         RETURNING
           session."id" AS "authSessionId",
           session."user_id" AS "userId",
-          session."csrf_digest" AS "csrfDigest"
+          session."idle_expires_at" AS "expiresAt"
       `,
-    );
+      );
+      const renewed = renewedRows[0];
+      if (renewed !== undefined) {
+        await this.accessChanges.refreshSessionExpiry(transaction, {
+          authSessionId: renewed.authSessionId,
+          expiresAt: renewed.expiresAt,
+          requestId,
+        });
+      }
+      return renewedRows;
+    });
     const renewed = rows[0];
-    if (
-      renewed === undefined ||
-      !isMatchingDigest(renewed.csrfDigest, token.csrfDigest)
-    ) {
+    if (renewed === undefined) {
       this.#logUnauthenticated(requestId);
       throw unauthenticated();
     }
@@ -297,6 +353,12 @@ export class IdentityService {
       await transaction.authSession.updateMany({
         where: { id: session.authSessionId, userId: session.userId },
         data: { revokedAt: now },
+      });
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "unauthenticated",
+        requestId,
+        selectors: [{ kind: "auth-session", value: session.authSessionId }],
       });
     });
     this.#logger.log({
@@ -346,6 +408,7 @@ export class IdentityService {
     transaction: Prisma.TransactionClient,
     userId: string,
     now: Date,
+    requestId: string,
   ): Promise<IdentityTransactionResult> {
     const user = await transaction.user.findUnique({
       where: { id: userId },
@@ -375,6 +438,12 @@ export class IdentityService {
       where: { userId, revokedAt: null },
       data: { revokedAt: now },
     });
+    await this.accessChanges.publish(transaction, {
+      kind: "close",
+      reason: "unauthenticated",
+      requestId,
+      selectors: [{ kind: "user", value: userId }],
+    });
     return "updated";
   }
 
@@ -382,6 +451,7 @@ export class IdentityService {
     transaction: Prisma.TransactionClient,
     userId: string,
     now: Date,
+    requestId: string,
   ): Promise<IdentityTransactionResult> {
     const user = await transaction.user.findUnique({
       where: { id: userId },
@@ -396,6 +466,12 @@ export class IdentityService {
     await transaction.authSession.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: now },
+    });
+    await this.accessChanges.publish(transaction, {
+      kind: "close",
+      reason: "unauthenticated",
+      requestId,
+      selectors: [{ kind: "user", value: userId }],
     });
     return "revoked";
   }

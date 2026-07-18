@@ -24,14 +24,19 @@
     "@nestjs/platform-fastify": "11.1.28",
     "@nestjs/swagger": "11.4.5",
     "@node-rs/argon2": "2.0.2",
+    "@singularity/authorization": "workspace:*",
     "@singularity/contracts": "workspace:*",
     "@singularity/database": "workspace:*",
+    "@singularity/kernel-client": "workspace:*",
     "rate-limiter-flexible": "11.2.0",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "ws": "8.21.1",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "@types/ws": "8.18.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

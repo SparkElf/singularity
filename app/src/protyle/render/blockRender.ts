@@ -1,15 +1,152 @@
 import {hasClosestByAttribute} from "../util/hasClosest";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {processRender} from "../util/processCode";
-import {highlightRender} from "./highlightRender";
+import {protyleContentIdentity} from "../util/contentLoad";
 import {genBreadcrumb, improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
 import {avRender} from "./av/render";
-import {genRenderFrame} from "./util";
-import {isEncryptedBox} from "../../util/pathName";
+import {genEmbedRenderFrame} from "./embedFrame";
+import {highlightRender} from "./highlightRender";
 
-/**
- * 渲染嵌入块
- */
+interface EmbedBlockResult {
+    readonly block: IBlock & {readonly box: string; readonly id: string};
+    readonly blockPaths: IBreadcrumb[];
+}
+
+interface EmbedBlockResponse {
+    readonly data: {
+        readonly blocks: EmbedBlockResult[];
+    };
+}
+
+interface EmbedLoad {
+    readonly signal: AbortSignal;
+    isCurrent: () => boolean;
+}
+
+type EmbedScriptRequest = <TResponse = IWebSocketData>(path: string, body?: unknown) => Promise<TResponse>;
+
+const embedLoads = new WeakMap<HTMLElement, {controller: AbortController}>();
+
+const beginEmbedLoad = (protyle: IProtyle, item: HTMLElement): EmbedLoad => {
+    embedLoads.get(item)?.controller.abort();
+    const state = {controller: new AbortController()};
+    embedLoads.set(item, state);
+    const signal = AbortSignal.any([protyle.requestSignal, state.controller.signal]);
+    return {
+        signal,
+        isCurrent: () => embedLoads.get(item) === state &&
+            !signal.aborted &&
+            !protyle.destroyed &&
+            protyle.element.contains(item),
+    };
+};
+
+const requestEmbed = <TResponse>(
+    protyle: IProtyle,
+    load: EmbedLoad,
+    path: string,
+    body?: unknown,
+) => {
+    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    return runtime.transport.request<TResponse>(path, body, {
+        identity: protyleContentIdentity(protyle),
+        intent: "read",
+        signal: load.signal,
+    });
+};
+
+const renderFrame = (protyle: IProtyle, item: HTMLElement) => {
+    genEmbedRenderFrame(item, {
+        more: protyle.localization.text("more"),
+        refPopover: protyle.localization.text("refPopover"),
+        refresh: protyle.localization.text("refresh"),
+        update: protyle.localization.text("update"),
+    });
+};
+
+const headingMode = (protyle: IProtyle, item: HTMLElement) => {
+    const customMode = item.getAttribute("custom-heading-mode");
+    return customMode === "0" || customMode === "1" || customMode === "2" ?
+        Number.parseInt(customMode, 10) : protyle.settings.editor.headingEmbedMode;
+};
+
+const showBreadcrumb = (protyle: IProtyle, item: HTMLElement) => {
+    const attribute = item.getAttribute("breadcrumb");
+    return attribute ? attribute === "true" : protyle.settings.editor.embedBlockBreadcrumb;
+};
+
+const scriptRequest = (protyle: IProtyle, load: EmbedLoad): EmbedScriptRequest =>
+    <TResponse>(path: string, body?: unknown) => requestEmbed<TResponse>(protyle, load, path, body);
+
+const runEmbedScript = async (
+    protyle: IProtyle,
+    item: HTMLElement,
+    content: string,
+    load: EmbedLoad,
+    top?: number,
+) => {
+    const identity = protyleContentIdentity(protyle);
+    const context = Object.freeze({
+        documentId: identity.documentId,
+        notebookId: identity.notebookId,
+        spaceId: protyle.session!.spaceId,
+    });
+    const execute = new Function("request", "item", "context", "top", content) as (
+        request: EmbedScriptRequest,
+        item: HTMLElement,
+        context: typeof context,
+        top?: number,
+    ) => unknown;
+    return await execute(scriptRequest(protyle, load), item, context, top);
+};
+
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const renderBlockQuery = async (protyle: IProtyle, item: HTMLElement, top?: number) => {
+    const load = beginEmbedLoad(protyle, item);
+    const content = Lute.UnEscapeHTMLStr(item.getAttribute("data-content"));
+    const embedBlockID = item.getAttribute("data-node-id");
+    const breadcrumb = showBreadcrumb(protyle, item);
+    try {
+        let response: EmbedBlockResponse;
+        if (content.startsWith("//!js")) {
+            const includeIDs = await runEmbedScript(protyle, item, content, load, top);
+            if (!load.isCurrent() || !Array.isArray(includeIDs)) {
+                return;
+            }
+            response = await requestEmbed<EmbedBlockResponse>(protyle, load, "/api/search/getEmbedBlock", {
+                breadcrumb,
+                embedBlockID,
+                headingMode: headingMode(protyle, item),
+                includeIDs,
+            });
+        } else {
+            const identity = protyleContentIdentity(protyle);
+            response = await requestEmbed<EmbedBlockResponse>(protyle, load, "/api/search/searchEmbedBlock", {
+                breadcrumb,
+                embedBlockID,
+                excludeIDs: [embedBlockID, identity.documentId],
+                headingMode: headingMode(protyle, item),
+                stmt: content,
+            });
+        }
+        if (!load.isCurrent()) {
+            return;
+        }
+        renderEmbed(response.data.blocks, protyle, item, top);
+    } catch (error) {
+        if (!load.isCurrent()) {
+            return;
+        }
+        console.error("[protyle.transport] block embed request failed", {
+            documentId: protyleContentIdentity(protyle).documentId,
+            embedBlockID,
+            error,
+        });
+        renderEmbed([], protyle, item, top, errorMessage(error));
+    }
+};
+
+/** Render block query embeds through the bound Session transport. */
 export const blockRender = (protyle: IProtyle, element: Element, top?: number) => {
     let blockElements: Element[] = [];
     if (element.getAttribute("data-type") === "NodeBlockQueryEmbed" && element.getAttribute("data-render") !== "true") {
@@ -17,15 +154,12 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number) =
     } else {
         blockElements = Array.from(element.querySelectorAll('[data-type="NodeBlockQueryEmbed"]:not([data-render="true"])'));
     }
-    if (blockElements.length === 0) {
-        return;
-    }
     blockElements.forEach((item: HTMLElement) => {
-        // 需置于请求返回前，否则快速滚动会导致重复加载 https://ld246.com/article/1666857862494?r=88250
+        // Mark before issuing the request so rapid scrolling cannot enqueue the same embed twice.
         item.setAttribute("data-render", "true");
-        genRenderFrame(item);
+        renderFrame(protyle, item);
         if (item.childElementCount > 3) {
-            item.style.height = (item.clientHeight - 4) + "px"; // 减少抖动 https://ld246.com/article/1668669380171
+            item.style.height = (item.clientHeight - 4) + "px";
             for (let i = 1; i < item.children.length - 1; i++) {
                 if (!item.children[i].classList.contains("protyle-cursor")) {
                     item.children[i].remove();
@@ -33,104 +167,29 @@ export const blockRender = (protyle: IProtyle, element: Element, top?: number) =
                 }
             }
         }
-        const content = Lute.UnEscapeHTMLStr(item.getAttribute("data-content"));
-        let breadcrumb: boolean | string = item.getAttribute("breadcrumb");
-        if (breadcrumb) {
-            breadcrumb = breadcrumb === "true";
-        } else {
-            breadcrumb = window.siyuan.config.editor.embedBlockBreadcrumb;
-        }
-
-        if (content.startsWith("//!js")) {
-            try {
-                const includeIDs = new Function(
-                    "fetchSyncPost",
-                    "item",
-                    "protyle",
-                    "top",
-                    content)(fetchSyncPost, item, protyle, top);
-                if (includeIDs instanceof Promise) {
-                    includeIDs.then((promiseIds) => {
-                        if (Array.isArray(promiseIds)) {
-                            const params: Record<string, unknown> = {
-                                embedBlockID: item.getAttribute("data-node-id"),
-                                includeIDs: promiseIds,
-                                headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
-                                breadcrumb
-                            };
-                            if (isEncryptedBox(protyle.notebookId)) {
-                                params.notebook = protyle.notebookId;
-                            }
-                            fetchPost("/api/search/getEmbedBlock", params, (response) => {
-                                renderEmbed(response.data.blocks || [], protyle, item, top);
-                            });
-                        } else {
-                            return;
-                        }
-                    }).catch((e) => {
-                        renderEmbed([], protyle, item, top, e);
-                    });
-                } else if (Array.isArray(includeIDs)) {
-                    const params: Record<string, unknown> = {
-                        embedBlockID: item.getAttribute("data-node-id"),
-                        includeIDs,
-                        headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
-                        breadcrumb
-                    };
-                    if (isEncryptedBox(protyle.notebookId)) {
-                        params.notebook = protyle.notebookId;
-                    }
-                    fetchPost("/api/search/getEmbedBlock", params, (response) => {
-                        renderEmbed(response.data.blocks || [], protyle, item, top);
-                    });
-                } else {
-                    return;
-                }
-            } catch (e) {
-                renderEmbed([], protyle, item, top, e);
-            }
-        } else {
-            const params: Record<string, unknown> = {
-                embedBlockID: item.getAttribute("data-node-id"),
-                stmt: content,
-                headingMode: ["0", "1", "2"].includes(item.getAttribute("custom-heading-mode")) ? parseInt(item.getAttribute("custom-heading-mode")) : window.siyuan.config.editor.headingEmbedMode,
-                excludeIDs: [item.getAttribute("data-node-id"), protyle.block.rootID],
-                breadcrumb
-            };
-            if (isEncryptedBox(protyle.notebookId)) {
-                params.notebook = protyle.notebookId;
-            }
-            fetchPost("/api/search/searchEmbedBlock", params, (response) => {
-                renderEmbed(response.data.blocks, protyle, item, top);
-            });
-        }
+        void renderBlockQuery(protyle, item, top);
     });
 };
 
-const renderEmbed = (blocks: {
-    block: IBlock,
-    blockPaths: IBreadcrumb[]
-}[], protyle: IProtyle, item: HTMLElement, top?: number, errorTip?: string) => {
-    const rotateElement = item.querySelector(".fn__rotate");
-    if (rotateElement) {
-        rotateElement.classList.remove("fn__rotate");
-    }
+const renderEmbed = (
+    blocks: EmbedBlockResult[],
+    protyle: IProtyle,
+    item: HTMLElement,
+    top?: number,
+    errorTip?: string,
+) => {
+    item.querySelector(".fn__rotate")?.classList.remove("fn__rotate");
     let html = "";
     blocks.forEach((blocksItem, index) => {
-        let breadcrumbHTML = "";
-        if (blocksItem.blockPaths.length !== 0) {
-            breadcrumbHTML = genBreadcrumb(blocksItem.blockPaths, true);
-        }
+        const breadcrumbHTML = blocksItem.blockPaths.length === 0 ? "" : genBreadcrumb(blocksItem.blockPaths, true);
         let popover = "";
         if (index !== 0) {
-            popover = `<div class="protyle-icons"><span data-id="${blocksItem.block.id}" data-action="openFloat" aria-label="${window.siyuan.languages.refPopover}" data-position="4north" class="ariaLabel protyle-icon protyle-icon--last protyle-icon--first"><svg><use xlink:href="#iconPictureInPicture"></use></svg></span></div>`;
+            popover = `<div class="protyle-icons"><span data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}" data-action="openFloat" aria-label="${protyle.localization.text("refPopover")}" data-position="4north" class="ariaLabel protyle-icon protyle-icon--last protyle-icon--first"><svg><use xlink:href="#iconPictureInPicture"></use></svg></span></div>`;
         } else {
-            const popoverElement = item.querySelectorAll(".protyle-icon")[2];
-            if (popoverElement) {
-                popoverElement.setAttribute("data-id", blocksItem.block.id);
-            }
+            item.querySelectorAll(".protyle-icon")[2]?.setAttribute("data-id", blocksItem.block.id);
+            item.querySelectorAll(".protyle-icon")[2]?.setAttribute("data-notebook-id", blocksItem.block.box);
         }
-        html += `<div class="protyle-wysiwyg__embed" data-id="${blocksItem.block.id}">
+        html += `<div class="protyle-wysiwyg__embed" data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}">
 ${popover}${breadcrumbHTML}${blocksItem.block.content}
 </div>`;
     });
@@ -138,14 +197,17 @@ ${popover}${breadcrumbHTML}${blocksItem.block.content}
         item.firstElementChild.insertAdjacentHTML("afterend", html);
         improveBreadcrumbAppearance(item.querySelector(".protyle-wysiwyg__embed"));
     } else {
-        item.firstElementChild.insertAdjacentHTML("afterend", `<div class="protyle-wysiwyg__embed ft__smaller ft__secondary b3-form__space--small" contenteditable="false">${errorTip || window.siyuan.languages.refExpired}</div>`);
+        const emptyElement = document.createElement("div");
+        emptyElement.className = "protyle-wysiwyg__embed ft__smaller ft__secondary b3-form__space--small";
+        emptyElement.contentEditable = "false";
+        emptyElement.textContent = errorTip || protyle.localization.text("refExpired");
+        item.firstElementChild.after(emptyElement);
     }
 
-    processRender(item);
-    highlightRender(item);
+    processRender(item, protyle);
+    highlightRender(item, protyle);
     avRender(item, protyle);
     if (top) {
-        // 前进后退定位 https://ld246.com/article/1667652729995
         protyle.contentElement.scrollTop = top;
     }
     let maxDeep = 0;
@@ -155,7 +217,7 @@ ${popover}${breadcrumbHTML}${blocksItem.block.content}
         maxDeep++;
     }
     if (maxDeep < 4) {
-        item.querySelectorAll('[data-type="NodeBlockQueryEmbed"]').forEach(embedElement => {
+        item.querySelectorAll('[data-type="NodeBlockQueryEmbed"]').forEach((embedElement) => {
             blockRender(protyle, embedElement);
         });
     }

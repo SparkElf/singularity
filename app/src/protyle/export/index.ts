@@ -3,7 +3,8 @@ import {Constants} from "../../constants";
 import {confirmDialog} from "../../dialog/confirmDialog";
 import {getThemeMode, setInlineStyle} from "../../util/assets";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
-import {getScreenWidth, isInMobileApp, saveExportFile} from "../util/compatibility";
+import {getViewportWidth, isNarrowViewport} from "../util/browserPlatform";
+import {downloadExportFile} from "../util/download";
 import {getFrontend} from "../../util/functions";
 import {isEncryptedBox} from "../../util/pathName";
 
@@ -58,7 +59,7 @@ export const saveExport = (option: IExportOptions) => {
                 }
                 return;
             }
-            saveExportFile(zipResponse.data.zip, msgId);
+            downloadExportFile(zipResponse.data.zip);
         } catch (error) {
             showMessage(error instanceof Error ? error.message : String(error), 0, "error");
         } finally {
@@ -112,8 +113,8 @@ export const onExport = async (data: IWebSocketData, filePath: string, servePath
     if (!isDefault) {
         themeStyle = `<link rel="stylesheet" type="text/css" id="themeStyle" href="${servePath}appearance/themes/${themeName}/theme.css?${Constants.SIYUAN_VERSION}"/>`;
     }
-    const screenWidth = getScreenWidth();
-    const isInMobile = isInMobileApp();
+    const screenWidth = getViewportWidth();
+    const isInMobile = isNarrowViewport();
     const mobileHtml = isInMobile ? {
         js: `document.body.style.minWidth = "${screenWidth}px";`,
         css: `@page { size: A4; margin: 10mm 0 10mm 0; background-color: var(--b3-theme-background); }
@@ -162,7 +163,12 @@ ${getIconScript(servePath)}
           katexMacros: decodeURI(\`${encodeURI(window.siyuan.config.editor.katexMacros)}\`),
         }
       },
-      languages: {copy:"${window.siyuan.languages.copy}"}
+      languages: {
+        copy: "${window.siyuan.languages.copy}",
+        edit: "${window.siyuan.languages.edit}",
+        more: "${window.siyuan.languages.more}",
+        refresh: "${window.siyuan.languages.refresh}"
+      }
     };
     const previewElement = document.getElementById('preview');
     Protyle.highlightRender(previewElement, "stage/protyle");

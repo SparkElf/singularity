@@ -142,7 +142,7 @@ func (tx *Transaction) doUnfoldHeading(operation *Operation) (ret *TxErr) {
 	// 展开折叠的标题后显示块引用计数 Display reference counts after unfolding headings https://github.com/siyuan-note/siyuan/issues/13618
 	fillBlockRefCount(children)
 
-	operation.RetData = renderBlockDOMByNodes(children, luteEngine)
+	operation.RetData = renderBlockDOMByNodes(children, luteEngine, tx.Notebook)
 	return
 }
 

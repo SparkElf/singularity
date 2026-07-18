@@ -33,7 +33,7 @@ import {getAllDocks, getAllModels, getAllTabs} from "../../layout/getAll";
 import {focusBlock, focusByRange} from "../../protyle/util/selection";
 import {initFileMenu, initNavigationMenu} from "../../menus/navigation";
 import {bindMenuKeydown} from "../../menus/Menu";
-import {Dialog} from "../../dialog";
+import {closeAllDialogs, Dialog} from "../../dialog";
 import {unicode2Emoji} from "../../emoji";
 import {deleteFiles} from "../../editor/deleteFile";
 import {escapeHtml} from "../../util/escape";
@@ -71,7 +71,7 @@ import {editorConfigApi} from "../../config/tabs/editorRuntime";
 import {copyPNGByLink} from "../../menus/util";
 import {globalCommand} from "./command/global";
 import {duplicateCompletely} from "../../protyle/render/av/action";
-import {copyTextByType} from "../../protyle/toolbar/util";
+import {copyTextByType} from "../../host/copyTextByType";
 import {onlyProtyleCommand} from "./command/protyle";
 import {cancelDrag} from "./dragover";
 import {bindAVPanelKeydown} from "../../protyle/render/av/keydown";
@@ -157,7 +157,7 @@ const dialogArrow = (app: App, element: HTMLElement, event: KeyboardEvent) => {
                     action: [Constants.CB_GET_FOCUS, Constants.CB_GET_SCROLL]
                 });
             }
-            hideElements(["dialog"]);
+            closeAllDialogs();
             return;
         }
         currentLiElement = element.querySelector(".b3-list-item--focus");
@@ -521,7 +521,9 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
         event.preventDefault();
         event.stopPropagation();
         if (hasClosestByClassName(range.startContainer, "protyle-title")) {
-            copyTextByType([protyle.block.rootID], "ref");
+            void copyTextByType([protyle.block.rootID], "ref").catch((error: unknown) => {
+                console.error("[protyle-host:copy-text]", error);
+            });
         } else {
             const nodeElement = hasClosestBlock(range.startContainer);
             if (!nodeElement) {
@@ -534,7 +536,9 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
             }
             const ids = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select")).map(item => item.getAttribute("data-node-id"));
             if (ids.length > 0) {
-                copyTextByType(ids, "ref");
+                void copyTextByType(ids, "ref").catch((error: unknown) => {
+                    console.error("[protyle-host:copy-text]", error);
+                });
                 return true;
             }
             if (range.toString() !== "") {
@@ -542,7 +546,9 @@ const editKeydown = (app: App, event: KeyboardEvent) => {
                     writeText(`((${nodeElement.getAttribute("data-node-id")} "${content.trim()}"))`);
                 });
             } else {
-                copyTextByType([nodeElement.getAttribute("data-node-id")], "ref");
+                void copyTextByType([nodeElement.getAttribute("data-node-id")], "ref").catch((error: unknown) => {
+                    console.error("[protyle-host:copy-text]", error);
+                });
             }
         }
         return true;
@@ -722,40 +728,52 @@ const fileTreeKeydown = (app: App, event: KeyboardEvent) => {
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyBlockRef.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "ref");
+        void copyTextByType(ids, "ref").catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
 
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyBlockEmbed.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "blockEmbed");
+        void copyTextByType(ids, "blockEmbed").catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
 
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocol.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "protocol", notebookId);
+        void copyTextByType(ids, "protocol", notebookId).catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
 
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "protocolMd", notebookId);
+        void copyTextByType(ids, "protocolMd", notebookId).catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyHPath.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "hPath", notebookId);
+        void copyTextByType(ids, "hPath", notebookId).catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
     if (!event.repeat && matchHotKey(window.siyuan.config.keymap.editor.general.copyID.custom, event)) {
         event.preventDefault();
         event.stopPropagation();
-        copyTextByType(ids, "id");
+        void copyTextByType(ids, "id").catch((error: unknown) => {
+            console.error("[protyle-host:copy-text]", error);
+        });
         return true;
     }
 
@@ -1263,7 +1281,7 @@ export const windowKeyDown = (app: App, event: KeyboardEvent) => {
             });
             dockHtml = dockHtml + "</ul>";
         }
-        hideElements(["dialog"]);
+        closeAllDialogs();
         switchDialog = new Dialog({
             positionId: Constants.DIALOG_SWITCHTAB,
             title: window.siyuan.languages.switchTab,

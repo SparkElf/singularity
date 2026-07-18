@@ -230,7 +230,7 @@ func html2BlockDOM(c *gin.Context) {
 	tree = parse.Parse("", []byte(md), luteEngine.ParseOptions)
 	renderer := render.NewProtyleRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	output := renderer.Render()
-	ret.Data = gulu.Str.FromBytes(output)
+	ret.Data = model.FillBlockRefNotebookIDs(gulu.Str.FromBytes(output), boxID)
 }
 
 func spinBlockDOM(c *gin.Context) {
@@ -249,6 +249,13 @@ func spinBlockDOM(c *gin.Context) {
 	luteEngine := model.NewLute()
 
 	dom = luteEngine.SpinBlockDOM(dom)
+	contentStore, err := encryptedNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	dom = model.FillBlockRefNotebookIDs(dom, contentStore)
 	ret.Data = map[string]any{
 		"dom": dom,
 	}

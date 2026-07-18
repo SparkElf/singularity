@@ -6,7 +6,7 @@ import {Constants} from "../constants";
 import {getDockByType} from "../layout/tabUtil";
 import {Tag} from "../layout/dock/Tag";
 /// #endif
-import {upDownHint} from "./upDownHint";
+import {upDownHint} from "../protyle/util/upDownHint";
 import {escapeHtml} from "./escape";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {isNotCtrl} from "../protyle/util/compatibility";

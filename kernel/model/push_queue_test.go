@@ -282,7 +282,15 @@ func openPushQueueWebSocket(t *testing.T, typ string) *websocket.Conn {
 	disconnected := make(chan struct{})
 	var connectOnce, disconnectOnce sync.Once
 	server.HandleConnect(func(session *melody.Session) {
-		util.AddPushChan(session)
+		identity, identityErr := util.ParsePushChannelIdentity(session.Request)
+		if identityErr != nil {
+			t.Errorf("parse push channel identity: %v", identityErr)
+			return
+		}
+		if identityErr = util.AddPushChan(session, identity); identityErr != nil {
+			t.Errorf("add push channel: %v", identityErr)
+			return
+		}
 		connectOnce.Do(func() { close(connected) })
 	})
 	server.HandleDisconnect(func(session *melody.Session) {

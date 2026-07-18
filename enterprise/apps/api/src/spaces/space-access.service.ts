@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import { Injectable, Logger } from "@nestjs/common";
 import type {
   AuthorizedSpaceSummary,
+  SpaceRole,
   SpaceRuntimeBootstrap,
 } from "@singularity/contracts";
 import { DatabaseRuntime, type Prisma } from "@singularity/database";
@@ -15,6 +16,22 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+const roleWeight: Record<SpaceRole, number> = {
+  admin: 3,
+  editor: 2,
+  viewer: 1,
+};
+
+function effectiveRole(roles: readonly SpaceRole[]): SpaceRole | null {
+  let result: SpaceRole | null = null;
+  for (const role of roles) {
+    if (result === null || roleWeight[role] > roleWeight[result]) {
+      result = role;
+    }
+  }
+  return result;
+}
+
 @Injectable()
 export class SpaceAccessService {
   readonly #authorizationLogger = new Logger("AuthorizationService");
@@ -23,40 +40,66 @@ export class SpaceAccessService {
   constructor(private readonly database: DatabaseRuntime) {}
 
   async listAuthorizedSpaces(userId: string): Promise<AuthorizedSpaceSummary[]> {
-    const memberships = await this.database.client.spaceMembership.findMany({
+    const spaces = await this.database.client.space.findMany({
       where: {
         status: "active",
-        userId,
-        organizationMembership: {
+        organization: {
           status: "active",
-          user: { status: "active" },
-          organization: { status: "active" },
+          memberships: {
+            some: { status: "active", userId, user: { status: "active" } },
+          },
         },
-        space: {
-          status: "active",
-          organization: { status: "active" },
-        },
+        OR: [
+          { memberships: { some: { status: "active", userId } } },
+          {
+            groupGrants: {
+              some: {
+                group: {
+                  status: "active",
+                  memberships: { some: { userId } },
+                },
+              },
+            },
+          },
+        ],
       },
       select: {
+        id: true,
+        name: true,
         organizationId: true,
-        role: true,
-        space: {
-          select: {
-            id: true,
-            name: true,
-            organization: { select: { name: true } },
+        organization: { select: { name: true } },
+        memberships: {
+          where: { status: "active", userId },
+          select: { role: true },
+        },
+        groupGrants: {
+          where: {
+            group: {
+              status: "active",
+              memberships: { some: { userId } },
+            },
           },
+          select: { role: true },
         },
       },
     });
-    return memberships
-      .map((membership) => ({
-        organizationId: membership.organizationId,
-        organizationName: membership.space.organization.name,
-        role: membership.role,
-        spaceId: membership.space.id,
-        spaceName: membership.space.name,
-      }))
+    return spaces
+      .map((space) => {
+        const role = effectiveRole([
+          ...space.memberships.map((membership) => membership.role),
+          ...space.groupGrants.map((grant) => grant.role),
+        ]);
+        return role === null
+          ? null
+          : {
+              organizationId: space.organizationId,
+              organizationName: space.organization.name,
+              role,
+              spaceId: space.id,
+              spaceName: space.name,
+            };
+      })
+      .filter((space): space is AuthorizedSpaceSummary => space !== null)
       .sort((left, right) => {
         const organizationComparison = compareText(
           normalizedSortValue(left.organizationName),
@@ -82,35 +125,62 @@ export class SpaceAccessService {
     requestId: string,
   ): Promise<SpaceRuntimeBootstrap | null | "kernel-missing"> {
     const startedAt = performance.now();
-    const membership = await this.database.client.spaceMembership.findFirst({
+    const space = await this.database.client.space.findFirst({
       where: {
+        id: spaceId,
         organizationId,
-        spaceId,
         status: "active",
-        userId,
-        organizationMembership: {
-          organizationId,
+        organization: {
+          id: organizationId,
           status: "active",
-          user: { status: "active" },
-          organization: { id: organizationId, status: "active" },
+          memberships: {
+            some: {
+              organizationId,
+              status: "active",
+              userId,
+              user: { status: "active" },
+            },
+          },
         },
-        space: {
-          id: spaceId,
-          organizationId,
-          status: "active",
-          organization: { id: organizationId, status: "active" },
-        },
+        OR: [
+          { memberships: { some: { status: "active", userId } } },
+          {
+            groupGrants: {
+              some: {
+                group: {
+                  status: "active",
+                  memberships: { some: { organizationId, userId } },
+                },
+              },
+            },
+          },
+        ],
       },
       select: {
-        role: true,
-        space: {
-          select: {
-            kernelInstance: { select: { status: true } },
+        kernelInstance: { select: { status: true } },
+        memberships: {
+          where: { status: "active", userId },
+          select: { role: true },
+        },
+        groupGrants: {
+          where: {
+            group: {
+              status: "active",
+              memberships: { some: { organizationId, userId } },
+            },
           },
+          select: { role: true },
         },
       },
     });
-    if (membership === null) {
+    const role =
+      space === null
+        ? null
+        : effectiveRole([
+            ...space.memberships.map((membership) => membership.role),
+            ...space.groupGrants.map((grant) => grant.role),
+          ]);
+    if (space === null || role === null) {
       this.#authorizationLogger.warn({
         action: "read-runtime",
         event: "authorization.decision",
@@ -130,7 +200,7 @@ export class SpaceAccessService {
       });
       return null;
     }
-    if (membership.space.kernelInstance === null) {
+    if (space.kernelInstance === null) {
       this.#runtimeLogger.warn({
         durationMilliseconds: performance.now() - startedAt,
         event: "space.runtime",
@@ -147,7 +217,7 @@ export class SpaceAccessService {
       organizationId,
       outcome: "allowed",
       requestId,
-      role: membership.role,
+      role,
       spaceId,
       userId,
     });
@@ -158,14 +228,56 @@ export class SpaceAccessService {
       outcome: "resolved",
       requestId,
       spaceId,
-      status: membership.space.kernelInstance.status,
+      status: space.kernelInstance.status,
     });
     return {
-      kernelState: membership.space.kernelInstance.status,
+      kernelState: space.kernelInstance.status,
       organizationId,
-      role: membership.role,
+      role,
       spaceId,
     };
+  }
+
+  async getEffectiveRole(
+    userId: string,
+    organizationId: string,
+    spaceId: string,
+    includeArchived = false,
+  ): Promise<SpaceRole | null> {
+    const space = await this.database.client.space.findFirst({
+      where: {
+        id: spaceId,
+        organizationId,
+        status: includeArchived ? { in: ["active", "archived"] } : "active",
+        organization: {
+          status: "active",
+          memberships: {
+            some: { status: "active", userId, user: { status: "active" } },
+          },
+        },
+      },
+      select: {
+        memberships: {
+          where: { status: "active", userId },
+          select: { role: true },
+        },
+        groupGrants: {
+          where: {
+            group: {
+              status: "active",
+              memberships: { some: { organizationId, userId } },
+            },
+          },
+          select: { role: true },
+        },
+      },
+    });
+    return space === null
+      ? null
+      : effectiveRole([
+          ...space.memberships.map((membership) => membership.role),
+          ...space.groupGrants.map((grant) => grant.role),
+        ]);
   }
 
   async createSpaceInTransaction(

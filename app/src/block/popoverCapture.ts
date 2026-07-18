@@ -7,9 +7,8 @@ export class PopoverCaptureState {
     private current?: PopoverCapture;
 
     public capture(target: HTMLElement, contentNotebookId?: string): PopoverCapture | undefined {
-        const notebookId = target.hasAttribute("data-notebook-id")
-            ? target.getAttribute("data-notebook-id") || ""
-            : contentNotebookId || "";
+        const isBlockRef = (target.getAttribute("data-type") || "").split(" ").includes("block-ref");
+        const notebookId = target.getAttribute("data-notebook-id") || (isBlockRef ? "" : contentNotebookId || "");
         if (!notebookId || !target.isConnected) {
             this.current = undefined;
             return;

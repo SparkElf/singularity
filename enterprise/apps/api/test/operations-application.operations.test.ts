@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { CoreModule } from "../src/core.module.js";
 import { runAccessOperationsApplication } from "../src/operations/application.js";
+import { testAuditConfiguration } from "./support/audit-configuration.js";
 
 @Module({})
 class FailingOperationsModule {}
@@ -42,6 +43,7 @@ test("bootstrap failures return one sanitized operation result without aborting"
   const stderr = new PassThrough();
 
   const exitCode = await runAccessOperationsApplication({
+    auditConfiguration: testAuditConfiguration(),
     databaseUrl: "postgresql://unused.invalid/singularity",
     stderr,
     stdin: Readable.from(["{}"]),

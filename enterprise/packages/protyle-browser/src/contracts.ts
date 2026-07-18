@@ -97,16 +97,19 @@ export type ProtyleHostEvent =
     }
   | {
       type: "open-card-deck-picker";
+      documentId: string;
       notebookId: string;
       blockIds: readonly string[];
     }
   | {
       type: "add-blocks-to-agent";
+      documentId: string;
       notebookId: string;
       blockIds: readonly string[];
     }
   | {
       type: "open-asset";
+      documentId: string;
       notebookId: string;
       assetPath: string;
       page?: number | string;
@@ -118,6 +121,7 @@ export type ProtyleHostEvent =
     }
   | {
       type: "close-document";
+      notebookId: string;
       documentId: string;
       reason: "deleted" | "notebook-closed";
     }
@@ -133,28 +137,34 @@ export type ProtyleHostEvent =
     }
   | {
       type: "set-document-title";
+      notebookId: string;
       documentId: string;
       title: string;
     }
   | {
       type: "set-document-icon";
+      notebookId: string;
       documentId: string;
       icon: string;
     }
   | {
       type: "activate-document";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "toggle-document-fullscreen";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "persist-workspace-layout";
+      notebookId: string;
       documentId: string;
     }
   | {
       type: "update-document-statistics";
+      notebookId: string;
       documentId: string;
       statistics: ProtyleDocumentStatistics;
     }
@@ -188,16 +198,40 @@ export type ProtyleSurface = "workspace" | "embedded";
 
 export type ProtyleParticipation = "live" | "detached";
 
+export interface ProtyleContentIdentity {
+  readonly documentId: string;
+  readonly notebookId: string;
+}
+
 export interface ProtyleRequestOptions {
-  readonly headers?: Readonly<Record<string, string>>;
+  readonly identity: ProtyleContentIdentity;
+  readonly intent: "read" | "write";
+  readonly range?: {
+    readonly start: number;
+    readonly end?: number;
+  };
+  readonly responseType?: "blob" | "json";
   readonly signal?: AbortSignal;
+}
+
+export interface ProtyleUploadOptions {
+  readonly identity: ProtyleContentIdentity;
+  readonly signal?: AbortSignal;
+  readonly onProgress?: (progress: {
+    readonly loadedBytes: number;
+    readonly totalBytes?: number;
+  }) => void;
 }
 
 export interface ProtyleTransport<TMessage> {
   request: <TResponse>(
     path: string,
-    body?: unknown,
-    options?: ProtyleRequestOptions,
+    body: unknown,
+    options: ProtyleRequestOptions,
+  ) => Promise<TResponse>;
+  upload: <TResponse>(
+    body: FormData,
+    options: ProtyleUploadOptions,
   ) => Promise<TResponse>;
   subscribe: (options: ProtyleSubscriptionOptions<TMessage>) => ProtyleSubscription;
   dispose: () => void;
@@ -207,10 +241,59 @@ export interface ProtyleSubscription {
   disconnect: () => void;
 }
 
-export interface ProtyleSubscriptionOptions<TMessage> {
-  readonly id: string;
+export interface ProtyleSubscriptionOptions<TMessage> extends ProtyleContentIdentity {
   readonly type: "protyle";
   readonly onMessage: (message: TMessage) => void;
+}
+
+export interface ProtyleResourcePort {
+  resolveAsset: (identity: ProtyleContentIdentity, path: string) => string;
+  resolveExport: (identity: ProtyleContentIdentity, path: string) => string;
+}
+
+export interface ProtyleMenuPosition {
+  readonly h?: number;
+  readonly isLeft?: boolean;
+  readonly w?: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface ProtyleMenuItem {
+  readonly accelerator?: string;
+  readonly action?: string;
+  readonly bind?: (element: HTMLElement) => void;
+  readonly checked?: boolean;
+  readonly click?: (
+    element: HTMLElement,
+    event: MouseEvent,
+  ) => boolean | void | Promise<boolean | void>;
+  readonly current?: boolean;
+  readonly disabled?: boolean;
+  readonly element?: HTMLElement;
+  readonly icon?: string;
+  readonly iconClass?: string;
+  readonly iconHTML?: string;
+  readonly id?: string;
+  readonly ignore?: boolean;
+  readonly index?: number;
+  readonly label?: string;
+  readonly submenu?: readonly ProtyleMenuItem[];
+  readonly type?: "empty" | "readonly" | "separator" | "submenu";
+  readonly warning?: boolean;
+}
+
+export interface ProtyleMenuSurface {
+  readonly element: HTMLElement;
+  data: unknown;
+  removeCB: (() => void) | undefined;
+  addItem: (item: ProtyleMenuItem) => HTMLElement | undefined;
+  append: (element: HTMLElement, index?: number) => void;
+  close: () => void;
+  fullscreen: (position?: "all" | "bottom") => void;
+  popup: (position: ProtyleMenuPosition) => void;
+  resetPosition: () => void;
+  showSubMenu: (element: HTMLElement) => void;
 }
 
 export interface ProtyleMenuPort<TMenu> {
@@ -225,6 +308,7 @@ export interface ProtyleMenuHandle<TMenu> {
 
 export interface ProtyleOverlayPort<TOverlay> {
   add: (overlay: TOverlay) => ProtyleOverlayHandle;
+  bringToFront: (overlay: TOverlay) => void;
   forEach: (visitor: (overlay: TOverlay) => void) => void;
   dispose: () => void;
 }
@@ -246,6 +330,7 @@ export interface ProtyleRuntime<
   readonly menu: ProtyleMenuPort<TMenu>;
   readonly overlays: ProtyleOverlayPort<TOverlay>;
   readonly plugins: ProtylePluginPort<TOptions, TToolbar, TEditor>;
+  readonly resources: ProtyleResourcePort;
   readonly transport: ProtyleTransport<TMessage>;
 }
 
@@ -335,6 +420,226 @@ export interface ProtyleController {
   setHostReadOnly: (readOnly: boolean) => void;
 }
 
+export interface ProtyleScrollPosition {
+  readonly rootId: string;
+  readonly startId?: string;
+  readonly endId?: string;
+  readonly scrollTop?: number;
+  readonly focusId?: string;
+  readonly focusStart?: number;
+  readonly focusEnd?: number;
+  readonly zoomInId?: string;
+}
+
+export type ProtyleToolbarMessageKey =
+  | "anchor"
+  | "appearance"
+  | "blockEmbed"
+  | "bold"
+  | "chart"
+  | "clear"
+  | "clearFontStyle"
+  | "clearInline"
+  | "color"
+  | "colorFont"
+  | "colorPrimary"
+  | "copy"
+  | "copied"
+  | "confirmDelete"
+  | "copyPlainText"
+  | "default"
+  | "emptyContent"
+  | "export"
+  | "fontStyle"
+  | "hollow"
+  | "htmlBlockTip"
+  | "image"
+  | "inline-code"
+  | "inline-math"
+  | "insertAfter"
+  | "insertBefore"
+  | "italic"
+  | "kbd"
+  | "lastUsed"
+  | "link"
+  | "mark"
+  | "math"
+  | "memo"
+  | "mindmap"
+  | "pasteAsPlainText"
+  | "pasteEscaped"
+  | "pin"
+  | "ref"
+  | "refresh"
+  | "relativeFontSize"
+  | "remove"
+  | "search"
+  | "shadow"
+  | "staff"
+  | "strike"
+  | "sub"
+  | "sup"
+  | "tag"
+  | "text"
+  | "title"
+  | "underline";
+
+export type ProtyleMessageKey =
+  | "cancel"
+  | "close"
+  | "confirm"
+  | "copyToWechatMP"
+  | "copyToZhihu"
+  | "copyToYuque"
+  | "cancelTempUnlock"
+  | "desktop"
+  | "edit"
+  | "fileTypeError"
+  | "fontSize"
+  | "emptyPlaceholder"
+  | "lockEdit"
+  | "mobile"
+  | "more"
+  | "nameEmpty"
+  | "over"
+  | "pasteToWechatMP"
+  | "pasteToZhihu"
+  | "pasteToYuque"
+  | "refExpired"
+  | "refPopover"
+  | "reset"
+  | "scrollGetMore"
+  | "tablet"
+  | "tempUnlock"
+  | "undo"
+  | "undoCrossDocConfirm"
+  | "unpin"
+  | "unlockEdit"
+  | "update"
+  | "upload"
+  | "uploadError"
+  | "uploadFileTooLarge"
+  | "uploading"
+  | ProtyleToolbarMessageKey;
+
+export type ProtyleToolbarHotkey =
+  | "appearance"
+  | "bold"
+  | "clearInline"
+  | "inline-code"
+  | "inline-math"
+  | "italic"
+  | "kbd"
+  | "lastUsed"
+  | "link"
+  | "mark"
+  | "memo"
+  | "ref"
+  | "strike"
+  | "sub"
+  | "sup"
+  | "tag"
+  | "underline";
+
+export interface ProtyleLocalizationPort {
+  readonly language: string;
+  readonly kernelText: (index: number) => string;
+  readonly text: (key: string) => string;
+}
+
+/**
+ * Settings are application-owned values that do not identify content. Bound
+ * content capabilities remain on ProtyleSession and are intentionally absent
+ * from this contract.
+ */
+export interface ProtyleApplicationSettings {
+  readonly appearance: {
+    readonly codeBlockThemeDark: string;
+    readonly codeBlockThemeLight: string;
+    readonly theme: "dark" | "light";
+  };
+  readonly editor: {
+    readonly codeLigatures: boolean;
+    readonly codeLineWrap: boolean;
+    readonly codeSyntaxHighlightLineNum: boolean;
+    readonly codeTabSpaces: number;
+    readonly displayBookmarkIcon: boolean;
+    readonly embedBlockBreadcrumb: boolean;
+    readonly fontSize: number;
+    readonly fontSizeScrollZoom: boolean;
+    readonly fullWidth: boolean;
+    readonly headingEmbedMode: number;
+    readonly rtl: boolean;
+    readonly dynamicLoadBlocks: number;
+    readonly katexMacros: string;
+    readonly plantUMLServePath: string;
+    readonly readOnly: boolean;
+    readonly spellcheck: boolean;
+    readonly displayNetImgMark: boolean;
+    readonly markdown: {
+      readonly inlineAsterisk: boolean;
+      readonly inlineUnderscore: boolean;
+      readonly inlineSup: boolean;
+      readonly inlineSub: boolean;
+      readonly inlineTag: boolean;
+      readonly inlineMath: boolean;
+      readonly inlineStrikethrough: boolean;
+      readonly inlineMark: boolean;
+    };
+    readonly setReadOnly: (readOnly: boolean) => void;
+    readonly setFontSize: (fontSize: number) => void;
+    readonly persist: () => void | Promise<void>;
+  };
+  readonly export: {
+    readonly addTitle: boolean;
+    readonly paragraphBeginningSpace: boolean;
+  };
+  readonly emojis: ReadonlyArray<{
+    readonly items: ReadonlyArray<{
+      readonly keywords: string;
+      readonly unicode: string;
+    }>;
+  }>;
+  readonly hotkeys: {
+    readonly insertRight: string;
+  };
+  readonly icons: {
+    readonly file: string;
+  };
+  readonly localFilePosition: {
+    readonly get: (identity: ProtyleContentIdentity) => ProtyleScrollPosition | undefined;
+    readonly set: (
+      identity: ProtyleContentIdentity,
+      position: ProtyleScrollPosition,
+    ) => void;
+    readonly remove: (identity: ProtyleContentIdentity) => void;
+    readonly persist: () => void;
+  };
+  readonly navigation: {
+    readonly openFilesUseCurrentTab: boolean;
+  };
+  readonly toolbar: {
+    readonly codeLanguage: string;
+    readonly hotkeys: Readonly<Record<ProtyleToolbarHotkey, string>>;
+    readonly persist: () => void | Promise<void>;
+    readonly recentFontStyles: readonly string[];
+    readonly setCodeLanguage: (language: string) => void;
+    readonly setRecentFontStyles: (styles: string[]) => void;
+  };
+}
+
+export interface ProtyleApplicationPort<
+  TOptions = unknown,
+  TToolbar = unknown,
+  TEditor extends ProtyleController = ProtyleController,
+> {
+  readonly localization: ProtyleLocalizationPort;
+  readonly settings: ProtyleApplicationSettings;
+  readonly protyleEditors?: ProtyleEditorRegistry<TEditor>;
+  readonly protyleHost?: ProtyleHostPort;
+  readonly protylePlugins?: ProtylePluginPort<TOptions, TToolbar, TEditor>;
+}
+
 export interface CreateProtyleOptions<TRuntime = ProtyleRuntime> {
   readonly documentId: string;
   readonly host: HTMLElement;
@@ -410,4 +715,28 @@ export interface ProtyleCoreFactory<
   TRuntime = ProtyleRuntime,
 > {
   create: (options: ProtyleCoreCreateOptions<TOptions, TRuntime>) => Promise<ProtyleController>;
+}
+
+export type ProtyleWorkspaceCoreCreateOptions<
+  TOptions extends ProtyleCoreDocumentOptions,
+  TRuntime = ProtyleRuntime,
+> = Omit<ProtyleCoreCommonOptions, "surface"> & {
+  readonly content: ProtyleBoundContent;
+  readonly participation: "live";
+  readonly session: ProtyleSession<TRuntime>;
+  readonly initialLoad: "automatic" | "owner";
+  readonly options: Omit<TOptions, "blockId" | "notebookId"> & {
+    readonly blockId: string;
+    readonly notebookId?: never;
+  };
+  readonly surface: "workspace";
+};
+
+export interface ProtyleWorkspaceCoreFactory<
+  TOptions extends ProtyleCoreDocumentOptions,
+  TRuntime = ProtyleRuntime,
+> {
+  create: (
+    options: ProtyleWorkspaceCoreCreateOptions<TOptions, TRuntime>,
+  ) => Promise<ProtyleController>;
 }

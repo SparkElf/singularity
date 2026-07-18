@@ -26,7 +26,7 @@ import {App} from "../index";
 import {isBrowser} from "../util/functions";
 import {openRecentDocs} from "../business/openRecentDocs";
 import * as dayjs from "dayjs";
-import {upDownHint} from "../util/upDownHint";
+import {upDownHint} from "../protyle/util/upDownHint";
 
 const editLayout = (layoutName?: string) => {
     const dialog = new Dialog({

@@ -293,7 +293,7 @@ export const bindCardEvent = (options: {
             hideTitleOnZoom: true,
         },
         typewriterMode: false
-    });
+    }, window.siyuan.config.readonly);
     if (options.cardsData.cards.length > 0) {
         const currentCard = options.cardsData.cards[index];
         getEditor(currentCard, editor, options.element, options.lifecycle);

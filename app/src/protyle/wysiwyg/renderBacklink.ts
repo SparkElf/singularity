@@ -1,14 +1,22 @@
-import {getIconByType} from "../../editor/getIcon";
+import {getIconByType} from "../util/getIconByType";
 import {removeLoading} from "../ui/initUI";
-import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
 import {blockRender} from "../render/blockRender";
-import {disabledForeverProtyle, disabledProtyle} from "../util/onGet";
+import {disabledForeverProtyle, setReadonlyByConfig} from "../util/onGet";
 import {avRender} from "../render/av/render";
 import {hasClosestByAttribute} from "../util/hasClosest";
-import {isEncryptedBox} from "../../util/pathName";
+import {protyleContentIdentity} from "../util/contentLoad";
+
+interface BacklinkDocumentResponse {
+    readonly data: {
+        readonly content: string;
+        readonly isSyncing: boolean;
+    };
+}
+
+const breadcrumbLoads = new WeakMap<HTMLElement, {controller: AbortController}>();
 
 export const renderBacklink = (protyle: IProtyle, backlinkData: {
     blockPaths: IBreadcrumb[],
@@ -22,14 +30,12 @@ export const renderBacklink = (protyle: IProtyle, backlinkData: {
     });
     protyle.wysiwyg.element.innerHTML = html;
     improveBreadcrumbAppearance(protyle.wysiwyg.element);
-    processRender(protyle.wysiwyg.element);
-    highlightRender(protyle.wysiwyg.element);
+    processRender(protyle.wysiwyg.element, protyle);
+    highlightRender(protyle.wysiwyg.element, protyle);
     avRender(protyle.wysiwyg.element, protyle);
     blockRender(protyle, protyle.wysiwyg.element);
     removeLoading(protyle);
-    if (window.siyuan.config.readonly || window.siyuan.config.editor.readOnly) {
-        disabledProtyle(protyle);
-    }
+    setReadonlyByConfig(protyle, false);
 };
 
 // 传递型折叠处理
@@ -64,30 +70,50 @@ const setBacklinkFold = (html: string, expand: boolean) => {
 };
 
 export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
-    const getDocParam: IObject = {
+    const breadcrumb = element.parentElement;
+    breadcrumbLoads.get(breadcrumb)?.controller.abort();
+    const state = {controller: new AbortController()};
+    breadcrumbLoads.set(breadcrumb, state);
+    const signal = AbortSignal.any([protyle.requestSignal, state.controller.signal]);
+    const isCurrent = () => breadcrumbLoads.get(breadcrumb) === state &&
+        !signal.aborted &&
+        !protyle.destroyed &&
+        protyle.element.contains(element);
+    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    void runtime.transport.request<BacklinkDocumentResponse>("/api/filetree/getDoc", {
         id: element.getAttribute("data-id"),
         size: Constants.SIZE_GET_MAX,
-    };
-    if (isEncryptedBox(protyle.notebookId)) {
-        getDocParam.notebook = protyle.notebookId;
-    }
-    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-        element.parentElement.querySelector(".protyle-breadcrumb__item--active").classList.remove("protyle-breadcrumb__item--active");
+    }, {
+        identity: protyleContentIdentity(protyle),
+        intent: "read",
+        signal,
+    }).then((response) => {
+        if (!isCurrent()) {
+            return;
+        }
+        breadcrumb.querySelector(".protyle-breadcrumb__item--active").classList.remove("protyle-breadcrumb__item--active");
         element.classList.add("protyle-breadcrumb__item--active");
-        let nextElement = element.parentElement.nextElementSibling;
+        let nextElement = breadcrumb.nextElementSibling;
         while (nextElement && !nextElement.classList.contains("protyle-breadcrumb__bar")) {
             const tempElement = nextElement;
             nextElement = nextElement.nextElementSibling;
             tempElement.remove();
         }
-        element.parentElement.insertAdjacentHTML("afterend", setBacklinkFold(getResponse.data.content, true));
-        processRender(element.parentElement.parentElement);
-        avRender(element.parentElement.parentElement, protyle);
-        blockRender(protyle, element.parentElement.parentElement);
-        if (getResponse.data.isSyncing) {
+        breadcrumb.insertAdjacentHTML("afterend", setBacklinkFold(response.data.content, true));
+        processRender(breadcrumb.parentElement, protyle);
+        avRender(breadcrumb.parentElement, protyle);
+        blockRender(protyle, breadcrumb.parentElement);
+        if (response.data.isSyncing) {
             disabledForeverProtyle(protyle);
-        } else if (window.siyuan.config.readonly || window.siyuan.config.editor.readOnly) {
-            disabledProtyle(protyle);
+        } else {
+            setReadonlyByConfig(protyle, false);
+        }
+    }).catch((error) => {
+        if (isCurrent()) {
+            console.error("[protyle.transport] backlink breadcrumb request failed", {
+                documentId: protyleContentIdentity(protyle).documentId,
+                error,
+            });
         }
     });
 };

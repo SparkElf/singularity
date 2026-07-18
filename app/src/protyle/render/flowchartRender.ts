@@ -1,13 +1,13 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
-import {genIconHTML} from "./util";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
 declare const flowchart: {
     parse(text: string): { drawSVG: (type: Element) => void };
 };
 
-export const flowchartRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const flowchartRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let flowchartElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "flowchart" && element.getAttribute("data-render") !== "true") {
         flowchartElements = [element];
@@ -29,7 +29,7 @@ export const flowchartRender = (element: Element, cdn = Constants.PROTYLE_CDN) =
         });
         if (hideElements.length > 0) {
             const observer = new MutationObserver(() => {
-                initFlowchart(hideElements);
+                initFlowchart(hideElements, context);
                 observer.disconnect();
             });
             hideElements.forEach(item => {
@@ -44,11 +44,11 @@ export const flowchartRender = (element: Element, cdn = Constants.PROTYLE_CDN) =
                 }
             });
         }
-        initFlowchart(normalElements);
+        initFlowchart(normalElements, context);
     });
 };
 
-const initFlowchart = (flowchartElements: Element[]) => {
+const initFlowchart = (flowchartElements: Element[], context: ProtyleRendererContext) => {
     const wysiswgElement = hasClosestByClassName(flowchartElements[0], "protyle-wysiwyg", true);
     flowchartElements.forEach((item: HTMLElement) => {
         if (item.getAttribute("data-render") === "true") {
@@ -56,7 +56,7 @@ const initFlowchart = (flowchartElements: Element[]) => {
         }
         item.setAttribute("data-render", "true");
         if (!item.firstElementChild.classList.contains("protyle-icons")) {
-            item.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement));
+            item.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement));
         }
         const renderElement = item.firstElementChild.nextElementSibling;
         if (!item.getAttribute("data-content")) {

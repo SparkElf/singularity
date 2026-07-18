@@ -1,7 +1,12 @@
 import { createApiApplication } from "./application.js";
+import { parseAuditConfiguration } from "./configuration.js";
+import { loadKernelGatewayConfiguration } from "./kernel/configuration.js";
 
 const app = await createApiApplication({
+  auditConfiguration: parseAuditConfiguration(process.env),
   databaseUrl: process.env.DATABASE_URL,
+  kernelGateway: loadKernelGatewayConfiguration(process.env),
+  oidcClientSecretFiles: process.env.SINGULARITY_OIDC_CLIENT_SECRET_FILES,
   publicOrigin: process.env.SINGULARITY_PUBLIC_ORIGIN,
   trustedProxyCidrs: process.env.SINGULARITY_TRUSTED_PROXY_CIDRS,
 });

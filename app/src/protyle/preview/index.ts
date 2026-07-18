@@ -1,13 +1,8 @@
-import {writeText} from "../util/compatibility";
+import {writeText} from "../util/clipboard";
 import {focusByRange} from "../util/selection";
-import {showMessage} from "../../dialog/message";
-import {isLocalPath, pathPosix} from "../../util/pathName";
 import {previewDocImage} from "./image";
 import {getDiagramBlock, previewDiagram} from "./diagram";
-import {needSubscribe} from "../../util/needSubscribe";
 import {Constants} from "../../constants";
-import {getSearch} from "../../util/functions";
-import {fetchPost} from "../../util/fetch";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
 import {speechRender} from "../render/speechRender";
@@ -16,9 +11,23 @@ import {getPadding} from "../ui/initUI";
 import {hasTopClosestByAttribute} from "../util/hasClosest";
 import {addScriptSync} from "../util/addScript";
 
+const assetExtension = (path: string) => {
+    const fileName = path.substring(path.lastIndexOf("/") + 1);
+    const extensionIndex = fileName.lastIndexOf(".");
+    return extensionIndex < 0 ? "" : fileName.substring(extensionIndex).toLowerCase();
+};
+
+const isSpaceAssetPath = (path: string) => path.trim().toLowerCase().startsWith("assets/");
+
+const notifySuccess = (protyle: IProtyle, message: string) => {
+    protyle.host.dispatch({type: "notify", level: "success", message});
+};
+
 export class Preview {
     public element: HTMLElement;
     public previewElement: HTMLElement;
+    private renderController?: AbortController;
+    private renderGeneration = 0;
 
     constructor(protyle: IProtyle) {
         this.element = document.createElement("div");
@@ -33,6 +42,7 @@ export class Preview {
         const actionElement = document.createElement("div");
         actionElement.className = "protyle-preview__action";
         const actionHtml: string[] = [];
+        const text = protyle.localization.text;
         for (let i = 0; i < actions.length; i++) {
             const action = actions[i];
             if (typeof action === "object") {
@@ -41,22 +51,22 @@ export class Preview {
             }
             switch (action) {
                 case "desktop":
-                    actionHtml.push(`<button type="button" class="protyle-preview__action--current" data-type="desktop">${window.siyuan.languages.desktop}</button>`);
+                    actionHtml.push(`<button type="button" class="protyle-preview__action--current" data-type="desktop">${text("desktop")}</button>`);
                     break;
                 case "tablet":
-                    actionHtml.push(`<button type="button" data-type="tablet">${window.siyuan.languages.tablet}</button>`);
+                    actionHtml.push(`<button type="button" data-type="tablet">${text("tablet")}</button>`);
                     break;
                 case "mobile":
-                    actionHtml.push(`<button type="button" data-type="mobile">${window.siyuan.languages.mobile}</button>`);
+                    actionHtml.push(`<button type="button" data-type="mobile">${text("mobile")}</button>`);
                     break;
                 case "mp-wechat":
-                    actionHtml.push(`<button type="button" data-type="mp-wechat" class="b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.copyToWechatMP}"><svg><use xlink:href="#iconMp"></use></svg></button>`);
+                    actionHtml.push(`<button type="button" data-type="mp-wechat" class="b3-tooltips b3-tooltips__w" aria-label="${text("copyToWechatMP")}"><svg><use xlink:href="#iconMp"></use></svg></button>`);
                     break;
                 case "zhihu":
-                    actionHtml.push(`<button type="button" data-type="zhihu" class="b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.copyToZhihu}"><svg><use xlink:href="#iconZhihu"></use></svg></button>`);
+                    actionHtml.push(`<button type="button" data-type="zhihu" class="b3-tooltips b3-tooltips__w" aria-label="${text("copyToZhihu")}"><svg><use xlink:href="#iconZhihu"></use></svg></button>`);
                     break;
                 case "yuque":
-                    actionHtml.push(`<button type="button" data-type="yuque" class="b3-tooltips b3-tooltips__w" aria-label="${window.siyuan.languages.copyToYuque}"><svg><use xlink:href="#iconYuque"></use></svg></button>`);
+                    actionHtml.push(`<button type="button" data-type="yuque" class="b3-tooltips b3-tooltips__w" aria-label="${text("copyToYuque")}"><svg><use xlink:href="#iconYuque"></use></svg></button>`);
                     break;
             }
         }
@@ -68,7 +78,7 @@ export class Preview {
             let target = event.target as HTMLElement;
             while (target && !target.isEqualNode(this.element)) {
                 if (target.tagName === "A") {
-                    const linkAddress = target.getAttribute("href");
+                    const linkAddress = target.getAttribute("href")!;
                     if (linkAddress.startsWith("#")) {
                         // 导出预览模式点击块引转换后的脚注跳转不正确 https://github.com/siyuan-note/siyuan/issues/5700
                         const hash = linkAddress.substring(1);
@@ -81,10 +91,11 @@ export class Preview {
                     event.stopPropagation();
                     event.preventDefault();
                     const assetPath = linkAddress.split("?page")[0];
-                    if (isLocalPath(linkAddress) && Constants.SIYUAN_ASSETS_EXTS.includes(pathPosix().extname(assetPath))) {
-                        const page = getSearch("page", linkAddress);
+                    if (isSpaceAssetPath(linkAddress) && Constants.SIYUAN_ASSETS_EXTS.includes(assetExtension(assetPath))) {
+                        const page = new URL(linkAddress, window.location.href).searchParams.get("page");
                         protyle.host.dispatch({
                             type: "open-asset",
+                            documentId: protyle.block.rootID,
                             notebookId: protyle.notebookId,
                             assetPath,
                             page: page ? parseInt(page) : undefined,
@@ -95,7 +106,7 @@ export class Preview {
                     }
                     break;
                 } else if (target.tagName === "IMG") {
-                    previewDocImage((event.target as HTMLElement).getAttribute("src"), protyle.block.rootID, protyle.notebookId);
+                    previewDocImage((event.target as HTMLElement).getAttribute("src")!, protyle);
                     event.stopPropagation();
                     event.preventDefault();
                     break;
@@ -148,6 +159,10 @@ export class Preview {
     }
 
     public render(protyle: IProtyle) {
+        this.renderController?.abort();
+        this.renderController = new AbortController();
+        const signal = AbortSignal.any([protyle.requestSignal, this.renderController.signal]);
+        const generation = ++this.renderGeneration;
         if (this.element.style.display === "none") {
             return;
         }
@@ -164,30 +179,49 @@ export class Preview {
             loadingElement = this.element.querySelector(".fn__loading");
         }
         window.setTimeout(() => {
-            fetchPost("/api/export/preview", {
+            if (protyle.destroyed || signal.aborted || generation !== this.renderGeneration) {
+                return;
+            }
+            void protyle.transport!.request<IWebSocketData>("/api/export/preview", {
                 id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
                 notebook: protyle.notebookId,
-            }, response => {
+            }, {
+                identity: {
+                    documentId: protyle.options.blockId!,
+                    notebookId: protyle.notebookId,
+                },
+                intent: "read",
+                signal,
+            }).then((response) => {
+                if (protyle.destroyed || signal.aborted || generation !== this.renderGeneration) {
+                    return;
+                }
                 const oldScrollTop = protyle.preview.previewElement.scrollTop;
                 protyle.preview.previewElement.innerHTML = response.data.html;
-                processRender(protyle.preview.previewElement);
-                highlightRender(protyle.preview.previewElement);
+                processRender(protyle.preview.previewElement, protyle);
+                highlightRender(protyle.preview.previewElement, protyle);
                 avRender(protyle.preview.previewElement, protyle);
-                speechRender(protyle.preview.previewElement, window.siyuan.config.appearance.lang);
+                speechRender(protyle.preview.previewElement, protyle.localization.language);
                 protyle.preview.previewElement.scrollTop = oldScrollTop;
                 loadingElement.remove();
+            }).catch((error) => {
+                if (!signal.aborted && generation === this.renderGeneration) {
+                    console.error("[protyle.transport] document preview failed", error);
+                    loadingElement.remove();
+                }
             });
         }, protyle.options.preview.delay);
     }
 
-    private link2online(copyElement: HTMLElement) {
-        if (needSubscribe("")) {
-            return;
-        }
+    private link2online(copyElement: HTMLElement, protyle: IProtyle) {
+        const identity = {
+            documentId: protyle.options.blockId!,
+            notebookId: protyle.notebookId,
+        };
         copyElement.querySelectorAll("[href],[src]").forEach(item => {
             const oldLink = item.getAttribute("href") || item.getAttribute("src");
             if (oldLink && oldLink.startsWith("assets/")) {
-                const newLink = Constants.ASSETS_ADDRESS + window.siyuan.user.userId + "/" + oldLink;
+                const newLink = protyle.runtime!.resources.resolveAsset(identity, oldLink);
                 if (item.getAttribute("href")) {
                     item.setAttribute("href", newLink);
                 } else {
@@ -200,7 +234,7 @@ export class Preview {
     private async copyToX(copyElement: HTMLElement, protyle: IProtyle, type?: string) {
         // fix math render
         if (type === "mp-wechat") {
-            this.link2online(copyElement);
+            this.link2online(copyElement, protyle);
             copyElement.querySelectorAll(".katex-html .base").forEach((item: HTMLElement) => {
                 item.style.display = "initial";
             });
@@ -240,14 +274,20 @@ export class Preview {
                 };
             }
             await addScriptSync(`${Constants.PROTYLE_CDN}/js/mathjax/tex-svg-full.js`, "protyleMathJaxScript");
+            if (protyle.requestSignal.aborted) {
+                return;
+            }
             await window.MathJax.startup.promise;
+            if (protyle.requestSignal.aborted) {
+                return;
+            }
             copyElement.querySelectorAll('[data-subtype="math"]').forEach(mathElement => {
                 const node = window.MathJax.tex2svg(Lute.UnEscapeHTMLStr(mathElement.getAttribute("data-content")).trim(), {display: mathElement.tagName === "DIV"});
                 node.querySelector("mjx-assistive-mml").remove();
                 mathElement.innerHTML = node.outerHTML;
             });
         } else if (type === "zhihu") {
-            this.link2online(copyElement);
+            this.link2online(copyElement, protyle);
             copyElement.querySelectorAll('[data-subtype="math"]').forEach((item: HTMLElement) => {
                 // https://github.com/siyuan-note/siyuan/issues/10015
                 item.outerHTML = `<img class="Formula-image" data-eeimg="true" src="//www.zhihu.com/equation?tex=" alt="${item.getAttribute("data-content")}" style="${item.tagName === "DIV" ? "display: block; max-width: 100%;" : ""}margin: 0 auto;">`;
@@ -262,16 +302,31 @@ export class Preview {
             });
             this.processZHTable(copyElement);
         } else if (type === "yuque") {
-            fetchPost("/api/lute/copyStdMarkdown", {
-                id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
-                notebook: protyle.notebookId,
-                assetsDestSpace2Underscore: true,
-                fillCSSVar: true,
-                adjustHeadingLevel: true,
-            }, (response) => {
+            try {
+                const response = await protyle.transport!.request<IWebSocketData>("/api/lute/copyStdMarkdown", {
+                    id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
+                    notebook: protyle.notebookId,
+                    assetsDestSpace2Underscore: true,
+                    fillCSSVar: true,
+                    adjustHeadingLevel: true,
+                }, {
+                    identity: {
+                        documentId: protyle.options.blockId!,
+                        notebookId: protyle.notebookId,
+                    },
+                    intent: "read",
+                    signal: protyle.requestSignal,
+                });
+                if (protyle.destroyed || protyle.requestSignal.aborted) {
+                    return;
+                }
                 writeText(response.data);
-                showMessage(`${window.siyuan.languages.pasteToYuque}`);
-            });
+                notifySuccess(protyle, protyle.localization.text("pasteToYuque"));
+            } catch (error) {
+                if (!protyle.requestSignal.aborted) {
+                    console.error("[protyle.transport] standard Markdown copy failed", error);
+                }
+            }
             return;
         }
 
@@ -311,7 +366,7 @@ export class Preview {
         this.element.lastElementChild.remove();
         focusByRange(cloneRange);
         if (type) {
-            showMessage(`${type === "zhihu" ? window.siyuan.languages.pasteToZhihu : window.siyuan.languages.pasteToWechatMP}`);
+            notifySuccess(protyle, protyle.localization.text(type === "zhihu" ? "pasteToZhihu" : "pasteToWechatMP"));
         }
     }
 

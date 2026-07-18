@@ -2,6 +2,7 @@ import type {
   ProtyleCoreCreateOptions,
   ProtyleCoreDocumentOptions,
   ProtyleCoreFactory,
+  ProtyleHostEvent,
   ProtyleSession,
 } from "./contracts.ts";
 import { createProtyleFactory } from "./factory.ts";
@@ -14,6 +15,39 @@ declare const coreFactory: ProtyleCoreFactory<TestOptions, unknown>;
 declare const host: HTMLElement;
 declare const session: ProtyleSession<unknown>;
 declare const signal: AbortSignal;
+
+const assetEvent: ProtyleHostEvent = {
+  assetPath: "assets/example.png",
+  disposition: "current",
+  documentId: "document-a",
+  notebookId: "notebook-a",
+  type: "open-asset",
+};
+
+const workspaceEvent: ProtyleHostEvent = {
+  documentId: "document-a",
+  notebookId: "notebook-a",
+  type: "activate-document",
+};
+
+// @ts-expect-error 内容事件必须同时携带源文档身份。
+const assetWithoutDocument: ProtyleHostEvent = {
+  assetPath: "assets/example.png",
+  disposition: "current",
+  notebookId: "notebook-a",
+  type: "open-asset",
+};
+
+// @ts-expect-error 工作台文档事件不能省略内容库身份。
+const workspaceWithoutNotebook: ProtyleHostEvent = {
+  documentId: "document-a",
+  type: "activate-document",
+};
+
+void assetEvent;
+void workspaceEvent;
+void assetWithoutDocument;
+void workspaceWithoutNotebook;
 
 const defaultsWithNotebook = {
   notebookId: "notebook-shadow",

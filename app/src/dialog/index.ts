@@ -6,6 +6,13 @@ import {Protyle} from "../protyle";
 import {Constants} from "../constants";
 import type {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 
+export const closeAllDialogs = () => {
+    const dialogLength = window.siyuan.dialogs.length;
+    for (let i = 0; i < dialogLength; i++) {
+        window.siyuan.dialogs[i].destroy();
+    }
+};
+
 export class Dialog {
     private beforeDestroyCallback: (options?: IObject) => void;
     private destroyCallback: (options?: IObject) => void;

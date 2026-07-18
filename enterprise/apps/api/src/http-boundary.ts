@@ -11,6 +11,7 @@ export interface HttpReplyBoundary {
     name: string,
     options: {
       httpOnly?: boolean;
+      expires?: Date;
       path?: string;
       sameSite?: "lax" | "none" | "strict" | boolean;
       secure?: boolean;
@@ -22,6 +23,7 @@ export interface HttpReplyBoundary {
     value: string,
     options: {
       httpOnly?: boolean;
+      expires?: Date;
       path?: string;
       sameSite?: "lax" | "none" | "strict" | boolean;
       secure?: boolean;

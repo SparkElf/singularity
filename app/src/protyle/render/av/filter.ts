@@ -6,9 +6,9 @@ import {setPosition} from "../../../util/setPosition";
 import {genCellValue} from "./cell";
 import * as dayjs from "dayjs";
 import {unicode2Emoji} from "../../../emoji";
-import {fetchPost} from "../../../util/fetch";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 
 export const getDefaultOperatorByType = (type: TAVCol) => {
     if (["select", "number", "date", "created", "updated"].includes(type)) {
@@ -400,7 +400,7 @@ const getOperatorSelectByType = (type: TAVCol, currentOperator: string): string 
 };
 
 // resolveFilterValueType 解析 filter 实际的值类型。
-// rollup 类型需同步解析底层目标列类型（fetchSyncPost），解析后返回底层类型；其它类型直接返回 value.type。
+// rollup 类型从当前视图返回的计算合同和内容类型解析；其它类型直接返回 value.type。
 // 返回 { type: 实际值类型, colData: 底层列数据（rollup 解析后更新 options/relation 等）, isRollup: 是否 rollup }。
 const resolveFilterValueType = (filter: IAVFilter, colData: IAVColumn): { type: TAVCol, colData: IAVColumn, isRollup: boolean } => {
     const valueType = filter.value?.type as TAVCol;
@@ -829,7 +829,7 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
                 if (dropdown.style.display === "none") {
                     // 展开时用 fixed 定位到 trigger 下方（避免被 overflow:auto 裁剪）
                     const rect = trigger.getBoundingClientRect();
-                    dropdown.style.zIndex = (++window.siyuan.zIndex).toString();
+                    protyle.session!.runtime.overlays.bringToFront(panelElement);
                     dropdown.style.left = rect.left + "px";
                     dropdown.style.width = Math.max(rect.width, 120) + "px";
                     // 先临时显示以测量真实高度，再决定向上还是向下展开
@@ -927,10 +927,14 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
             const colData = findColData(path);
             if (!colData?.relation?.avID) return;
             const keyword = (target as HTMLInputElement).value;
-            fetchPost("/api/av/getAttributeViewPrimaryKeyValues", {
+            const load = beginAVRenderLoad(protyle, target);
+            void requestAVRender<IWebSocketData>(protyle, load, "/api/av/getAttributeViewPrimaryKeyValues", {
                 id: colData.relation.avID,
                 keyword,
-            }, response => {
+            }).then((response) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
                 const row = getRow(target);
                 if (!row) return;
                 let listEl = row.querySelector('[data-type="relList"]') as HTMLElement;
@@ -948,6 +952,8 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
                 });
                 listEl.innerHTML = html;
                 listEl.style.display = html ? "" : "none";
+            }).catch((error) => {
+                reportAVLoadFailure(load, "attribute view filter relation values", error);
             });
         }
     });

@@ -13,7 +13,7 @@ export const tabCodeBlock = (protyle: IProtyle, nodeElement: HTMLElement,
     range.setStartAfter(wbrElement);
     const oldHTML = nodeElement.outerHTML;
     let text = "";
-    const tabSpace = window.siyuan.config.editor.codeTabSpaces === 0 ? "\t" : "".padStart(window.siyuan.config.editor.codeTabSpaces, " ");
+    const tabSpace = protyle.settings.editor.codeTabSpaces === 0 ? "\t" : "".padStart(protyle.settings.editor.codeTabSpaces, " ");
     if (!outdent) {
         range.extractContents().textContent.split("\n").forEach((item: string) => {
             text += tabSpace + item + "\n";

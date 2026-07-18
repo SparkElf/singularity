@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   collectBrowserDiagnostics,
@@ -37,6 +37,19 @@ function workspacePath(organizationId = ORGANIZATION_A, spaceId = SPACE_A) {
 
 function runtimePath(organizationId = ORGANIZATION_A, spaceId = SPACE_A) {
   return `/api/v1/organizations/${organizationId}/spaces/${spaceId}/runtime`;
+}
+
+async function fulfillEmptyContentDirectory(route: Route, path: string): Promise<boolean> {
+  if (!path.includes("/content-directory/notebooks")) {
+    return false;
+  }
+  await fulfillJson(
+    route,
+    path.endsWith("/content-directory/notebooks")
+      ? { notebooks: [] }
+      : { documents: [], locked: false, nextOffset: null },
+  );
+  return true;
 }
 
 async function openMobileSidebarIfNeeded(page: Page) {
@@ -86,12 +99,15 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
       await route.fulfill({ status: 204 });
       return;
     }
+    if (await fulfillEmptyContentDirectory(route, path)) {
+      return;
+    }
     await route.abort("failed");
   });
 
   await page.goto("/spaces");
   await page.getByRole("link", { name: /深空知识空间/ }).click();
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "选择文档" })).toBeVisible();
   await expect(page.getByText("阅读者")).toBeVisible();
 
   await openMobileSidebarIfNeeded(page);
@@ -103,11 +119,11 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
   await page.goBack();
   await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
   await expect(page).toHaveURL("/login?returnTo=%2Fspaces");
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "选择文档" })).toHaveCount(0);
   await page.goForward();
   await expect(page.getByRole("heading", { name: "登录奇点" })).toBeVisible();
   await expect(page).toHaveURL("/login");
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "选择文档" })).toHaveCount(0);
   const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
     message.text().includes("401 (Unauthorized)"),
   );
@@ -148,12 +164,15 @@ test("a visible starting page polls once and adopts the new ready state", async 
       });
       return;
     }
+    if (await fulfillEmptyContentDirectory(route, path)) {
+      return;
+    }
     await route.abort("failed");
   });
 
   await page.goto(workspacePath());
   await expect(page.getByRole("heading", { name: "空间正在启动" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "选择文档" })).toBeVisible({
     timeout: 5_000,
   });
   expect(runtimeRequests).toBe(2);
@@ -187,6 +206,9 @@ test("a browser network failure remains distinct and explicit retry recovers", a
       });
       return;
     }
+    if (await fulfillEmptyContentDirectory(route, path)) {
+      return;
+    }
     await route.abort("failed");
   });
 
@@ -196,7 +218,7 @@ test("a browser network failure remains distinct and explicit retry recovers", a
 
   networkFailure = false;
   await page.getByRole("button", { name: "立即重试" }).click();
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "选择文档" })).toBeVisible();
   const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
     message.text().includes("net::ERR_CONNECTION_FAILED"),
   );
@@ -240,11 +262,14 @@ test("the sidebar collapses on desktop and closes after mobile space navigation"
       });
       return;
     }
+    if (await fulfillEmptyContentDirectory(route, path)) {
+      return;
+    }
     await route.abort("failed");
   });
 
   await page.goto(workspacePath());
-  await expect(page.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "选择文档" })).toBeVisible();
   const trigger = page.getByRole("button", { name: "切换侧栏" });
 
   if (testInfo.project.name === "desktop") {

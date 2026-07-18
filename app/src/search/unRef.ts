@@ -4,7 +4,7 @@ import {setStorageVal} from "../protyle/util/compatibility";
 import {getArticle, getAttr} from "./util";
 import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {escapeAriaLabel, escapeLessThans} from "../util/escape";
-import {getIconByType} from "../editor/getIcon";
+import {getIconByType} from "../protyle/util/getIconByType";
 import {unicode2Emoji} from "../emoji";
 import {getDisplayName, getNotebookName} from "../util/pathName";
 import {Menu} from "../plugin/Menu";

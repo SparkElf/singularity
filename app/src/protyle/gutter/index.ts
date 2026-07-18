@@ -6,22 +6,15 @@ import {
     isInAVBlock,
     isInEmbedBlock
 } from "../util/hasClosest";
-import {getIconByType} from "../../editor/getIcon";
-import {enterBack, iframeMenu, tableMenu, videoMenu, zoomOut} from "../../menus/protyle";
+import {getIconByType} from "../util/getIconByType";
+import {enterBack, iframeMenu, tableMenu, videoMenu} from "../../menus/protyle";
 import {foldBlocksRecursively, setFold} from "../util/blockFold";
 import {MenuItem} from "../../menus/Menu";
 import {copySubMenu, openAttr, openFileAttr, openWechatNotify} from "../../menus/commonMenuItem";
-import {
-    copyPlainText,
-    isInAndroid,
-    isInHarmony,
-    isMac,
-    isOnlyMeta,
-    saveExportFile,
-    updateHotkeyAfterTip,
-    updateHotkeyTip,
-    writeText
-} from "../util/compatibility";
+import {isMac} from "../util/browserPlatform";
+import {copyPlainText, writeText} from "../util/clipboard";
+import {downloadExportFile} from "../util/download";
+import {isOnlyMeta, updateHotkeyAfterTip, updateHotkeyTip} from "../util/keyboard";
 import {
     transaction,
     turnsIntoOneTransaction,
@@ -40,7 +33,7 @@ import * as dayjs from "dayjs";
 import {fetchPost} from "../../util/fetch";
 import {cancelSB, genEmptyElement, getLangByType, insertEmptyBlock, jumpToParent,} from "../../block/util";
 import {transparentImgSrc} from "../util/dragTip";
-import {countBlockWord} from "../../layout/status";
+import {countBlockStatistics} from "../util/statistics";
 import {Constants} from "../../constants";
 import {mathRender} from "../render/mathRender";
 import {duplicateBlock} from "../wysiwyg/commonHotkey";
@@ -59,10 +52,11 @@ import {avContextmenu, duplicateCompletely} from "../render/av/action";
 import {getPlainText} from "../util/paste";
 import {addEditorToDatabase} from "../render/av/addToDatabase";
 import {processClonePHElement} from "../render/util";
-import {showMessage} from "../../dialog/message";
-import {checkFold} from "../../util/noRelyPCFunction";
+import {hideMessage, showMessage} from "../../dialog/message";
 import {clearSelect} from "../util/clear";
 import {chartRender} from "../render/chartRender";
+import {zoomOut} from "../util/zoom";
+import {requestBlockFold} from "../util/blockFoldRequest";
 
 // 块类型 data-type 到本地化名称键的映射，用于块标提示中的 ${x}
 const BLOCK_TYPE_LANG_KEYS: { [key: string]: string } = {
@@ -345,7 +339,7 @@ export class Gutter {
                     return;
                 }
                 hideElements(["gutter"], protyle);
-                countBlockWord([], protyle.block.rootID);
+                countBlockStatistics(protyle, []);
                 insertEmptyBlock(protyle, buttonElement.dataset.type === "gutterPlusBefore" ? "beforebegin" : "afterend", id);
                 return;
             }
@@ -422,7 +416,10 @@ export class Gutter {
             }
             if (isOnlyMeta(event)) {
                 if (protyle.options.backlinkData) {
-                    checkFold(id, protyle.notebookId, (zoomIn) => {
+                    void requestBlockFold(protyle, {
+                        notebookId: protyle.notebookId,
+                        documentId: id,
+                    }).then(({zoomIn}) => {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: protyle.notebookId,
@@ -434,6 +431,10 @@ export class Gutter {
                             restoreScroll: zoomIn ? "never" : "if-document",
                             zoom: zoomIn,
                         });
+                    }).catch((error) => {
+                        if (!protyle.requestSignal.aborted) {
+                            console.error("[protyle.transport] block fold request failed", error);
+                        }
                     });
                 } else {
                     zoomOut({protyle, id});
@@ -1059,6 +1060,7 @@ export class Gutter {
                 click: () => {
                     protyle.host.dispatch({
                         type: "add-blocks-to-agent",
+                        documentId: protyle.block.rootID,
                         notebookId: protyle.notebookId,
                         blockIds: Array.from(selectsElement).map(item => item.getAttribute("data-node-id")!),
                     });
@@ -1132,6 +1134,7 @@ export class Gutter {
                     });
                     protyle.host.dispatch({
                         type: "open-card-deck-picker",
+                        documentId: protyle.block.rootID,
                         notebookId: protyle.notebookId,
                         blockIds: ids,
                     });
@@ -1196,7 +1199,7 @@ export class Gutter {
         const turnIntoSubmenu: IMenu[] = [];
         hideElements(["select"], protyle);
         nodeElement.classList.add("protyle-wysiwyg--select");
-        countBlockWord([id], protyle.block.rootID);
+        countBlockStatistics(protyle, [id]);
         // "heading1-6", "list", "ordered-list", "check", "quote", "code", "table", "line", "math", "paragraph"
         if (type === "NodeParagraph" && !protyle.disabled) {
             turnIntoSubmenu.push(this.turnsIntoOne({
@@ -1668,6 +1671,7 @@ export class Gutter {
                 click: () => {
                     protyle.host.dispatch({
                         type: "add-blocks-to-agent",
+                        documentId: protyle.block.rootID,
                         notebookId: protyle.notebookId,
                         blockIds: [nodeElement.getAttribute("data-node-id")!],
                     });
@@ -1743,7 +1747,7 @@ export class Gutter {
                             }
                             nodeElement.setAttribute("linewrap", inputElement.checked.toString());
                             nodeElement.querySelector(".hljs").removeAttribute("data-render");
-                            highlightRender(nodeElement);
+                            highlightRender(nodeElement, protyle);
                             fetchPost("/api/attr/setBlockAttrs", {
                                 id,
                                 attrs: {linewrap: inputElement.checked.toString()}
@@ -1765,7 +1769,7 @@ export class Gutter {
                             }
                             nodeElement.setAttribute("ligatures", inputElement.checked.toString());
                             nodeElement.querySelector(".hljs").removeAttribute("data-render");
-                            highlightRender(nodeElement);
+                            highlightRender(nodeElement, protyle);
                             fetchPost("/api/attr/setBlockAttrs", {
                                 id,
                                 attrs: {ligatures: inputElement.checked.toString()}
@@ -1787,7 +1791,7 @@ export class Gutter {
                             }
                             nodeElement.setAttribute("linenumber", inputElement.checked.toString());
                             nodeElement.querySelector(".hljs").removeAttribute("data-render");
-                            highlightRender(nodeElement);
+                            highlightRender(nodeElement, protyle);
                             fetchPost("/api/attr/setBlockAttrs", {
                                 id,
                                 attrs: {linenumber: inputElement.checked.toString()}
@@ -1802,7 +1806,11 @@ export class Gutter {
                     click() {
                         const msgId = showMessage(window.siyuan.languages.exporting, -1);
                         fetchPost("/api/export/exportCodeBlock", {id, notebook: protyle.notebookId}, (response) => {
-                            saveExportFile(response.data.path, msgId);
+                            try {
+                                downloadExportFile(response.data.path);
+                            } finally {
+                                hideMessage(msgId);
+                            }
                         });
                     }
                 }]
@@ -1876,7 +1884,7 @@ export class Gutter {
                         blockID: id,
                         notebook: protyle.notebookId,
                     }, response => {
-                        saveExportFile(response.data.zip);
+                        downloadExportFile(response.data.zip);
                     });
                 }
             }).element);
@@ -2054,13 +2062,7 @@ export class Gutter {
                         notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
                     }, (response) => {
-                        if (isInAndroid()) {
-                            window.JSAndroid.writeSiYuanHTMLClipboard(protyle.lute.BlockDOM2StdMd(response.data).trimEnd(), protyle.lute.BlockDOM2HTML(response.data).trimEnd(), response.data + Constants.ZWSP);
-                        } else if (isInHarmony()) {
-                            window.JSHarmony.writeSiYuanHTMLClipboard(protyle.lute.BlockDOM2StdMd(response.data).trimEnd(), protyle.lute.BlockDOM2HTML(response.data).trimEnd(), response.data + Constants.ZWSP);
-                        } else {
-                            writeText(response.data + Constants.ZWSP);
-                        }
+                        void writeText(response.data + Constants.ZWSP);
                     });
                 }
             }).element);
@@ -2074,13 +2076,7 @@ export class Gutter {
                         notebook: protyle.notebookId,
                         removeFoldAttr: nodeElement.getAttribute("fold") !== "1"
                     }, (response) => {
-                        if (isInAndroid()) {
-                            window.JSAndroid.writeHTMLClipboard(protyle.lute.BlockDOM2StdMd(response.data).trimEnd(), response.data + Constants.ZWSP);
-                        } else if (isInHarmony()) {
-                            window.JSHarmony.writeHTMLClipboard(protyle.lute.BlockDOM2StdMd(response.data).trimEnd(), response.data + Constants.ZWSP);
-                        } else {
-                            writeText(response.data + Constants.ZWSP);
-                        }
+                        void writeText(response.data + Constants.ZWSP);
                         fetchPost("/api/block/getHeadingDeleteTransaction", {
                             id,
                             notebook: protyle.notebookId,
@@ -2173,7 +2169,10 @@ export class Gutter {
                 accelerator: `${updateHotkeyTip(window.siyuan.config.keymap.general.enter.custom)}/${updateHotkeyTip("⌘" + window.siyuan.languages.click)}`,
                 label: window.siyuan.languages.openBy,
                 click: () => {
-                    checkFold(id, protyle.notebookId, (zoomIn) => {
+                    void requestBlockFold(protyle, {
+                        notebookId: protyle.notebookId,
+                        documentId: id,
+                    }).then(({zoomIn}) => {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: protyle.notebookId,
@@ -2185,6 +2184,10 @@ export class Gutter {
                             restoreScroll: zoomIn ? "never" : "if-document",
                             zoom: zoomIn,
                         });
+                    }).catch((error) => {
+                        if (!protyle.requestSignal.aborted) {
+                            console.error("[protyle.transport] block fold request failed", error);
+                        }
                     });
                 }
             }).element);
@@ -2197,7 +2200,7 @@ export class Gutter {
                 accelerator: window.siyuan.config.keymap.editor.general.insertBefore.custom,
                 click() {
                     hideElements(["select"], protyle);
-                    countBlockWord([], protyle.block.rootID);
+                    countBlockStatistics(protyle, []);
                     insertEmptyBlock(protyle, "beforebegin", id);
                 }
             }).element);
@@ -2208,7 +2211,7 @@ export class Gutter {
                 accelerator: window.siyuan.config.keymap.editor.general.insertAfter.custom,
                 click() {
                     hideElements(["select"], protyle);
-                    countBlockWord([], protyle.block.rootID);
+                    countBlockStatistics(protyle, []);
                     insertEmptyBlock(protyle, "afterend", id);
                 }
             }).element);
@@ -2350,6 +2353,7 @@ export class Gutter {
                 click() {
                     protyle.host.dispatch({
                         type: "open-card-deck-picker",
+                        documentId: protyle.block.rootID,
                         notebookId: protyle.notebookId,
                         blockIds: [id],
                     });
@@ -2399,7 +2403,7 @@ export class Gutter {
                         });
                         // 使用 outer 后元素需要重新查询
                         protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
-                            mathRender(itemElement);
+                            mathRender(itemElement, protyle);
                         });
                         if (index === 0) {
                             focusBlock(protyle.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`), protyle.wysiwyg.element, true);
@@ -2565,7 +2569,7 @@ export class Gutter {
                     if (chartInstance) {
                         chartInstance.resize();
                     }
-                    chartRender(e);
+                    chartRender(e, protyle);
                 }
             });
             transaction(protyle, operations, undoOperations);

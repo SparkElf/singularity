@@ -88,6 +88,13 @@ describe("Protyle notebook-scoped HostEvent boundary", () => {
     );
   });
 
+  test("rejects a document event without document identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-document", notebookId: "notebook"});'),
+      ["document-scope-missing"],
+    );
+  });
+
   test("accepts a document event with notebook identity", () => {
     assert.deepEqual(
       violationIds('protyle.host.dispatch({type: "open-document", notebookId: protyle.notebookId, documentId: "doc"});'),
@@ -97,15 +104,22 @@ describe("Protyle notebook-scoped HostEvent boundary", () => {
 
   test("rejects an agent handoff without source notebook identity", () => {
     assert.deepEqual(
-      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", blockIds: ["block"]});'),
+      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", documentId: "doc", blockIds: ["block"]});'),
       ["notebook-scope-missing"],
     );
   });
 
   test("accepts an agent handoff with source notebook identity", () => {
     assert.deepEqual(
-      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", notebookId: protyle.notebookId, blockIds: ["block"]});'),
+      violationIds('protyle.host.dispatch({type: "add-blocks-to-agent", notebookId: protyle.notebookId, documentId: protyle.block.rootID, blockIds: ["block"]});'),
       [],
+    );
+  });
+
+  test("rejects a resource event without source document identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-asset", notebookId: protyle.notebookId, assetPath: "assets/a.png"});'),
+      ["document-scope-missing"],
     );
   });
 
@@ -114,6 +128,17 @@ describe("Protyle notebook-scoped HostEvent boundary", () => {
     assert.deepEqual(
       violationIds('protyle.host.dispatch({type: "open-graph", scope: "document", documentId: "doc"});'),
       ["notebook-scope-missing"],
+    );
+  });
+
+  test("requires both identities for workspace document state events", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "activate-document", documentId: "doc"});'),
+      ["notebook-scope-missing"],
+    );
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "activate-document", notebookId: "notebook"});'),
+      ["document-scope-missing"],
     );
   });
 });

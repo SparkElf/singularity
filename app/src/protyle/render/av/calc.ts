@@ -1,11 +1,11 @@
 import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
-import {fetchSyncPost} from "../../../util/fetch";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
 import {Dialog} from "../../../dialog";
 import {escapeAttr} from "../../../util/escape";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 
 const calcItem = (options: {
     menu: Menu,
@@ -90,6 +90,7 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
     colId: string,
     blockID: string
 }, x?: number) => {
+    const load = beginAVRenderLoad(protyle, calcElement);
     let rowElement: HTMLElement | false;
     let type;
     let colId: string;
@@ -303,10 +304,19 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         let rowCalcOperator: string;
         let avData = panelData?.data;
         if (!avData) {
-            const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {
-                id: avId,
-                notebook: protyle.notebookId,
-            });
+            let avResponse: IWebSocketData;
+            try {
+                avResponse = await requestAVRender<IWebSocketData>(protyle, load, "/api/av/renderAttributeView", {
+                    id: avId,
+                    notebook: load.identity.notebookId,
+                });
+            } catch (error) {
+                reportAVLoadFailure(load, "attribute view calculation metadata", error);
+                return;
+            }
+            if (!load.isCurrent()) {
+                return;
+            }
             avData = avResponse.data;
         }
 
@@ -330,7 +340,17 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
                 }
             });
             if (relationAvId) {
-                const colResponse = await fetchSyncPost("/api/av/getAttributeView", {id: relationAvId});
+                let colResponse: IWebSocketData;
+                try {
+                    colResponse = await requestAVRender<IWebSocketData>(protyle, load,
+                        "/api/av/getAttributeView", {id: relationAvId});
+                } catch (error) {
+                    reportAVLoadFailure(load, "attribute view rollup calculation metadata", error);
+                    return;
+                }
+                if (!load.isCurrent()) {
+                    return;
+                }
                 colResponse.data.av.keyValues.find((item: { key: { id: string, name: string, type: TAVCol } }) => {
                     if (item.key.id === keyID) {
                         rollupIsNumber = item.key.type === "number" || rollupIsNumber;
@@ -449,10 +469,19 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         const colData = getFieldsByData(panelData.data).find((item) => item.id === colId);
         currentTemplate = colData?.calc?.template || "";
     } else {
-        const avResponse = await fetchSyncPost("/api/av/renderAttributeView", {
-            id: avId,
-            notebook: protyle.notebookId,
-        });
+        let avResponse: IWebSocketData;
+        try {
+            avResponse = await requestAVRender<IWebSocketData>(protyle, load, "/api/av/renderAttributeView", {
+                id: avId,
+                notebook: load.identity.notebookId,
+            });
+        } catch (error) {
+            reportAVLoadFailure(load, "attribute view calculation template", error);
+            return;
+        }
+        if (!load.isCurrent()) {
+            return;
+        }
         const colData = getFieldsByData(avResponse.data).find((item) => item.id === colId);
         currentTemplate = colData?.calc?.template || "";
     }

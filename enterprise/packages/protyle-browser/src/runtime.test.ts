@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createProtyleEditorRegistry,
+  createEmptyProtylePluginPort,
   createProtyleFactory,
   createProtyleMenuPort,
   createProtyleOverlayPort,
@@ -61,18 +62,38 @@ describe("createProtyleFactory", () => {
   });
 });
 
+describe("createEmptyProtylePluginPort", () => {
+  it("preserves zero-plugin inputs and enters a terminal state on disposal", async () => {
+    const port = createEmptyProtylePluginPort<object, object[], object>();
+    const options = { render: true };
+    const toolbar = [{ name: "strong" }];
+    const paste = { extra: "preserved", textPlain: "content" };
+
+    expect(port.extendOptions(options)).toBe(options);
+    expect(port.extendToolbar(toolbar, vi.fn())).toBe(toolbar);
+    const transformedPaste = await port.transformPaste({}, paste);
+    expect(transformedPaste).toEqual(paste);
+    expect(transformedPaste).toBe(paste);
+
+    await port.dispose();
+    await port.dispose();
+
+    expect(() => port.extendOptions(options)).toThrowError(/\[protyle\.plugins]/);
+  });
+});
+
 describe("createProtyleMenuPort", () => {
   it("keeps owner handles independent and reserves capability disposal for the session", () => {
     const closed: string[] = [];
     let nextMenu = 0;
     const menuPort = createProtyleMenuPort(
-      () => ({ id: `menu-${++nextMenu}` }),
+      (close) => ({ close, id: `menu-${++nextMenu}` }),
       (menu) => closed.push(menu.id),
     );
     const first = menuPort.open();
     const second = menuPort.open();
 
-    first.close();
+    first.menu.close();
     first.close();
     const third = menuPort.open();
 
@@ -212,8 +233,13 @@ describe("createProtyleSession", () => {
       spaceId: "space-a",
       runtime: {
         transport: { dispose: () => order.push("transport") },
-        overlays: { dispose: () => order.push("overlays") },
-        menu: { dispose: () => order.push("menu") },
+        overlays: {
+          bringToFront: () => undefined,
+          dispose: () => order.push("overlays"),
+        },
+        menu: {
+          dispose: () => order.push("menu"),
+        },
         editors,
         plugins: {
           dispose: () => {

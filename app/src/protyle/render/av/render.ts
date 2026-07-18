@@ -1,4 +1,3 @@
-import {fetchSyncPost} from "../../../util/fetch";
 import {getColIconByType} from "./col";
 import {Constants} from "../../../constants";
 import {addDragFill, cellScrollIntoView, popTextCell} from "./cell";
@@ -9,7 +8,7 @@ import {getRowHTML, stickyRow, updateHeader} from "./row";
 import {getCalcValue} from "./calc";
 import {renderAVAttribute} from "./blockAttr";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
-import {isInMobileApp} from "../../util/compatibility";
+import {isTouchInput} from "../../util/browserPlatform";
 import {isMobile} from "../../../util/functions";
 import {renderGallery} from "./gallery/render";
 import {getFieldsByData, getViewIcon} from "./view";
@@ -20,6 +19,8 @@ import {showMessage} from "../../../dialog/message";
 import {renderKanban} from "./kanban/render";
 import {bindAvSearch} from "./search";
 import {getBodyVirtualData, initVirtualScroll} from "./virtualScroll";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender, type AVRenderLoad} from "./load";
+import {closeAVOverlay, currentAVOverlay} from "./overlay";
 
 interface IIds {
     groupId: string,
@@ -49,7 +50,7 @@ interface ITableOptions {
     }
 }
 
-export const genTabHeaderHTML = (data: IAV, showSearch: boolean, editable: boolean) => {
+export const genTabHeaderHTML = (protyle: IProtyle, data: IAV, showSearch: boolean, editable: boolean) => {
     let tabHTML = "";
     let viewData: IAVView;
     let hasFilter = false;
@@ -123,12 +124,12 @@ export const genTabHeaderHTML = (data: IAV, showSearch: boolean, editable: boole
             ${data.isMirror ? ` <span data-av-id="${data.id}" data-popover-url="/api/av/getMirrorDatabaseBlocks" class="popover__block block__icon block__icon--show ariaLabel" data-position="8south" aria-label="${window.siyuan.languages.mirrorTip}">
     <svg><use xlink:href="#iconSplitLR"></use></svg></span><div class="fn__space"></div>` : ""}
         </div>
-        <div contenteditable="${editable}" spellcheck="${window.siyuan.config.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${Lute.EscapeHTMLStr(data.name || "")}" data-tip="${window.siyuan.languages._kernel[267]}">${Lute.EscapeHTMLStr(data.name || "")}</div>
+        <div contenteditable="${editable}" spellcheck="${protyle.settings.editor.spellcheck.toString()}" class="av__title${viewData.hideAttrViewName ? " fn__none" : ""}" data-title="${Lute.EscapeHTMLStr(data.name || "")}" data-tip="${window.siyuan.languages._kernel[267]}">${Lute.EscapeHTMLStr(data.name || "")}</div>
         <div class="av__counter fn__none"></div>
     </div>`;
 };
 
-const getTableHTMLs = (data: IAVTable, e: HTMLElement, virtualData: IAVVirtualData) => {
+const getTableHTMLs = (data: IAVTable, e: HTMLElement, virtualData: IAVVirtualData, fileIcon: string) => {
     let calcHTML = "";
     let contentHTML = '<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div></div>';
     let pinIndex = -1;
@@ -208,7 +209,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column) || `<svg><use x
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table"});
+        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon});
     });
     return `${contentHTML}<div class="av__row--util${data.rowCount > data.rows.length ? " av__readonly--show" : ""}">
     <div class="av__colsticky">
@@ -259,12 +260,12 @@ const renderGroupTable = (options: ITableOptions) => {
     options.data.view.groups.forEach((group: IAVTable) => {
         if (group.groupHidden === 0) {
             avBodyHTML += `${getGroupTitleHTML(group, group.rowCount)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id])}</div>`;
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file)}</div>`;
         }
     });
     if (options.renderAll) {
         options.blockElement.firstElementChild.outerHTML = `<div class="av__container">
-    ${genTabHeaderHTML(options.data, isSearching || !!query, !options.protyle.disabled)}
+    ${genTabHeaderHTML(options.protyle, options.data, isSearching || !!query, !options.protyle.disabled)}
     <div class="av__scroll">
         ${avBodyHTML}
     </div>
@@ -316,8 +317,8 @@ const afterRenderTable = (options: ITableOptions) => {
             newCellElement.classList.add("av__cell--select");
             cellScrollIntoView(options.blockElement, newCellElement);
         }
-        const avMaskElement = document.querySelector(".av__mask");
-        const avPanelElement = document.querySelector(".av__panel");
+        const avMaskElement = currentAVOverlay(options.protyle, "cell-editor");
+        const avPanelElement = currentAVOverlay(options.protyle, "panel");
         if (avMaskElement) {
             (avMaskElement.querySelector("textarea, input") as HTMLTextAreaElement)?.focus();
         } else if (!avPanelElement && !options.resetData.isSearching && getSelection().rangeCount > 0) {
@@ -327,7 +328,7 @@ const afterRenderTable = (options: ITableOptions) => {
                 focusBlock(options.blockElement);
             }
         } else if (avPanelElement && !newCellElement) {
-            avPanelElement.remove();
+            closeAVOverlay(options.protyle, "panel");
         }
     }
     options.resetData.selectRowIds.forEach((selectRowId, index) => {
@@ -389,7 +390,8 @@ const afterRenderTable = (options: ITableOptions) => {
     initVirtualScroll(options);
 };
 
-export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: IAV) => void, renderAll = true, avData?: IAV) => {
+export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: IAV) => void, renderAll = true,
+                               avData?: IAV, inheritedLoad?: AVRenderLoad) => {
     let avElements: Element[] = [];
     if (element.getAttribute("data-type") === "NodeAttributeView") {
         avElements = [element];
@@ -405,16 +407,25 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
         if (e.getAttribute("data-render") === "true" || hasClosestByClassName(e, "av__gallery-content")) {
             continue;
         }
-        if (isMobile() || isInMobileApp()) {
+        const load = inheritedLoad?.owner === e ? inheritedLoad : beginAVRenderLoad(protyle, e);
+        if (isMobile() || isTouchInput()) {
             e.classList.add("av--touch");
         }
 
         if (e.getAttribute("data-av-type") === "gallery") {
-            await renderGallery({blockElement: e, protyle, cb, renderAll});
+            try {
+                await renderGallery({blockElement: e, protyle, cb, renderAll, load});
+            } catch (error) {
+                reportAVLoadFailure(load, "attribute view gallery render", error);
+            }
             continue;
         }
         if (e.getAttribute("data-av-type") === "kanban") {
-            await renderKanban({blockElement: e, protyle, cb, renderAll});
+            try {
+                await renderKanban({blockElement: e, protyle, cb, renderAll, load});
+            } catch (error) {
+                reportAVLoadFailure(load, "attribute view kanban render", error);
+            }
             continue;
         }
 
@@ -509,30 +520,48 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
         if (!avData) {
             const created = protyle.options.history?.created;
             const snapshot = protyle.options.history?.snapshot;
-            const response = await fetchSyncPost(created ? "/api/av/renderHistoryAttributeView" : (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"), {
-                id: e.getAttribute("data-av-id"),
-                notebook: protyle.notebookId,
-                created,
-                snapshot,
-                pageSize: avPageSize.unGroupPageSize,
-                groupPaging: avPageSize.groupPageSize,
-                viewID: e.getAttribute(Constants.CUSTOM_SY_AV_VIEW) || "",
-                query: resetData.query.trim(),
-                blockID: e.getAttribute("data-node-id"),
-                createIfNotExist: !protyle.block.action?.includes(Constants.CB_GET_AV_NO_CREATE),
-            });
+            let response: {data: IAV};
+            try {
+                response = await requestAVRender<{data: IAV}>(
+                    protyle,
+                    load,
+                    created ? "/api/av/renderHistoryAttributeView" :
+                        (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"),
+                    {
+                        id: e.getAttribute("data-av-id"),
+                        notebook: load.identity.notebookId,
+                        created,
+                        snapshot,
+                        pageSize: avPageSize.unGroupPageSize,
+                        groupPaging: avPageSize.groupPageSize,
+                        viewID: e.getAttribute(Constants.CUSTOM_SY_AV_VIEW) || "",
+                        query: resetData.query.trim(),
+                        blockID: e.getAttribute("data-node-id"),
+                        createIfNotExist: !protyle.block.action?.includes(Constants.CB_GET_AV_NO_CREATE),
+                    },
+                );
+            } catch (error) {
+                reportAVLoadFailure(load, "attribute view table render", error);
+                continue;
+            }
+            if (!load.isCurrent()) {
+                continue;
+            }
             data = response.data;
         } else {
             data = avData;
         }
+        if (!load.isCurrent()) {
+            continue;
+        }
         if (data.viewType === "gallery") {
             e.setAttribute("data-av-type", data.viewType);
-            await renderGallery({blockElement: e, protyle, cb, renderAll, data});
+            await renderGallery({blockElement: e, protyle, cb, renderAll, data, load});
             continue;
         }
         if (data.viewType === "kanban") {
             e.setAttribute("data-av-type", data.viewType);
-            await renderKanban({blockElement: e, protyle, cb, renderAll, data});
+            await renderKanban({blockElement: e, protyle, cb, renderAll, data, load});
             continue;
         }
         const view = data.view as IAVTable;
@@ -541,11 +570,11 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             continue;
         }
         const avBodyHTML = `<div class="av__body" data-group-id="" data-page-size="${view.pageSize}" style="float: left">
-    ${getTableHTMLs(view, e, resetData.virtualData.all)}
+    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file)}
 </div>`;
         if (renderAll) {
             e.firstElementChild.outerHTML = `<div class="av__container">
-    ${genTabHeaderHTML(data, resetData.isSearching || !!resetData.query, !protyle.disabled)}
+    ${genTabHeaderHTML(protyle, data, resetData.isSearching || !!resetData.query, !protyle.disabled)}
     <div class="av__scroll">
         ${avBodyHTML}
     </div>
@@ -567,19 +596,18 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
     }
 };
 
-let searchTimeout: number;
+const searchTimeouts = new WeakMap<HTMLElement, number>();
 
 export const updateSearch = (e: HTMLElement, protyle: IProtyle) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = window.setTimeout(() => {
+    clearTimeout(searchTimeouts.get(e));
+    searchTimeouts.set(e, window.setTimeout(() => {
+        searchTimeouts.delete(e);
         e.removeAttribute("data-render");
         avRender(e, protyle, undefined, false);
-    }, Constants.TIMEOUT_INPUT);
+    }, Constants.TIMEOUT_INPUT));
 };
 
-const refreshTimeouts: {
-    [key: string]: number;
-} = {};
+const refreshTimeouts = new WeakMap<IProtyle, number>();
 
 const getAVElements = (protyle: IProtyle, avID: string, viewID?: string): HTMLElement[] => {
     const elements = Array.from(protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${avID}"]`)) as HTMLElement[];
@@ -770,8 +798,9 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
         return;
     }
     // 只能 setTimeout，以前方案快速输入后最后一次修改会被忽略；必须为每一个 protyle 单独设置，否则有多个 protyle 时，其余无法被执行
-    clearTimeout(refreshTimeouts[protyle.id]);
-    refreshTimeouts[protyle.id] = window.setTimeout(() => {
+    clearTimeout(refreshTimeouts.get(protyle));
+    refreshTimeouts.set(protyle, window.setTimeout(() => {
+        refreshTimeouts.delete(protyle);
         // 修改表格名 avID 传入到 id 上了 https://github.com/siyuan-note/siyuan/issues/12724
         const avID = operation.action === "setAttrViewName" ? operation.id : operation.avID;
         const attrElement = document.querySelector(`.b3-dialog--open[data-key="${Constants.DIALOG_ATTR}"] .custom-attr > [data-av-id="${avID}"]`) as HTMLElement;
@@ -858,5 +887,5 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
                 item.removeAttribute("data-loading");
             });
         });
-    }, ["insertAttrViewBlock", "addAttrViewCol", "removeAttrViewCol", "duplicateAttrViewKey"].includes(operation.action) ? 2 : 100);
+    }, ["insertAttrViewBlock", "addAttrViewCol", "removeAttrViewCol", "duplicateAttrViewKey"].includes(operation.action) ? 2 : 100));
 };

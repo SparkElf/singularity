@@ -1,4 +1,6 @@
-export const htmlRender = (element: Element) => {
+import type {ProtyleRendererContext} from "./renderContext";
+
+export const htmlRender = (element: Element, context: ProtyleRendererContext) => {
     let htmlElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-type") === "NodeHTMLBlock" && element.getAttribute("data-render") !== "true") {
         htmlElements = [element];
@@ -10,7 +12,7 @@ export const htmlRender = (element: Element) => {
     }
     htmlElements.forEach((e) => {
         e.setAttribute("data-render", "true");
-        e.firstElementChild.firstElementChild.setAttribute("aria-label", window.siyuan.languages.edit);
-        e.firstElementChild.lastElementChild.setAttribute("aria-label", window.siyuan.languages.more);
+        e.firstElementChild.firstElementChild.setAttribute("aria-label", context.localization.text("edit"));
+        e.firstElementChild.lastElementChild.setAttribute("aria-label", context.localization.text("more"));
     });
 };

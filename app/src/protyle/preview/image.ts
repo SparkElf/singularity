@@ -1,9 +1,11 @@
 import {Constants} from "../../constants";
 import {addScript} from "../util/addScript";
-import {fetchPost} from "../../util/fetch";
 
-export const previewImages = (srcList: string[], currentSrc?: string, onHidden?: () => void) => {
+export const previewImages = (srcList: string[], currentSrc?: string, onHidden?: () => void, signal?: AbortSignal) => {
     addScript(`${Constants.PROTYLE_CDN}/js/viewerjs/viewer.js?v=1.11.7`, "protyleViewerScript").then(() => {
+        if (signal?.aborted) {
+            return;
+        }
         const imagesElement = document.createElement("ul");
         let html = "";
         let initialViewIndex = -1;
@@ -16,7 +18,14 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
             }
         });
         imagesElement.innerHTML = html;
-        window.siyuan.viewer = new Viewer(imagesElement, {
+        let viewer: Viewer;
+        const destroyViewer = () => {
+            signal?.removeEventListener("abort", destroyViewer);
+            if (!viewer.destroyed) {
+                viewer.destroy();
+            }
+        };
+        viewer = new Viewer(imagesElement, {
             initialViewIndex: currentSrc ? initialViewIndex : 0,
             title: [1, (image: HTMLImageElement, imageData: IObject) => {
                 let name = image.alt;
@@ -29,7 +38,7 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
             button: false,
             transition: false,
             hidden: function () {
-                window.siyuan.viewer.destroy();
+                destroyViewer();
                 if (onHidden) {
                     onHidden();
                 }
@@ -46,27 +55,57 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
                 rotateRight: true,
                 flipHorizontal: true,
                 flipVertical: true,
-                close: function () {
-                    window.siyuan.viewer.destroy();
-                },
+                close: destroyViewer,
             },
         });
-        window.siyuan.viewer.show();
+        signal?.addEventListener("abort", destroyViewer, {once: true});
+        viewer.show();
     });
 };
 
-export const previewDocImage = (currentSrc: string, id: string, notebookId: string) => {
-    fetchPost("/api/asset/getDocImageAssets", {id, notebook: notebookId}, (response) => {
-        previewImages(response.data, currentSrc);
+export const previewDocImage = (currentSrc: string, protyle: IProtyle) => {
+    void protyle.transport!.request<IWebSocketData>("/api/asset/getDocImageAssets", {
+        id: protyle.block.rootID,
+        notebook: protyle.notebookId,
+    }, {
+        identity: {
+            documentId: protyle.options.blockId!,
+            notebookId: protyle.notebookId,
+        },
+        intent: "read",
+        signal: protyle.requestSignal,
+    }).then((response) => {
+        if (protyle.destroyed || protyle.requestSignal.aborted) {
+            return;
+        }
+        previewImages(response.data, currentSrc, undefined, protyle.requestSignal);
+    }).catch((error) => {
+        if (!protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] document image preview failed", error);
+        }
     });
 };
 
-export const previewAttrViewImages = (currentSrc: string, avID: string, viewID: string, query: string) => {
-    fetchPost("/api/av/getCurrentAttrViewImages", {
+export const previewAttrViewImages = (protyle: IProtyle, currentSrc: string, avID: string, viewID: string, query: string) => {
+    void protyle.transport!.request<IWebSocketData>("/api/av/getCurrentAttrViewImages", {
         id: avID,
         viewID,
         query,
-    }, (response) => {
-        previewImages(response.data, currentSrc);
+    }, {
+        identity: {
+            documentId: protyle.options.blockId!,
+            notebookId: protyle.notebookId,
+        },
+        intent: "read",
+        signal: protyle.requestSignal,
+    }).then((response) => {
+        if (protyle.destroyed || protyle.requestSignal.aborted) {
+            return;
+        }
+        previewImages(response.data, currentSrc, undefined, protyle.requestSignal);
+    }).catch((error) => {
+        if (!protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] attribute view image preview failed", error);
+        }
     });
 };

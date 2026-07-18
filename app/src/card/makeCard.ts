@@ -1,9 +1,8 @@
 import {fetchPost} from "../util/fetch";
-import {Dialog} from "../dialog";
+import {closeAllDialogs, Dialog} from "../dialog";
 import {isMobile} from "../util/functions";
 import {hideMessage, showMessage} from "../dialog/message";
 import {confirmDialog} from "../dialog/confirmDialog";
-import {hideElements} from "../protyle/ui/hideElements";
 import {viewCards} from "./viewCards";
 import {Constants} from "../constants";
 import {escapeAttr, escapeHtml} from "../util/escape";
@@ -38,7 +37,7 @@ export const genCardItem = (item: ICardPackage) => {
 export const makeCard = (app: App, ids: readonly string[]) => {
     window.siyuan.dialogs.find(item => {
         if (item.element.getAttribute("data-key") === Constants.DIALOG_MAKECARD) {
-            hideElements(["dialog"]);
+            closeAllDialogs();
             return true;
         }
     });
@@ -223,5 +222,3 @@ export const quickMakeCard = (protyle: IProtyle, nodeElement: Element[]) => {
         }]);
     }
 };
-
-

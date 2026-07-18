@@ -1,10 +1,10 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
 import {hasClosestByClassName} from "../util/hasClosest";
-import {looseJsonParse} from "../../util/functions";
-import {genIconHTML} from "./util";
+import {looseJsonParse} from "../util/looseJsonParse";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
-export const chartRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const chartRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let echartsElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "echarts" && element.getAttribute("data-render") !== "true") {
         echartsElements = [element];
@@ -24,7 +24,7 @@ export const chartRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
             echartsElements.forEach(async (e: HTMLDivElement) => {
                 e.setAttribute("data-render", "true");
                 if (!e.firstElementChild.classList.contains("protyle-icons")) {
-                    e.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement, ["refresh", "edit", "more"]));
+                    e.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement, ["refresh", "edit", "more"]));
                 }
                 const renderElement = e.firstElementChild.nextElementSibling as HTMLElement;
                 if (!e.getAttribute("data-content")) {
@@ -45,7 +45,7 @@ export const chartRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
                         }
                         chartInstance?.resize();
                     }
-                    window.echarts.init(renderElement.lastElementChild, window.siyuan.config.appearance.mode === 1 ? "dark" : undefined, {width}).setOption(option);
+                    window.echarts.init(renderElement.lastElementChild, context.settings.appearance.theme === "dark" ? "dark" : undefined, {width}).setOption(option);
                 } catch (error) {
                     window.echarts.dispose(renderElement.lastElementChild);
                     renderElement.innerHTML = `<span style="position: absolute;left:0;top:0;width: 1px;">${Constants.ZWSP}</span><div class="ft__error" style="height:${e.style.height || "420px"}" contenteditable="false">echarts render error: <br>${error}</div>`;

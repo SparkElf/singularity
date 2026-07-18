@@ -28,7 +28,15 @@ func TestPushReloadProtyleBroadcastsOneStoreAwarePayloadShape(t *testing.T) {
 	disconnected := make(chan struct{})
 	var connectOnce, disconnectOnce sync.Once
 	server.HandleConnect(func(session *melody.Session) {
-		AddPushChan(session)
+		identity, identityErr := ParsePushChannelIdentity(session.Request)
+		if identityErr != nil {
+			t.Errorf("parse push channel identity: %v", identityErr)
+			return
+		}
+		if identityErr = AddPushChan(session, identity); identityErr != nil {
+			t.Errorf("add push channel: %v", identityErr)
+			return
+		}
 		connectOnce.Do(func() { close(connected) })
 	})
 	server.HandleDisconnect(func(session *melody.Session) {

@@ -17,13 +17,13 @@ interface IBodyState {
     selectedRowIds?: Set<string>;
 }
 
-const dataStore = new Map<string, {
+const dataStore = new WeakMap<HTMLElement, {
     protyle: IProtyle;
     data: IAV;
 }>();
 const bodyStates = new WeakMap<HTMLElement, IBodyState>();
 const trimPending = new WeakSet<HTMLElement>();
-let lastScrollTop: number;
+const lastScrollTops = new WeakMap<IProtyle, number>();
 
 // 测量 DOM 变更前后容器 scrollHeight 的差值，用于精确计算 gallery 多列网格中行移除/回填的实际高度（含 gap）
 const measureHeightDiff = (el: HTMLElement, mutate: () => void): number => {
@@ -41,13 +41,14 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
 
     // AV 重渲/新增分组/局部更新未走完整 initVirtualScroll 时 dataStore 可能缺失，跳过本次 trim，
     // 等下次 initVirtualScroll 重新登记后再处理，避免解引用 undefined.protyle
-    const stored = dataStore.get(blockElement.getAttribute("data-av-id") + blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW));
+    const stored = dataStore.get(blockElement);
     if (!stored) {
         return;
     }
     const protyle = stored.protyle;
-    const isScrollingUp = lastScrollTop && lastScrollTop > protyle.contentElement.scrollTop;
-    lastScrollTop = protyle.contentElement.scrollTop;
+    const lastScrollTop = lastScrollTops.get(protyle);
+    const isScrollingUp = lastScrollTop !== undefined && lastScrollTop > protyle.contentElement.scrollTop;
+    lastScrollTops.set(protyle, protyle.contentElement.scrollTop);
 
     if ((blockRect.bottom < elementRect.top && !isScrollingUp) || (blockRect.top > elementRect.bottom && isScrollingUp)) {
         return;
@@ -147,7 +148,8 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         row: dataRows[i],
                         rowIndex: i,
                         pinIndex: state.pinIndex,
-                        type: viewType
+                        type: viewType,
+                        fileIcon: protyle.settings.icons.file,
                     });
                 }
                 if (bottomElement && bottomElement.isConnected) {
@@ -261,7 +263,8 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         row: dataRows[i],
                         rowIndex: i,
                         pinIndex: state.pinIndex,
-                        type: viewType
+                        type: viewType,
+                        fileIcon: protyle.settings.icons.file,
                     });
                 }
                 if (bottomElement && bottomElement.isConnected) {
@@ -285,7 +288,8 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         row: dataRows[i],
                         rowIndex: i,
                         pinIndex: state.pinIndex,
-                        type: viewType
+                        type: viewType,
+                        fileIcon: protyle.settings.icons.file,
                     });
                 }
                 if (!topElement.isConnected) {
@@ -371,7 +375,7 @@ export const getBodyVirtualData = (bodyEl: HTMLElement, endSelector: string, fir
 const getBodyData = (bodyEl: HTMLElement) => {
     const avEl = bodyEl.closest(".av") as HTMLElement;
     if (!avEl) return null;
-    const stored = dataStore.get(avEl.getAttribute("data-av-id") + avEl.getAttribute(Constants.CUSTOM_SY_AV_VIEW));
+    const stored = dataStore.get(avEl);
     if (!stored) return null;
 
     const groupId = bodyEl.dataset.groupId;
@@ -453,8 +457,7 @@ export const initVirtualScroll = (options: {
     if (options.blockElement.getAttribute(Constants.ATTRIBUTE_V_SCROLL) !== "true") {
         return;
     }
-    dataStore.set(options.blockElement.getAttribute("data-av-id") +
-        options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW), {
+    dataStore.set(options.blockElement, {
         protyle: options.protyle,
         data: options.data,
     });

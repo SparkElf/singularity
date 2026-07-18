@@ -13,6 +13,8 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import { createApiApplication } from "../src/application.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
+import { testAuditConfiguration } from "./support/audit-configuration.js";
+import { testKernelGatewayConfiguration } from "./support/kernel-gateway.js";
 
 const requestIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -47,7 +49,9 @@ describe("database readiness HTTP contract", () => {
 
   beforeAll(async () => {
     app = await createApiApplication({
+      auditConfiguration: testAuditConfiguration(),
       databaseUrl: isolatedDatabaseUrl(),
+      kernelGateway: testKernelGatewayConfiguration(),
       publicOrigin,
     });
     await app.listen(0, "127.0.0.1");
@@ -77,7 +81,9 @@ describe("database readiness HTTP contract", () => {
     async ({ databaseUrl, forbiddenFragments }) => {
       const logger = new CapturingLogger();
       const unavailableApp = await createApiApplication({
+        auditConfiguration: testAuditConfiguration(),
         databaseUrl,
+        kernelGateway: testKernelGatewayConfiguration(),
         logger,
         publicOrigin,
       });
@@ -119,7 +125,9 @@ describe("database readiness HTTP contract", () => {
 
     try {
       unavailableApp = await createApiApplication({
+        auditConfiguration: testAuditConfiguration(),
         databaseUrl: unavailableUrl.toString(),
+        kernelGateway: testKernelGatewayConfiguration(),
         publicOrigin,
       });
       await unavailableApp.listen(0, "127.0.0.1");
@@ -150,7 +158,9 @@ describe("database readiness HTTP contract", () => {
 
   test("disconnects PostgreSQL only after the HTTP server closes", async () => {
     const shutdownApp = await createApiApplication({
+      auditConfiguration: testAuditConfiguration(),
       databaseUrl: isolatedDatabaseUrl(),
+      kernelGateway: testKernelGatewayConfiguration(),
       publicOrigin,
     });
     await shutdownApp.listen(0, "127.0.0.1");

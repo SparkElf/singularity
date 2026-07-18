@@ -1,42 +1,49 @@
 import {addLoading, removeLoading} from "../ui/initUI";
-import {fetchPost} from "../../util/fetch";
 import {getDocByScroll, saveScroll} from "../scroll/saveScroll";
 import {renderBacklink} from "../wysiwyg/renderBacklink";
 import {hasClosestByClassName} from "./hasClosest";
 import {preventScroll} from "../scroll/preventScroll";
 import {isSupportCSSHL, searchMarkRender} from "../render/searchMarkRender";
-import {restoreLuteMarkdownSyntax} from "./paste";
-import {isEncryptedBox} from "../../util/pathName";
+import {beginProtyleContentLoad, requestProtyleContent} from "./contentLoad";
 
 export const reloadProtyle = (protyle: IProtyle, focus: boolean, updateReadonly?: boolean) => {
+    const load = beginProtyleContentLoad(protyle);
     if (!protyle.preview.element.classList.contains("fn__none")) {
         protyle.preview.render(protyle);
         removeLoading(protyle);
         return;
     }
-    if (window.siyuan.config.editor.displayBookmarkIcon) {
+    if (protyle.settings.editor.displayBookmarkIcon) {
         protyle.wysiwyg.element.classList.add("protyle-wysiwyg--attr");
     } else {
         protyle.wysiwyg.element.classList.remove("protyle-wysiwyg--attr");
     }
     // RTL 切换时同步 .protyle 元素的 .rtl 类名
-    if (window.siyuan.config.editor.rtl) {
+    if (protyle.settings.editor.rtl) {
         protyle.element.classList.add("rtl");
     } else {
         protyle.element.classList.remove("rtl");
     }
     if (protyle.title) {
         protyle.title.element.removeAttribute("data-render");
-        protyle.title.element.setAttribute("spellcheck", window.siyuan.config.editor.spellcheck.toString());
-        if (window.siyuan.config.editor.displayBookmarkIcon) {
+        protyle.title.element.setAttribute("spellcheck", protyle.settings.editor.spellcheck.toString());
+        if (protyle.settings.editor.displayBookmarkIcon) {
             protyle.title.element.classList.add("protyle-wysiwyg--attr");
         } else {
             protyle.title.element.classList.remove("protyle-wysiwyg--attr");
         }
     }
-    protyle.lute.SetProtyleMarkNetImg(window.siyuan.config.editor.displayNetImgMark);
-    protyle.lute.SetSpellcheck(window.siyuan.config.editor.spellcheck);
-    restoreLuteMarkdownSyntax(protyle);
+    protyle.lute.SetProtyleMarkNetImg(protyle.settings.editor.displayNetImgMark);
+    protyle.lute.SetSpellcheck(protyle.settings.editor.spellcheck);
+    const markdown = protyle.settings.editor.markdown;
+    protyle.lute.SetInlineAsterisk(markdown.inlineAsterisk);
+    protyle.lute.SetGFMStrikethrough(markdown.inlineStrikethrough);
+    protyle.lute.SetInlineMath(markdown.inlineMath);
+    protyle.lute.SetSub(markdown.inlineSub);
+    protyle.lute.SetSup(markdown.inlineSup);
+    protyle.lute.SetTag(markdown.inlineTag);
+    protyle.lute.SetInlineUnderscore(markdown.inlineUnderscore);
+    protyle.lute.SetMark(markdown.inlineMark);
     protyle.lute.SetGFMStrikethrough1(false);
     addLoading(protyle);
     if (protyle.options.backlinkData) {
@@ -51,22 +58,35 @@ export const reloadProtyle = (protyle: IProtyle, focus: boolean, updateReadonly?
                 highlight: !isSupportCSSHL(),
                 keyword,
             };
-            if (isEncryptedBox(protyle.notebookId)) {
-                params.notebook = protyle.notebookId;
-            }
-            fetchPost(isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc", params, response => {
+            void requestProtyleContent<IWebSocketData>(
+                protyle,
+                isMention ? "/api/ref/getBackmentionDoc" : "/api/ref/getBacklinkDoc",
+                params,
+                load,
+            ).then((response) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
                 protyle.options.backlinkData = isMention ? response.data.backmentions : response.data.backlinks;
                 renderBacklink(protyle, protyle.options.backlinkData);
                 searchMarkRender(protyle, response.data.keywords);
+            }).catch((error) => {
+                if (load.isCurrent()) {
+                    removeLoading(protyle);
+                    console.error("[protyle.transport] backlink reload failed", error);
+                }
             });
         }
     } else {
-        preventScroll(protyle);
+        preventScroll(protyle, 0, 1000, load.signal);
         getDocByScroll({
             protyle,
             focus,
             scrollAttr: saveScroll(protyle, true) as IScrollAttr,
             updateReadonly,
+            load,
+            signal: load.signal,
+            isCurrent: load.isCurrent,
             cb(keys) {
                 if (protyle.query?.key) {
                     searchMarkRender(protyle, keys, protyle.highlight.rangeIndex);

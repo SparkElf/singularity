@@ -4,7 +4,7 @@ import {Wnd} from "../layout/Wnd";
 import {getInstanceById, getWndByLayout, pdfIsLoading, setPanelFocus} from "../layout/util";
 import {getDockByType} from "../layout/tabUtil";
 import {getAllModels, getAllTabs} from "../layout/getAll";
-import {highlightById, scrollCenter} from "../util/highlightById";
+import {highlightById, scrollCenter} from "../protyle/util/highlightById";
 import {
     getDisplayName,
     getDocDisplayName,

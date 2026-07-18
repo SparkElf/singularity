@@ -15,11 +15,11 @@ import {
 import {transaction, turnsIntoOneTransaction, turnsIntoTransaction, updateTransaction} from "./transaction";
 import {cancelSB, genEmptyElement, rebalanceSbWidth, refreshSbResize} from "../../block/util";
 import {listOutdent, updateListOrder} from "./list";
-import {zoomOut} from "../../menus/protyle";
+import {zoomOut} from "../util/zoom";
 import {preventScroll} from "../scroll/preventScroll";
 import {hideElements} from "../ui/hideElements";
 import {Constants} from "../../constants";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {isMobile} from "../../util/functions";
 import {mathRender} from "../render/mathRender";
 import {hasClosestBlock, hasClosestByClassName, isInEmbedBlock} from "../util/hasClosest";
@@ -620,7 +620,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
         previousLastElement.insertAdjacentHTML("afterend",  protyle.lute.SpinBlockDOM(previousLastElement.outerHTML));
         previousLastElement = previousLastElement.nextElementSibling as HTMLElement;
         previousLastElement.previousElementSibling.remove();
-        mathRender(getPreviousBlock(removeElement) as HTMLElement);
+        mathRender(getPreviousBlock(removeElement) as HTMLElement, protyle);
         const removeParentElement = removeElement.parentElement;
         // https://github.com/siyuan-note/siyuan/issues/12327
         if (removeParentElement.classList.contains("li") && removeParentElement.childElementCount === 4 &&

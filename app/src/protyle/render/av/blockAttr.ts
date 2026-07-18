@@ -1,4 +1,3 @@
-import {fetchPost} from "../../../util/fetch";
 import {addCol, getColIconByType} from "./col";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import * as dayjs from "dayjs";
@@ -13,6 +12,9 @@ import {editAssetItem} from "./asset";
 import {previewImages} from "../../preview/image";
 import {Constants} from "../../../constants";
 import {getCompressURL, removeCompressURL} from "../../../util/image";
+import {beginAVDrag, currentAVDrag, endAVDrag} from "./dragState";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {closeAVOverlay, currentAVOverlay} from "./overlay";
 
 const genAVRollupHTML = (value: IAVCellValue) => {
     let html = "";
@@ -61,7 +63,7 @@ const genAVRollupHTML = (value: IAVCellValue) => {
     return html;
 };
 
-export const genAVValueHTML = (value: IAVCellValue) => {
+export const genAVValueHTML = (value: IAVCellValue, fileIcon: string) => {
     let html = "";
     switch (value.type) {
         case "block":
@@ -137,7 +139,7 @@ export const genAVValueHTML = (value: IAVCellValue) => {
                         html += `<span data-row-id="${rowID}" class="av__cell--relation"><span><svg style="height: 26px"><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
                     } else {
                         // data-block-id 用于更新 emoji
-                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || window.siyuan.storage[Constants.LOCAL_IMAGES].file)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
                     }
                 }
             });
@@ -147,7 +149,7 @@ export const genAVValueHTML = (value: IAVCellValue) => {
             break;
         case "rollup":
             value?.rollup?.contents?.forEach((item) => {
-                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item) : genAVRollupHTML(item);
+                const rollupText = ["template", "select", "mSelect", "mAsset", "checkbox", "relation"].includes(item.type) ? genAVValueHTML(item, fileIcon) : genAVRollupHTML(item);
                 if (rollupText) {
                     html += rollupText.replace("fn__flex-1", "") + ",&nbsp;";
                 }
@@ -161,7 +163,11 @@ export const genAVValueHTML = (value: IAVCellValue) => {
 };
 
 export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement) => void) => {
-    fetchPost("/api/av/getAttributeViewKeys", {id}, (response) => {
+    const load = beginAVRenderLoad(protyle, element);
+    void requestAVRender<IWebSocketData>(protyle, load, "/api/av/getAttributeViewKeys", {id}).then((response) => {
+        if (!load.isCurrent()) {
+            return;
+        }
         let html = "";
         response.data.forEach((table: {
             keyValues: {
@@ -205,7 +211,7 @@ export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IPr
     <div data-av-id="${table.avID}" data-col-id="${item.values[0].keyID}" data-row-id="${item.values[0].blockID}" data-id="${item.values[0].id}" data-type="${item.values[0].type}" 
 data-options="${item.key?.options ? escapeAttr(JSON.stringify(item.key.options)) : "[]"}" 
 ${["text", "number", "date", "url", "phone", "template", "email"].includes(item.values[0].type) ? "" : `placeholder="${window.siyuan.languages.empty}"`}  
-class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0])}</div>
+class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"].includes(item.values[0].type) ? "" : " custom-attr__avvalue"}${["created", "updated"].includes(item.values[0].type) ? " custom-attr__avvalue--readonly" : ""}">${genAVValueHTML(item.values[0], protyle.settings.icons.file)}</div>
 </div>`;
             });
             innerHTML += `<div class="fn__hr"></div>
@@ -222,9 +228,8 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
             let dragBlockElement: HTMLElement;
             element.addEventListener("dragstart", (event: DragEvent) => {
                 const target = event.target as HTMLElement;
-                window.siyuan.dragElement = target.parentElement;
-                window.siyuan.dragElement.style.opacity = ".38";
-                dragBlockElement = hasClosestBlock(window.siyuan.dragElement) as HTMLElement;
+                const dragElement = beginAVDrag(protyle, target.parentElement, ".38");
+                dragBlockElement = hasClosestBlock(dragElement) as HTMLElement;
 
                 const ghostElement = document.createElement("div");
                 ghostElement.className = "block__icons";
@@ -244,16 +249,17 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                     return;
                 }
                 const targetElement = element.querySelector(".dragover__bottom, .dragover__top") as HTMLElement;
-                if (targetElement && dragBlockElement) {
+                const dragElement = currentAVDrag(protyle);
+                if (targetElement && dragBlockElement && dragElement) {
                     const isBottom = targetElement.classList.contains("dragover__bottom");
                     const previousID = isBottom ? targetElement.dataset.colId : targetElement.previousElementSibling?.getAttribute("data-col-id");
-                    const undoPreviousID = window.siyuan.dragElement.previousElementSibling?.getAttribute("data-col-id");
-                    if (previousID !== undoPreviousID && previousID !== window.siyuan.dragElement.dataset.colId) {
+                    const undoPreviousID = dragElement.previousElementSibling?.getAttribute("data-col-id");
+                    if (previousID !== undoPreviousID && previousID !== dragElement.dataset.colId) {
                         transaction(protyle, [{
                             action: "sortAttrViewKey",
                             avID: dragBlockElement.dataset.avId,
                             previousID,
-                            id: window.siyuan.dragElement.dataset.colId,
+                            id: dragElement.dataset.colId,
                         }], [{
                             action: "sortAttrViewKey",
                             avID: dragBlockElement.dataset.avId,
@@ -261,17 +267,14 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                             id,
                         }]);
                         if (isBottom) {
-                            targetElement.after(window.siyuan.dragElement);
+                            targetElement.after(dragElement);
                         } else {
-                            targetElement.before(window.siyuan.dragElement);
+                            targetElement.before(dragElement);
                         }
                     }
                     targetElement.classList.remove("dragover__bottom", "dragover__top");
                 }
-                if (window.siyuan.dragElement) {
-                    window.siyuan.dragElement.style.opacity = "";
-                    window.siyuan.dragElement = undefined;
-                }
+                endAVDrag(protyle);
             });
             element.addEventListener("dragover", (event: DragEvent) => {
                 const target = event.target as HTMLElement;
@@ -291,7 +294,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                 if (!targetElement) {
                     targetElement = hasClosestByClassName(document.elementFromPoint(event.clientX, event.clientY - 1), "av__row");
                 }
-                if (!targetElement || targetElement === window.siyuan.dragElement || !dragBlockElement) {
+                if (!targetElement || targetElement === currentAVDrag(protyle) || !dragBlockElement) {
                     return;
                 }
                 const targetBlockElement = hasClosestBlock(targetElement);
@@ -323,14 +326,11 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                 counter++;
             });
             element.addEventListener("dragend", () => {
-                if (window.siyuan.dragElement) {
-                    window.siyuan.dragElement.style.opacity = "";
-                    window.siyuan.dragElement = undefined;
-                }
+                endAVDrag(protyle);
             });
             element.addEventListener("paste", (event) => {
                 const files = event.clipboardData.files;
-                if (document.querySelector(".av__panel .b3-form__upload")) {
+                if (currentAVOverlay(protyle, "panel")?.querySelector(".b3-form__upload")) {
                     if (files && files.length > 0) {
                         uploadFiles(protyle, files);
                     } else {
@@ -340,7 +340,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                         const cellsElement = hasClosestByAttribute(target, "data-type", "mAsset");
                         if (blockElement && cellsElement && textPlain) {
                             updateCellsValue(protyle, blockElement as HTMLElement, textPlain, [cellsElement], undefined, protyle.lute.Md2BlockDOM(textPlain));
-                            document.querySelector(".av__panel")?.remove();
+                            closeAVOverlay(protyle, "panel");
                         }
                     }
                 }
@@ -422,23 +422,35 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                         isDetached: false
                     };
                 }
-                fetchPost("/api/av/setAttributeViewBlockAttr", {
+                const mutation = beginAVRenderLoad(protyle, item);
+                void protyle.transport!.request<IWebSocketData>("/api/av/setAttributeViewBlockAttr", {
                     avID: item.parentElement.dataset.avId,
                     keyID: item.parentElement.dataset.colId,
                     itemID: item.parentElement.dataset.rowId,
                     value
-                }, (setResponse) => {
+                }, {
+                    identity: mutation.identity,
+                    intent: "write",
+                    signal: mutation.signal,
+                }).then((setResponse) => {
+                    if (!mutation.isCurrent()) {
+                        return;
+                    }
                     if (type === "number") {
                         item.parentElement.querySelector(".fn__flex-center").textContent = setResponse.data.value.number.formattedContent;
                     } else if (type === "block" && !item.value) {
                         item.value = setResponse.data.value.block.content;
                     }
+                }).catch((error) => {
+                    reportAVLoadFailure(mutation, "attribute view block attribute update", error);
                 });
             });
         });
         if (cb) {
             cb(element);
         }
+    }).catch((error) => {
+        reportAVLoadFailure(load, "attribute view block attributes", error);
     });
 };
 
@@ -458,7 +470,7 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
                 h: rect.height,
                 w: rect.width,
             }, (unicode) => {
-                target.innerHTML = unicode2Emoji(unicode || window.siyuan.storage[Constants.LOCAL_IMAGES].file);
+                target.innerHTML = unicode2Emoji(unicode || protyle.settings.icons.file);
             }, target.querySelector("img"));
             event.preventDefault();
             event.stopPropagation();

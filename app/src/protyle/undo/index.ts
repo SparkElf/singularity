@@ -3,7 +3,7 @@ import {preventScroll} from "../scroll/preventScroll";
 import {Constants} from "../../constants";
 import {hideElements} from "../ui/hideElements";
 import {markMirror, refreshUndoButtons, requestRedo, requestUndo} from "./globalUndo";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {ILocalUndoOperations, LocalUndoHistory} from "./history";
 
 // 撤销/重做统一契约：kernel 模式由 Undo 实现（转发 kernel），lite 模式由 LocalUndo 实现（前端操作日志）。

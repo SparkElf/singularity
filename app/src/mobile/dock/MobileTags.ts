@@ -32,6 +32,7 @@ export class MobileTags {
         this.tree = new Tree({
             element: this.element.querySelector(".tagList") as HTMLElement,
             data: null,
+            renderContext: app,
             click: (element: HTMLElement, event?: MouseEvent) => {
                 const labelName = element.getAttribute("data-label");
                 if (event) {

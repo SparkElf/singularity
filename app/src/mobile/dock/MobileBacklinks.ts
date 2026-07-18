@@ -46,6 +46,7 @@ export class MobileBacklinks {
         this.tree = new Tree({
             element: this.element.querySelector(".backlinkList") as HTMLElement,
             data: null,
+            renderContext: app,
             click: (element: HTMLElement) => {
                 const blockId = element.getAttribute("data-node-id");
                 const notebookId = this.targetNotebookIds.get(blockId);
@@ -59,6 +60,7 @@ export class MobileBacklinks {
         this.mTree = new Tree({
             element: this.element.querySelector(".backlinkMList") as HTMLElement,
             data: null,
+            renderContext: app,
             click: (element) => {
                 const blockId = element.getAttribute("data-node-id");
                 const notebookId = this.targetNotebookIds.get(blockId);

@@ -56,9 +56,10 @@ export const mountBazaarTab = (root: HTMLElement, keywords?: string, app?: App) 
 /**
  * 渲染集市 README
  */
-export const renderReadme = (bazaarType: TBazaarType, from: "downloaded" | "updated" | "bazaar", data: IBazaarItem) => {
+export const renderReadme = (app: App, bazaarType: TBazaarType,
+                             from: "downloaded" | "updated" | "bazaar", data: IBazaarItem) => {
     if (bazaar.element == null) return;
-    bazaar._renderReadme(bazaarType, from, data);
+    bazaar._renderReadme(app, bazaarType, from, data);
 };
 
 export const bazaar = {
@@ -495,7 +496,7 @@ type="checkbox">
                 const repoURL = sideElement.getAttribute("data-repourl");
                 bazaar._data.downloaded.find((i) => {
                     if (i.repoURL === repoURL) {
-                        bazaar._renderReadme(bazaarType, "downloaded", i);
+                        bazaar._renderReadme(app, bazaarType, "downloaded", i);
                         return true;
                     }
                 });
@@ -534,7 +535,8 @@ type="checkbox">
             upsert(bazaar._data[bazaarType]);
         }
     },
-    _renderReadme(bazaarType: TBazaarType, from: "downloaded" | "updated" | "bazaar", data: IBazaarItem) {
+    _renderReadme(app: App, bazaarType: TBazaarType,
+                  from: "downloaded" | "updated" | "bazaar", data: IBazaarItem) {
         const readmeElement = bazaar.element.querySelector("#configBazaarReadme") as HTMLElement;
         const urls = data.repoURL.split("/");
         urls.pop();
@@ -637,7 +639,7 @@ type="checkbox">
         if (isDownload) {
             const mdElement = readmeElement.querySelector(".item__readme");
             mdElement.innerHTML = window.DOMPurify.sanitize(data.preferredReadme || "", {FORBID_TAGS: ["iframe", "frame", "frameset"]});
-            highlightRender(mdElement);
+            highlightRender(mdElement, app);
         } else {
             fetchPost("/api/bazaar/getBazaarPackageREADME", {
                 repoURL: data.repoURL,
@@ -646,7 +648,7 @@ type="checkbox">
             }, response => {
                 const mdElement = readmeElement.querySelector(".item__readme");
                 mdElement.innerHTML = window.DOMPurify.sanitize(response.data.html, {FORBID_TAGS: ["iframe", "frame", "frameset"]});
-                highlightRender(mdElement);
+                highlightRender(mdElement, app);
             });
         }
         readmeElement.classList.add("config-bazaar__readme--show");
@@ -1068,7 +1070,7 @@ type="checkbox">
                     break;
                 } else if (target.classList.contains("b3-card")) {
                     if (!hasClosestByClassName(event.target as HTMLElement, "b3-card__actions--right") && pkgItem && pkgType) {
-                        bazaar._renderReadme(pkgType,
+                        bazaar._renderReadme(app, pkgType,
                             target.closest('[data-type="downloaded-update"]') ? "updated" : (target.parentElement.id === "configBazaarDownloaded" ? "downloaded" : "bazaar"), pkgItem);
                     }
                     event.preventDefault();

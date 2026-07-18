@@ -33,6 +33,20 @@ const IMAGE_CONTRACTS = new Map([
       user: "101",
     },
   ],
+  [
+    "Singularity Enterprise Worker",
+    {
+      command: ["dist/main.js"],
+      healthcheck: [
+        "CMD",
+        "/nodejs/bin/node",
+        "-e",
+        "try{process.kill(1,0)}catch{process.exit(1)}",
+      ],
+      port: null,
+      user: "65532",
+    },
+  ],
 ]);
 
 export function parseArguments(args) {
@@ -54,7 +68,7 @@ export function parseArguments(args) {
   }
 
   if (options.revision === undefined || images.length !== IMAGE_CONTRACTS.size) {
-    throw new Error("Usage: verify-container-metadata.mjs --revision <sha> -- <api-image> <web-image>");
+    throw new Error("Usage: verify-container-metadata.mjs --revision <sha> -- <api-image> <worker-image> <web-image>");
   }
   return { images, options };
 }
@@ -99,7 +113,12 @@ export function validateContainerMetadata(images, inspectedImages, { revision, u
     if (config?.User !== contract.user) {
       failures.push(`${image}: user mismatch for ${title}`);
     }
-    if (!Object.hasOwn(config?.ExposedPorts ?? {}, contract.port)) {
+    const exposedPorts = config?.ExposedPorts ?? {};
+    if (contract.port === null) {
+      if (Object.keys(exposedPorts).length !== 0) {
+        failures.push(`${image}: unexpected exposed port for ${title}`);
+      }
+    } else if (!Object.hasOwn(exposedPorts, contract.port)) {
       failures.push(`${image}: exposed port mismatch for ${title}`);
     }
     if (!arraysEqual(config?.Cmd, contract.command)) {

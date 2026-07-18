@@ -22,6 +22,7 @@ import {
   startTestApiApplication,
   TEST_PUBLIC_ORIGIN,
 } from "./support/test-app.js";
+import { truncateTestDatabase } from "./support/database.js";
 
 const password = "correct horse battery staple";
 const caseTimeoutMilliseconds = 15_000;
@@ -40,19 +41,6 @@ interface HeldRowLock {
   release(): void;
 }
 
-async function cleanDatabase(database: DatabaseClient): Promise<void> {
-  await database.$transaction(async (transaction) => {
-    await transaction.kernelInstance.deleteMany();
-    await transaction.authSession.deleteMany();
-    await transaction.spaceMembership.deleteMany();
-    await transaction.space.deleteMany();
-    await transaction.organizationMembership.deleteMany();
-    await transaction.organization.deleteMany();
-    await transaction.user.deleteMany();
-    await transaction.systemInstallation.deleteMany();
-  });
-}
-
 async function withTestApplication(
   run: (context: ConcurrencyTestContext) => Promise<void>,
 ): Promise<void> {
@@ -67,7 +55,7 @@ async function withTestApplication(
     });
   } finally {
     try {
-      await cleanDatabase(database);
+      await truncateTestDatabase(database);
     } finally {
       await testApi.dispose();
     }

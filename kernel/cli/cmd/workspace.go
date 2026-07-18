@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/util"
 
 	"github.com/spf13/cobra"
@@ -98,6 +100,70 @@ var workspaceInfoCmd = &cobra.Command{
 	},
 }
 
+var (
+	restoreArchivePath           string
+	restoreArchiveDestination    string
+	restoreArchiveExpectedSHA256 string
+	restoreArchiveMaximumBytes   int64
+	restoreArchiveMaximumEntry   int64
+	restoreArchiveMaximumFiles   int64
+	restoreArchiveMaximumTotal   int64
+	restoreArchiveOutput         string
+)
+
+var restoreArchiveCmd = &cobra.Command{
+	Use:   "restore-archive --archive <path> --destination <path> --expected-sha256 <sha256>",
+	Short: "Extract and verify an enterprise backup archive",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if restoreArchivePath == "" || restoreArchiveDestination == "" || restoreArchiveExpectedSHA256 == "" {
+			return fmt.Errorf("archive, destination and expected sha256 are required")
+		}
+		if restoreArchiveMaximumBytes < 1 || restoreArchiveMaximumEntry < 1 || restoreArchiveMaximumFiles < 1 || restoreArchiveMaximumTotal < 1 {
+			return fmt.Errorf("restore limits must be positive")
+		}
+		if restoreArchiveOutput != "json" {
+			return fmt.Errorf("restore output must be json")
+		}
+		destination, err := filepath.Abs(restoreArchiveDestination)
+		if err != nil {
+			return err
+		}
+		// 恢复工具没有当前工作空间，使用目标目录旁的哨兵路径作为隔离比较根。
+		util.WorkspaceDir = filepath.Join(
+			filepath.Dir(destination),
+			".singularity-restore-current-"+strconv.Itoa(os.Getpid()),
+		)
+		manifest, err := model.ExtractEnterpriseBackupArchive(
+			restoreArchivePath,
+			destination,
+			restoreArchiveExpectedSHA256,
+			model.EnterpriseRestoreLimits{
+				MaximumArchiveBytes: restoreArchiveMaximumBytes,
+				MaximumEntryBytes:   restoreArchiveMaximumEntry,
+				MaximumFiles:        restoreArchiveMaximumFiles,
+				MaximumTotalBytes:   restoreArchiveMaximumTotal,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+			FileCount      int64  `json:"fileCount"`
+			FormatVersion  int    `json:"formatVersion"`
+			KernelVersion  string `json:"kernelVersion"`
+			SourceSpaceID  string `json:"sourceSpaceId"`
+			TotalSizeBytes int64  `json:"totalSizeBytes"`
+		}{
+			FileCount:      manifest.FileCount,
+			FormatVersion:  manifest.FormatVersion,
+			KernelVersion:  manifest.KernelVersion,
+			SourceSpaceID:  manifest.SourceSpaceID,
+			TotalSizeBytes: manifest.TotalSizeBytes,
+		})
+	},
+}
+
 func resolveDefaultWorkspace() string {
 	if p := os.Getenv("SIYUAN_WORKSPACE_PATH"); p != "" {
 		return p
@@ -113,4 +179,13 @@ func init() {
 	rootCmd.AddCommand(workspaceCmd)
 	workspaceCmd.AddCommand(workspaceListCmd)
 	workspaceCmd.AddCommand(workspaceInfoCmd)
+	workspaceCmd.AddCommand(restoreArchiveCmd)
+	restoreArchiveCmd.Flags().StringVar(&restoreArchivePath, "archive", "", "verified backup archive path")
+	restoreArchiveCmd.Flags().StringVar(&restoreArchiveDestination, "destination", "", "isolated restore workspace path")
+	restoreArchiveCmd.Flags().StringVar(&restoreArchiveExpectedSHA256, "expected-sha256", "", "expected archive SHA-256")
+	restoreArchiveCmd.Flags().Int64Var(&restoreArchiveMaximumBytes, "maximum-archive-bytes", 0, "maximum archive bytes")
+	restoreArchiveCmd.Flags().Int64Var(&restoreArchiveMaximumEntry, "maximum-entry-bytes", 0, "maximum extracted entry bytes")
+	restoreArchiveCmd.Flags().Int64Var(&restoreArchiveMaximumFiles, "maximum-files", 0, "maximum extracted file count")
+	restoreArchiveCmd.Flags().Int64Var(&restoreArchiveMaximumTotal, "maximum-total-bytes", 0, "maximum extracted total bytes")
+	restoreArchiveCmd.Flags().StringVar(&restoreArchiveOutput, "output", "json", "restore output format: json")
 }

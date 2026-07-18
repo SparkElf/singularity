@@ -34,6 +34,8 @@ import {
 } from "../util/pathName";
 import {showMessage} from "../dialog/message";
 import {resolveAgentBlockMentions} from "./agentMentions";
+import {setPanelFocus} from "../layout/util";
+import {renderStatusbarCounter} from "../layout/status";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -293,7 +295,8 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             return;
         case "close-document":
             app.protyleEditors.forEach((editor) => {
-                if (editor.block.rootID === event.documentId && editor.model) {
+                if (editor.block.rootID === event.documentId &&
+                    isSameNotebookContentDomain(editor.notebookId, event.notebookId) && editor.model) {
                     editor.model.parent.parent.removeTab(editor.model.parent.id);
                 }
             });
@@ -318,7 +321,11 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
         case "activate-document": {
             const activeEditor = app.protyleEditors.getActive();
             if (activeEditor?.surface === "workspace" &&
-                activeEditor.block.rootID === event.documentId) {
+                activeEditor.block.rootID === event.documentId &&
+                isSameNotebookContentDomain(activeEditor.notebookId, event.notebookId)) {
+                if (activeEditor.model) {
+                    setPanelFocus(activeEditor.model.element.parentElement.parentElement);
+                }
                 updatePanelByEditor({
                     protyle: activeEditor,
                     focus: false,
@@ -329,11 +336,13 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             }
             return;
         }
+        case "update-document-statistics":
+            renderStatusbarCounter(event.statistics);
+            return;
         case "set-document-title":
         case "set-document-icon":
         case "toggle-document-fullscreen":
         case "persist-workspace-layout":
-        case "update-document-statistics":
         case "runtime-error":
             console.warn(`[protyle-host:unsupported-event] ${event.type}`);
             return;

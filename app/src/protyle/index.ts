@@ -8,7 +8,6 @@ import {Upload} from "./upload";
 import {Options} from "./util/Options";
 import {destroy} from "./util/destroy";
 import {Scroll} from "./scroll";
-import {Model} from "../layout/Model";
 import {genUUID} from "../util/genID";
 import {WYSIWYG} from "./wysiwyg";
 import {Toolbar} from "./toolbar";
@@ -22,10 +21,8 @@ import {
     updateBatchTransaction,
     updateTransaction
 } from "./wysiwyg/transaction";
-import {fetchPost} from "../util/fetch";
-import {getDocDisplayName, isEncryptedBox} from "../util/pathName";
+import {getProtyleDocumentDisplayName} from "./runtime/displayName";
 import {initMirror, refreshUndoButtons, syncMirrorFromBroadcast} from "./undo/globalUndo";
-import {setPanelFocus} from "../layout/util";
 import {Title} from "./header/Title";
 import {Background} from "./header/Background";
 import {disabledProtyle, enableProtyle, onGet, setReadonlyByConfig} from "./util/onGet";
@@ -33,16 +30,17 @@ import {reloadProtyle} from "./util/reload";
 import {renderBacklink} from "./wysiwyg/renderBacklink";
 import {resize} from "./util/resize";
 import {getDocByScroll} from "./scroll/saveScroll";
-import {App} from "../index";
 import {insertHTML} from "./util/insertHTML";
 import {avRender} from "./render/av/render";
 import {focusBlock, getEditorRange} from "./util/selection";
 import {hasClosestBlock} from "./util/hasClosest";
-import {setStorageVal} from "./util/compatibility";
 import {isSupportCSSHL} from "./render/searchMarkRender";
 import {renderAVAttribute} from "./render/av/blockAttr";
-import {setFoldById, zoomOut} from "../menus/protyle";
+import {setFoldById} from "./util/blockFold";
+import {zoomOut} from "./util/zoom";
 import {setEditMode} from "./util/setEditMode";
+import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "./util/contentLoad";
+import {createProtyleReadOnlyState, isProtyleReadOnly, setHostReadOnly} from "./runtime/readOnly";
 
 const dispatchWorkspaceOutlineRefresh = (protyle: IProtyle) => {
     if (protyle.surface !== "workspace") {
@@ -59,13 +57,11 @@ const dispatchWorkspaceActivation = (protyle: IProtyle) => {
     if (protyle.surface === "workspace") {
         protyle.host.dispatch({
             type: "activate-document",
+            notebookId: protyle.notebookId,
             documentId: protyle.block.rootID,
         });
     }
 };
-
-const getProtyleContentStore = (protyle: IProtyle) =>
-    isEncryptedBox(protyle.notebookId) ? protyle.notebookId : "";
 
 export class Protyle {
 
@@ -73,24 +69,58 @@ export class Protyle {
     public protyle: IProtyle;
     private contentOwnerMouseover?: (event: MouseEvent & { contentNotebookId?: string }) => void;
     private onBacklinkChange?: () => void;
+    private subscription?: TProtyleSubscription;
+    private readonly requestController = new AbortController();
+    private removeOwnerAbortListener?: () => void;
+    private disposed = false;
+    private readonly session?: TProtyleSession;
+    private readonly settings: TProtyleApplicationSettingsPort;
 
     /**
      * @param id 要挂载 Protyle 的元素或者元素 ID。
      * @param options Protyle 参数
      */
-    constructor(app: App, id: HTMLElement,
+    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
-                lifecycle: TProtyleBoundLifecycle & { participation: "live" });
-    constructor(app: App, id: HTMLElement,
+                lifecycle: (TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle) & { participation: "live" });
+    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
-                lifecycle: TProtyleBoundLifecycle & { participation: "detached" });
-    constructor(app: App, id: HTMLElement,
+                lifecycle: (TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle) & { participation: "detached" });
+    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "blockId" | "notebookId"> & { blockId?: never },
                 lifecycle: TProtyleLocalOnlyLifecycle);
-    constructor(app: App, id: HTMLElement, options: Omit<IProtyleOptions, "notebookId">,
-                lifecycle: TProtyleBoundLifecycle | TProtyleLocalOnlyLifecycle) {
+    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
+                options: Omit<IProtyleOptions, "notebookId">,
+                lifecycle: TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle | TProtyleLocalOnlyLifecycle) {
         this.version = Constants.SIYUAN_VERSION;
         this.onBacklinkChange = "onBacklinkChange" in lifecycle ? lifecycle.onBacklinkChange : undefined;
+        if (!("settings" in application) || !application.settings) {
+            throw new Error("[protyle.application] Core requires explicit application settings");
+        }
+        this.settings = application.settings;
+        let runtime: TProtyleRuntime | undefined;
+        let editors: TProtyleEditorRegistry;
+        let hostPort: TProtyleHostPort;
+        let plugins: TProtylePluginPort;
+        if (lifecycle.content.mode === "bound") {
+            const session = "session" in lifecycle ? lifecycle.session : undefined;
+            if (!session) {
+                throw new Error("[protyle.runtime] bound Core requires a ProtyleSession");
+            }
+            this.session = session;
+            runtime = this.session.runtime;
+            editors = runtime.editors;
+            hostPort = runtime.host;
+            plugins = runtime.plugins;
+        } else {
+            this.session = undefined;
+            if (!application.protyleEditors || !application.protyleHost || !application.protylePlugins) {
+                throw new Error("[protyle.application] local-only Core requires explicit local capabilities");
+            }
+            editors = application.protyleEditors;
+            hostPort = application.protyleHost;
+            plugins = application.protylePlugins;
+        }
         if (lifecycle.content.mode === "bound") {
             if (!lifecycle.content.notebookId) {
                 throw new Error("[protyle.content] bound Protyle requires a notebookId");
@@ -101,15 +131,15 @@ export class Protyle {
         } else if (options.blockId) {
             throw new Error("[protyle.content] local-only Protyle cannot bind a blockId");
         }
-        const pluginsOptions = app.protylePlugins.extendOptions(options);
-        const getOptions = new Options(pluginsOptions);
+        const pluginsOptions = plugins.extendOptions(options);
+        const getOptions = new Options(pluginsOptions, this.settings);
         const mergedOptions = getOptions.merge();
         const host: TProtyleHostPort = {
             dispatch: (event) => {
                 if (lifecycle.content.mode === "local-only") {
                     if (event.type === "open-search" || event.type === "open-external" ||
                         event.type === "notify" || (event.type === "open-graph" && event.scope === "space")) {
-                        app.protyleHost.dispatch(event);
+                        hostPort.dispatch(event);
                         return;
                     }
                     throw new Error(`[protyle.content] local-only Protyle cannot dispatch ${event.type}`);
@@ -127,19 +157,34 @@ export class Protyle {
                 ].includes(event.type)) {
                     throw new Error(`[protyle.surface] embedded Protyle cannot dispatch ${event.type}`);
                 }
-                app.protyleHost.dispatch(event);
+                hostPort.dispatch(event);
             },
         };
         this.protyle = {
             getInstance: () => this,
-            app,
-            editors: app.protyleEditors,
+            destroy: () => this.destroy(),
+            focus: () => this.focus(),
+            setHostReadOnly: (readOnly) => this.setHostReadOnly(readOnly),
+            // 旧下游仍读取 app；新的内容能力不从该视图取得。
+            app: application as unknown as IProtyle["app"],
+            application,
+            localization: application.localization,
+            settings: this.settings,
+            editors,
             host,
-            plugins: app.protylePlugins,
+            plugins,
+            runtime,
+            session: this.session,
+            transport: runtime?.transport,
             surface: lifecycle.surface,
             participation: lifecycle.participation,
             content: lifecycle.content,
             ownerSignal: "signal" in lifecycle ? lifecycle.signal : undefined,
+            requestSignal: this.requestController.signal,
+            readonlyState: createProtyleReadOnlyState(
+                "hostReadOnly" in lifecycle ? lifecycle.hostReadOnly : false,
+                this.settings.editor.readOnly,
+            ),
             id: genUUID(),
             disabled: false,
             lite: !!options.lite,
@@ -161,6 +206,16 @@ export class Protyle {
                 styleElement: document.createElement("style"),
             }
         };
+        const ownerSignal = "signal" in lifecycle ? lifecycle.signal : undefined;
+        if (ownerSignal) {
+            const abortRequests = () => this.requestController.abort();
+            if (ownerSignal.aborted) {
+                abortRequests();
+            } else {
+                ownerSignal.addEventListener("abort", abortRequests, {once: true});
+                this.removeOwnerAbortListener = () => ownerSignal.removeEventListener("abort", abortRequests);
+            }
+        }
         this.contentOwnerMouseover = (event) => {
             if (lifecycle.content.mode === "bound" && !event.contentNotebookId) {
                 event.contentNotebookId = lifecycle.content.notebookId;
@@ -189,7 +244,7 @@ export class Protyle {
         this.protyle.element.innerHTML = "";
         this.protyle.element.classList.add("protyle");
         // 启用 RTL 时给 .protyle 元素添加 .rtl 类名，方便主题开发者判断 RTL 方向
-        if (window.siyuan.config.editor.rtl) {
+        if (this.settings.editor.rtl) {
             this.protyle.element.classList.add("rtl");
         }
         if (mergedOptions.render.breadcrumb) {
@@ -203,33 +258,37 @@ export class Protyle {
         if (this.protyle.options.render.gutter) {
             this.protyle.gutter = new Gutter(this.protyle);
         }
-        if (mergedOptions.upload.url || mergedOptions.upload.handler) {
+        if (lifecycle.content.mode === "bound") {
             this.protyle.upload = new Upload();
         }
 
         this.init();
+        this.applyReadOnlyState();
         if (lifecycle.participation === "live") {
+            if (!runtime || lifecycle.content.mode !== "bound") {
+                throw new Error("[protyle.runtime] live Core requires a bound Session runtime");
+            }
             this.protyle.editors.register(this.protyle);
             this.protyle.wysiwyg.element.addEventListener("focusin", () => {
                 this.protyle.editors.activate(this.protyle);
             });
-            this.protyle.ws = new Model({app});
-            this.protyle.ws.connect({
-                id: this.protyle.id,
+            this.subscription = runtime.transport.subscribe({
+                notebookId: lifecycle.content.notebookId,
+                documentId: options.blockId,
                 type: "protyle",
-                msgCallback: (data) => {
+                onMessage: (data) => {
+                    if (this.disposed) {
+                        return;
+                    }
                     switch (data.cmd) {
                         case "reload":
-                            if (data.data.rootID === this.protyle.block.rootID &&
-                                data.data.notebook === getProtyleContentStore(this.protyle)) {
+                            if (data.data.rootID === this.protyle.block.rootID) {
                                 reloadProtyle(this.protyle, false);
                                 dispatchWorkspaceOutlineRefresh(this.protyle);
                             }
                             break;
                         case "refreshAttributeView":
-                            if (this.protyle.content.mode !== "bound" ||
-                                (data.data.boxID ? this.protyle.content.notebookId !== data.data.boxID :
-                                    isEncryptedBox(this.protyle.content.notebookId))) {
+                            if (this.protyle.content.mode !== "bound") {
                                 break;
                             }
                             Array.from(this.protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${data.data.id}"]`)).forEach((item: HTMLElement) => {
@@ -249,7 +308,7 @@ export class Protyle {
                             this.onTransaction(data);
                             break;
                         case "readonly":
-                            window.siyuan.config.editor.readOnly = data.data;
+                            this.settings.editor.setReadOnly(data.data);
                             setReadonlyByConfig(this.protyle, true);
                             break;
                         case "heading2doc":
@@ -258,14 +317,16 @@ export class Protyle {
                                 if (this.protyle.block.showAll && data.cmd === "heading2doc" && !this.protyle.options.backlinkData) {
                                     const getDocParam: IObject = {
                                         id: this.protyle.block.rootID,
-                                        size: window.siyuan.config.editor.dynamicLoadBlocks,
+                                        size: this.settings.editor.dynamicLoadBlocks,
                                     };
-                                    if (isEncryptedBox(this.protyle.notebookId)) {
-                                        getDocParam.notebook = this.protyle.notebookId;
-                                    }
-                                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                                        onGet({data: getResponse, protyle: this.protyle});
-                                    });
+                                    const load = beginProtyleContentLoad(this.protyle);
+                                    void requestProtyleContent<IWebSocketData>(this.protyle, "/api/filetree/getDoc", getDocParam, load)
+                                        .then((getResponse) => {
+                                            if (load.isCurrent()) {
+                                                onGet({data: getResponse, protyle: this.protyle, load});
+                                            }
+                                        })
+                                        .catch((error) => this.reportRequestFailure(error));
                                 } else {
                                     reloadProtyle(this.protyle, false);
                                 }
@@ -278,12 +339,14 @@ export class Protyle {
                         case "rename":
                             if (this.protyle.path === data.data.path) {
                                 if (this.protyle.model) {
-                                    this.protyle.model.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
+                                    this.protyle.model.parent.updateTitle(
+                                        getProtyleDocumentDisplayName(data.data.title, data.data.empty),
+                                    );
                                 }
                                 if (this.protyle.background) {
                                     this.protyle.background.ial.title = data.data.title;
                                 }
-                                if (window.siyuan.config.export.addTitle &&
+                                if (this.settings.export.addTitle &&
                                     !this.protyle.preview.element.classList.contains("fn__none")) {
                                     this.protyle.preview.render(this.protyle);
                                 }
@@ -331,6 +394,7 @@ export class Protyle {
                                 if (this.protyle.model) {
                                     this.protyle.host.dispatch({
                                         type: "close-document",
+                                        notebookId: this.protyle.notebookId,
                                         documentId: this.protyle.block.rootID,
                                         reason: "notebook-closed",
                                     });
@@ -342,12 +406,13 @@ export class Protyle {
                                 if (this.protyle.model) {
                                     this.protyle.host.dispatch({
                                         type: "close-document",
+                                        notebookId: this.protyle.notebookId,
                                         documentId: this.protyle.block.rootID,
                                         reason: "deleted",
                                     });
                                 }
-                                delete window.siyuan.storage[Constants.LOCAL_FILEPOSITION][this.protyle.block.rootID];
-                                setStorageVal(Constants.LOCAL_FILEPOSITION, window.siyuan.storage[Constants.LOCAL_FILEPOSITION]);
+                                this.settings.localFilePosition.remove(protyleContentIdentity(this.protyle));
+                                this.settings.localFilePosition.persist();
                             }
                             break;
                     }
@@ -366,7 +431,7 @@ export class Protyle {
             }
 
             if (this.protyle.options.mode !== "preview" &&
-                options.rootId && window.siyuan.storage[Constants.LOCAL_FILEPOSITION][options.rootId] &&
+                options.rootId && this.settings.localFilePosition.get(protyleContentIdentity(this.protyle)) &&
                 (
                     mergedOptions.action.includes(Constants.CB_GET_SCROLL) ||
                     (mergedOptions.action.includes(Constants.CB_GET_ROOTSCROLL) && options.rootId === options.blockId)
@@ -374,7 +439,7 @@ export class Protyle {
             ) {
                 getDocByScroll({
                     protyle: this.protyle,
-                    scrollAttr: window.siyuan.storage[Constants.LOCAL_FILEPOSITION][options.rootId],
+                    scrollAttr: this.settings.localFilePosition.get(protyleContentIdentity(this.protyle)),
                     mergedOptions,
                     signal: lifecycle.signal,
                     isCurrent: () => !this.protyle.destroyed && !lifecycle.signal?.aborted,
@@ -390,10 +455,43 @@ export class Protyle {
         }
     }
 
+    private request<TResponse>(path: string, body: unknown): Promise<TResponse> {
+        if (!this.session || this.protyle.content.mode !== "bound") {
+            return Promise.reject(new Error("[protyle.runtime] content request requires a bound Session"));
+        }
+        return this.session.runtime.transport.request(path, body, {
+            identity: {
+                notebookId: this.protyle.content.notebookId,
+                documentId: this.protyle.options.blockId,
+            },
+            intent: "read",
+            signal: this.requestController.signal,
+        }) as Promise<TResponse>;
+    }
+
+    private reportRequestFailure(error: unknown) {
+        if (this.requestController.signal.aborted) {
+            return;
+        }
+        console.error("[protyle.transport] content request failed", error);
+    }
+
+    private applyReadOnlyState() {
+        if (isProtyleReadOnly(this.protyle.readonlyState)) {
+            disabledProtyle(this.protyle);
+        } else {
+            enableProtyle(this.protyle);
+        }
+    }
+
+    public setHostReadOnly(readOnly: boolean) {
+        setHostReadOnly(this.protyle.readonlyState, readOnly);
+        this.applyReadOnlyState();
+    }
+
     private onTransaction(data: IWebSocketData) {
-        const contentStore = getProtyleContentStore(this.protyle);
-        const transactions = data.data.filter((transaction: { notebook: string }) =>
-            transaction.notebook === contentStore);
+        // Transport 已按当前 notebookId + documentId 建立订阅，消息合同不再从全局内容库推断。
+        const transactions: Array<{ doOperations: IOperation[] }> = data.data;
         if (transactions.length === 0) {
             return;
         }
@@ -437,14 +535,16 @@ export class Protyle {
         // 聚焦块被分屏另一侧的删除操作连带删除时（容器块删除会级联删除其所有子孙块，如列表/超级块/引述等），当前页签的聚焦块已成为孤儿但仍显示，需退出聚焦
         // Improve editor state synchronization when deleting blocks https://github.com/siyuan-note/siyuan/issues/17742
         if (this.protyle.block.showAll && hasDeleteOp) {
-            fetchPost("/api/block/checkBlockExist", {id: this.protyle.block.id}, response => {
+            void this.request<IWebSocketData>("/api/block/checkBlockExist", {
+                id: this.protyle.block.id,
+            }).then((response) => {
                 if (!response.data) {
                     zoomOut({
                         protyle: this.protyle,
                         id: this.protyle.block.rootID
                     });
                 }
-            });
+            }).catch((error) => this.reportRequestFailure(error));
             return;
         }
         if (this.protyle.wysiwyg.element.childElementCount === 0 && this.protyle.block.parentID && needCreateAction) {
@@ -470,68 +570,45 @@ export class Protyle {
         }
     }
 
-    private getDoc(mergedOptions: IProtyleOptions, signal?: AbortSignal) {
+    private getDoc(mergedOptions: IResolvedProtyleOptions, signal?: AbortSignal) {
         const getDocParam: Record<string, any> = {
             id: mergedOptions.blockId,
             isBacklink: mergedOptions.action.includes(Constants.CB_GET_BACKLINK),
             originalRefBlockIDs: mergedOptions.originalRefBlockIDs,
             // 0: 仅当前 ID（默认值），1：向上 2：向下，3：上下都加载，4：加载最后
-            mode: (mergedOptions.action && mergedOptions.action.includes(Constants.CB_GET_CONTEXT)) ? 3 : 0,
-            size: mergedOptions.action?.includes(Constants.CB_GET_ALL) ? Constants.SIZE_GET_MAX : window.siyuan.config.editor.dynamicLoadBlocks,
+            mode: mergedOptions.action.includes(Constants.CB_GET_CONTEXT) ? 3 : 0,
+            size: mergedOptions.action.includes(Constants.CB_GET_ALL) ? Constants.SIZE_GET_MAX : this.settings.editor.dynamicLoadBlocks,
         };
-        if (isEncryptedBox(this.protyle.notebookId)) {
-            getDocParam.notebook = this.protyle.notebookId;
-        }
-        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-            if (this.protyle.destroyed || signal?.aborted) {
-                return;
-            }
-            onGet({
-                data: getResponse,
-                protyle: this.protyle,
-                action: mergedOptions.action,
-                scrollPosition: mergedOptions.scrollPosition,
-                afterCB: () => {
-                    this.afterOnGet(mergedOptions);
+        const load = beginProtyleContentLoad(this.protyle);
+        void requestProtyleContent<IWebSocketData>(this.protyle, "/api/filetree/getDoc", getDocParam, load)
+            .then((getResponse) => {
+                if (!load.isCurrent() || signal?.aborted) {
+                    return;
                 }
-            });
-        }, undefined, undefined, signal);
+                onGet({
+                    data: getResponse,
+                    protyle: this.protyle,
+                    action: mergedOptions.action,
+                    scrollPosition: mergedOptions.scrollPosition,
+                    afterCB: () => {
+                        this.afterOnGet(mergedOptions);
+                    },
+                    load,
+                });
+            }).catch((error) => this.reportRequestFailure(error));
     }
 
-    private afterOnGet(mergedOptions: IProtyleOptions) {
+    private afterOnGet(mergedOptions: IResolvedProtyleOptions) {
         // 文档加载完成后初始化撤销镜像（低频，不在 selectionchange 热路径）
         if (this.protyle.block?.rootID) {
             initMirror(this.protyle);
         }
-        if (this.protyle.model) {
-            if (mergedOptions.action?.includes(Constants.CB_GET_FOCUS) || mergedOptions.action?.includes(Constants.CB_GET_OPENNEW)) {
-                setPanelFocus(this.protyle.model.element.parentElement.parentElement);
-            }
-            dispatchWorkspaceActivation(this.protyle);
-        }
+        dispatchWorkspaceActivation(this.protyle);
         resize(this.protyle);   // 需等待 fullwidth 获取后设定完毕再重新计算 padding 和元素
         // 需等待 getDoc 完成后再绑定焦点同步，否则无页签时会重复刷新工作台面板
         // 只能用 focusin，否则点击表格无法执行
         this.protyle.wysiwyg.element.addEventListener("focusin", () => {
-            if (this.protyle && this.protyle.model) {
-                let needUpdate = true;
-                if (this.protyle.model.element.parentElement.parentElement.classList.contains("layout__wnd--active") && this.protyle.model.headElement.classList.contains("item--focus")) {
-                    needUpdate = false;
-                }
-                if (!needUpdate) {
-                    return;
-                }
-                setPanelFocus(this.protyle.model.element.parentElement.parentElement);
-                dispatchWorkspaceActivation(this.protyle);
-            } else {
-                // 悬浮层应移除其余面板高亮，否则按键会被面板监听到
-                document.querySelectorAll(".layout__tab--active").forEach(item => {
-                    item.classList.remove("layout__tab--active");
-                });
-                document.querySelectorAll(".layout__wnd--active").forEach(item => {
-                    item.classList.remove("layout__wnd--active");
-                });
-            }
+            dispatchWorkspaceActivation(this.protyle);
         });
         // 需等渲染完后再回调，用于定位搜索字段 https://github.com/siyuan-note/siyuan/issues/3171
         if (mergedOptions.after) {
@@ -548,7 +625,7 @@ export class Protyle {
             listStyle: this.protyle.options.preview.markdown.listStyle,
             paragraphBeginningSpace: this.protyle.options.preview.markdown.paragraphBeginningSpace,
             sanitize: this.protyle.options.preview.markdown.sanitize,
-        });
+        }, this.settings);
 
         this.protyle.preview = new Preview(this.protyle);
 
@@ -572,6 +649,15 @@ export class Protyle {
 
     /** 销毁编辑器 */
     public destroy() {
+        if (this.disposed) {
+            return;
+        }
+        this.disposed = true;
+        this.requestController.abort();
+        this.removeOwnerAbortListener?.();
+        this.removeOwnerAbortListener = undefined;
+        this.subscription?.disconnect();
+        this.subscription = undefined;
         this.protyle.element.removeEventListener("mouseover", this.contentOwnerMouseover);
         destroy(this.protyle);
     }
