@@ -1161,6 +1161,7 @@ interface IAVCellValue {
         content: string,
         id?: string,
         notebookId?: string,
+        documentId?: string,
         icon?: string
     }
     url?: {

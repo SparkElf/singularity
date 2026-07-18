@@ -357,6 +357,15 @@ func GetAttrViewAddingBlockDefaultValues(avID, viewID, groupID, previousBlockID,
 			value.Block.Content = ""
 		}
 	}
+	keys := make([]string, 0, len(ret))
+	values := make([]*av.Value, 0, len(ret))
+	for key, value := range ret {
+		keys = append(keys, key)
+		values = append(values, value)
+	}
+	for index, value := range projectAttributeViewResponseValues(values) {
+		ret[keys[index]] = value
+	}
 	return
 }
 
@@ -1794,6 +1803,7 @@ func GetAttributeViewPrimaryKeyValues(avID, keyword string, page, pageSize int) 
 	start := (page - 1) * pageSize
 	end := min(len(keyValues.Values), start+pageSize)
 	keyValues.Values = keyValues.Values[start:end]
+	projectAttributeViewResponseKeyValues([]*av.KeyValues{keyValues})
 	return
 }
 
@@ -2167,6 +2177,9 @@ func GetBlockAttributeViewKeys(nodeID string) (ret []*BlockAttributeViewKeys) {
 			BlockIDs:  blockIDs,
 			KeyValues: keyValues,
 		})
+	}
+	for _, blockAttributeViewKeys := range ret {
+		projectAttributeViewResponseKeyValues(blockAttributeViewKeys.KeyValues)
 	}
 	return
 }
@@ -5352,6 +5365,7 @@ func UpdateAttributeViewCell(tx *Transaction, avID, keyID, itemID string, valueD
 	if nil != err {
 		return
 	}
+	val = projectAttributeViewResponseValues([]*av.Value{val})[0]
 	return
 }
 
