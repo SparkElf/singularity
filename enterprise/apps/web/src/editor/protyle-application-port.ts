@@ -227,6 +227,8 @@ export function createProtyleApplicationPort(
             copyText: "",
             duplicate: "⌘D",
             duplicateCompletely: "",
+            expandDown: "⌥⇧↓",
+            expandUp: "⌥⇧↑",
             foldRecursive: "⌥⌘↑",
             fullscreen: "",
             graphView: "",

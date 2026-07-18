@@ -784,6 +784,8 @@ export interface ProtyleApplicationSettings {
         readonly copyText: string;
         readonly duplicate: string;
         readonly duplicateCompletely: string;
+        readonly expandDown: string;
+        readonly expandUp: string;
         readonly foldRecursive: string;
         readonly fullscreen: string;
         readonly graphView: string;

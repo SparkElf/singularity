@@ -134,6 +134,8 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
                     copyText: keymap.editor.general.copyText.custom,
                     duplicate: keymap.editor.general.duplicate.custom,
                     duplicateCompletely: keymap.editor.general.duplicateCompletely.custom,
+                    expandDown: keymap.editor.general.expandDown.custom,
+                    expandUp: keymap.editor.general.expandUp.custom,
                     foldRecursive: keymap.editor.general.foldRecursive.custom,
                     fullscreen: keymap.editor.general.fullscreen.custom,
                     graphView: keymap.editor.general.graphView.custom,

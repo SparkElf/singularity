@@ -1,7 +1,5 @@
 import {matchHotKey} from "../util/hotKey";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {isMac} from "../util/browserPlatform";
-import {writeText} from "../util/clipboard";
 import {focusBlock, getSelectionOffset, setFirstNodeRange, setLastNodeRange,} from "../util/selection";
 import {getContenteditableElement, getNextBlock} from "./getBlock";
 import {hideElements} from "../ui/hideElements";
@@ -17,44 +15,48 @@ import {copyBlockText} from "../util/copyBlockText";
 import {hasClosestByTag, hasTopClosestByClassName} from "../util/hasClosest";
 import {removeEmbed} from "./removeEmbed";
 import {clearBlockElement} from "../util/clear";
-import {isEncryptedBox} from "../../util/pathName";
+import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "../util/contentLoad";
 
 export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElement?: HTMLElement) => {
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.netImg2LocalAsset.custom, event)) {
+    if (protyle.content.mode === "local-only") {
+        return protyle.plugins.runEditorCommand(protyle, event, matchHotKey) || undefined;
+    }
+    const hotkeys = protyle.settings.hotkeys.editor.general;
+    if (matchHotKey(hotkeys.netImg2LocalAsset, event)) {
         net2LocalAssets(protyle, "Img");
         event.preventDefault();
         event.stopPropagation();
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.netAssets2LocalAssets.custom, event)) {
+    if (matchHotKey(hotkeys.netAssets2LocalAssets, event)) {
         net2LocalAssets(protyle, "Assets");
         event.preventDefault();
         event.stopPropagation();
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.optimizeTypography.custom, event)) {
-        fetchPost("/api/format/autoSpace", {
-            id: protyle.block.rootID
-        });
+    if (matchHotKey(hotkeys.optimizeTypography, event)) {
+        void protyle.session!.runtime.transport.request<IWebSocketData>("/api/format/autoSpace", {
+            id: protyle.block.rootID,
+        }, {
+            identity: protyleContentIdentity(protyle),
+            intent: "write",
+            signal: protyle.requestSignal,
+        }).catch((error) => console.error("[protyle.transport] typography optimization failed", error));
         event.preventDefault();
         event.stopPropagation();
         return true;
     }
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.copyHPath.custom, event)) {
-        fetchPost("/api/filetree/getHPathByID", {
-            id: protyle.block.rootID,
-            notebook: protyle.notebookId,
-        }, (response) => {
-            writeText(response.data);
-        });
+    if (matchHotKey(hotkeys.copyHPath, event)) {
+        void copyBlockText(protyle, [protyle.block.rootID], "hPath")
+            .catch((error) => console.error("[protyle.transport] copy human path failed", error));
         event.preventDefault();
         event.stopPropagation();
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom, event)) {
+    if (matchHotKey(hotkeys.copyProtocolInMd, event)) {
         if (nodeElement) {
             const selectElements = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectElements.length === 0) {
@@ -71,7 +73,7 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.copyID.custom, event)) {
+    if (matchHotKey(hotkeys.copyID, event)) {
         if (nodeElement) {
             const selectElements = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectElements.length === 0) {
@@ -87,7 +89,7 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         event.stopPropagation();
         return true;
     }
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.copyProtocol.custom, event)) {
+    if (matchHotKey(hotkeys.copyProtocol, event)) {
         if (nodeElement) {
             const selectElements = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectElements.length === 0) {
@@ -104,7 +106,7 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.general.copyBlockEmbed.custom, event)) {
+    if (matchHotKey(hotkeys.copyBlockEmbed, event)) {
         if (nodeElement) {
             const selectElements = Array.from(protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select"));
             if (selectElements.length === 0) {
@@ -142,7 +144,7 @@ export const upSelect = (options: {
         const nodeEditableElement = (tdElement || getContenteditableElement(options.nodeElement) || options.nodeElement) as HTMLElement;
         const startIndex = getSelectionOffset(nodeEditableElement, options.editorElement, options.range).start;
         const innerText = nodeEditableElement.innerText;
-        const isExpandUp = matchHotKey(window.siyuan.config.keymap.editor.general.expandUp.custom, options.event);
+        const isExpandUp = matchHotKey(options.protyle.settings.hotkeys.editor.general.expandUp, options.event);
         if (!isMac() && isExpandUp) {
             // Windows 中 ⌥⇧↑ 默认无选中功能会导致 https://ld246.com/article/1716635371149
         } else if (startIndex > 0) {
@@ -189,7 +191,7 @@ export const downSelect = (options: {
         const nodeEditableElement = (tdElement || getContenteditableElement(options.nodeElement) || options.nodeElement) as HTMLElement;
         const endIndex = getSelectionOffset(nodeEditableElement, options.editorElement, options.range).end;
         const innerText = nodeEditableElement.innerText;
-        const isExpandDown = matchHotKey(window.siyuan.config.keymap.editor.general.expandDown.custom, options.event);
+        const isExpandDown = matchHotKey(options.protyle.settings.hotkeys.editor.general.expandDown, options.event);
         if (!isMac() && isExpandDown) {
             // Windows 中 ⌥⇧↓ 默认无选中功能会导致 https://ld246.com/article/1716635371149
         } else if (endIndex < innerText.length) {
@@ -252,6 +254,7 @@ export const getStartEndElement = (selectElements: NodeListOf<Element> | Element
 };
 
 export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle) => {
+    const identity = protyleContentIdentity(protyle);
     let focusElement: Element;
     const doOperations: IOperation[] = [];
     const undoOperations: IOperation[] = [];
@@ -282,9 +285,13 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
         const newId = Lute.NewNodeID();
         if (item.getAttribute("data-type") !== "NodeBlockQueryEmbed" &&
             item.querySelector('[data-type="NodeHeading"][fold="1"]')) {
-            const response = await fetchSyncPost("/api/block/getBlockDOM", {
+            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
                 id: item.getAttribute("data-node-id"),
                 notebook: protyle.notebookId,
+            }, {
+                identity,
+                intent: "read",
+                signal: protyle.requestSignal,
             });
             const foldTempElement = document.createElement("template");
             foldTempElement.innerHTML = response.data.dom;
@@ -338,9 +345,13 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
         });
         if (item.getAttribute("data-type") === "NodeHeading" && item.getAttribute("fold") === "1") {
             foldHeadingIds.push({oldId: item.getAttribute("data-node-id"), newId});
-            const responseHTML = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
+            const responseHTML = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingChildrenDOM", {
                 id: item.getAttribute("data-node-id"),
                 notebook: protyle.notebookId,
+            }, {
+                identity,
+                intent: "read",
+                signal: protyle.requestSignal,
             });
             const foldElement = document.createElement("template");
             foldElement.innerHTML = responseHTML.data;
@@ -416,14 +427,18 @@ export const goHome = (protyle: IProtyle) => {
         const getDocParam: IObject = {
             id: protyle.block.rootID,
             mode: 0,
+            notebook: protyle.notebookId,
             size: protyle.settings.editor.dynamicLoadBlocks,
         };
-        if (isEncryptedBox(protyle.notebookId)) {
-            getDocParam.notebook = protyle.notebookId;
-        }
-        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-            onGet({data: getResponse, protyle, action: [Constants.CB_GET_FOCUS]});
-        });
+        const load = beginProtyleContentLoad(protyle);
+        void requestProtyleContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam, load)
+            .then((getResponse) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
+                onGet({data: getResponse, protyle, action: [Constants.CB_GET_FOCUS], load});
+            })
+            .catch((error) => console.error("[protyle.transport] document start load failed", error));
     }
 };
 
@@ -433,21 +448,26 @@ export const goEnd = (protyle: IProtyle) => {
         const getDocParam: IObject = {
             id: protyle.block.rootID,
             mode: 4,
+            notebook: protyle.notebookId,
             size: protyle.settings.editor.dynamicLoadBlocks,
         };
-        if (isEncryptedBox(protyle.notebookId)) {
-            getDocParam.notebook = protyle.notebookId;
-        }
-        fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-            onGet({
-                data: getResponse,
-                protyle,
-                action: [Constants.CB_GET_FOCUS],
-                afterCB() {
-                    focusBlock(protyle.wysiwyg.element.lastElementChild, undefined, false);
+        const load = beginProtyleContentLoad(protyle);
+        void requestProtyleContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam, load)
+            .then((getResponse) => {
+                if (!load.isCurrent()) {
+                    return;
                 }
-            });
-        });
+                onGet({
+                    data: getResponse,
+                    protyle,
+                    action: [Constants.CB_GET_FOCUS],
+                    load,
+                    afterCB() {
+                        focusBlock(protyle.wysiwyg.element.lastElementChild, undefined, false);
+                    }
+                });
+            })
+            .catch((error) => console.error("[protyle.transport] document end load failed", error));
     } else {
         protyle.contentElement.scrollTop = protyle.contentElement.scrollHeight;
         protyle.scroll.lastScrollTop = protyle.contentElement.scrollTop;
