@@ -1972,7 +1972,12 @@ func removeDoc0(tree *parse.Tree, childrenDir string) {
 	}
 }
 
-func RenameDoc(boxID, p, title string) (err error) {
+type RenameDocResult struct {
+	Title string `json:"title"`
+	Empty bool   `json:"empty"`
+}
+
+func RenameDoc(boxID, p, title string) (result RenameDocResult, err error) {
 	box := Conf.Box(boxID)
 	if nil == box {
 		err = errors.New(Conf.Language(0))
@@ -1986,35 +1991,33 @@ func RenameDoc(boxID, p, title string) (err error) {
 		return
 	}
 
-	title = normalizeDocTitle(title)
-	if 512 < utf8.RuneCountInString(title) {
+	result.Title = normalizeDocTitle(title)
+	if 512 < utf8.RuneCountInString(result.Title) {
 		// 限制笔记本名和文档名最大长度为 `512` https://github.com/siyuan-note/siyuan/issues/6299
-		return errors.New(Conf.Language(106))
+		err = errors.New(Conf.Language(106))
+		return
 	}
 
-	var isEmpty bool
-	if "" == title {
-		title = Conf.language(16)
-		isEmpty = true
+	if "" == result.Title {
+		result.Title = Conf.language(16)
+		result.Empty = true
 	}
 	// 先规范化输入得到实际会存储的标题，再与旧标题比较
-	titleChanged := tree.Root.IALAttr("title") != title
+	titleChanged := tree.Root.IALAttr("title") != result.Title
 
 	var emptyAttrUpdated bool
 	if titleChanged {
-		tree.HPath = path.Join(path.Dir(tree.HPath), title)
-		tree.Root.SetIALAttr("title", title)
+		tree.HPath = path.Join(path.Dir(tree.HPath), result.Title)
+		tree.Root.SetIALAttr("title", result.Title)
 	}
 
 	// 按需同步“无标题”标记（仅更新 IAL，不触发子树重命名等）
 	isTitleEmpty := tree.Root.IALAttr(NodeAttrTitleEmpty) == "true"
-	if isTitleEmpty != isEmpty {
-		if isEmpty {
+	if isTitleEmpty != result.Empty {
+		if result.Empty {
 			tree.Root.SetIALAttr(NodeAttrTitleEmpty, "true")
-			isTitleEmpty = true
 		} else {
 			tree.Root.RemoveIALAttr(NodeAttrTitleEmpty)
-			isTitleEmpty = false
 		}
 		emptyAttrUpdated = true
 	}
@@ -2037,7 +2040,8 @@ func RenameDoc(boxID, p, title string) (err error) {
 			}
 
 			if err = treenode.SetBlockTreePath(subTree); err != nil {
-				return fmt.Errorf("persist renamed blocktree path for tree [%s/%s]: %w", subTree.Box, subTree.Path, err)
+				err = fmt.Errorf("persist renamed blocktree path for tree [%s/%s]: %w", subTree.Box, subTree.Path, err)
+				return
 			}
 			if err = sql.RenameTreeQueue(subTree); err != nil {
 				return
@@ -2050,8 +2054,8 @@ func RenameDoc(boxID, p, title string) (err error) {
 			"box":     boxID,
 			"id":      tree.Root.ID,
 			"path":    p,
-			"title":   title,
-			"empty":   isTitleEmpty,
+			"title":   result.Title,
+			"empty":   result.Empty,
 			"refText": refText,
 		}
 		util.PushEvent(evt)
@@ -2191,7 +2195,7 @@ func createDoc(boxID, p, title, dom string, titleEmpty bool) (tree *parse.Tree, 
 }
 
 func normalizeDocTitle(title string) string {
-	title = strings.ReplaceAll(title, "/", "")
+	title = strings.ReplaceAll(title, "/", "／")
 	// 不要踢掉 零宽连字符，否则有的 Emoji 会变形 https://github.com/siyuan-note/siyuan/issues/11480
 	title = strings.ReplaceAll(title, string(gulu.ZWJ), "__@ZWJ@__")
 	title = util.RemoveInvalid(title)

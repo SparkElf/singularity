@@ -700,13 +700,13 @@ func renameDoc(c *gin.Context) {
 	p := arg["path"].(string)
 	title := arg["title"].(string)
 
-	err := model.RenameDoc(notebook, p, title)
+	result, err := model.RenameDoc(notebook, p, title)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
 	}
-	return
+	ret.Data = result
 }
 
 func renameDocByID(c *gin.Context) {
@@ -736,12 +736,13 @@ func renameDocByID(c *gin.Context) {
 		return
 	}
 
-	err = model.RenameDoc(tree.Box, tree.Path, title)
+	result, err := model.RenameDoc(tree.Box, tree.Path, title)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
 	}
+	ret.Data = result
 }
 
 func duplicateDoc(c *gin.Context) {
