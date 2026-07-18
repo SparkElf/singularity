@@ -21,7 +21,7 @@ import {hideMessage, showMessage} from "../dialog/message";
 import {Dialog} from "../dialog";
 import {focusBlock, focusByRange, getEditorRange} from "../protyle/util/selection";
 /// #if !MOBILE
-import {openBy} from "../editor/util";
+import {openAsset, openBy} from "../editor/util";
 /// #endif
 import {rename, replaceFileName} from "../editor/rename";
 import * as dayjs from "dayjs";
@@ -867,7 +867,7 @@ export const exportMd = (id: string, notebookId: string): IMenu | undefined => {
     };
 };
 
-export const openMenu = (app: App, src: string, notebookId: string, documentId: string,
+export const openMenu = (app: App, src: string, notebookId: string,
                          onlyMenu: boolean, showAccelerator: boolean) => {
     const submenu = [];
     /// #if MOBILE
@@ -891,14 +891,7 @@ export const openMenu = (app: App, src: string, notebookId: string, documentId: 
                 label: window.siyuan.languages.insertRight,
                 accelerator: showAccelerator ? window.siyuan.languages.click : "",
                 click() {
-                    app.protyleHost.dispatch({
-                        type: "open-asset",
-                        documentId,
-                        notebookId,
-                        assetPath: src.trim(),
-                        page: parseInt(getSearch("page", src)),
-                        disposition: "split-right",
-                    });
+                    openAsset(app, src.trim(), parseInt(getSearch("page", src)), "right", notebookId);
                 }
             });
             submenu.push({
@@ -907,14 +900,7 @@ export const openMenu = (app: App, src: string, notebookId: string, documentId: 
                 icon: "iconOpen",
                 accelerator: showAccelerator ? "⌥" + window.siyuan.languages.click : "",
                 click() {
-                    app.protyleHost.dispatch({
-                        type: "open-asset",
-                        documentId,
-                        notebookId,
-                        assetPath: src.trim(),
-                        page: parseInt(getSearch("page", src)),
-                        disposition: "current",
-                    });
+                    openAsset(app, src.trim(), parseInt(getSearch("page", src)), undefined, notebookId);
                 }
             });
             /// #if !BROWSER

@@ -1,13 +1,23 @@
-import {getAllModels, getAllWnds} from "../../layout/getAll";
 import {addLoading} from "../ui/initUI";
-import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
-import {hideAllElements, hideElements} from "../ui/hideElements";
-import {hasClosestByClassName} from "../util/hasClosest";
-import {resize} from "../util/resize";
+import {hideElements} from "../ui/hideElements";
 import {disabledProtyle, enableProtyle} from "../util/onGet";
-import {isWindow} from "../../util/functions";
-import {Wnd} from "../../layout/Wnd";
+import {protyleContentIdentity} from "../util/contentLoad";
+import {setApplicationReadOnly, setDocumentReadOnlyAttribute} from "../runtime/readOnly";
+
+const reportBreadcrumbActionFailure = (protyle: IProtyle, action: string, error: unknown) => {
+    if (!protyle.requestSignal.aborted) {
+        console.error(`[protyle.breadcrumb] ${action} failed`, error);
+    }
+};
+
+const applyReadOnlyState = (protyle: IProtyle) => {
+    if (protyle.readonlyState.host || protyle.readonlyState.application || protyle.readonlyState.document) {
+        disabledProtyle(protyle);
+    } else {
+        enableProtyle(protyle);
+    }
+};
 
 export const net2LocalAssets = (protyle: IProtyle, type: "Assets" | "Img") => {
     if (protyle.element.querySelector(".wysiwygLoading")) {
@@ -15,101 +25,55 @@ export const net2LocalAssets = (protyle: IProtyle, type: "Assets" | "Img") => {
     }
     addLoading(protyle);
     hideElements(["toolbar"], protyle);
-    fetchPost(`/api/format/net${type}2LocalAssets`, {
+    void protyle.session!.runtime.transport.request<IWebSocketData>(`/api/format/net${type}2LocalAssets`, {
         id: protyle.block.rootID
-    });
-};
-
-export const fullscreen = (element: Element, btnElement?: Element) => {
-    setTimeout(() => {
-        hideAllElements(["gutter"]);
-    }, Constants.TIMEOUT_TRANSITION);   // 等待页面动画结束
-
-    const isFullscreen = element.className.includes("fullscreen");
-    if (isFullscreen) {
-        element.classList.remove("fullscreen");
-        document.getElementById("drag")?.classList.remove("fn__hidden");
-    } else {
-        element.classList.add("fullscreen");
-        document.getElementById("drag")?.classList.add("fn__hidden");
-    }
-    const isWindowMode = isWindow();
-    const wndsTemp: Wnd[] = [];
-    if (isWindowMode) {
-        getAllWnds(window.siyuan.layout.layout, wndsTemp);
-    } else if (window.siyuan.config.appearance.hideToolbar) {
-        getAllWnds(window.siyuan.layout.centerLayout, wndsTemp);
-    }
-    wndsTemp.find(item => {
-        const headerElement = item.headersElement.parentElement;
-        if (headerElement.getBoundingClientRect().top <= 0) {
-            ((headerElement.querySelector(".item--readonly .fn__flex-1") as HTMLElement).style as CSSStyleDeclarationElectron).WebkitAppRegion =
-                isFullscreen ? "drag" : "";
-            return true;
-        }
-    });
-
-    if ("darwin" !== window.siyuan.config.system.os && !isWindow()) {
-        const windowControlsElement = document.getElementById("windowControls");
-        if (isFullscreen) {
-            windowControlsElement.style.zIndex = "";
-        } else {
-            window.siyuan.zIndex++;
-            windowControlsElement.style.zIndex = window.siyuan.zIndex.toString();
-        }
-    }
-    if (btnElement) {
-        if (isFullscreen) {
-            btnElement.querySelector("use").setAttribute("xlink:href", "#iconFullscreen");
-        } else {
-            btnElement.querySelector("use").setAttribute("xlink:href", "#iconFullscreenExit");
-        }
-        const dockLayoutElement = hasClosestByClassName(element, "layout--float");
-        if (dockLayoutElement) {
-            if (isFullscreen) {
-                dockLayoutElement.setAttribute("data-temp", dockLayoutElement.style.transform);
-                dockLayoutElement.style.transform = "none";
-            } else {
-                dockLayoutElement.style.transform = dockLayoutElement.getAttribute("data-temp");
-                dockLayoutElement.removeAttribute("data-temp");
-            }
-        }
-        return;
-    }
-    if (element.classList.contains("protyle")) {
-        window.siyuan.editorIsFullscreen = !isFullscreen;
-    }
-    getAllModels().editor.forEach(item => {
-        if (element !== item.element) {
-            if (window.siyuan.editorIsFullscreen) {
-                if (item.element.classList.contains("fullscreen")) {
-                    item.element.classList.remove("fullscreen");
-                    resize(item.editor.protyle);
-                }
-            } else if (item.element.classList.contains("fullscreen")) {
-                item.element.classList.remove("fullscreen");
-                resize(item.editor.protyle);
-            }
-        }
+    }, {
+        identity: protyleContentIdentity(protyle),
+        intent: "write",
+        signal: protyle.requestSignal,
+    }).catch((error) => {
+        reportBreadcrumbActionFailure(protyle, `localize network ${type.toLowerCase()}`, error);
     });
 };
 
 export const updateReadonly = (target: Element, protyle: IProtyle) => {
-    if (!window.siyuan.config.readonly && protyle.element.getAttribute("disabled-forever") !== "true") {
-        const isReadonly = target.querySelector("use").getAttribute("xlink:href") !== "#iconUnlock";
-        if (window.siyuan.config.editor.readOnly) {
-            if (isReadonly) {
-                enableProtyle(protyle);
-            } else {
-                disabledProtyle(protyle);
-            }
-        } else {
-            fetchPost("/api/attr/setBlockAttrs", {
-                id: protyle.block.rootID,
-                attrs: {
-                    [Constants.CUSTOM_SY_READONLY]: isReadonly ? "false" : "true"
-                }
-            });
-        }
+    if (protyle.readonlyState.host || protyle.element.getAttribute("disabled-forever") === "true") {
+        return;
     }
+    const currentlyReadOnly = target.querySelector("use").getAttribute("xlink:href") !== "#iconUnlock";
+    if (protyle.settings.editor.readOnly) {
+        setApplicationReadOnly(protyle.readonlyState, !currentlyReadOnly);
+        applyReadOnlyState(protyle);
+        return;
+    }
+    const identity = protyleContentIdentity(protyle);
+    const requestedReadOnly = !currentlyReadOnly;
+    void setDocumentReadOnlyAttribute(protyle.readonlyState, requestedReadOnly, async (readOnly) => {
+        await protyle.session!.runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
+            id: protyle.block.rootID,
+            attrs: {[Constants.CUSTOM_SY_READONLY]: readOnly ? "true" : "false"},
+        }, {
+            identity,
+            intent: "write",
+            signal: protyle.requestSignal,
+        });
+        const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getDocInfo", {
+            id: protyle.block.rootID,
+            notebook: identity.notebookId,
+        }, {
+            identity,
+            intent: "read",
+            signal: protyle.requestSignal,
+        });
+        return response.data.ial[Constants.CUSTOM_SY_READONLY] === "true";
+    }).then(() => {
+        if (!protyle.requestSignal.aborted) {
+            applyReadOnlyState(protyle);
+        }
+    }).catch((error) => {
+        if (!protyle.requestSignal.aborted) {
+            reportBreadcrumbActionFailure(protyle, "update document read-only", error);
+            applyReadOnlyState(protyle);
+        }
+    });
 };

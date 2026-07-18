@@ -4,9 +4,8 @@ import {Dialog} from "../../dialog";
 import {Menu} from "../../plugin/Menu";
 import {isMobile} from "../../util/functions";
 import {Constants} from "../../constants";
-import {openEmojiPanel, unicode2Emoji} from "../../emoji";
-import {escapeAttr} from "../../util/escape";
-import {resolveProtyleEmojiPath} from "../util/emojiPath";
+import {unicodeToEmoji} from "../hint/emoji";
+import {openProtyleEmojiMenu} from "../ui/emojiMenu";
 
 export const updateCalloutType = (blockElements: HTMLElement[], protyle: IProtyle) => {
     if (blockElements.length === 0) {
@@ -113,35 +112,32 @@ export const updateCalloutType = (blockElements: HTMLElement[], protyle: IProtyl
     const dialogCalloutIconElement = dialog.element.querySelector(".callout-icon");
     dialogCalloutIconElement.addEventListener("click", () => {
         const emojiRect = dialogCalloutIconElement.getBoundingClientRect();
-        openEmojiPanel("", "av", {
-            x: emojiRect.left,
-            y: emojiRect.bottom,
-            h: emojiRect.height,
-            w: emojiRect.width
-        }, (unicode) => {
-            let emojiHTML;
-            if (unicode.startsWith("api/icon/getDynamicIcon")) {
-                emojiHTML = `<img class="callout-img" src="${unicode}"/>`;
-            } else if (unicode.indexOf(".") > -1) {
-                emojiHTML = `<img class="callout-img" src="${escapeAttr(resolveProtyleEmojiPath(protyle, unicode))}">`;
-            } else {
-                emojiHTML = unicode2Emoji(unicode);
-            }
-            if (unicode === "") {
-                if (textElements[0].value === "NOTE") {
-                    emojiHTML = "✏️";
-                } else if (textElements[0].value === "TIP") {
-                    emojiHTML = "💡";
-                } else if (textElements[0].value === "IMPORTANT") {
-                    emojiHTML = "❗";
-                } else if (textElements[0].value === "WARNING") {
-                    emojiHTML = "⚠️";
-                } else if (textElements[0].value === "CAUTION") {
-                    emojiHTML = "🚨";
+        openProtyleEmojiMenu({
+            protyle,
+            position: {
+                x: emojiRect.left,
+                y: emojiRect.bottom,
+                h: emojiRect.height,
+                w: emojiRect.width,
+            },
+            onSelect: (unicode) => {
+                let emojiHTML = unicodeToEmoji(protyle, unicode, "callout-img");
+                if (unicode === "") {
+                    if (textElements[0].value === "NOTE") {
+                        emojiHTML = "✏️";
+                    } else if (textElements[0].value === "TIP") {
+                        emojiHTML = "💡";
+                    } else if (textElements[0].value === "IMPORTANT") {
+                        emojiHTML = "❗";
+                    } else if (textElements[0].value === "WARNING") {
+                        emojiHTML = "⚠️";
+                    } else if (textElements[0].value === "CAUTION") {
+                        emojiHTML = "🚨";
+                    }
                 }
-            }
-            dialogCalloutIconElement.innerHTML = emojiHTML;
-        }, dialogCalloutIconElement.querySelector("img"));
+                dialogCalloutIconElement.innerHTML = emojiHTML;
+            },
+        });
     });
     dialog.element.querySelector(".b3-form__icona-icon").addEventListener("click", (event) => {
         const menu = new Menu(Constants.MENU_CALLOUT_SELECT, () => {

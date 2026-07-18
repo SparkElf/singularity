@@ -3,6 +3,7 @@ import {setStorageVal} from "../protyle/util/compatibility";
 import {setInlineStyle} from "../util/assets";
 import {fetchSyncPost} from "../util/fetch";
 import {addRecentEmoji, getRecentEmojis} from "./recent-emojis";
+import coverEntries from "../../appearance/covers/manifest.json";
 
 const positionKey = (identity: {notebookId: string, documentId: string}) =>
     `${identity.notebookId}:${identity.documentId}`;
@@ -67,6 +68,10 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
             spellcheck: editor.spellcheck,
         };
     },
+    cover: {
+        entries: coverEntries,
+        resolve: (file) => `/appearance/covers/${encodeURIComponent(file)}`,
+    },
     get emojis() {
         return window.siyuan.emojis;
     },
@@ -77,9 +82,24 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
         };
     },
     get features() {
+        const user = window.siyuan.user;
         return {
+            aiActions: true,
             aiWriting: true,
+            assetRename: true,
+            blockAttributes: true,
+            blockMove: true,
+            blockRefTransfer: true,
+            cloudAssetUpload: true,
+            communityShare: Boolean(user),
+            documentDelete: true,
+            documentExport: true,
+            documentMove: true,
             flashcardDeck: window.siyuan.config.flashcard.deck,
+            fullscreen: true,
+            quickFlashcard: true,
+            tableMenu: true,
+            webBlockLink: true,
             wechatReminder: window.siyuan.config.cloudRegion === 0,
             widget: true,
         };
@@ -102,23 +122,41 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
                     alignLeft: keymap.editor.general.alignLeft.custom,
                     alignRight: keymap.editor.general.alignRight.custom,
                     attr: keymap.editor.general.attr.custom,
+                    backlinks: keymap.editor.general.backlinks.custom,
                     collapse: keymap.editor.general.collapse.custom,
+                    copyBlockEmbed: keymap.editor.general.copyBlockEmbed.custom,
+                    copyBlockRef: keymap.editor.general.copyBlockRef.custom,
+                    copyHPath: keymap.editor.general.copyHPath.custom,
+                    copyID: keymap.editor.general.copyID.custom,
                     copyPlainText: keymap.editor.general.copyPlainText.custom,
+                    copyProtocol: keymap.editor.general.copyProtocol.custom,
+                    copyProtocolInMd: keymap.editor.general.copyProtocolInMd.custom,
                     copyText: keymap.editor.general.copyText.custom,
                     duplicate: keymap.editor.general.duplicate.custom,
                     duplicateCompletely: keymap.editor.general.duplicateCompletely.custom,
                     foldRecursive: keymap.editor.general.foldRecursive.custom,
+                    fullscreen: keymap.editor.general.fullscreen.custom,
+                    graphView: keymap.editor.general.graphView.custom,
                     hLayout: keymap.editor.general.hLayout.custom,
                     insertAfter: keymap.editor.general.insertAfter.custom,
                     insertBefore: keymap.editor.general.insertBefore.custom,
                     insertRight: keymap.editor.general.insertRight.custom,
+                    exitFocus: keymap.editor.general.exitFocus.custom,
                     jumpToParent: keymap.editor.general.jumpToParent.custom,
                     jumpToParentNext: keymap.editor.general.jumpToParentNext.custom,
                     jumpToParentPrev: keymap.editor.general.jumpToParentPrev.custom,
                     ltr: keymap.editor.general.ltr.custom,
+                    netAssets2LocalAssets: keymap.editor.general.netAssets2LocalAssets.custom,
+                    netImg2LocalAsset: keymap.editor.general.netImg2LocalAsset.custom,
+                    optimizeTypography: keymap.editor.general.optimizeTypography.custom,
+                    outline: keymap.editor.general.outline.custom,
+                    preview: keymap.editor.general.preview.custom,
                     quickMakeCard: keymap.editor.general.quickMakeCard.custom,
+                    refresh: keymap.editor.general.refresh.custom,
                     rtl: keymap.editor.general.rtl.custom,
+                    spaceRepetition: keymap.editor.general.spaceRepetition.custom,
                     vLayout: keymap.editor.general.vLayout.custom,
+                    wysiwyg: keymap.editor.general.wysiwyg.custom,
                 },
                 heading: {
                     heading1: keymap.editor.heading.heading1.custom,

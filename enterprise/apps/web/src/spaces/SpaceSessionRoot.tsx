@@ -1,6 +1,7 @@
 import type { SpaceRuntimeBootstrap } from "@singularity/contracts";
 import type {
-  ProtyleHostEvent,
+  ProtyleHostDispatchEvent,
+  ProtyleRuntimeErrorEvent,
   ProtyleSession,
 } from "@singularity/protyle-browser";
 import {
@@ -18,8 +19,11 @@ import {
   type SpaceProtyleRuntime,
 } from "@/spaces/space-session.ts";
 
-export type RuntimeErrorEvent = Extract<ProtyleHostEvent, { type: "runtime-error" }>;
-export type ProtyleMediatorEvent = Exclude<ProtyleHostEvent, RuntimeErrorEvent>;
+export type RuntimeErrorEvent = ProtyleRuntimeErrorEvent;
+export type ProtyleMediatorEvent = Exclude<
+  ProtyleHostDispatchEvent,
+  ProtyleRuntimeErrorEvent
+>;
 type SessionPhase = "blocked" | "creating" | "disposing" | "idle" | "ready";
 
 interface OwnedSession {

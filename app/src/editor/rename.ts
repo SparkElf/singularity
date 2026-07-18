@@ -12,9 +12,11 @@ import {showTooltip} from "../dialog/tooltip";
 import {getAllModels} from "../layout/getAll";
 /// #endif
 import {getAllEditor} from "../layout/getAll";
+import {getFileNameViolation, normalizeFileName} from "./fileNameRules";
 
 export const validateName = (name: string, targetElement?: HTMLElement) => {
-    if (/\r\n|\r|\n|\u2028|\u2029|\t/.test(name)) {
+    const violation = getFileNameViolation(name);
+    if (violation === "invalid-character") {
         if (targetElement) {
             showTooltip(window.siyuan.languages.fileNameRule, targetElement, "error");
         } else {
@@ -22,7 +24,7 @@ export const validateName = (name: string, targetElement?: HTMLElement) => {
         }
         return false;
     }
-    if (name.length > Constants.SIZE_TITLE) {
+    if (violation === "too-long") {
         if (targetElement) {
             showTooltip(window.siyuan.languages["_kernel"]["106"], targetElement, "error");
         } else {
@@ -34,11 +36,11 @@ export const validateName = (name: string, targetElement?: HTMLElement) => {
 };
 
 export const replaceFileName = (name: string) => {
-    if (name.indexOf("/") > -1) {
+    const normalized = normalizeFileName(name);
+    if (normalized.replacedPathSeparator) {
         showMessage(window.siyuan.languages.fileNameRule);
-        name = name.replace(/\//g, "／");
     }
-    return name.replace(/\r\n|\r|\n|\u2028|\u2029|\t|/g, "").substring(0, Constants.SIZE_TITLE);
+    return normalized.name;
 };
 
 export const replaceLocalPath = (name: string) => {

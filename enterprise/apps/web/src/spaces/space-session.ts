@@ -6,7 +6,7 @@ import {
   createProtyleOverlayPort,
   createProtyleSession,
   type ProtyleController,
-  type ProtyleHostEvent,
+  type ProtyleHostDispatchEvent,
   type ProtyleMenuSurface,
   type ProtyleRuntime,
   type ProtyleSession,
@@ -41,7 +41,7 @@ export type SpaceProtyleRuntime = Omit<
 export interface CreateSpaceProtyleSessionOptions {
   readonly bootstrap: ReadySpaceRuntimeBootstrap;
   readonly getCsrfToken: (signal: AbortSignal) => Promise<string>;
-  readonly onHostEvent: (event: ProtyleHostEvent) => void;
+  readonly onHostEvent: (event: ProtyleHostDispatchEvent) => void;
   readonly portalRoot: HTMLElement;
   readonly retryRuntime: () => Promise<SpaceRuntimeBootstrap>;
 }

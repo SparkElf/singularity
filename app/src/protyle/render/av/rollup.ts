@@ -2,7 +2,7 @@ import {hasClosestByClassName} from "../../util/hasClosest";
 import {upDownHint} from "../../util/upDownHint";
 import {escapeHtml} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {getColIconByType, getColId} from "./col";
 import {getNameByOperator} from "./calc";
 import {getFieldsByData} from "./view";
@@ -97,7 +97,7 @@ const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string,
         let html = "";
         response.data.keys.forEach((item: IAVColumn, index: number) => {
             html += `<div class="b3-list-item b3-list-item--narrow${index === 0 ? " b3-list-item--focus" : ""}" data-col-id="${item.id}" ${isRelation ? `data-target-av-id="${item.relation.avID}"` : `data-col-type="${item.type}"`}>
-        ${item.icon ? unicode2Emoji(item.icon, "b3-list-item__graphic", true) : `<svg class="b3-list-item__graphic"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
+        ${item.icon ? unicodeToEmoji(protyle, item.icon, "b3-list-item__graphic", true) : `<svg class="b3-list-item__graphic"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
         <span class="b3-list-item__text">${escapeHtml(item.name || protyle.localization.text("title"))}</span>
 </div>`;
         });

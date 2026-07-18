@@ -19,6 +19,7 @@ import {contentPathBasename} from "./path";
 import {unicodeToEmoji} from "./emoji";
 import {beginHintRequest, reportHintRequestFailure, requestHint} from "./request";
 import type {HintSearchReferenceResponse, HintSearchTagResponse, HintTemplateResponse} from "./protocol";
+import {registerAVBlockTarget} from "../render/av/blockTarget";
 
 const createEmptyParagraph = (protyle: IProtyle, id: string) => {
     const element = document.createElement("div");
@@ -494,7 +495,7 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
             return;
         }
         const dataList: IHintData[] = [];
-        response.data.blocks.forEach((item: IBlock & {box: string; id: string}) => {
+        response.data.blocks.forEach((item) => {
             let value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="d">${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
             if (source === "search") {
                 value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${key}${Constants.ZWSP}${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
@@ -506,6 +507,11 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
                 value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${refText}</span>`;
             }
             dataList.push({
+                avBlockTarget: source === "av" ? registerAVBlockTarget(protyle, {
+                    blockId: item.id,
+                    documentId: item.rootID,
+                    notebookId: item.box,
+                }) : undefined,
                 value,
                 html: genHintItemHTML(item, protyle),
             });

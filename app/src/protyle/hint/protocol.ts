@@ -1,6 +1,6 @@
 export interface HintSearchReferenceResponse {
     data: {
-        blocks: Array<IBlock & {box: string; id: string}>;
+        blocks: Array<IBlock & {box: string; id: string; rootID: string}>;
     };
 }
 

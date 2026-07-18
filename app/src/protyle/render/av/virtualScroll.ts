@@ -150,7 +150,6 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         pinIndex: state.pinIndex,
                         type: viewType,
                         fileIcon: protyle.settings.icons.file,
-                        localization: protyle.localization,
                         protyle,
                     });
                 }
@@ -267,7 +266,6 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         pinIndex: state.pinIndex,
                         type: viewType,
                         fileIcon: protyle.settings.icons.file,
-                        localization: protyle.localization,
                         protyle,
                     });
                 }
@@ -294,7 +292,6 @@ const doTrim = (blockElement: HTMLElement, elementRect: DOMRect): void => {
                         pinIndex: state.pinIndex,
                         type: viewType,
                         fileIcon: protyle.settings.icons.file,
-                        localization: protyle.localization,
                         protyle,
                     });
                 }

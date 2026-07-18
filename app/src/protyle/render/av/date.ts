@@ -2,8 +2,9 @@ import * as dayjs from "dayjs";
 import {genCellValueByElement, updateCellsValue} from "./cell";
 import {currentAVOverlay} from "./overlay";
 
-export const getDateHTML = (cellElements: HTMLElement[], localization: IProtyle["localization"]) => {
-    const cellValue = genCellValueByElement("date", cellElements[0]).date;
+export const getDateHTML = (protyle: IProtyle, cellElements: HTMLElement[]) => {
+    const {localization} = protyle;
+    const cellValue = genCellValueByElement(protyle, "date", cellElements[0]).date;
     const isNotTime = cellValue.isNotTime;
     let value = "";
     const currentDate = Date.now();

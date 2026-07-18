@@ -6,7 +6,8 @@ import {isNotCtrl} from "../../util/keyboard";
 import {isDynamicRef, objEquals} from "../../../util/functions";
 import {focusBlock, focusByRange} from "../../util/selection";
 import * as dayjs from "dayjs";
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
+import {registerAVBlockValueTarget, resolveAVBlockTarget} from "./blockTarget";
 import {getColIconByType, getColId} from "./col";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender, type AVRenderLoad} from "./load";
 import {closeAVOverlay, currentAVOverlay, registerAVOverlay} from "./overlay";
@@ -63,7 +64,7 @@ export const getCellText = (cellElement: HTMLElement | false) => {
     return cellText;
 };
 
-export const genCellValueByElement = (colType: TAVCol, cellElement: HTMLElement) => {
+export const genCellValueByElement = (protyle: IProtyle, colType: TAVCol, cellElement: HTMLElement) => {
     const cellValue: IAVCellValue = {
         type: colType,
         id: cellElement.dataset.id,
@@ -79,10 +80,14 @@ export const genCellValueByElement = (colType: TAVCol, cellElement: HTMLElement)
         cellValue[colType as "text"] = {
             content: colType === "url" ? textElement.dataset.href : textElement.textContent
         };
-        if (colType === "block" && textElement.dataset.id) {
-            cellValue.block.id = textElement.dataset.id;
-            if (textElement.previousElementSibling?.classList.contains("b3-menu__avemoji")) {
-                const unicode = textElement.previousElementSibling.getAttribute("data-unicode");
+        if (colType === "block" && cellElement.dataset.detached !== "true") {
+            const iconElement = textElement.previousElementSibling as HTMLElement;
+            const target = resolveAVBlockTarget(protyle, iconElement.dataset.avBlockTarget!);
+            cellValue.block.id = target.blockId;
+            cellValue.block.notebookId = target.notebookId;
+            cellValue.block.documentId = target.documentId;
+            if (iconElement.classList.contains("b3-menu__avemoji")) {
+                const unicode = iconElement.getAttribute("data-unicode");
                 if (unicode) {
                     cellValue.block.icon = unicode;
                 }
@@ -108,13 +113,25 @@ export const genCellValueByElement = (colType: TAVCol, cellElement: HTMLElement)
         const contents: IAVCellValue[] = [];
         Array.from(cellElement.querySelectorAll(".av__cell--relation")).forEach((relationItem: HTMLElement) => {
             const item = relationItem.querySelector(".av__celltext") as HTMLElement;
+            const isDetached = !item.classList.contains("av__celltext--ref");
+            const block: NonNullable<IAVCellValue["block"]> = {
+                content: item.textContent,
+            };
+            if (!isDetached) {
+                const iconElement = relationItem.querySelector<HTMLElement>("[data-av-block-target]")!;
+                const target = resolveAVBlockTarget(protyle, iconElement.dataset.avBlockTarget!);
+                block.id = target.blockId;
+                block.notebookId = target.notebookId;
+                block.documentId = target.documentId;
+                const unicode = iconElement.dataset.unicode;
+                if (unicode) {
+                    block.icon = unicode;
+                }
+            }
             blockIDs.push(relationItem.dataset.rowId);
             contents.push({
-                isDetached: !item.classList.contains("av__celltext--ref"),
-                block: {
-                    content: item.textContent,
-                    id: item.dataset.id,
-                },
+                isDetached,
+                block,
                 type: "block"
             });
         });
@@ -190,6 +207,9 @@ const transformCellValue = (colType: TAVCol, value: IAVCellValue): IAVCellValue 
         newValue[colType as "text"] = {
             content: getCellValueContent(value).toString()
         };
+        if (colType === "block") {
+            newValue.isDetached = true;
+        }
     } else if (colType === "mSelect" || colType === "select") {
         newValue.mSelect = [{
             content: getCellValueContent(value).toString(),
@@ -747,7 +767,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
         const colId = getColId(item, viewType);
 
         text += getCellText(item) + ((cellElements[elementIndex + 1] && item.nextElementSibling && item.nextElementSibling === cellElements[elementIndex + 1]) ? "\t" : "\n\n");
-        const oldValue = genCellValueByElement(type, item);
+        const oldValue = genCellValueByElement(protyle, type, item);
         if (elementIndex === 0 || cellElements[elementIndex - 1] !== item.previousElementSibling) {
             json.push([]);
         }
@@ -840,7 +860,9 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
         } else if (type === "block" && typeof value === "string" && oldValue.block.id) {
             newValue = {
                 content: value,
+                documentId: oldValue.block.documentId,
                 id: oldValue.block.id,
+                notebookId: oldValue.block.notebookId,
             };
             if (oldValue.block.icon) {
                 newValue.icon = oldValue.block.icon;
@@ -941,7 +963,8 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
 };
 
 export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: boolean, type: TAVView,
-                           fileIcon: string, localization: IProtyle["localization"], protyle: IProtyle) => {
+                           fileIcon: string, protyle: IProtyle) => {
+    const {localization} = protyle;
     let text = "";
     if ("template" === cellValue.type) {
         // 使用 DOMPurify 过滤危险标签和事件属性，保留安全的 HTML 格式 https://github.com/siyuan-note/siyuan/issues/18169
@@ -957,7 +980,8 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
         if (cellValue?.isDetached) {
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block.content || "")}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("more")}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("update")}</span>`;
+            const targetReference = registerAVBlockValueTarget(protyle, cellValue.block);
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("update")}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = `<span class="av__celltext" data-content="${cellValue?.number.isNotEmpty ? cellValue?.number.content : ""}">${cellValue?.number.formattedContent || cellValue?.number.content || ""}</span>`;
@@ -1005,7 +1029,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
     } else if (cellValue.type === "rollup") {
         let rollupType;
         cellValue?.rollup?.contents?.forEach((item) => {
-            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon, localization, protyle) : renderRollup(item, showIcon, fileIcon, localization);
+            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon, protyle) : renderRollup(item, showIcon, fileIcon, protyle);
             if (rollupText) {
                 text += rollupText + (item.type === "checkbox" ? "" : ", ");
             }
@@ -1026,7 +1050,8 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
                     text += `<span data-row-id="${rowID}" class="av__cell--relation"><span${showIcon ? "" : ' class="fn__none"'}><svg><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                 } else {
                     // data-block-id 用于更新 emoji
-                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
+                    const targetReference = registerAVBlockValueTarget(protyle, item.block);
+                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                 }
             }
         });
@@ -1048,8 +1073,9 @@ const renderRollup = (
     cellValue: IAVCellValue,
     showIcon: boolean,
     fileIcon: string,
-    localization: IProtyle["localization"],
+    protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let text = "";
     if (["text"].includes(cellValue.type)) {
         text = cellValue ? Lute.EscapeHTMLStr(cellValue[cellValue.type as "text"].content || "") : "";
@@ -1067,7 +1093,8 @@ const renderRollup = (
         if (cellValue?.isDetached) {
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
+            const targetReference = registerAVBlockValueTarget(protyle, cellValue.block);
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = cellValue?.number.formattedContent || cellValue?.number.content.toString() || "";
@@ -1096,10 +1123,10 @@ export const updateHeaderCell = (cellElement: HTMLElement, headerValue: {
     icon?: string,
     name?: string,
     pin?: boolean,
-}) => {
+}, protyle: IProtyle) => {
     if (typeof headerValue.icon !== "undefined") {
         cellElement.dataset.icon = headerValue.icon;
-        cellElement.querySelector(".av__cellheadericon").outerHTML = headerValue.icon ? unicode2Emoji(headerValue.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(cellElement.dataset.dtype as TAVCol)}"></use></svg>`;
+        cellElement.querySelector(".av__cellheadericon").outerHTML = headerValue.icon ? unicodeToEmoji(protyle, headerValue.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(cellElement.dataset.dtype as TAVCol)}"></use></svg>`;
     }
     if (typeof headerValue.name !== "undefined") {
         cellElement.querySelector(".av__celltext").textContent = headerValue.name;
@@ -1164,7 +1191,7 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
         const value: IAVCellValue & {
             colId?: string,
             element?: HTMLElement
-        } = genCellValueByElement(getTypeByCellElement(item), item);
+        } = genCellValueByElement(protyle, getTypeByCellElement(item), item);
         value.colId = item.dataset.colId;
         value.element = item;
         newData[rowElement.dataset.id].push(value);
@@ -1187,6 +1214,8 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
             if (data.type === "block") {
                 data.isDetached = true;
                 delete data.block.id;
+                delete data.block.notebookId;
+                delete data.block.documentId;
             }
             doOperations.push({
                 action: "updateAttrViewCell",
@@ -1202,7 +1231,6 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
                 showIcon,
                 "table",
                 protyle.settings.icons.file,
-                protyle.localization,
                 protyle,
             );
             renderCellAttr(item.element, data);

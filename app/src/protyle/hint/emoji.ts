@@ -1,8 +1,12 @@
 import {escapeAttr} from "../../util/escape";
+import {emojiCodepointsToString} from "../util/emojiUnicode";
 import {resolveProtyleEmojiPath} from "../util/emojiPath";
 
 type EmojiGroup = TProtyleApplicationSettingsPort["emojis"][number];
 type EmojiItem = EmojiGroup["items"][number];
+
+const isDynamicIcon = (unicode: string) => unicode.startsWith("api/icon/getDynamicIcon");
+const isCustomEmoji = (unicode: string) => !isDynamicIcon(unicode) && unicode.includes(".");
 
 const localizedEmojiValue = (
     protyle: IProtyle,
@@ -59,24 +63,37 @@ export const unicodeToEmoji = (
     if (!unicode) {
         return "";
     }
-    if (unicode.startsWith("api/icon/getDynamicIcon")) {
+    if (isDynamicIcon(unicode)) {
+        if (protyle.content.mode === "bound") {
+            const icon = `<svg data-type="unsupported-dynamic-icon" role="img" aria-label="${escapeAttr(protyle.localization.text("dynamicIcon"))}"><use xlink:href="#iconCalendar"></use></svg>`;
+            return needSpan || className
+                ? `<span class="${escapeAttr(className)}" data-type="unsupported-dynamic-icon">${icon}</span>`
+                : icon;
+        }
         return Lute.Sanitize(`<img class="${escapeAttr(className)}" ${lazy ? "data-" : ""}src="${escapeAttr(unicode)}"/>`);
     }
-    if (unicode.includes(".")) {
+    if (isCustomEmoji(unicode)) {
         const source = resolveProtyleEmojiPath(protyle, unicode);
         return Lute.Sanitize(`<img class="${escapeAttr(className)}" ${lazy ? "data-" : ""}src="${escapeAttr(source)}"/>`);
     }
-    const emoji = unicode.split("-").map((part) => String.fromCodePoint(parseInt(part, 16))).join("");
+    const emoji = emojiCodepointsToString(unicode);
     return needSpan ? `<span class="${escapeAttr(className)}">${emoji}</span>` : emoji;
 };
 
-export const emojiInsertionHTML = (protyle: IProtyle, unicode: string) => {
-    if (unicode.includes(".")) {
+export const emojiContentHTML = (protyle: IProtyle, unicode: string) => {
+    if (isCustomEmoji(unicode)) {
         const name = unicode.split(".")[0];
         const source = resolveProtyleEmojiPath(protyle, unicode);
-        return `<img alt="${escapeAttr(name)}" class="emoji" src="${escapeAttr(source)}" title="${escapeAttr(name)}"> `;
+        return `<img alt="${escapeAttr(name)}" class="emoji" src="${escapeAttr(source)}" title="${escapeAttr(name)}">`;
     }
-    return protyle.lute.SpinBlockDOM(unicodeToEmoji(protyle, unicode) + " ");
+    return unicodeToEmoji(protyle, unicode, "emoji");
+};
+
+export const emojiInsertionHTML = (protyle: IProtyle, unicode: string) => {
+    if (isCustomEmoji(unicode)) {
+        return `${emojiContentHTML(protyle, unicode)} `;
+    }
+    return protyle.lute.SpinBlockDOM(emojiContentHTML(protyle, unicode) + " ");
 };
 
 export const renderEmojiItems = (protyle: IProtyle, items: readonly EmojiItem[], lazy = false) => items.map((emoji) =>
@@ -84,10 +101,10 @@ export const renderEmojiItems = (protyle: IProtyle, items: readonly EmojiItem[],
 ).join("");
 
 const observeUntilLoaded = (
-    protyle: IProtyle,
     selector: string,
     element: Element,
     load: (target: HTMLElement) => boolean,
+    signal: AbortSignal,
 ) => {
     const observer = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
@@ -97,26 +114,34 @@ const observeUntilLoaded = (
         });
     });
     element.querySelectorAll<HTMLElement>(selector).forEach((target) => observer.observe(target));
-    protyle.requestSignal.addEventListener("abort", () => observer.disconnect(), {once: true});
+    signal.addEventListener("abort", () => observer.disconnect(), {once: true});
 };
 
-export const lazyLoadEmojiGroups = (protyle: IProtyle, element: HTMLElement) => {
-    observeUntilLoaded(protyle, ".emojis__content[data-index]", element, (target) => {
+export const lazyLoadEmojiGroups = (
+    protyle: IProtyle,
+    element: HTMLElement,
+    signal = protyle.requestSignal,
+) => {
+    observeUntilLoaded(".emojis__content[data-index]", element, (target) => {
         const index = Number(target.dataset.index);
         target.innerHTML = renderEmojiItems(protyle, protyle.settings.emojis[index].items);
         target.removeAttribute("data-index");
         target.style.minHeight = "";
         return true;
-    });
+    }, signal);
 };
 
-export const lazyLoadEmojiImages = (protyle: IProtyle, element: Element) => {
-    observeUntilLoaded(protyle, "img[data-src]", element, (target) => {
+export const lazyLoadEmojiImages = (
+    protyle: IProtyle,
+    element: Element,
+    signal = protyle.requestSignal,
+) => {
+    observeUntilLoaded("img[data-src]", element, (target) => {
         const image = target as HTMLImageElement;
         image.src = image.dataset.src!;
         image.removeAttribute("data-src");
         return true;
-    });
+    }, signal);
 };
 
 const matchesEmoji = (protyle: IProtyle, emoji: EmojiItem, key: string) => {

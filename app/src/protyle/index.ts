@@ -135,12 +135,12 @@ export class Protyle {
         const pluginsOptions = plugins.extendOptions(options);
         const getOptions = new Options(pluginsOptions, this.settings);
         const mergedOptions = getOptions.merge();
-        const host: TProtyleHostPort = {
+        const host: TProtyleEditorHostPort = {
             dispatch: (event) => {
                 if (lifecycle.content.mode === "local-only") {
                     if (event.type === "open-search" || event.type === "open-external" ||
                         event.type === "notify" || (event.type === "open-graph" && event.scope === "space")) {
-                        hostPort.dispatch(event);
+                        hostPort.dispatch({...event, sourceEditorId: this.protyle.id});
                         return;
                     }
                     throw new Error(`[protyle.content] local-only Protyle cannot dispatch ${event.type}`);
@@ -158,7 +158,7 @@ export class Protyle {
                 ].includes(event.type)) {
                     throw new Error(`[protyle.surface] embedded Protyle cannot dispatch ${event.type}`);
                 }
-                hostPort.dispatch(event);
+                hostPort.dispatch({...event, sourceEditorId: this.protyle.id});
             },
         };
         this.protyle = {
@@ -372,6 +372,17 @@ export class Protyle {
                                     item.innerHTML = data.data.refText;
                                 }
                             });
+                            if (this.protyle.surface === "workspace" &&
+                                this.protyle.content.mode === "bound" &&
+                                data.data.box === this.protyle.content.notebookId &&
+                                data.data.id === this.protyle.options.blockId) {
+                                this.protyle.host.dispatch({
+                                    type: "set-document-title",
+                                    notebookId: data.data.box,
+                                    documentId: data.data.id,
+                                    title: getProtyleDocumentDisplayName(data.data.title, data.data.empty),
+                                });
+                            }
                             break;
                         case "moveDoc":
                             if (this.protyle.path === data.data.fromPath) {

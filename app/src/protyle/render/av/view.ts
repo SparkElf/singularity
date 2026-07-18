@@ -1,4 +1,4 @@
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
 import {focusBlock} from "../../util/selection";
@@ -182,7 +182,8 @@ export const bindViewEvent = (options: {
     });
 };
 
-export const getViewHTML = (data: IAV, localization: IProtyle["localization"]) => {
+export const getViewHTML = (data: IAV, protyle: IProtyle) => {
+    const {localization} = protyle;
     const view = data.view;
     const fields = getFieldsByData(data);
     return `<div class="b3-menu__items">
@@ -193,7 +194,7 @@ export const getViewHTML = (data: IAV, localization: IProtyle["localization"]) =
 <button class="b3-menu__item" data-type="nobg">
     <div class="fn__block">
         <div class="fn__flex">
-            <span class="b3-menu__avemoji" data-type="update-view-icon">${view.icon ? unicode2Emoji(view.icon) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getViewIcon(data.viewType)}"></use></svg>`}</span>
+            <span class="b3-menu__avemoji" data-type="update-view-icon">${view.icon ? unicodeToEmoji(protyle, view.icon) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getViewIcon(data.viewType)}"></use></svg>`}</span>
             <div class="b3-form__icona fn__block">
                 <input data-type="name" class="b3-text-field b3-form__icona-input" type="text" data-value="${escapeAttr(view.name)}">
                 <svg data-position="north" class="b3-form__icona-icon ariaLabel" aria-label="${view.desc ? escapeAriaLabel(view.desc) : localization.text("addDesc")}"><use xlink:href="#iconInfo"></use></svg>
@@ -311,13 +312,14 @@ const filterSwitcher = (menuElement: Element) => {
     }
 };
 
-export const getSwitcherHTML = (views: IAVView[], viewId: string, localization: IProtyle["localization"]) => {
+export const getSwitcherHTML = (views: IAVView[], viewId: string, protyle: IProtyle) => {
+    const {localization} = protyle;
     let html = "";
     views.forEach((item) => {
         html += `<button draggable="true" class="b3-menu__item${item.id === viewId ? " b3-menu__item--current" : ""}" data-id="${item.id}">
     <svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
     <div class="b3-menu__label fn__flex" data-type="av-view-switch" data-av-type="${item.type}">
-        ${item.icon ? unicode2Emoji(item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getViewIcon(item.type)}"></use></svg>`}
+        ${item.icon ? unicodeToEmoji(protyle, item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getViewIcon(item.type)}"></use></svg>`}
         <span class="fn__ellipsis">${item.name}</span>
     </div>
     <svg class="b3-menu__action" data-type="av-view-edit"><use xlink:href="#iconEdit"></use></svg>

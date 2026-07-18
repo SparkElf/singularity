@@ -47,7 +47,8 @@ import {addAssetLink, bindAssetEvent, editAssetItem, getAssetHTML, updateAssetCe
 import {Constants} from "../../../constants";
 import {hideElements} from "../../ui/hideElements";
 import {pathPosix} from "../../../util/pathName";
-import {openEmojiPanel, unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
+import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
 import {isMobile} from "../../../util/functions";
 import {openLink} from "../../../editor/openLink";
 import {previewAttrViewImages} from "../../preview/image";
@@ -63,7 +64,14 @@ import {
 } from "./view";
 import {focusBlock} from "../../util/selection";
 import {getFieldIdByCellElement, setPageSize} from "./row";
-import {bindRelationEvent, getRelationHTML, openSearchAV, setRelationCell, updateRelation} from "./relation";
+import {
+    bindRelationEvent,
+    getRelationHTML,
+    openSearchAV,
+    relationCellValueFromLabel,
+    setRelationCell,
+    updateRelation,
+} from "./relation";
 import {bindRollupData, getRollupHTML, goSearchRollupCol} from "./rollup";
 import {openCalcMenu} from "./calc";
 import {escapeAttr, escapeHtml} from "../../../util/escape";
@@ -139,17 +147,17 @@ export const openMenuPanel = (options: {
         let html;
         let fields = getFieldsByData(data);
         if (options.type === "config") {
-            html = getViewHTML(data, localization);
+            html = getViewHTML(data, options.protyle);
         } else if (options.type === "properties") {
-            html = getPropertiesHTML(fields, localization);
+            html = getPropertiesHTML(fields, options.protyle);
         } else if (options.type === "sorts") {
-            html = getSortsHTML(fields, data.view.sorts, localization);
+            html = getSortsHTML(fields, data.view.sorts, options.protyle);
         } else if (options.type === "switcher") {
-            html = getSwitcherHTML(data.views, data.viewID, localization);
+            html = getSwitcherHTML(data.views, data.viewID, options.protyle);
         } else if (options.type === "filters") {
-            html = getFiltersHTML(data, localization);
+            html = getFiltersHTML(data, options.protyle);
         } else if (options.type === "select") {
-            html = getSelectHTML(fields, options.cellElements, selectState, true, options.blockElement, localization);
+            html = getSelectHTML(options.protyle, fields, options.cellElements, selectState, true, options.blockElement, localization);
         } else if (options.type === "asset") {
             html = getAssetHTML(options.cellElements, localization, options.protyle);
         } else if (options.type === "edit") {
@@ -174,7 +182,7 @@ export const openMenuPanel = (options: {
             }
             html = getEditHTML({protyle: options.protyle, data, colId: options.colId, isCustomAttr});
         } else if (options.type === "date") {
-            html = getDateHTML(options.cellElements, localization);
+            html = getDateHTML(options.protyle, options.cellElements);
         } else if (options.type === "rollup") {
             html = `<div class="b3-menu__items">${getRollupHTML({data, cellElements: options.cellElements, localization})}</div>`;
         } else if (options.type === "relation") {
@@ -324,7 +332,7 @@ export const openMenuPanel = (options: {
                     data: oldData,
                     blockID
                 }]);
-                menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, localization);
+                menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, options.protyle);
                 bindSortsEvent(options.protyle, menuElement, data, blockID);
                 return;
             }
@@ -412,7 +420,7 @@ export const openMenuPanel = (options: {
                 }]);
                 const oldScroll = menuElement.querySelector(".b3-menu__items").scrollTop;
                 if (options.cellElements) {
-                    menuElement.innerHTML = getSelectHTML(fields, options.cellElements, selectState, false, options.blockElement, localization);
+                    menuElement.innerHTML = getSelectHTML(options.protyle, fields, options.cellElements, selectState, false, options.blockElement, localization);
                     bindSelectEvent(options.protyle, data, menuElement, options.cellElements, options.blockElement, selectState);
                 } else {
                     menuElement.innerHTML = getEditHTML({
@@ -439,14 +447,7 @@ export const openMenuPanel = (options: {
                 targetElement.parentElement.querySelectorAll(".fn__grab").forEach(item => {
                     const dateElement = item.nextElementSibling as HTMLElement;
                     blockIDs.push(dateElement.parentElement.dataset.rowId);
-                    contents.push({
-                        isDetached: !dateElement.style.color,
-                        type: "block",
-                        block: {
-                            content: dateElement.textContent,
-                            id: dateElement.dataset.id
-                        }
-                    });
+                    contents.push(relationCellValueFromLabel(options.protyle, dateElement));
                 });
                 updateCellsValue(options.protyle, options.blockElement as HTMLElement, {
                     blockIDs,
@@ -490,7 +491,7 @@ export const openMenuPanel = (options: {
                         }
                     });
                 }
-                menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                 return;
             }
             // 分组项拖拽排序
@@ -609,7 +610,7 @@ export const openMenuPanel = (options: {
                 blockID
             }]);
             // 重渲染以同步所有只读且/或标签（index >= 2 的节点显示的是只读 span）
-            menuElement.innerHTML = getFiltersHTML(data, localization);
+            menuElement.innerHTML = getFiltersHTML(data, options.protyle);
             bindInlineFilterEvents(avPanelElement as HTMLElement, data, options.protyle, blockID, avID);
             setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
             event.stopPropagation();
@@ -717,7 +718,7 @@ export const openMenuPanel = (options: {
                     break;
                 } else if (type === "go-config") {
                     menuElement.classList.remove("av__filter-panel");
-                    menuElement.innerHTML = getViewHTML(data, localization);
+                    menuElement.innerHTML = getViewHTML(data, options.protyle);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     bindViewEvent({protyle: options.protyle, data, menuElement, blockElement: options.blockElement});
                     closeAVMenu(options.protyle);
@@ -728,7 +729,7 @@ export const openMenuPanel = (options: {
                     // 复制列后点击返回到属性面板，宽度不一致，需重新计算
                     tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
                     menuElement.classList.remove("av__filter-panel");
-                    menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                    menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     closeAVMenu(options.protyle);
                     event.preventDefault();
@@ -745,7 +746,7 @@ export const openMenuPanel = (options: {
                     break;
                 } else if (type === "goSorts") {
                     menuElement.classList.remove("av__filter-panel");
-                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, localization);
+                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, options.protyle);
                     bindSortsEvent(options.protyle, menuElement, data, blockID);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     closeAVMenu(options.protyle);
@@ -765,7 +766,7 @@ export const openMenuPanel = (options: {
                         blockID
                     }]);
                     data.view.sorts = [];
-                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, localization);
+                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, options.protyle);
                     bindSortsEvent(options.protyle, menuElement, data, blockID);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
@@ -803,14 +804,14 @@ export const openMenuPanel = (options: {
                         data: oldSorts,
                         blockID
                     }]);
-                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, localization);
+                    menuElement.innerHTML = getSortsHTML(fields, data.view.sorts, options.protyle);
                     bindSortsEvent(options.protyle, menuElement, data, blockID);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
                     event.stopPropagation();
                     break;
                 } else if (type === "goFilters") {
-                    menuElement.innerHTML = getFiltersHTML(data, localization);
+                    menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                     menuElement.classList.add("av__filter-panel");
                     bindInlineFilterEvents(avPanelElement as HTMLElement, data, options.protyle, blockID, avID);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
@@ -832,7 +833,7 @@ export const openMenuPanel = (options: {
                     }]);
                     // 本地状态保持“顶层单个空根组”不变量（后端会同样归一化），避免后续 addFilterGroup 误把新分组当成根组
                     data.view.filters = [{combination: "and", filters: []}];
-                    menuElement.innerHTML = getFiltersHTML(data, localization);
+                    menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     closeAVMenu(options.protyle);
                     event.preventDefault();
@@ -919,7 +920,7 @@ export const openMenuPanel = (options: {
                                     data: oldFilters,
                                     blockID
                                 }]);
-                                menuElement.innerHTML = getFiltersHTML(data, localization);
+                                menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                                 setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                             }
                         });
@@ -956,7 +957,7 @@ export const openMenuPanel = (options: {
                                 data: oldFilters,
                                 blockID
                             }]);
-                            menuElement.innerHTML = getFiltersHTML(data, localization);
+                            menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                             setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                         }
                     });
@@ -978,7 +979,7 @@ export const openMenuPanel = (options: {
                                     data: oldFilters,
                                     blockID
                                 }]);
-                                menuElement.innerHTML = getFiltersHTML(data, localization);
+                                menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                                 setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                             }
                         });
@@ -1000,7 +1001,7 @@ export const openMenuPanel = (options: {
                                     data: oldFilters,
                                     blockID
                                 }]);
-                                menuElement.innerHTML = getFiltersHTML(data, localization);
+                                menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                                 setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                             }
                         });
@@ -1023,7 +1024,7 @@ export const openMenuPanel = (options: {
                                 data: cloneBefore,
                                 blockID
                             }]);
-                            menuElement.innerHTML = getFiltersHTML(data, localization);
+                            menuElement.innerHTML = getFiltersHTML(data, options.protyle);
                             setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                         }
                     });
@@ -1057,26 +1058,30 @@ export const openMenuPanel = (options: {
                     break;
                 } else if (type === "update-view-icon") {
                     const rect = target.getBoundingClientRect();
-                    openEmojiPanel("", "av", {
-                        x: rect.left,
-                        y: rect.bottom + 4,
-                        h: rect.height,
-                        w: rect.width
-                    }, (unicode) => {
-                        transaction(options.protyle, [{
-                            action: "setAttrViewViewIcon",
-                            avID,
-                            id: data.viewID,
-                            data: unicode,
-                        }], [{
-                            action: "setAttrViewViewIcon",
-                            id: data.viewID,
-                            avID,
-                            data: target.dataset.icon,
-                        }]);
-                        target.innerHTML = unicode ? unicode2Emoji(unicode) : '<svg style="width: 14px;height: 14px;"><use xlink:href="#iconTable"></use></svg>';
-                        target.dataset.icon = unicode;
-                    }, target.querySelector("img"));
+                    openProtyleEmojiMenu({
+                        protyle: options.protyle,
+                        position: {
+                            x: rect.left,
+                            y: rect.bottom + 4,
+                            h: rect.height,
+                            w: rect.width,
+                        },
+                        onSelect: (unicode) => {
+                            transaction(options.protyle, [{
+                                action: "setAttrViewViewIcon",
+                                avID,
+                                id: data.viewID,
+                                data: unicode,
+                            }], [{
+                                action: "setAttrViewViewIcon",
+                                id: data.viewID,
+                                avID,
+                                data: target.dataset.icon,
+                            }]);
+                            target.innerHTML = unicode ? unicodeToEmoji(options.protyle, unicode) : '<svg style="width: 14px;height: 14px;"><use xlink:href="#iconTable"></use></svg>';
+                            target.dataset.icon = unicode;
+                        },
+                    });
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1121,33 +1126,37 @@ export const openMenuPanel = (options: {
                     break;
                 } else if (type === "update-icon") {
                     const rect = target.getBoundingClientRect();
-                    openEmojiPanel("", "av", {
-                        x: rect.left,
-                        y: rect.bottom + 4,
-                        h: rect.height,
-                        w: rect.width
-                    }, (unicode) => {
-                        const colId = menuElement.querySelector(".b3-menu__item").getAttribute("data-col-id");
-                        transaction(options.protyle, [{
-                            action: "setAttrViewColIcon",
-                            id: colId,
-                            avID,
-                            data: unicode,
-                        }], [{
-                            action: "setAttrViewColIcon",
-                            id: colId,
-                            avID,
-                            data: target.dataset.icon,
-                        }]);
-                        target.innerHTML = unicode ? unicode2Emoji(unicode) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getColIconByType(target.dataset.colType as TAVCol)}"></use></svg>`;
-                        if (isCustomAttr) {
-                            const iconElement = options.blockElement.querySelector(`.av__row[data-col-id="${colId}"] .block__logoicon`);
-                            iconElement.outerHTML = unicode ? unicode2Emoji(unicode, "block__logoicon", true) : `<svg class="block__logoicon"><use xlink:href="#${getColIconByType(iconElement.nextElementSibling.getAttribute("data-type") as TAVCol)}"></use></svg>`;
-                        } else {
-                            updateAttrViewCellAnimation(options.protyle, options.blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {icon: unicode});
-                        }
-                        target.dataset.icon = unicode;
-                    }, target.querySelector("img"));
+                    openProtyleEmojiMenu({
+                        protyle: options.protyle,
+                        position: {
+                            x: rect.left,
+                            y: rect.bottom + 4,
+                            h: rect.height,
+                            w: rect.width,
+                        },
+                        onSelect: (unicode) => {
+                            const colId = menuElement.querySelector(".b3-menu__item").getAttribute("data-col-id");
+                            transaction(options.protyle, [{
+                                action: "setAttrViewColIcon",
+                                id: colId,
+                                avID,
+                                data: unicode,
+                            }], [{
+                                action: "setAttrViewColIcon",
+                                id: colId,
+                                avID,
+                                data: target.dataset.icon,
+                            }]);
+                            target.innerHTML = unicode ? unicodeToEmoji(options.protyle, unicode) : `<svg style="height: 14px;width: 14px"><use xlink:href="#${getColIconByType(target.dataset.colType as TAVCol)}"></use></svg>`;
+                            if (isCustomAttr) {
+                                const iconElement = options.blockElement.querySelector(`.av__row[data-col-id="${colId}"] .block__logoicon`);
+                                iconElement.outerHTML = unicode ? unicodeToEmoji(options.protyle, unicode, "block__logoicon", true) : `<svg class="block__logoicon"><use xlink:href="#${getColIconByType(iconElement.nextElementSibling.getAttribute("data-type") as TAVCol)}"></use></svg>`;
+                            } else {
+                                updateAttrViewCellAnimation(options.protyle, options.blockElement.querySelector(`.av__row--header .av__cell[data-col-id="${colId}"]`), undefined, {icon: unicode});
+                            }
+                            target.dataset.icon = unicode;
+                        },
+                    });
                     event.preventDefault();
                     event.stopPropagation();
                     break;
@@ -1175,7 +1184,7 @@ export const openMenuPanel = (options: {
                     });
                     if (doOperations.length > 0) {
                         transaction(options.protyle, doOperations, undoOperations);
-                        menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                        menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                         setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     }
                     event.preventDefault();
@@ -1205,7 +1214,7 @@ export const openMenuPanel = (options: {
                     });
                     if (doOperations.length > 0) {
                         transaction(options.protyle, doOperations, undoOperations);
-                        menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                        menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                         setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     }
                     event.preventDefault();
@@ -1404,7 +1413,7 @@ export const openMenuPanel = (options: {
                         });
                         bindEditEvent({protyle: options.protyle, data, menuElement, isCustomAttr, blockID});
                     } else {
-                        menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                        menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                     }
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
@@ -1436,7 +1445,7 @@ export const openMenuPanel = (options: {
                         });
                         bindEditEvent({protyle: options.protyle, data, menuElement, isCustomAttr, blockID});
                     } else {
-                        menuElement.innerHTML = getPropertiesHTML(fields, localization);
+                        menuElement.innerHTML = getPropertiesHTML(fields, options.protyle);
                     }
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
@@ -1800,7 +1809,7 @@ export const openMenuPanel = (options: {
                     }
                     closeCB = undefined;
                     if ((data.view.group && data.view.group.field) || target.classList.contains("block__icon")) {
-                        menuElement.innerHTML = getGroupsHTML(fields, data.view, localization);
+                        menuElement.innerHTML = getGroupsHTML(fields, data.view, options.protyle);
                         bindGroupsEvent({
                             protyle: options.protyle,
                             menuElement: menuElement,
@@ -1808,7 +1817,7 @@ export const openMenuPanel = (options: {
                             data
                         });
                     } else {
-                        menuElement.innerHTML = getGroupsMethodHTML(fields, data.view.group, data.viewType, localization);
+                        menuElement.innerHTML = getGroupsMethodHTML(fields, data.view.group, data.viewType, options.protyle);
                     }
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
@@ -1816,7 +1825,7 @@ export const openMenuPanel = (options: {
                     break;
                 } else if (type === "goGroupsMethod") {
                     closeAVMenu(options.protyle);
-                    menuElement.innerHTML = getGroupsMethodHTML(fields, data.view.group, data.viewType, localization);
+                    menuElement.innerHTML = getGroupsMethodHTML(fields, data.view.group, data.viewType, options.protyle);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
                     event.stopPropagation();
@@ -1910,7 +1919,7 @@ export const openMenuPanel = (options: {
                     }]);
                     data.view.group = null;
                     delete data.view.groups;
-                    menuElement.innerHTML = getGroupsHTML(fields, data.view, localization);
+                    menuElement.innerHTML = getGroupsHTML(fields, data.view, options.protyle);
                     setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
                     event.preventDefault();
                     event.stopPropagation();
@@ -1939,7 +1948,8 @@ export const openMenuPanel = (options: {
     }
 };
 
-export const getPropertiesHTML = (fields: IAVColumn[], localization: IProtyle["localization"]) => {
+export const getPropertiesHTML = (fields: IAVColumn[], protyle: IProtyle) => {
+    const {localization} = protyle;
     let showHTML = "";
     let hideHTML = "";
     fields.forEach((item: IAVColumn) => {
@@ -1947,7 +1957,7 @@ export const getPropertiesHTML = (fields: IAVColumn[], localization: IProtyle["l
             hideHTML += `<button class="b3-menu__item" data-type="editCol" draggable="true" data-id="${item.id}">
     <svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
     <div class="b3-menu__label fn__flex">
-        ${item.icon ? unicode2Emoji(item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
+        ${item.icon ? unicodeToEmoji(protyle, item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
         ${escapeHtml(item.name) || "&nbsp;"}
     </div>
     <svg class="b3-menu__action" data-type="showCol"><use xlink:href="#iconEye"></use></svg>
@@ -1957,7 +1967,7 @@ export const getPropertiesHTML = (fields: IAVColumn[], localization: IProtyle["l
             showHTML += `<button class="b3-menu__item" data-type="editCol" draggable="true" data-id="${item.id}">
     <svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
     <div class="b3-menu__label fn__flex">
-        ${item.icon ? unicode2Emoji(item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
+        ${item.icon ? unicodeToEmoji(protyle, item.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(item.type)}"></use></svg>`}
         ${escapeHtml(item.name) || "&nbsp;"}
     </div>
     <svg class="b3-menu__action${item.type === "block" ? " fn__none" : ""}" data-type="hideCol"><use xlink:href="#iconEyeoff"></use></svg>

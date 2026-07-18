@@ -417,6 +417,7 @@ interface IPreviewActionCustom {
 }
 
 interface IHintData {
+    avBlockTarget?: string;
     id?: string;
     html: string;
     value: string;
@@ -552,6 +553,8 @@ type TProtyleLegacyApplicationPort = {
 
 type TProtyleHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort;
 
+type TProtyleEditorHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleEditorHostPort;
+
 type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSurface;
 
 type TProtyleParticipation = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleParticipation;
@@ -609,7 +612,7 @@ interface IProtyle {
     localization: TProtyleLocalizationPort,
     settings: TProtyleApplicationSettingsPort,
     editors: TProtyleEditorRegistry,
-    host: TProtyleHostPort,
+    host: TProtyleEditorHostPort,
     plugins: TProtylePluginPort,
     runtime?: TProtyleRuntime,
     session?: TProtyleSession,

@@ -21,7 +21,8 @@ import {openMenuPanel} from "./openMenuPanel";
 import {hintRef} from "../../hint/extend";
 import {focusBlock, focusByRange} from "../../util/selection";
 import {previewAttrViewImages} from "../../preview/image";
-import {openEmojiPanel, unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
+import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
 import * as dayjs from "dayjs";
 import {openCalcMenu} from "./calc";
 import {avRender} from "./render";
@@ -39,6 +40,7 @@ import {clearSelect} from "../../util/clear";
 import {requestBlockFold} from "../../util/blockFoldRequest";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {closeAVMenu, openAVMenu} from "./menu";
+import {resolveAVBlockTarget, setAVBlockIcon} from "./blockTarget";
 
 const foldTimeouts = new WeakMap<IProtyle, number>();
 export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLElement }) => {
@@ -203,16 +205,26 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             event.preventDefault();
             event.stopPropagation();
             return true;
-        } else if (target.classList.contains("b3-menu__avemoji") && !protyle.disabled) {
+        } else if (type === "block-icon" && !protyle.disabled) {
+            const blockTarget = resolveAVBlockTarget(protyle, target.dataset.avBlockTarget!);
             const rect = target.getBoundingClientRect();
-            openEmojiPanel(target.nextElementSibling.getAttribute("data-id"), "doc", {
-                x: rect.left,
-                y: rect.bottom,
-                h: rect.height,
-                w: rect.width,
-            }, (unicode) => {
-                target.innerHTML = unicode2Emoji(unicode || protyle.settings.icons.file);
-            }, target.querySelector("img"));
+            openProtyleEmojiMenu({
+                protyle,
+                position: {
+                    x: rect.left,
+                    y: rect.bottom,
+                    h: rect.height,
+                    w: rect.width,
+                },
+                onSelect: async (unicode, signal) => {
+                    await setAVBlockIcon(protyle, blockTarget, unicode, signal);
+                    if (signal.aborted || !target.isConnected) {
+                        return;
+                    }
+                    target.dataset.unicode = unicode;
+                    target.innerHTML = unicodeToEmoji(protyle, unicode || protyle.settings.icons.file);
+                },
+            });
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -393,18 +405,22 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     const menuHandle = openAVMenu(protyle)!;
     const {menu} = menuHandle;
     const rowElements = blockElement.querySelectorAll(".av__row--select:not(.av__row--header), .av__gallery-item--select");
-    const keyCellElement = rowElements[0].querySelector('.av__cell[data-dtype="block"]') as HTMLElement;
-    const ids = Array.from(rowElements).map(item => item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-id"));
-    const targetNotebookIds = Array.from(rowElements).map(item =>
-        item.querySelector('[data-dtype="block"] .av__celltext').getAttribute("data-notebook-id"));
+    const keyCellElements = Array.from(rowElements, item =>
+        item.querySelector('.av__cell[data-dtype="block"]') as HTMLElement);
+    const blockTargets = keyCellElements.map((cellElement) => {
+        if (cellElement.dataset.detached === "true") {
+            return undefined;
+        }
+        const reference = cellElement.querySelector<HTMLElement>("[data-av-block-target]")!.dataset.avBlockTarget!;
+        return resolveAVBlockTarget(protyle, reference);
+    });
+    const keyCellElement = keyCellElements[0];
+    const ids = keyCellElements.map((cellElement, index) =>
+        blockTargets[index]?.blockId ?? cellElement.querySelector(".av__celltext").getAttribute("data-id"));
     if (rowElements.length === 1 && keyCellElement.getAttribute("data-detached") !== "true") {
-        const blockId = ids[0];
+        const blockTarget = blockTargets[0]!;
+        const {blockId, notebookId} = blockTarget;
         const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
-            const notebookId = targetNotebookIds[0];
-            if (!notebookId) {
-                console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId});
-                return;
-            }
             void requestBlockFold(protyle, {
                 notebookId,
                 documentId: blockId,
@@ -453,13 +469,8 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             icon: "iconAttr",
             label: localization.text("attr"),
             click: () => {
-                const notebookId = targetNotebookIds[0];
-                if (!notebookId) {
-                    console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId});
-                    return;
-                }
                 void protyle.transport!.request<IWebSocketData>("/api/attr/getBlockAttrs", {id: blockId}, {
-                    identity: {documentId: blockId, notebookId},
+                    identity: {documentId: blockTarget.documentId, notebookId},
                     intent: "read",
                     signal: protyle.requestSignal,
                 }).then((response) => {
@@ -481,12 +492,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             submenu: openSubmenus,
         });
     }
-    let hasBlock = false;
-    rowElements.forEach((item) => {
-        if (item.querySelector('.av__cell[data-dtype="block"]').getAttribute("data-detached") !== "true") {
-            hasBlock = true;
-        }
-    });
+    const hasBlock = blockTargets.some((target) => target !== undefined);
     const copyMenu: IMenu[] = [{
         id: "copyKeyContent",
         iconHTML: "",
@@ -558,17 +564,8 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             iconHTML: "",
             label: localization.text("copyProtocol"),
             click: () => {
-                const missingTargetIndex = ids.findIndex((_id, index) =>
-                    rowElements[index].querySelector(".av__cell[data-dtype='block']").getAttribute("data-detached") !== "true" &&
-                    !targetNotebookIds[index]);
-                if (missingTargetIndex !== -1) {
-                    console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {
-                        blockId: ids[missingTargetIndex],
-                    });
-                    return;
-                }
                 let text = "";
-                ids.forEach((id, index) => {
+                ids.forEach((_id, index) => {
                     if (ids.length > 1) {
                         text += "- ";
                     }
@@ -576,8 +573,8 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (cellElement.getAttribute("data-detached") === "true") {
                         text += cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        const notebookId = targetNotebookIds[index];
-                        text += buildSiYuanBlockUri(id, notebookId);
+                        const blockTarget = blockTargets[index]!;
+                        text += buildSiYuanBlockUri(blockTarget.blockId, blockTarget.notebookId);
                     }
                     if (ids.length > 1 && index !== ids.length - 1) {
                         text += "\n";
@@ -592,18 +589,13 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             click: () => {
                 let text = "";
                 for (let i = 0; i < ids.length; i++) {
-                    const id = ids[i];
                     let content = "";
                     const cellElement = rowElements[i].querySelector(".av__cell[data-dtype='block']");
                     if (cellElement.getAttribute("data-detached") === "true") {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        const notebookId = targetNotebookIds[i];
-                        if (!notebookId) {
-                            console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId: id});
-                            return;
-                        }
-                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](${buildSiYuanBlockUri(id, notebookId)})`;
+                        const blockTarget = blockTargets[i]!;
+                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](${buildSiYuanBlockUri(blockTarget.blockId, blockTarget.notebookId)})`;
                     }
                     if (ids.length > 1) {
                         text += "- ";
@@ -622,22 +614,20 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             click: async () => {
                 let text = "";
                 for (let i = 0; i < ids.length; i++) {
-                    const id = ids[i];
                     let content = "";
                     const cellElement = rowElements[i].querySelector(".av__cell[data-dtype='block']");
                     if (cellElement.getAttribute("data-detached") === "true") {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        const notebookId = targetNotebookIds[i];
-                        if (!notebookId) {
-                            console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId: id});
-                            return;
-                        }
+                        const blockTarget = blockTargets[i]!;
                         const response = await protyle.transport!.request<IWebSocketData>("/api/filetree/getHPathByID", {
-                            id,
-                            notebook: notebookId,
+                            id: blockTarget.blockId,
+                            notebook: blockTarget.notebookId,
                         }, {
-                            identity: {documentId: id, notebookId},
+                            identity: {
+                                documentId: blockTarget.documentId,
+                                notebookId: blockTarget.notebookId,
+                            },
                             intent: "read",
                             signal: protyle.requestSignal,
                         });
@@ -706,7 +696,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     const sourceIds: string[] = [];
                     rowElements.forEach(item => {
                         const rowId = item.getAttribute("data-id");
-                        const blockValue = genCellValueByElement("block", item.querySelector('.av__cell[data-dtype="block"]'));
+                        const blockValue = genCellValueByElement(protyle, "block", item.querySelector('.av__cell[data-dtype="block"]'));
                         srcs.push({
                             itemID: Lute.NewNodeID(),
                             content: blockValue.block.content,
@@ -842,7 +832,7 @@ ${localization.text(avType === "table" ? "insertRowAfter" : "insertItemAfter").r
                 if (!["updated", "created"].includes(type)) {
                     const icon = cellElement.dataset.icon;
                     editAttrSubmenu.push({
-                        iconHTML: icon ? unicode2Emoji(icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(type)}"></use></svg>`,
+                        iconHTML: icon ? unicodeToEmoji(protyle, icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(type)}"></use></svg>`,
                         label: escapeHtml(cellElement.querySelector(".av__celltext").textContent.trim()),
                         click() {
                             popTextCell(protyle, selectElements);
@@ -961,7 +951,7 @@ export const updateAttrViewCellAnimation = (protyle: IProtyle, cellElement: HTML
         return;
     }
     if (headerValue) {
-        updateHeaderCell(cellElement, headerValue);
+        updateHeaderCell(cellElement, headerValue, protyle);
     } else {
         const hasDragFill = cellElement.querySelector(".av__drag-fill");
         const blockElement = hasClosestBlock(cellElement);
@@ -978,11 +968,11 @@ export const updateAttrViewCellAnimation = (protyle: IProtyle, cellElement: HTML
                 };
             }
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                viewType, protyle.settings.icons.file, protyle.localization, protyle);
+                viewType, protyle.settings.icons.file, protyle);
             cellElement.parentElement.setAttribute("data-empty", cellValueIsEmpty(value).toString());
         } else {
             cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
-                "table", protyle.settings.icons.file, protyle.localization, protyle);
+                "table", protyle.settings.icons.file, protyle);
         }
         if (hasDragFill) {
             addDragFill(cellElement, protyle.localization);

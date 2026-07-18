@@ -304,7 +304,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 const getDocParam: IObject = {
                     id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                     mode: 2,
-                    size: window.siyuan.config.editor.dynamicLoadBlocks,
+                    size: protyle.settings.editor.dynamicLoadBlocks,
                 };
                 if (isEncryptedBox(protyle.notebookId)) {
                     getDocParam.notebook = protyle.notebookId;

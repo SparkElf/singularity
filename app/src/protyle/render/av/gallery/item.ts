@@ -43,7 +43,7 @@ data-field-id="${item.dataset.fieldId}"
 data-wrap="${item.dataset.wrap}" 
 data-dtype="${item.dataset.dtype}" 
 ${fieldType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(fieldType, null), lineNumber, false, type,
-    options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>`;
+    options.protyle.settings.icons.file, options.protyle)}</div>`;
         if (item.previousElementSibling.classList.contains("av__gallery-name")) {
             cellsHTML += `<div class="av__gallery-field av__gallery-field--name" data-empty="${item.parentElement.dataset.empty}">
     ${item.previousElementSibling.outerHTML}
@@ -116,7 +116,6 @@ ${fieldType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValu
                             false,
                             type,
                             options.protyle.settings.icons.file,
-                            options.protyle.localization,
                             options.protyle,
                         );
                         renderCellAttr(cellItem, cellValue);

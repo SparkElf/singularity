@@ -3,7 +3,7 @@ import type {
     ProtyleDocumentDisposition,
     ProtyleDocumentScope,
     ProtyleDocumentScrollRestore,
-    ProtyleHostEvent,
+    ProtyleHostDispatchEvent,
     ProtyleHostPort,
 } from "../../../enterprise/packages/protyle-browser/src/contracts";
 import type {App} from "../index";
@@ -23,6 +23,7 @@ import {openCardByData} from "../card/openCard";
 import {viewCards} from "../card/viewCards";
 import {makeCard} from "../card/makeCard";
 import {openByMobile} from "../editor/openLink";
+import {deleteFile} from "../editor/deleteFile";
 import {Constants} from "../constants";
 import {fetchPost, fetchSyncPost} from "../util/fetch";
 import {
@@ -30,13 +31,28 @@ import {
     getNotebookName,
     isEncryptedBox,
     isSameNotebookContentDomain,
+    movePathTo,
+    moveToPath,
     pathPosix,
 } from "../util/pathName";
 import {showMessage} from "../dialog/message";
 import {resolveAgentBlockMentions} from "./agentMentions";
-import {setPanelFocus} from "../layout/util";
+import {saveLayout, setPanelFocus} from "../layout/util";
 import {renderStatusbarCounter} from "../layout/status";
 import {AIChat} from "../ai/chat";
+import {AIActions} from "../ai/actions";
+import {exportMd, openFileAttr, openWechatNotify} from "../menus/commonMenuItem";
+import {hintMoveBlock} from "../protyle/hint/extend";
+import {tableMenu} from "../menus/protyle";
+import {renameAsset} from "../editor/rename";
+import {openBlockRefTransfer} from "../menus/block";
+import {getEditorRange} from "../protyle/util/selection";
+import {hasClosestByTag} from "../protyle/util/hasClosest";
+import {updateFileTreeEmoji, updateOutlineEmoji} from "../emoji";
+import {confirmDialog} from "../dialog/confirmDialog";
+import {needSubscribe} from "../util/needSubscribe";
+import {getCloudURL} from "../config/util/about";
+import {resize} from "../protyle/util/resize";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -160,6 +176,59 @@ const isCurrentWorkspaceDocument = (app: App, notebookId: string, documentId: st
         isSameNotebookContentDomain(activeEditor.notebookId, notebookId);
 };
 
+const requireSourceEditor = (
+    app: App,
+    event: {readonly sourceEditorId: string},
+) => {
+    const editor = app.protyleEditors.find((candidate) => candidate.id === event.sourceEditorId);
+    if (!editor) {
+        throw new Error(`[protyle-host] source editor unavailable: ${event.sourceEditorId}`);
+    }
+    return editor;
+};
+
+const requireEditorBlock = (
+    editor: IProtyle,
+    blockId: string,
+) => {
+    const block = editor.wysiwyg.element.querySelector(`[data-node-id="${blockId}"]`);
+    if (!block) {
+        throw new Error(`[protyle-host] block unavailable for ${editor.notebookId}:${editor.options.blockId}:${blockId}`);
+    }
+    return block;
+};
+
+const requireEditorBlocks = (
+    editor: IProtyle,
+    blockIds: readonly string[],
+) => blockIds.map((blockId) => requireEditorBlock(editor, blockId));
+
+const openTableActions = (editor: IProtyle, nodeElement: Element) => {
+    let range = getEditorRange(nodeElement);
+    const tableElement = nodeElement.querySelector("table");
+    if (!tableElement) {
+        throw new Error(`[protyle-host:open-table-menu] table unavailable for ${nodeElement.getAttribute("data-node-id")}`);
+    }
+    if (!tableElement.contains(range.startContainer)) {
+        const firstCell = tableElement.querySelector("th, td");
+        if (!firstCell) {
+            throw new Error(`[protyle-host:open-table-menu] table has no cells for ${nodeElement.getAttribute("data-node-id")}`);
+        }
+        range = getEditorRange(firstCell);
+    }
+    const cellElement = hasClosestByTag(range.startContainer, "TD") ||
+        hasClosestByTag(range.startContainer, "TH") || tableElement.querySelector("th, td");
+    if (!cellElement) {
+        throw new Error(`[protyle-host:open-table-menu] active cell unavailable for ${nodeElement.getAttribute("data-node-id")}`);
+    }
+    const menu = window.siyuan.menus.menu;
+    menu.remove();
+    tableMenu(editor, nodeElement, cellElement as HTMLTableCellElement, range).menus
+        .forEach((item) => menu.addItem(item));
+    const rect = nodeElement.getBoundingClientRect();
+    menu.popup({x: rect.left, y: rect.bottom});
+};
+
 interface AgentChatPort {
     insertBlockMentions: (mentions: Array<{ id: string; label: string }>) => void;
 }
@@ -203,23 +272,32 @@ const addBlocksToAgent = async (notebookId: string, blockIds: readonly string[])
 
 const openAIWriting = (
     app: App,
-    identity: {readonly blockId: string; readonly documentId: string; readonly notebookId: string},
+    event: {readonly blockId: string; readonly sourceEditorId: string},
 ) => {
-    let blockElement: Element | undefined;
-    const editor = app.protyleEditors.find((candidate) => {
-        if (candidate.notebookId !== identity.notebookId || candidate.options.blockId !== identity.documentId) {
-            return false;
-        }
-        blockElement = candidate.wysiwyg.element.querySelector(`[data-node-id="${identity.blockId}"]`) ?? undefined;
-        return blockElement !== undefined;
-    });
-    if (!editor || !blockElement) {
-        throw new Error("[protyle-host:open-ai-writing] target editor block is unavailable");
-    }
+    const editor = requireSourceEditor(app, event);
+    const blockElement = requireEditorBlock(editor, event.blockId);
     AIChat(editor, blockElement);
 };
 
-const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
+const toggleDocumentFullscreen = (
+    app: App,
+    event: {readonly sourceEditorId: string},
+) => {
+    const editor = requireSourceEditor(app, event);
+    const enteringFullscreen = !editor.element.classList.contains("fullscreen");
+    editor.element.classList.toggle("fullscreen", enteringFullscreen);
+    document.getElementById("drag")?.classList.toggle("fn__hidden", enteringFullscreen);
+    window.siyuan.editorIsFullscreen = enteringFullscreen;
+    app.protyleEditors.forEach((candidate) => {
+        if (candidate !== editor && candidate.element.classList.contains("fullscreen")) {
+            candidate.element.classList.remove("fullscreen");
+            resize(candidate);
+        }
+    });
+    resize(editor);
+};
+
+const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
     switch (event.type) {
         case "open-document":
             void openFileById({
@@ -269,6 +347,52 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
         case "open-document-history":
             openDocumentHistory(app, event.notebookId, event.documentId);
             return;
+        case "open-document-move": {
+            const editor = requireSourceEditor(app, event);
+            const path = editor.path!;
+            movePathTo({
+                cb: (toPath, toNotebook) => moveToPath([path], toNotebook[0], toPath[0]),
+                flashcard: false,
+                paths: [path],
+                rootIDs: [event.documentId],
+            });
+            return;
+        }
+        case "delete-document": {
+            const editor = requireSourceEditor(app, event);
+            deleteFile(event.notebookId, editor.path!);
+            return;
+        }
+        case "open-document-export": {
+            const item = exportMd(event.blockId, event.notebookId);
+            if (!item) {
+                return;
+            }
+            const menu = window.siyuan.menus.menu;
+            menu.remove();
+            menu.addItem(item);
+            menu.popup(event.position);
+            return;
+        }
+        case "upload-cloud-assets":
+            if (!needSubscribe()) {
+                confirmDialog(
+                    "📦 " + window.siyuan.languages.uploadAssets2CDN,
+                    window.siyuan.languages.uploadAssets2CDNConfirmTip,
+                    () => fetchPost("/api/asset/uploadCloud", {id: event.blockId}),
+                );
+            }
+            return;
+        case "share-document-community":
+            confirmDialog(
+                "🤩 " + window.siyuan.languages.share2Liandi,
+                window.siyuan.languages.share2LiandiConfirmTip.replace("${accountServer}", getCloudURL("")),
+                () => fetchPost("/api/export/export2Liandi", {
+                    id: event.blockId,
+                    notebook: event.notebookId,
+                }),
+            );
+            return;
         case "open-card-review":
             if (rejectUnsupportedEncryptedOperation(event.notebookId)) {
                 return;
@@ -302,6 +426,79 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             return;
         case "open-ai-writing":
             openAIWriting(app, event);
+            return;
+        case "open-ai-actions": {
+            const editor = requireSourceEditor(app, event);
+            AIActions(requireEditorBlocks(editor, event.blockIds), editor);
+            return;
+        }
+        case "open-block-attributes": {
+            const editor = requireSourceEditor(app, event);
+            requireEditorBlock(editor, event.blockId);
+            void editor.session!.runtime.transport.request<IWebSocketData>(
+                "/api/attr/getBlockAttrs",
+                {id: event.blockId},
+                {
+                    identity: {
+                        documentId: event.documentId,
+                        notebookId: event.notebookId,
+                    },
+                    intent: "read",
+                    signal: editor.requestSignal,
+                },
+            ).then((response) => {
+                openFileAttr(response.data, event.focus, editor, event.notebookId);
+            }).catch((error) => {
+                if (!editor.requestSignal.aborted) {
+                    console.error("[protyle-host:open-block-attributes] request failed", error);
+                }
+            });
+            return;
+        }
+        case "open-block-move": {
+            movePathTo({
+                cb: (toPath) => {
+                    const editor = requireSourceEditor(app, event);
+                    hintMoveBlock(toPath[0], requireEditorBlocks(editor, event.blockIds), editor);
+                },
+                flashcard: false,
+            });
+            return;
+        }
+        case "open-block-ref-transfer": {
+            const editor = requireSourceEditor(app, event);
+            requireEditorBlock(editor, event.blockId);
+            openBlockRefTransfer(event.blockId, async (targetId) => {
+                const currentEditor = requireSourceEditor(app, event);
+                requireEditorBlock(currentEditor, event.blockId);
+                await currentEditor.session!.runtime.transport.request<IWebSocketData>(
+                    "/api/block/transferBlockRef",
+                    {fromID: event.blockId, toID: targetId},
+                    {
+                        identity: {
+                            documentId: event.documentId,
+                            notebookId: event.notebookId,
+                        },
+                        intent: "write",
+                        signal: currentEditor.requestSignal,
+                    },
+                );
+            });
+            return;
+        }
+        case "open-block-reminder": {
+            const editor = requireSourceEditor(app, event);
+            openWechatNotify(requireEditorBlock(editor, event.blockId));
+            return;
+        }
+        case "open-table-menu": {
+            const editor = requireSourceEditor(app, event);
+            openTableActions(editor, requireEditorBlock(editor, event.blockId));
+            return;
+        }
+        case "rename-asset":
+            requireEditorBlock(requireSourceEditor(app, event), event.blockId);
+            renameAsset(event.assetPath);
             return;
         case "open-asset":
             openAsset(
@@ -341,15 +538,14 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             );
             return;
         case "activate-document": {
-            const activeEditor = app.protyleEditors.getActive();
-            if (activeEditor?.surface === "workspace" &&
-                activeEditor.block.rootID === event.documentId &&
-                isSameNotebookContentDomain(activeEditor.notebookId, event.notebookId)) {
-                if (activeEditor.model) {
-                    setPanelFocus(activeEditor.model.element.parentElement.parentElement);
+            const editor = requireSourceEditor(app, event);
+            app.protyleEditors.activate(editor);
+            if (editor.surface === "workspace") {
+                if (editor.model) {
+                    setPanelFocus(editor.model.element.parentElement.parentElement);
                 }
                 updatePanelByEditor({
-                    protyle: activeEditor,
+                    protyle: editor,
                     focus: false,
                     pushBackStack: false,
                     reload: false,
@@ -359,12 +555,29 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostEvent) => {
             return;
         }
         case "update-document-statistics":
-            renderStatusbarCounter(event.statistics);
+            if (app.protyleEditors.getActive() === requireSourceEditor(app, event)) {
+                renderStatusbarCounter(event.statistics);
+            }
+            return;
+        case "set-document-icon":
+            updateFileTreeEmoji(event.icon, event.documentId);
+            updateOutlineEmoji(event.icon, event.documentId);
             return;
         case "set-document-title":
-        case "set-document-icon":
+            app.protyleEditors.forEach((editor) => {
+                if (editor.content.mode === "bound" &&
+                    editor.content.notebookId === event.notebookId &&
+                    editor.options.blockId === event.documentId) {
+                    editor.model?.parent.updateTitle(event.title);
+                }
+            });
+            return;
         case "toggle-document-fullscreen":
+            toggleDocumentFullscreen(app, event);
+            return;
         case "persist-workspace-layout":
+            saveLayout();
+            return;
         case "runtime-error":
             console.warn(`[protyle-host:unsupported-event] ${event.type}`);
             return;

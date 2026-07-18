@@ -1,7 +1,7 @@
 import {getColIconByType} from "./col";
 import {Constants} from "../../../constants";
 import {addDragFill, cellScrollIntoView, popTextCell} from "./cell";
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {focusBlock} from "../../util/selection";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {getRowHTML, stickyRow, updateHeader} from "./row";
@@ -74,7 +74,7 @@ export const genTabHeaderHTML = (protyle: IProtyle, data: IAV, showSearch: boole
     });
     data.views.forEach((item: IAVView) => {
         tabHTML += `<div draggable="true" data-position="north" data-av-type="${item.type}" data-id="${item.id}" data-page="${item.pageSize}" data-desc="${escapeAriaLabel(item.desc || "")}" class="ariaLabel item${item.id === data.viewID ? " item--focus" : ""}">
-    ${item.icon ? unicode2Emoji(item.icon, "item__graphic", true) : `<svg class="item__graphic"><use xlink:href="#${getViewIcon(item.type)}"></use></svg>`}
+    ${item.icon ? unicodeToEmoji(protyle, item.icon, "item__graphic", true) : `<svg class="item__graphic"><use xlink:href="#${getViewIcon(item.type)}"></use></svg>`}
     <span class="item__text">${escapeHtml(item.name)}</span>
 </div>`;
         if (item.id === data.viewID) {
@@ -134,9 +134,9 @@ const getTableHTMLs = (
     e: HTMLElement,
     virtualData: IAVVirtualData,
     fileIcon: string,
-    localization: IProtyle["localization"],
     protyle: IProtyle,
 ) => {
+    const {localization} = protyle;
     let calcHTML = "";
     let contentHTML = '<div class="av__row av__row--header"><div class="av__colsticky"><div class="av__firstcol"><svg><use xlink:href="#iconUncheck"></use></svg></div></div>';
     let pinIndex = -1;
@@ -171,7 +171,7 @@ const getTableHTMLs = (
 data-icon="${column.icon}" data-dtype="${column.type}" data-wrap="${column.wrap}" data-pin="${column.pin}" 
 data-desc="${escapeAttr(column.desc)}" data-position="north" 
 style="width: ${column.width || "200px"};">
-    ${column.icon ? unicode2Emoji(column.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`}
+    ${column.icon ? unicodeToEmoji(protyle, column.icon, "av__cellheadericon", true) : `<svg class="av__cellheadericon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`}
     <span class="av__celltext fn__flex-1">${escapeHtml(column.name)}</span>
     ${column.pin ? '<svg class="av__cellheadericon av__cellheadericon--pin"><use xlink:href="#iconPin"></use></svg>' : ""}
     <div class="av__widthdrag"></div>
@@ -216,7 +216,7 @@ style="width: ${column.width || "200px"}">${getCalcValue(column, localization) |
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon, localization, protyle});
+        contentHTML += getRowHTML({data, row, rowIndex, pinIndex, type: "table", fileIcon, protyle});
     });
     return `${contentHTML}<div class="av__row--util${data.rowCount > data.rows.length ? " av__readonly--show" : ""}">
     <div class="av__colsticky">
@@ -271,7 +271,7 @@ const renderGroupTable = (options: ITableOptions) => {
     options.data.view.groups.forEach((group: IAVTable) => {
         if (group.groupHidden === 0) {
             avBodyHTML += `${getGroupTitleHTML(group, group.rowCount, options.protyle.localization)}
-<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle.localization, options.protyle)}</div>`;
+<div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" style="float: left" class="av__body${group.groupFolded ? " fn__none" : ""}">${getTableHTMLs(group, options.blockElement, options.resetData.virtualData[group.id], options.protyle.settings.icons.file, options.protyle)}</div>`;
         }
     });
     if (options.renderAll) {
@@ -583,7 +583,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
             continue;
         }
         const avBodyHTML = `<div class="av__body" data-group-id="" data-page-size="${view.pageSize}" style="float: left">
-    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file, protyle.localization, protyle)}
+    ${getTableHTMLs(view, e, resetData.virtualData.all, protyle.settings.icons.file, protyle)}
 </div>`;
         if (renderAll) {
             e.firstElementChild.outerHTML = `<div class="av__container">

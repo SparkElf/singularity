@@ -14,6 +14,7 @@ import {configureProtyleLuteEmojis} from "../protyle/render/setLute";
 import {resolveProtyleEmojiPath} from "../protyle/util/emojiPath";
 import * as dayjs from "dayjs";
 import {addRecentEmoji} from "../host/recent-emojis";
+import {emojiCodepointsToString} from "../protyle/util/emojiUnicode";
 
 export const getRandomEmoji = () => {
     const emojis = window.siyuan.emojis[getRandom(0, window.siyuan.emojis.length - 1)];
@@ -36,13 +37,7 @@ export const unicode2Emoji = (unicode: string, className = "", needSpan = false,
         emoji = Lute.Sanitize(emoji);
     } else {
         try {
-            unicode.split("-").forEach(item => {
-                if (item.length < 5) {
-                    emoji += String.fromCodePoint(parseInt("0" + item, 16));
-                } else {
-                    emoji += String.fromCodePoint(parseInt(item, 16));
-                }
-            });
+            emoji = emojiCodepointsToString(unicode);
             if (needSpan) {
                 emoji = `<span class="${className}">${emoji}</span>`;
             }

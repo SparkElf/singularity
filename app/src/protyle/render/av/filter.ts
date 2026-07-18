@@ -4,7 +4,7 @@ import {getColIconByType} from "./col";
 import {setPosition} from "../../../util/setPosition";
 import {genCellValue} from "./cell";
 import * as dayjs from "dayjs";
-import {unicode2Emoji} from "../../../emoji";
+import {unicodeToEmoji} from "../../hint/emoji";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
@@ -167,7 +167,7 @@ export const addFilter = (options: {
         if (column.type !== "lineNumber") {
             menu.addItem({
                 label: column.name,
-                iconHTML: column.icon ? unicode2Emoji(column.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`,
+                iconHTML: column.icon ? unicodeToEmoji(options.protyle, column.icon, "b3-menu__icon", true) : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(column.type)}"></use></svg>`,
                 click: () => {
                     const cellValue = genCellValue(column.type, column.type === "checkbox" ? {checked: undefined} : "");
                     const filter: IAVFilter = {
@@ -191,7 +191,7 @@ export const addFilter = (options: {
                         data: oldFilters,
                         blockID
                     }]);
-                    options.menuElement.innerHTML = getFiltersHTML(options.data, options.protyle.localization);
+                    options.menuElement.innerHTML = getFiltersHTML(options.data, options.protyle);
                     setPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
                 }
             });
@@ -204,7 +204,8 @@ export const addFilter = (options: {
     });
 };
 
-export const getFiltersHTML = (data: IAV, localization: IProtyle["localization"]) => {
+export const getFiltersHTML = (data: IAV, protyle: IProtyle) => {
+    const {localization} = protyle;
     let html = "";
     const fields = getFieldsByData(data);
     const measureEl = document.createElement("span");
@@ -273,7 +274,7 @@ export const getFiltersHTML = (data: IAV, localization: IProtyle["localization"]
             return "";
         }
         const iconHTML = colData.icon
-            ? unicode2Emoji(colData.icon, "b3-menu__icon", true)
+            ? unicodeToEmoji(protyle, colData.icon, "b3-menu__icon", true)
             : `<svg class="b3-menu__icon"><use xlink:href="#${getColIconByType(colData.type)}"></use></svg>`;
         const fieldOptions = fields.filter((f: IAVColumn) => f.type !== "lineNumber").map((f: IAVColumn) =>
             `<option value="${f.id}" ${f.id === node.column ? "selected" : ""}>${escapeHtml(f.name)}</option>`
@@ -704,7 +705,7 @@ export const commitFilter = (data: IAV, path: string, newFilter: IAVFilter, prot
     }]);
 
     if (reRender && menuElement) {
-        menuElement.innerHTML = getFiltersHTML(data, protyle.localization);
+        menuElement.innerHTML = getFiltersHTML(data, protyle);
     }
 };
 

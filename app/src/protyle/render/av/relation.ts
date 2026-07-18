@@ -1,6 +1,6 @@
 import {hasClosestByClassName, hasTopClosestByClassName} from "../../util/hasClosest";
 import {UDLRHint, upDownHint} from "../../util/upDownHint";
-import {escapeHtml, escapeLessThans} from "../../../util/escape";
+import {escapeAttr, escapeHtml, escapeLessThans} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
 import {updateCellsValue} from "./cell";
 import {updateAttrViewCellAnimation} from "./action";
@@ -15,6 +15,7 @@ import {writeText} from "../../util/clipboard";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {openAVMenu} from "./menu";
 import {closeOwnedAVOverlay} from "./overlay";
+import {registerAVBlockValueTarget, resolveAVBlockTarget} from "./blockTarget";
 
 interface IAVItem {
     avID: string;
@@ -280,16 +281,20 @@ const updateCopyRelatedItems = (menuElement: Element) => {
 
 const genSelectItemHTML = (options: {
     type: "selected" | "empty" | "unselect",
-    id?: string,
+    blockTarget?: string,
+    icon?: string,
     isDetached?: boolean,
     text?: string,
     className?: string,
     rowId?: string,
     newName?: string
 }, localization: IProtyle["localization"]) => {
+    const blockTargetAttributes = options.blockTarget
+        ? ` data-av-block-target="${escapeAttr(options.blockTarget)}" data-unicode="${escapeAttr(options.icon || "")}"`
+        : "";
     if (options.type === "selected") {
         return `<svg class="b3-menu__icon fn__grab"><use xlink:href="#iconDrag"></use></svg>
-<span class="b3-menu__label fn__ellipsis ${options.isDetached ? "" : " popover__block"}" ${options.isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'} data-id="${options.id}">${options.text}</span>
+<span class="b3-menu__label fn__ellipsis ${options.isDetached ? "" : " popover__block"}" ${options.isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'}${blockTargetAttributes}>${options.text}</span>
 <svg class="b3-menu__action"><use xlink:href="#iconMin"></use></svg>`;
     }
     if (options.type === "empty") {
@@ -304,10 +309,25 @@ const genSelectItemHTML = (options: {
     }
     if (options.type == "unselect") {
         return `<button data-row-id="${options.rowId}" class="${options.className || "b3-menu__item ariaLabel"}" data-position="west" data-type="setRelationCell">
-    <span class="b3-menu__label fn__ellipsis${options.isDetached ? "" : " popover__block"}" ${options.isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'} data-id="${options.id}">${options.text}</span>
+    <span class="b3-menu__label fn__ellipsis${options.isDetached ? "" : " popover__block"}" ${options.isDetached ? "" : 'style="color:var(--b3-protyle-inline-blockref-color)"'}${blockTargetAttributes}>${options.text}</span>
     <svg class="b3-menu__action"><use xlink:href="#iconAdd"></use></svg>
 </button>`;
     }
+};
+
+export const relationCellValueFromLabel = (protyle: IProtyle, label: HTMLElement): IAVCellValue => {
+    const isDetached = !label.classList.contains("popover__block");
+    const block: NonNullable<IAVCellValue["block"]> = {content: label.textContent};
+    if (!isDetached) {
+        const target = resolveAVBlockTarget(protyle, label.dataset.avBlockTarget!);
+        block.id = target.blockId;
+        block.notebookId = target.notebookId;
+        block.documentId = target.documentId;
+        if (label.dataset.unicode) {
+            block.icon = label.dataset.unicode;
+        }
+    }
+    return {block, isDetached, type: "block"};
 };
 
 const filterItem = (protyle: IProtyle, menuElement: HTMLElement, cellElement: HTMLElement, keyword: string) => {
@@ -330,22 +350,26 @@ const filterItem = (protyle: IProtyle, menuElement: HTMLElement, cellElement: HT
         const hasIds: string[] = [];
         cellElement.querySelectorAll(".av__cell--relation").forEach((relationItem: HTMLElement) => {
             const item = relationItem.querySelector(".av__celltext") as HTMLElement;
+            const icon = relationItem.querySelector<HTMLElement>("[data-av-block-target]");
             hasIds.push(relationItem.dataset.rowId);
             selectHTML += `<button data-row-id="${relationItem.dataset.rowId}" data-position="west" data-type="setRelationCell" 
 class="b3-menu__item ariaLabel${item.textContent.indexOf(keyword) > -1 ? "" : " fn__none"}" 
 draggable="true">${genSelectItemHTML({
                 type: "selected",
-                id: item.dataset.id,
+                blockTarget: icon?.dataset.avBlockTarget,
+                icon: icon?.dataset.unicode,
                 isDetached: !item.classList.contains("av__celltext--ref"),
                 text: Lute.EscapeHTMLStr(item.textContent || protyle.localization.text("untitled"))
             }, protyle.localization)}</button>`;
         });
         cells.forEach((item) => {
             if (!hasIds.includes(item.blockID)) {
+                const blockTarget = item.isDetached ? undefined : registerAVBlockValueTarget(protyle, item.block);
                 html += genSelectItemHTML({
                     type: "unselect",
+                    blockTarget,
                     rowId: item.blockID,
-                    id: item.block.id,
+                    icon: item.block.icon,
                     isDetached: item.isDetached,
                     text: Lute.EscapeHTMLStr(item.block.content || protyle.localization.text("untitled"))
                 }, protyle.localization);
@@ -391,21 +415,25 @@ export const bindRelationEvent = (options: {
         const hasIds: string[] = [];
         options.cellElements[0].querySelectorAll(".av__cell--relation").forEach((relationItem: HTMLElement) => {
             const item = relationItem.querySelector(".av__celltext") as HTMLElement;
+            const icon = relationItem.querySelector<HTMLElement>("[data-av-block-target]");
             hasIds.push(relationItem.dataset.rowId);
             selectHTML += `<button data-row-id="${relationItem.dataset.rowId}" data-position="west" data-type="setRelationCell" class="b3-menu__item ariaLabel" 
 draggable="true">${genSelectItemHTML({
                 type: "selected",
-                id: item.dataset.id,
+                blockTarget: icon?.dataset.avBlockTarget,
+                icon: icon?.dataset.unicode,
                 isDetached: !item.classList.contains("av__celltext--ref"),
                 text: Lute.EscapeHTMLStr(item.textContent || options.protyle.localization.text("untitled"))
             }, options.protyle.localization)}</button>`;
         });
         cells.forEach((item) => {
             if (!hasIds.includes(item.blockID)) {
+                const blockTarget = item.isDetached ? undefined : registerAVBlockValueTarget(options.protyle, item.block);
                 html += genSelectItemHTML({
                     type: "unselect",
+                    blockTarget,
                     rowId: item.blockID,
-                    id: item.block.id,
+                    icon: item.block.icon,
                     isDetached: item.isDetached,
                     text: Lute.EscapeHTMLStr(item.block.content || options.protyle.localization.text("untitled"))
                 }, options.protyle.localization);
@@ -455,10 +483,11 @@ ${html || genSelectItemHTML({type: "empty"}, options.protyle.localization)}`;
                     copyText += "- ";
                 }
                 const textElement = item.querySelector(".b3-menu__label") as HTMLElement;
-                if (!textElement.dataset.id || textElement.dataset.id === "undefined") {
+                if (!textElement.classList.contains("popover__block")) {
                     copyText += textElement.textContent + "\n";
                 } else {
-                    copyText += `((${textElement.dataset.id} "${textElement.textContent}"))\n`;
+                    const target = resolveAVBlockTarget(options.protyle, textElement.dataset.avBlockTarget!);
+                    copyText += `((${target.blockId} "${textElement.textContent}"))\n`;
                 }
             });
             if (copyText) {
@@ -528,20 +557,13 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
     const newValue: IAVCellRelationValue = {blockIDs: [], contents: []};
     menuElement.querySelectorAll('[draggable="true"]').forEach(item => {
         const rowId = item.getAttribute("data-row-id");
-        const blockPopElement = item.querySelector(".b3-menu__label");
+        const blockPopElement = item.querySelector<HTMLElement>(".b3-menu__label")!;
         newValue.blockIDs.push(rowId);
-        newValue.contents.push({
-            type: "block",
-            block: {
-                id: blockPopElement.getAttribute("data-id"),
-                content: blockPopElement.textContent
-            },
-            isDetached: !blockPopElement.classList.contains("popover__block")
-        });
+        newValue.contents.push(relationCellValueFromLabel(protyle, blockPopElement));
     });
     if (target.classList.contains("b3-menu__item")) {
         const rowId = target.getAttribute("data-row-id");
-        const id = target.querySelector(".b3-menu__label").getAttribute("data-id");
+        const label = target.querySelector<HTMLElement>(".b3-menu__label")!;
         const separatorElement = menuElement.querySelector(".b3-menu__separator");
         const searchValue = menuElement.querySelector("input").value;
         if (target.getAttribute("draggable")) {
@@ -554,8 +576,9 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
             separatorElement.after(target);
             target.outerHTML = genSelectItemHTML({
                 type: "unselect",
+                blockTarget: label.dataset.avBlockTarget,
                 rowId,
-                id,
+                icon: label.dataset.unicode,
                 isDetached: !target.querySelector(".popover__block"),
                 text: Lute.EscapeHTMLStr(target.querySelector(".b3-menu__label").textContent),
                 className: target.className
@@ -563,20 +586,14 @@ export const setRelationCell = async (protyle: IProtyle, nodeElement: HTMLElemen
             updateCellsValue(protyle, nodeElement, newValue, cellElements);
         } else if (rowId) {
             newValue.blockIDs.push(rowId);
-            newValue.contents.push({
-                type: "block",
-                block: {
-                    id,
-                    content: target.firstElementChild.textContent
-                },
-                isDetached: !target.firstElementChild.getAttribute("style")
-            });
+            newValue.contents.push(relationCellValueFromLabel(protyle, label));
             separatorElement.before(target);
             target.outerHTML = `<button data-row-id="${rowId}" data-position="west" data-type="setRelationCell" class="${target.className}" 
 draggable="true">${genSelectItemHTML({
                 type: "selected",
+                blockTarget: label.dataset.avBlockTarget,
                 rowId,
-                id,
+                icon: label.dataset.unicode,
                 isDetached: !target.querySelector(".popover__block"),
                 text: Lute.EscapeHTMLStr(target.querySelector(".b3-menu__label").textContent)
             }, protyle.localization)}</button>`;

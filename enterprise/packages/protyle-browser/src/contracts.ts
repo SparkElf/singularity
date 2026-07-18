@@ -36,6 +36,13 @@ export interface ProtyleDocumentStatistics {
   readonly blockCount: number;
 }
 
+export type ProtyleBlockAttributeFocus =
+  | "bookmark"
+  | "name"
+  | "alias"
+  | "memo"
+  | "av";
+
 export type ProtyleHostEvent =
   | {
       type: "open-document";
@@ -86,6 +93,35 @@ export type ProtyleHostEvent =
       documentId: string;
     }
   | {
+      type: "open-document-move";
+      notebookId: string;
+      documentId: string;
+    }
+  | {
+      type: "delete-document";
+      notebookId: string;
+      documentId: string;
+    }
+  | {
+      type: "open-document-export";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+      position: ProtyleMenuPosition;
+    }
+  | {
+      type: "upload-cloud-assets";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+    }
+  | {
+      type: "share-document-community";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+    }
+  | {
       type: "open-card-review";
       notebookId: string;
       documentId: string;
@@ -112,6 +148,50 @@ export type ProtyleHostEvent =
       blockId: string;
       documentId: string;
       notebookId: string;
+    }
+  | {
+      type: "open-ai-actions";
+      notebookId: string;
+      documentId: string;
+      blockIds: readonly string[];
+    }
+  | {
+      type: "open-block-attributes";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+      focus: ProtyleBlockAttributeFocus;
+    }
+  | {
+      type: "open-block-move";
+      notebookId: string;
+      documentId: string;
+      blockIds: readonly string[];
+    }
+  | {
+      type: "open-block-ref-transfer";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+    }
+  | {
+      type: "open-block-reminder";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+    }
+  | {
+      type: "open-table-menu";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+    }
+  | {
+      type: "rename-asset";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+      assetPath: string;
     }
   | {
       type: "open-asset";
@@ -185,8 +265,26 @@ export type ProtyleHostEvent =
       message: string;
     };
 
+export type ProtyleRuntimeErrorEvent = Extract<
+  ProtyleHostEvent,
+  { type: "runtime-error" }
+>;
+
+export type ProtyleEditorHostEvent = Exclude<
+  ProtyleHostEvent,
+  ProtyleRuntimeErrorEvent
+>;
+
+export type ProtyleHostDispatchEvent =
+  | ProtyleRuntimeErrorEvent
+  | (ProtyleEditorHostEvent & { readonly sourceEditorId: string });
+
+export interface ProtyleEditorHostPort {
+  dispatch: (event: ProtyleEditorHostEvent) => void;
+}
+
 export interface ProtyleHostPort {
-  dispatch: (event: ProtyleHostEvent) => void;
+  dispatch: (event: ProtyleHostDispatchEvent) => void;
 }
 
 export interface ProtyleEditorRegistry<TEditor> {
@@ -571,6 +669,16 @@ export interface ProtyleEmojiGroup {
   readonly title_zh_cn: string;
 }
 
+export interface ProtyleCoverEntry {
+  readonly file: string;
+  readonly category: string;
+  readonly photographer: string;
+  readonly photographer_url: string;
+  readonly pexels_url: string;
+  readonly width: number;
+  readonly height: number;
+}
+
 /**
  * Settings are application-owned values that do not identify content. Bound
  * content capabilities remain on ProtyleSession and are intentionally absent
@@ -615,13 +723,31 @@ export interface ProtyleApplicationSettings {
     readonly setFontSize: (fontSize: number) => void;
     readonly persist: () => void | Promise<void>;
   };
+  readonly cover: {
+    readonly entries: readonly ProtyleCoverEntry[];
+    readonly resolve: (file: string) => string;
+  };
   readonly export: {
     readonly addTitle: boolean;
     readonly paragraphBeginningSpace: boolean;
   };
   readonly features: {
+    readonly aiActions: boolean;
     readonly aiWriting: boolean;
+    readonly assetRename: boolean;
+    readonly blockAttributes: boolean;
+    readonly blockMove: boolean;
+    readonly blockRefTransfer: boolean;
+    readonly cloudAssetUpload: boolean;
+    readonly communityShare: boolean;
+    readonly documentDelete: boolean;
+    readonly documentExport: boolean;
+    readonly documentMove: boolean;
     readonly flashcardDeck: boolean;
+    readonly fullscreen: boolean;
+    readonly quickFlashcard: boolean;
+    readonly tableMenu: boolean;
+    readonly webBlockLink: boolean;
     readonly wechatReminder: boolean;
     readonly widget: boolean;
   };
@@ -646,23 +772,41 @@ export interface ProtyleApplicationSettings {
         readonly alignLeft: string;
         readonly alignRight: string;
         readonly attr: string;
+        readonly backlinks: string;
         readonly collapse: string;
+        readonly copyBlockEmbed: string;
+        readonly copyBlockRef: string;
+        readonly copyHPath: string;
+        readonly copyID: string;
         readonly copyPlainText: string;
+        readonly copyProtocol: string;
+        readonly copyProtocolInMd: string;
         readonly copyText: string;
         readonly duplicate: string;
         readonly duplicateCompletely: string;
         readonly foldRecursive: string;
+        readonly fullscreen: string;
+        readonly graphView: string;
         readonly hLayout: string;
         readonly insertAfter: string;
         readonly insertBefore: string;
         readonly insertRight: string;
+        readonly exitFocus: string;
         readonly jumpToParent: string;
         readonly jumpToParentNext: string;
         readonly jumpToParentPrev: string;
         readonly ltr: string;
+        readonly netAssets2LocalAssets: string;
+        readonly netImg2LocalAsset: string;
+        readonly optimizeTypography: string;
+        readonly outline: string;
+        readonly preview: string;
         readonly quickMakeCard: string;
+        readonly refresh: string;
         readonly rtl: string;
+        readonly spaceRepetition: string;
         readonly vLayout: string;
+        readonly wysiwyg: string;
       };
       readonly heading: {
         readonly heading1: string;

@@ -250,6 +250,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                 }
             });
             menuElement.innerHTML = getSelectHTML(
+                protyle,
                 fields,
                 cellElements,
                 state,
@@ -383,6 +384,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                         }
                     });
                     menuElement.innerHTML = getSelectHTML(
+                        protyle,
                         fields,
                         cellElements,
                         state,
@@ -489,6 +491,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                             }
                         });
                         menuElement.innerHTML = getSelectHTML(
+                            protyle,
                             fields,
                             cellElements,
                             state,
@@ -710,6 +713,7 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
         const oldScroll = menuElement.querySelector(".b3-menu__items").scrollTop;
         const oldChipsHeight = menuElement.querySelector(".b3-chips").clientHeight;
         menuElement.innerHTML = getSelectHTML(
+            protyle,
             fields,
             cellElements,
             state,
@@ -727,6 +731,7 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
 };
 
 export const getSelectHTML = (
+    protyle: IProtyle,
     fields: IAVColumn[],
     cellElements: HTMLElement[],
     state: IAVSelectPanelState,
@@ -739,7 +744,7 @@ export const getSelectHTML = (
         state.cellValues = [];
         const isCustomAttr = cellElements[0].classList.contains("custom-attr__avvalue");
         cellElements.forEach(item => {
-            state.cellValues.push(genCellValueByElement(isCustomAttr ? item.dataset.type as TAVCol : getTypeByCellElement(item), item));
+            state.cellValues.push(genCellValueByElement(protyle, isCustomAttr ? item.dataset.type as TAVCol : getTypeByCellElement(item), item));
         });
     }
     const cellValues = state.cellValues;
