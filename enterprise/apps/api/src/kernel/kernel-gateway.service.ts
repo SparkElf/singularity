@@ -135,7 +135,7 @@ function auditAction(
 
 async function readKernelJsonResult(message: IncomingMessage): Promise<{
   readonly body: Buffer;
-  readonly succeeded: boolean;
+  readonly code: number;
 }> {
   const chunks: Buffer[] = [];
   let sizeBytes = 0;
@@ -171,7 +171,32 @@ async function readKernelJsonResult(message: IncomingMessage): Promise<{
   ) {
     throw new ApiProblemError("service-unavailable", 502);
   }
-  return { body, succeeded: value.code === 0 };
+  return { body, code: value.code };
+}
+
+function kernelResultProblem(code: number): ApiProblemError | null {
+  if (code === 0) {
+    return null;
+  }
+  if (code === 400) {
+    return validationFailed();
+  }
+  if (code === 404) {
+    return notFound();
+  }
+  if (code === 409) {
+    return conflict();
+  }
+  if (code === 422) {
+    return new ApiProblemError("validation-failed", 422);
+  }
+  if (code >= 500) {
+    return new ApiProblemError(
+      "service-unavailable",
+      code === 503 || code === 504 ? code : 502,
+    );
+  }
+  return new ApiProblemError("validation-failed", 422);
 }
 
 function upstreamProblem(status: number): ApiProblemError | null {
@@ -267,7 +292,6 @@ export class KernelGatewayService {
       input.body,
     );
     if (
-      contentAuditAction !== null &&
       (input.target.surface === "api" || input.target.surface === "upload") &&
       upstream.status !== 204
     ) {
@@ -278,7 +302,12 @@ export class KernelGatewayService {
         this.#log(input, "upstream-rejected", 502, startedAt);
         throw error;
       }
-      if (result.succeeded) {
+      const resultProblem = kernelResultProblem(result.code);
+      if (resultProblem !== null) {
+        this.#log(input, "upstream-rejected", resultProblem.status, startedAt);
+        throw resultProblem;
+      }
+      if (contentAuditAction !== null) {
         try {
           await this.#appendContentAudit(input, contentAuditAction, startedAt);
         } catch (error) {

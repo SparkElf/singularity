@@ -28,6 +28,10 @@ import {
 const PASSWORD = "correct horse battery staple";
 const NOTEBOOK_ID = "20260718010101-abcdefg";
 const DOCUMENT_ID = "20260718010102-hijklmn";
+const KERNEL_ENVELOPE_NOT_FOUND_PATH = "/api/block/getBlockDOM";
+const KERNEL_ENVELOPE_VALIDATION_PATH = "/api/block/checkBlockExist";
+const KERNEL_ENVELOPE_UNAVAILABLE_PATH = "/api/block/getBlockIndex";
+const KERNEL_ENVELOPE_SUCCESS_PATH = "/api/block/getRefText";
 
 interface AuthenticatedGraph {
   readonly cookie: string;
@@ -46,7 +50,7 @@ function cookiePair(response: Response): string {
   return pair;
 }
 
-describe("Kernel Gateway hidden runtime access loss", () => {
+describe("Kernel Gateway business responses and runtime access loss", () => {
   let database: DatabaseClient;
   let kernel: TestKernelGateway;
   let operations: AccessOperationsService;
@@ -55,15 +59,35 @@ describe("Kernel Gateway hidden runtime access loss", () => {
 
   beforeAll(async () => {
     kernel = await startTestKernelGateway({
-      handler: () => ({
-        body: JSON.stringify({
-          code: "not-found",
-          requestId: randomUUID(),
+      handler: (request) => {
+        const envelopeCodes = new Map<string, number>([
+          [KERNEL_ENVELOPE_NOT_FOUND_PATH, 404],
+          [KERNEL_ENVELOPE_VALIDATION_PATH, -1],
+          [KERNEL_ENVELOPE_UNAVAILABLE_PATH, 500],
+          [KERNEL_ENVELOPE_SUCCESS_PATH, 0],
+        ]);
+        const code = envelopeCodes.get(request.path);
+        if (code !== undefined) {
+          return {
+            body: JSON.stringify({
+              code,
+              data: code === 0 ? "Block title" : null,
+              msg: code === 0 ? "" : "Kernel operation failed",
+            }),
+            headers: { "content-type": "application/json" },
+            status: 200,
+          };
+        }
+        return {
+          body: JSON.stringify({
+            code: "not-found",
+            requestId: randomUUID(),
+            status: 404,
+          }),
+          headers: { "content-type": "application/json" },
           status: 404,
-        }),
-        headers: { "content-type": "application/json" },
-        status: 404,
-      }),
+        };
+      },
     });
     try {
       testApi = await startTestApiApplication({
@@ -161,8 +185,11 @@ describe("Kernel Gateway hidden runtime access loss", () => {
     };
   }
 
-  function requestContent(graph: AuthenticatedGraph): Promise<Response> {
-    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel/api/api/block/getBlockInfo`;
+  function requestContent(
+    graph: AuthenticatedGraph,
+    kernelPath = "/api/block/getBlockInfo",
+  ): Promise<Response> {
+    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel/api${kernelPath}`;
     return fetch(`${testApi.baseUrl}${path}`, {
       body: JSON.stringify({ id: DOCUMENT_ID }),
       headers: {
@@ -205,5 +232,60 @@ describe("Kernel Gateway hidden runtime access loss", () => {
       "not-found",
     );
     expect(response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME)).toBeNull();
+  });
+
+  test("maps a Kernel envelope 404 without marking runtime access loss", async () => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestContent(
+      graph,
+      KERNEL_ENVELOPE_NOT_FOUND_PATH,
+    );
+    expect(response.status).toBe(404);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "not-found",
+    );
+    expect(response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME)).toBeNull();
+  });
+
+  test("maps a legacy Kernel envelope failure to validation failed", async () => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestContent(
+      graph,
+      KERNEL_ENVELOPE_VALIDATION_PATH,
+    );
+    expect(response.status).toBe(422);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "validation-failed",
+    );
+  });
+
+  test("maps a Kernel envelope service failure to upstream unavailable", async () => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestContent(
+      graph,
+      KERNEL_ENVELOPE_UNAVAILABLE_PATH,
+    );
+    expect(response.status).toBe(502);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "service-unavailable",
+    );
+  });
+
+  test("preserves a successful Kernel envelope", async () => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestContent(
+      graph,
+      KERNEL_ENVELOPE_SUCCESS_PATH,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      code: 0,
+      data: "Block title",
+      msg: "",
+    });
   });
 });
