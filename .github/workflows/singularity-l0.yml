@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      SINGULARITY_TEST_DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:5432/singularity_test
+      SINGULARITY_TEST_DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
     services:
       postgres:
         image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -143,7 +143,7 @@ jobs:
           POSTGRES_PASSWORD: singularity_test
           POSTGRES_DB: singularity_test
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U singularity_test -d singularity_test"
           --health-interval 10s
@@ -203,6 +203,7 @@ jobs:
     timeout-minutes: 45
     env:
       API_IMAGE: singularity-api:${{ github.sha }}
+      WORKER_IMAGE: singularity-worker:${{ github.sha }}
       WEB_IMAGE: singularity-web:${{ github.sha }}
     services:
       postgres:
@@ -212,7 +213,7 @@ jobs:
           POSTGRES_PASSWORD: singularity_test
           POSTGRES_DB: singularity_test
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U singularity_test -d singularity_test"
           --health-interval 10s
@@ -267,20 +268,38 @@ jobs:
             --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
             --tag "$WEB_IMAGE" \
             .
+          docker build \
+            --file enterprise/apps/worker/Dockerfile \
+            --build-arg VCS_REF="$GITHUB_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag "$WORKER_IMAGE" \
+            .
 
       - name: Verify image metadata
         run: |
           node scripts/singularity/verify-container-metadata.mjs \
             --revision "$GITHUB_SHA" \
-            -- "$API_IMAGE" "$WEB_IMAGE"
+            -- "$API_IMAGE" "$WORKER_IMAGE" "$WEB_IMAGE"
+
+      - name: Install enterprise dependencies for container smoke
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Apply enterprise migrations for container smoke
+        env:
+          DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
+        run: pnpm --filter @singularity/database exec prisma migrate deploy --config prisma.config.ts
+        working-directory: enterprise
 
       - name: Smoke enterprise images
         env:
-          DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:5432/singularity_test
+          DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
         run: |
           set -euo pipefail
+          secret_dir="$(mktemp -d)"
           cleanup() {
-            docker rm --force singularity-api-smoke singularity-web-smoke >/dev/null 2>&1 || true
+            docker rm --force singularity-api-smoke singularity-worker-smoke singularity-web-smoke >/dev/null 2>&1 || true
+            rm -rf "$secret_dir"
           }
           wait_for_url() {
             local container="$1"
@@ -295,16 +314,84 @@ jobs:
             return 1
           }
           trap cleanup EXIT
+          audit_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+          openssl genpkey -algorithm ED25519 -out "$secret_dir/service.key"
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -subj "/CN=kernel.invalid" \
+            -addext "subjectAltName=DNS:kernel.invalid,DNS:worker.invalid,IP:127.0.0.1" \
+            -keyout "$secret_dir/client.key" \
+            -out "$secret_dir/client.crt" \
+            -days 1
+          cp "$secret_dir/client.crt" "$secret_dir/ca.crt"
+          openssl pkey -in "$secret_dir/service.key" -pubout -out "$secret_dir/service.pub"
+          jq -n --rawfile publicKeyPem "$secret_dir/service.pub" \
+            '{keys: [{kid: "ci-key", publicKeyPem: $publicKeyPem}]}' \
+            > "$secret_dir/service-keys.json"
+          jq -n '{
+            deployments: [{
+              caCertificateFile: "/run/secrets/singularity/ca.crt",
+              clientCertificateFile: "/run/secrets/singularity/client.crt",
+              clientPrivateKeyFile: "/run/secrets/singularity/client.key",
+              handle: "ci-kernel",
+              hostname: "127.0.0.1",
+              kernelInstanceId: "00000000-0000-4000-8000-000000000001",
+              port: 9443,
+              serverName: "kernel.invalid",
+              spaceId: "00000000-0000-4000-8000-000000000002"
+            }]
+          }' > "$secret_dir/deployments.json"
+          chmod 0555 "$secret_dir"
+          chmod 0444 "$secret_dir"/*
           docker run --detach --name singularity-api-smoke --network host \
+            --mount "type=bind,source=$secret_dir,target=/run/secrets/singularity,readonly" \
             --env DATABASE_URL="$DATABASE_URL" \
+            --env SINGULARITY_AUDIT_HMAC_KEY="$audit_key" \
+            --env SINGULARITY_AUDIT_KEY_VERSION="ci-audit-v1" \
+            --env SINGULARITY_KERNEL_DEPLOYMENTS_FILE="/run/secrets/singularity/deployments.json" \
+            --env SINGULARITY_KERNEL_RUNTIME_CA_FILE="/run/secrets/singularity/ca.crt" \
+            --env SINGULARITY_KERNEL_RUNTIME_CLIENT_CERTIFICATE_FILE="/run/secrets/singularity/client.crt" \
+            --env SINGULARITY_KERNEL_RUNTIME_CLIENT_PRIVATE_KEY_FILE="/run/secrets/singularity/client.key" \
+            --env SINGULARITY_KERNEL_RUNTIME_TLS_PROFILE="ci-runtime" \
+            --env SINGULARITY_KERNEL_SERVICE_KEY_ID="ci-key" \
+            --env SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE="/run/secrets/singularity/service.key" \
             --env SINGULARITY_PUBLIC_ORIGIN="https://singularity.invalid" \
             "$API_IMAGE"
+          docker run --detach --name singularity-worker-smoke --network host \
+            --mount "type=bind,source=$secret_dir,target=/run/secrets/singularity,readonly" \
+            --env DATABASE_URL="$DATABASE_URL" \
+            --env SINGULARITY_KERNEL_DEPLOYMENTS_FILE="/run/secrets/singularity/deployments.json" \
+            --env SINGULARITY_KERNEL_SERVICE_KEY_ID="ci-key" \
+            --env SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE="/run/secrets/singularity/service.key" \
+            --env SINGULARITY_WORKER_ID="ci-worker" \
+            --env SINGULARITY_WORKER_RESTORE_CLIENT_CA_FILE="/run/secrets/singularity/ca.crt" \
+            --env SINGULARITY_WORKER_RESTORE_CLIENT_CERT_FILE="/run/secrets/singularity/client.crt" \
+            --env SINGULARITY_WORKER_RESTORE_CLIENT_KEY_FILE="/run/secrets/singularity/client.key" \
+            --env SINGULARITY_WORKER_RESTORE_GATEWAY_CLIENT_DNS_NAME="worker.invalid" \
+            --env SINGULARITY_WORKER_RESTORE_GATEWAY_HOSTNAME="127.0.0.1" \
+            --env SINGULARITY_WORKER_RESTORE_PORT_FIRST="19443" \
+            --env SINGULARITY_WORKER_RESTORE_PORT_LAST="19443" \
+            --env SINGULARITY_WORKER_RESTORE_SERVER_CERT_FILE="/run/secrets/singularity/client.crt" \
+            --env SINGULARITY_WORKER_RESTORE_SERVER_KEY_FILE="/run/secrets/singularity/client.key" \
+            --env SINGULARITY_WORKER_RESTORE_SERVER_NAME="kernel.invalid" \
+            --env SINGULARITY_WORKER_RESTORE_SERVICE_KEYS_FILE="/run/secrets/singularity/service-keys.json" \
+            --env SINGULARITY_WORKER_RESTORE_TLS_PROFILE="ci-runtime" \
+            "$WORKER_IMAGE"
           docker run --detach --name singularity-web-smoke --network host "$WEB_IMAGE"
           wait_for_url singularity-api-smoke http://127.0.0.1:3001/api/v1/health/database
           wait_for_url singularity-web-smoke http://127.0.0.1:8080/healthz
           curl --fail --silent --show-error http://127.0.0.1:3001/api/v1/health/database \
             | jq --exit-status '. == {"status":"ready"}' >/dev/null
           test "$(curl --fail --silent --show-error http://127.0.0.1:8080/healthz)" = "ok"
+          for _ in {1..30}; do
+            if [ "$(docker inspect --format '{{.State.Status}}' singularity-worker-smoke 2>/dev/null || true)" = "running" ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$(docker inspect --format '{{.State.Status}}' singularity-worker-smoke 2>/dev/null || true)" != "running" ]; then
+            docker logs singularity-worker-smoke
+            exit 1
+          fi
 
       - name: Prepare supply-chain reports
         run: mkdir -p artifacts/supply-chain
@@ -347,6 +434,19 @@ jobs:
           output: artifacts/supply-chain/api.trivy.cdx.json
           trivy-config: config/trivy.yaml
 
+      - name: Generate Worker image SBOM
+        id: worker_sbom
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WORKER_IMAGE }}
+          scanners: license
+          format: cyclonedx
+          output: artifacts/supply-chain/worker.trivy.cdx.json
+          trivy-config: config/trivy.yaml
+
       - name: Generate Web image SBOM
         id: web_sbom
         continue-on-error: true
@@ -367,6 +467,8 @@ jobs:
           node scripts/singularity/verify-production-sbom.mjs \
             --api-image "$API_IMAGE" \
             --api artifacts/supply-chain/api.trivy.cdx.json \
+            --worker-image "$WORKER_IMAGE" \
+            --worker artifacts/supply-chain/worker.trivy.cdx.json \
             --web artifacts/supply-chain/web.trivy.cdx.json \
             --output artifacts/supply-chain/production-sbom-policy.json
 
@@ -388,6 +490,16 @@ jobs:
             --input artifacts/supply-chain/api.trivy.cdx.json \
             --output artifacts/supply-chain/api.cdx.json \
             --image "$API_IMAGE"
+
+      - name: Enrich Worker SBOM license evidence
+        id: worker_sbom_evidence
+        continue-on-error: true
+        run: |
+          node scripts/singularity/enrich-license-sbom.mjs \
+            --policy config/license-policy.json \
+            --input artifacts/supply-chain/worker.trivy.cdx.json \
+            --output artifacts/supply-chain/worker.cdx.json \
+            --image "$WORKER_IMAGE"
 
       - name: Enrich Web SBOM license evidence
         id: web_sbom_evidence
@@ -425,6 +537,19 @@ jobs:
           output: artifacts/supply-chain/api-licenses.json
           trivy-config: config/trivy.yaml
 
+      - name: Scan Worker image licenses
+        id: worker_license
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WORKER_IMAGE }}
+          scanners: license
+          format: json
+          output: artifacts/supply-chain/worker-licenses.json
+          trivy-config: config/trivy.yaml
+
       - name: Scan Web image licenses
         id: web_license
         continue-on-error: true
@@ -449,6 +574,8 @@ jobs:
             --sbom artifacts/supply-chain/source.cdx.json \
             --report artifacts/supply-chain/api-licenses.json \
             --sbom artifacts/supply-chain/api.cdx.json \
+            --report artifacts/supply-chain/worker-licenses.json \
+            --sbom artifacts/supply-chain/worker.cdx.json \
             --report artifacts/supply-chain/web-licenses.json \
             --sbom artifacts/supply-chain/web.cdx.json
 
@@ -485,6 +612,22 @@ jobs:
           format: json
           output: artifacts/supply-chain/api-vulnerabilities.json
 
+      - name: Scan Worker High and Critical vulnerabilities
+        id: worker_vulnerability
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: ${{ env.WORKER_IMAGE }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 0
+          format: json
+          output: artifacts/supply-chain/worker-vulnerabilities.json
+
       - name: Scan Web High and Critical vulnerabilities
         id: web_vulnerability
         continue-on-error: true
@@ -509,6 +652,7 @@ jobs:
             --output artifacts/supply-chain/vulnerability-policy.json \
             --report artifacts/supply-chain/enterprise-vulnerabilities.json \
             --report artifacts/supply-chain/api-vulnerabilities.json \
+            --report artifacts/supply-chain/worker-vulnerabilities.json \
             --report artifacts/supply-chain/web-vulnerabilities.json
 
       - name: Upload supply-chain reports
@@ -537,6 +681,10 @@ jobs:
           WEB_SBOM: ${{ steps.web_sbom.outcome }}
           WEB_SBOM_EVIDENCE: ${{ steps.web_sbom_evidence.outcome }}
           WEB_VULNERABILITY: ${{ steps.web_vulnerability.outcome }}
+          WORKER_LICENSE: ${{ steps.worker_license.outcome }}
+          WORKER_SBOM: ${{ steps.worker_sbom.outcome }}
+          WORKER_SBOM_EVIDENCE: ${{ steps.worker_sbom_evidence.outcome }}
+          WORKER_VULNERABILITY: ${{ steps.worker_vulnerability.outcome }}
           VULNERABILITY_POLICY: ${{ steps.vulnerability_policy.outcome }}
         run: |
           for outcome in \
@@ -554,6 +702,10 @@ jobs:
             "$WEB_SBOM" \
             "$WEB_SBOM_EVIDENCE" \
             "$WEB_VULNERABILITY" \
+            "$WORKER_LICENSE" \
+            "$WORKER_SBOM" \
+            "$WORKER_SBOM_EVIDENCE" \
+            "$WORKER_VULNERABILITY" \
             "$VULNERABILITY_POLICY"; do
             if [ "$outcome" != "success" ]; then
               exit 1

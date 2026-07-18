@@ -1,4 +1,8 @@
 import { isIP } from "node:net";
+import { isAbsolute } from "node:path";
+import { createSecretKey } from "node:crypto";
+
+import type { AuditConfiguration } from "./audit/audit-writer.service.js";
 
 export class ApiConfigurationError extends Error {
   constructor() {
@@ -8,8 +12,76 @@ export class ApiConfigurationError extends Error {
 }
 
 export interface ApiConfiguration {
+  oidcClientSecretFiles: Readonly<Record<string, string>>;
   publicOrigin: string;
   trustedProxyCidrs: readonly string[];
+}
+
+export interface AuditConfigurationEnvironment {
+  readonly SINGULARITY_AUDIT_HMAC_KEY?: string;
+  readonly SINGULARITY_AUDIT_KEY_VERSION?: string;
+}
+
+export function parseAuditConfiguration(
+  environment: AuditConfigurationEnvironment,
+): AuditConfiguration {
+  const encoded = environment.SINGULARITY_AUDIT_HMAC_KEY;
+  const keyVersion = environment.SINGULARITY_AUDIT_KEY_VERSION;
+  if (
+    encoded === undefined ||
+    !/^[A-Za-z0-9_-]+$/.test(encoded) ||
+    keyVersion === undefined ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(keyVersion)
+  ) {
+    throw new ApiConfigurationError();
+  }
+  let key: Buffer;
+  try {
+    key = Buffer.from(encoded, "base64url");
+  } catch {
+    throw new ApiConfigurationError();
+  }
+  if (
+    key.byteLength < 32 ||
+    key.byteLength > 128 ||
+    key.toString("base64url") !== encoded
+  ) {
+    throw new ApiConfigurationError();
+  }
+  return { hmacKey: createSecretKey(key), keyVersion };
+}
+
+export function parseOidcClientSecretFiles(
+  value: string | undefined,
+): Readonly<Record<string, string>> {
+  if (value === undefined || value.length === 0) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ApiConfigurationError();
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    throw new ApiConfigurationError();
+  }
+  const result: Record<string, string> = {};
+  for (const [reference, path] of Object.entries(parsed)) {
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(reference) ||
+      typeof path !== "string" ||
+      !isAbsolute(path)
+    ) {
+      throw new ApiConfigurationError();
+    }
+    result[reference] = path;
+  }
+  return result;
 }
 
 export function parsePublicOrigin(value: string | undefined): string {

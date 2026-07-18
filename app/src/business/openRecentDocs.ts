@@ -5,10 +5,9 @@ import {escapeHtml} from "../util/escape";
 import {isWindow} from "../util/functions";
 import {setStorageVal, updateHotkeyTip} from "../protyle/util/compatibility";
 import {getAllDocks} from "../layout/getAll";
-import {Dialog} from "../dialog";
+import {closeAllDialogs, Dialog} from "../dialog";
 import {focusByRange} from "../protyle/util/selection";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
-import {hideElements} from "../protyle/ui/hideElements";
 
 const renderRecentDocsContent = async (data: IRecentDoc[], element: Element, key?: string) => {
     let tabHtml = "";
@@ -74,7 +73,7 @@ export const openRecentDocs = () => {
         }
     });
     if (openRecentDocsDialog) {
-        hideElements(["dialog"]);
+        closeAllDialogs();
         return;
     }
     const sortBy = window.siyuan.storage[Constants.LOCAL_RECENT_DOCS].type as TRecentDocsSort;

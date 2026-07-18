@@ -22,19 +22,22 @@ import {getAllTabs} from "../layout/getAll";
 import {getLocalStorage} from "../protyle/util/compatibility";
 import {init} from "./init";
 import {loadPlugins, reloadPlugin} from "../plugin/loader";
-import {hideAllElements} from "../protyle/ui/hideElements";
+import {hideAllEditorElements} from "../protyle/ui/hideElements";
 import {reloadEmoji} from "../emoji";
 import {appearanceConfigApi} from "../config/tabs/appearanceRuntime";
 import {renderSnippet} from "../config/util/snippets";
 import {setBodyHighlight} from "../util/assets";
 import {reloadSync} from "../util/reloadSync";
 import {setTitle} from "../util/processTitle";
+import {createProtyleEditorRegistry} from "../../../enterprise/packages/protyle-browser/src";
 
 class App {
     public plugins: import("../plugin").Plugin[] = [];
+    public readonly protyleEditors: TProtyleEditorRegistry;
     public appId: string;
 
     constructor() {
+        this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
         addBaseURL();
         this.appId = Constants.SIYUAN_APPID;
 
@@ -78,7 +81,7 @@ class App {
                                 break;
                             case "readonly":
                                 window.siyuan.config.editor.readOnly = data.data;
-                                hideAllElements(["util"]);
+                                hideAllEditorElements(this.protyleEditors);
                                 break;
                             case "setConf":
                                 window.siyuan.config = data.data;

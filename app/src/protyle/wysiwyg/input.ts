@@ -9,7 +9,6 @@ import {genEmptyBlock} from "../../block/util";
 import {blockRender} from "../render/blockRender";
 import {hideElements} from "../ui/hideElements";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {headingTurnIntoList, turnIntoTaskList} from "./turnIntoList";
 import {updateAVName} from "../render/av/action";
 import {setFold} from "../util/blockFold";
@@ -141,7 +140,19 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
 
     const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
     if (refElement && refElement.getAttribute("data-subtype") === "d") {
-        const response = await fetchSyncPost("/api/block/getRefText", {id: refElement.getAttribute("data-id")});
+        const response = await protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+            id: refElement.getAttribute("data-id"),
+        }, {
+            identity: {
+                notebookId: protyle.notebookId,
+                documentId: protyle.options.blockId!,
+            },
+            intent: "read",
+            signal: protyle.ownerSignal,
+        });
+        if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+            return;
+        }
         if (response.data !== refElement.innerHTML.replace("<wbr>", "")) {
             refElement.setAttribute("data-subtype", "s");
         }
@@ -266,16 +277,13 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
             if (realType === "NodeCodeBlock") {
                 const languageElement = realElement.querySelector(".protyle-action__language");
                 if (languageElement) {
-                    if (window.siyuan.storage[Constants.LOCAL_CODELANG] && languageElement.textContent === "") {
-                        languageElement.textContent = window.siyuan.storage[Constants.LOCAL_CODELANG];
-                    }
-                    highlightRender(realElement);
+                    highlightRender(realElement, protyle);
                 } else if (tempElement.content.childElementCount === 1) {
                     protyle.toolbar.showRender(protyle, realElement);
                 }
             } else if (["NodeMathBlock", "NodeHTMLBlock"].includes(realType)) {
                 if (realType === "NodeMathBlock") {
-                    mathRender(realElement);
+                    mathRender(realElement, protyle);
                 }
                 protyle.toolbar.showRender(protyle, realElement);
             } else if (realType === "NodeBlockQueryEmbed") {
@@ -290,12 +298,28 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
                 // https://github.com/siyuan-note/siyuan/issues/6087
                 realElement.querySelectorAll('[data-type~="block-ref"][data-subtype="d"]').forEach(refItem => {
                     if (refItem.textContent === "") {
-                        fetchPost("/api/block/getRefText", {id: refItem.getAttribute("data-id")}, (response) => {
+                        void protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+                            id: refItem.getAttribute("data-id"),
+                        }, {
+                            identity: {
+                                notebookId: protyle.notebookId,
+                                documentId: protyle.options.blockId!,
+                            },
+                            intent: "read",
+                            signal: protyle.ownerSignal,
+                        }).then((response) => {
+                            if (protyle.destroyed || protyle.ownerSignal?.aborted || !refItem.isConnected) {
+                                return;
+                            }
                             refItem.innerHTML = response.data;
+                        }).catch((error) => {
+                            if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                                console.error("[protyle.transport] block reference request failed", error);
+                            }
                         });
                     }
                 });
-                mathRender(realElement);
+                mathRender(realElement, protyle);
                 if (index === tempElement.content.childElementCount - 1) {
                     // https://github.com/siyuan-note/siyuan/issues/11156
                     const currentWbrElement = blockElement.querySelector("wbr");
@@ -322,7 +346,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
         });
     } else if (blockElement.getAttribute("data-type") === "NodeCodeBlock") {
         editElement.parentElement.removeAttribute("data-render");
-        highlightRender(blockElement);
+        highlightRender(blockElement, protyle);
     } else {
         focusByWbr(protyle.wysiwyg.element, range);
         protyle.hint.render(protyle);

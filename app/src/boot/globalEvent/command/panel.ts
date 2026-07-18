@@ -1,6 +1,6 @@
 import {Dialog} from "../../../dialog";
 import {App} from "../../../index";
-import {upDownHint} from "../../../util/upDownHint";
+import {upDownHint} from "../../../protyle/util/upDownHint";
 import {updateHotkeyTip} from "../../../protyle/util/compatibility";
 import {isMobile} from "../../../util/functions";
 import {Constants} from "../../../constants";

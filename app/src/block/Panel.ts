@@ -238,6 +238,7 @@ export class BlockPanel {
                 participation: "live",
                 content: {mode: "bound", notebookId: targetNotebookId},
                 initialLoad: "automatic",
+                hostReadOnly: window.siyuan.config.readonly,
                 signal: this.abortController.signal,
             });
             this.editors.push(editor);

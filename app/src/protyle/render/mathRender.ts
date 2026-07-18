@@ -3,10 +3,17 @@ import {addStyle} from "../util/addStyle";
 import {Constants} from "../../constants";
 import {hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
 import {hasClosestBlock} from "../util/hasClosest";
-import {looseJsonParse} from "../../util/functions";
-import {genRenderFrame} from "./util";
+import {looseJsonParse} from "../util/looseJsonParse";
+import type {ProtyleRendererContext} from "./renderContext";
 
-export const mathRender = (element: Element, cdn = Constants.PROTYLE_CDN, maxWidth = false) => {
+const genMathRenderFrame = (renderElement: Element) => {
+    if (!renderElement.querySelector(".protyle-cursor")) {
+        renderElement.firstElementChild.innerHTML = `<span></span><span class="protyle-cursor">${Constants.ZWSP}</span>`;
+    }
+};
+
+export const mathRender = (element: Element, context: ProtyleRendererContext,
+                           cdn = Constants.PROTYLE_CDN, maxWidth = false) => {
     let mathElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "math" && element.getAttribute("data-render") !== "true") {
         mathElements = [element];
@@ -23,7 +30,7 @@ export const mathRender = (element: Element, cdn = Constants.PROTYLE_CDN, maxWid
                 mathElement.setAttribute("data-render", "true");
                 let macros = {};
                 try {
-                    macros = looseJsonParse(window.siyuan.config.editor.katexMacros || "{}");
+                    macros = looseJsonParse(context.settings.editor.katexMacros);
                 } catch (e) {
                     console.warn("KaTex macros is not JSON", e);
                 }
@@ -38,7 +45,7 @@ export const mathRender = (element: Element, cdn = Constants.PROTYLE_CDN, maxWid
                     });
                     const blockElement = hasClosestBlock(mathElement);
                     if (isBlock) {
-                        genRenderFrame(mathElement);
+                        genMathRenderFrame(mathElement);
                         mathElement.firstElementChild.firstElementChild.classList.remove("ft__error");
                         mathElement.firstElementChild.firstElementChild.setAttribute("contenteditable", "false");
                         mathElement.firstElementChild.firstElementChild.innerHTML = mathHTML;
@@ -118,7 +125,7 @@ export const mathRender = (element: Element, cdn = Constants.PROTYLE_CDN, maxWid
                     }
                 } catch (e) {
                     if (isBlock) {
-                        genRenderFrame(mathElement);
+                        genMathRenderFrame(mathElement);
                         mathElement.firstElementChild.firstElementChild.setAttribute("contenteditable", "false");
                         mathElement.firstElementChild.firstElementChild.innerHTML = e.message;
                         mathElement.firstElementChild.firstElementChild.classList.add("ft__error");

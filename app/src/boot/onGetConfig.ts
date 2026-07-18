@@ -63,7 +63,7 @@ export const onGetConfig = (isStart: boolean, app: App) => {
             /// #if !BROWSER
             sendGlobalShortcut(app);
             /// #endif
-            openChangelog();
+            openChangelog(app);
         } catch (e) {
             resetLayout();
         }

@@ -1,7 +1,6 @@
 import {Menu} from "../../../plugin/Menu";
 import {hasClosestByClassName} from "../../util/hasClosest";
-import {upDownHint} from "../../../util/upDownHint";
-import {fetchPost} from "../../../util/fetch";
+import {upDownHint} from "../../util/upDownHint";
 import {escapeHtml} from "../../../util/escape";
 import {transaction} from "../../wysiwyg/transaction";
 import {unicode2Emoji} from "../../../emoji";
@@ -9,6 +8,7 @@ import {getColIconByType, getColId} from "./col";
 import {showMessage} from "../../../dialog/message";
 import {getNameByOperator} from "./calc";
 import {getFieldsByData} from "./view";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 
 const updateCol = (options: {
     target: HTMLElement,
@@ -76,15 +76,21 @@ const updateCol = (options: {
     }]);
 };
 
-const genSearchList = (element: Element, keyword: string, avId: string, isRelation: boolean, cb?: () => void) => {
+const genSearchList = (protyle: IProtyle, element: HTMLElement, keyword: string, avId: string, isRelation: boolean,
+                       cb?: () => void) => {
     if (!isRelation && !avId) {
         showMessage(window.siyuan.languages.selectRelation);
         return;
     }
-    fetchPost(isRelation ? "/api/av/searchAttributeViewRelationKey" : "/api/av/searchAttributeViewRollupDestKeys", {
+    const load = beginAVRenderLoad(protyle, element);
+    void requestAVRender<{data: {keys: IAVColumn[]}}>(protyle, load,
+        isRelation ? "/api/av/searchAttributeViewRelationKey" : "/api/av/searchAttributeViewRollupDestKeys", {
         avID: avId,
         keyword
-    }, (response) => {
+    }).then((response) => {
+        if (!load.isCurrent()) {
+            return;
+        }
         let html = "";
         response.data.keys.forEach((item: IAVColumn, index: number) => {
             html += `<div class="b3-list-item b3-list-item--narrow${index === 0 ? " b3-list-item--focus" : ""}" data-col-id="${item.id}" ${isRelation ? `data-target-av-id="${item.relation.avID}"` : `data-col-type="${item.type}"`}>
@@ -96,6 +102,8 @@ const genSearchList = (element: Element, keyword: string, avId: string, isRelati
         if (cb) {
             cb();
         }
+    }).catch((error) => {
+        reportAVLoadFailure(load, "attribute view rollup search", error);
     });
 };
 
@@ -138,7 +146,8 @@ export const goSearchRollupCol = (options: {
             });
             inputElement.addEventListener("input", (event) => {
                 event.stopPropagation();
-                genSearchList(listElement, inputElement.value, options.isRelation ? options.data.id : options.target.dataset.avId, options.isRelation);
+                genSearchList(options.protyle, listElement, inputElement.value,
+                    options.isRelation ? options.data.id : options.target.dataset.avId, options.isRelation);
             });
             element.lastElementChild.addEventListener("click", (event) => {
                 const listItemElement = hasClosestByClassName(event.target as HTMLElement, "b3-list-item");
@@ -148,7 +157,8 @@ export const goSearchRollupCol = (options: {
                     window.siyuan.menus.menu.remove();
                 }
             });
-            genSearchList(listElement, "", options.isRelation ? options.data.id : options.target.dataset.avId, options.isRelation, () => {
+            genSearchList(options.protyle, listElement, "",
+                options.isRelation ? options.data.id : options.target.dataset.avId, options.isRelation, () => {
                 const rect = options.target.getBoundingClientRect();
                 menu.open({
                     x: rect.left,
@@ -212,7 +222,13 @@ export const bindRollupData = (options: {
             });
         }
         if (oldValue.keyID && targetKeyAVId) {
-            fetchPost("/api/av/getAttributeView", {id: targetKeyAVId}, (response) => {
+            const load = beginAVRenderLoad(options.protyle, options.menuElement);
+            void requestAVRender<IWebSocketData>(options.protyle, load, "/api/av/getAttributeView", {
+                id: targetKeyAVId,
+            }).then((response) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
                 response.data.av.keyValues.find((item: { key: { id: string, name: string, type: TAVCol } }) => {
                     if (item.key.id === oldValue.keyID) {
                         goSearchRollupTargetElement.querySelector(".b3-menu__accelerator").textContent = item.key.name;
@@ -224,6 +240,8 @@ export const bindRollupData = (options: {
                         return true;
                     }
                 });
+            }).catch((error) => {
+                reportAVLoadFailure(load, "attribute view rollup metadata", error);
             });
         }
     }

@@ -32,7 +32,7 @@ import {getAllModels, getAllTabs} from "./layout/getAll";
 import {getLocalStorage, isChromeBrowser, isInMobileApp} from "./protyle/util/compatibility";
 import {isBrowser} from "./util/functions";
 import {checkPublishServiceClosed} from "./util/processMessage";
-import {hideAllElements} from "./protyle/ui/hideElements";
+import {hideAllEditorElements} from "./protyle/ui/hideElements";
 import {loadPlugins, reloadPlugin} from "./plugin/loader";
 import "./assets/scss/base.scss";
 import {reloadEmoji} from "./emoji";
@@ -49,6 +49,8 @@ import {reloadSync} from "./util/reloadSync";
 import {setTitle} from "./util/processTitle";
 import {createAppProtyleHost} from "./host/protyle";
 import {createAppProtylePluginPort} from "./host/plugin";
+import {createAppProtyleApplicationSettings} from "./host/protyle-settings";
+import {createAppProtyleLocalization} from "./host/protyle-localization";
 import {createProtyleEditorRegistry} from "../../enterprise/packages/protyle-browser/src";
 import type {ProtyleHostPort} from "../../enterprise/packages/protyle-browser/src/contracts";
 
@@ -57,12 +59,16 @@ export class App {
     public readonly protyleEditors: TProtyleEditorRegistry;
     public readonly protyleHost: ProtyleHostPort;
     public readonly protylePlugins: TProtylePluginPort;
+    public readonly localization: TProtyleLocalizationPort;
+    public readonly settings: TProtyleApplicationSettingsPort;
     public appId: string;
 
     constructor() {
         this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
         this.protyleHost = createAppProtyleHost(this);
         this.protylePlugins = createAppProtylePluginPort(this);
+        this.localization = createAppProtyleLocalization();
+        this.settings = createAppProtyleApplicationSettings();
         if (checkPublishServiceClosed()) {
             return;
         }
@@ -116,7 +122,7 @@ export class App {
                             break;
                         case "readonly":
                             window.siyuan.config.editor.readOnly = data.data;
-                            hideAllElements(["util"]);
+                            hideAllEditorElements(this.protyleEditors);
                             break;
                         case "setConf":
                             window.siyuan.config = data.data;

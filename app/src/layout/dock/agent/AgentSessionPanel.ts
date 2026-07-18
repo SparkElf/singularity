@@ -2,7 +2,7 @@ import {SessionIndexItem, SessionStore} from "./SessionStore";
 import {escapeHtml} from "../../../util/escape";
 import {setPosition} from "../../../util/setPosition";
 import {hasClosestByClassName} from "../../../protyle/util/hasClosest";
-import {upDownHint} from "../../../util/upDownHint";
+import {upDownHint} from "../../../protyle/util/upDownHint";
 /// #if !BROWSER
 import * as path from "path";
 import {useShell} from "../../../util/pathName";

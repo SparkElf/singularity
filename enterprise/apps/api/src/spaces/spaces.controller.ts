@@ -1,6 +1,5 @@
-import { Controller, Get, Header, Param, Req, Res } from "@nestjs/common";
+import { Controller, Get, Header, Param, Req } from "@nestjs/common";
 import {
-  ApiCookieAuth,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -12,40 +11,32 @@ import {
   AUTHORIZED_SPACES_PATH,
   AUTHORIZED_SPACES_RESPONSE_OPENAPI_SCHEMA,
   type AuthorizedSpacesResponse,
-  AUTH_SESSION_COOKIE_NAME,
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
   SPACE_RUNTIME_CONTROLLER_PATH,
   type SpaceRuntimeBootstrap,
+  type SpaceRuntimePathParameters,
   spaceRuntimePathParametersSchema,
   UUID_OPENAPI_SCHEMA,
 } from "@singularity/contracts";
 
-import type {
-  HttpReplyBoundary,
-  HttpRequestBoundary,
-} from "../http-boundary.js";
-import {
-  ApiProblemError,
-  notFound,
-  serviceUnavailable,
-  validationFailed,
-} from "../problem.js";
-import { IdentityService } from "../identity/identity.service.js";
-import { SESSION_COOKIE_OPTIONS } from "../identity/session-crypto.js";
+import type { HttpRequestBoundary } from "../http-boundary.js";
+import { Authenticated, CurrentSession } from "../identity/http-access.js";
+import type { AuthenticatedSession } from "../identity/identity.service.js";
+import { ZodValidationPipe } from "../identity/zod-validation.pipe.js";
+import { notFound, serviceUnavailable } from "../problem.js";
 import { SpaceAccessService } from "./space-access.service.js";
 
 @ApiTags("spaces")
 @Controller()
 export class SpacesController {
   constructor(
-    private readonly identity: IdentityService,
     private readonly spaces: SpaceAccessService,
   ) {}
 
   @Get(AUTHORIZED_SPACES_PATH)
   @Header("Cache-Control", "no-store")
+  @Authenticated()
   @ApiOperation({ summary: "List the current user's authorized spaces" })
-  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
   @ApiOkResponse({ schema: AUTHORIZED_SPACES_RESPONSE_OPENAPI_SCHEMA })
   @ApiResponse({
     status: 401,
@@ -56,17 +47,15 @@ export class SpacesController {
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
   })
   async listSpaces(
-    @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
+    @CurrentSession() session: AuthenticatedSession,
   ): Promise<AuthorizedSpacesResponse> {
-    const session = await this.#authenticateOrClear(request, reply);
     return { spaces: await this.spaces.listAuthorizedSpaces(session.userId) };
   }
 
   @Get(SPACE_RUNTIME_CONTROLLER_PATH)
   @Header("Cache-Control", "no-store")
+  @Authenticated()
   @ApiOperation({ summary: "Read an authorized space runtime state" })
-  @ApiCookieAuth(AUTH_SESSION_COOKIE_NAME)
   @ApiParam({ name: "organizationId", schema: UUID_OPENAPI_SCHEMA })
   @ApiParam({ name: "spaceId", schema: UUID_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA })
@@ -87,19 +76,15 @@ export class SpacesController {
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
   })
   async getRuntime(
-    @Param() parameters: unknown,
+    @Param(new ZodValidationPipe(spaceRuntimePathParametersSchema))
+    parameters: SpaceRuntimePathParameters,
     @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
+    @CurrentSession() session: AuthenticatedSession,
   ): Promise<SpaceRuntimeBootstrap> {
-    const parsed = spaceRuntimePathParametersSchema.safeParse(parameters);
-    if (!parsed.success) {
-      throw validationFailed();
-    }
-    const session = await this.#authenticateOrClear(request, reply);
     const runtime = await this.spaces.getRuntime(
       session.userId,
-      parsed.data.organizationId,
-      parsed.data.spaceId,
+      parameters.organizationId,
+      parameters.spaceId,
       request.id,
     );
     if (runtime === null) {
@@ -109,25 +94,5 @@ export class SpacesController {
       throw serviceUnavailable();
     }
     return runtime;
-  }
-
-  async #authenticateOrClear(
-    request: HttpRequestBoundary,
-    reply: HttpReplyBoundary,
-  ) {
-    try {
-      return await this.identity.authenticate(
-        request.cookies[AUTH_SESSION_COOKIE_NAME],
-        request.id,
-      );
-    } catch (error) {
-      if (
-        error instanceof ApiProblemError &&
-        error.code === "unauthenticated"
-      ) {
-        reply.clearCookie(AUTH_SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
-      }
-      throw error;
-    }
   }
 }

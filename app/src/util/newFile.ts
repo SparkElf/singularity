@@ -11,6 +11,7 @@ import {getDisplayName, getOpenNotebookCount, pathPosix} from "./pathName";
 import {Constants} from "../constants";
 import {replaceFileName, validateName} from "../editor/rename";
 import {hideElements} from "../protyle/ui/hideElements";
+import {closeAllDialogs} from "../dialog";
 import {openMobileFileById} from "../mobile/editor";
 import {App} from "../index";
 import {NewDocTargetByHPath, NewDocTargetSubDoc, getNewDocTargetFromSavePath, getNewDocTargetFromTree} from "./parseNewDocTarget";
@@ -56,7 +57,7 @@ export const newFile = (app: App, name?: string) => {
             currentPath,
             hasFocusTarget,
             name: replaceFileName(name.trim()),
-            onCreated: () => hideElements(["dialog"]),
+            onCreated: closeAllDialogs,
         });
     }
 };

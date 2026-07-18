@@ -3,8 +3,9 @@ import {Dialog} from "../dialog";
 import {highlightRender} from "../protyle/render/highlightRender";
 import {isMobile} from "../util/functions";
 import {Constants} from "../constants";
+import type {App} from "../index";
 
-export const openChangelog = () => {
+export const openChangelog = (app: App) => {
     fetchPost("/api/system/getChangelog", {}, (response) => {
         if (!response.data.show) {
             return;
@@ -16,6 +17,6 @@ export const openChangelog = () => {
             content: `<div style="overflow:auto;" class="b3-dialog__content b3-typography b3-typography--default">${response.data.html}</div>`
         });
         dialog.element.setAttribute("data-key", Constants.DIALOG_CHANGELOG);
-        highlightRender(dialog.element);
+        highlightRender(dialog.element, app);
     });
 };

@@ -1,9 +1,9 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
-import {genIconHTML} from "./util";
 import {hasClosestByClassName} from "../util/hasClosest";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
-export const graphvizRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const graphvizRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let graphvizElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "graphviz" && element.getAttribute("data-render") !== "true") {
         graphvizElements = [element];
@@ -18,7 +18,7 @@ export const graphvizRender = (element: Element, cdn = Constants.PROTYLE_CDN) =>
         graphvizElements.forEach((e: HTMLDivElement) => {
             e.setAttribute("data-render", "true");
             if (!e.firstElementChild.classList.contains("protyle-icons")) {
-                e.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement));
+                e.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement));
             }
             const renderElement = e.firstElementChild.nextElementSibling as HTMLElement;
             if (!e.getAttribute("data-content")) {

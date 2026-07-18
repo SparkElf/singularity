@@ -2,13 +2,12 @@ import {showMessage} from "../../dialog/message";
 import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
 import {confirmDialog} from "../../dialog/confirmDialog";
-import {Dialog} from "../../dialog";
+import {closeAllDialogs, Dialog} from "../../dialog";
 import {isInIOS} from "../../protyle/util/compatibility";
 import {isMobile} from "../../util/functions";
 import {processSync} from "../../dialog/processSystem";
 import {getCloudURL, getIndexURL} from "../util/about";
 import {iOSPurchase} from "../../util/iOSPurchase";
-import {hideElements} from "../../protyle/ui/hideElements";
 /// #if MOBILE
 import {closePanel} from "../../mobile/util/closePanel";
 /// #endif
@@ -461,7 +460,7 @@ const bindAccountAuthForm = (
 };
 
 const confirmDeactivateAccount = () => {
-    hideElements(["dialog"]);
+    closeAllDialogs();
     confirmDialog("⚠️ " + window.siyuan.languages.deactivateUser, window.siyuan.languages.deactivateUserTip, () => {
         fetchPost("/api/account/deactivate", {}, () => {
             window.siyuan.user = null;

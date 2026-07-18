@@ -1,11 +1,14 @@
-import {setStorageVal, updateHotkeyTip} from "../util/compatibility";
 import {ToolbarItem} from "./ToolbarItem";
-import {setPosition} from "../../util/setPosition";
+import {updateHotkeyTip} from "../util/keyboard";
+import {setToolbarPosition} from "./position";
 import {focusByRange, getSelectionPosition} from "../util/selection";
 import {Constants} from "../../constants";
 import {hasClosestBlock, hasClosestByAttribute} from "../util/hasClosest";
 import {updateBatchTransaction} from "../wysiwyg/transaction";
 import {lineNumberRender} from "../render/highlightRender";
+
+const text = (protyle: IProtyle, key: Parameters<IProtyle["localization"]["text"]>[0]) =>
+    protyle.localization.text(key);
 
 export class Font extends ToolbarItem {
     public element: HTMLElement;
@@ -18,12 +21,12 @@ export class Font extends ToolbarItem {
             protyle.toolbar.subElement.style.width = "";
             protyle.toolbar.subElement.style.padding = "";
             protyle.toolbar.subElement.append(appearanceMenu(protyle, getFontNodeElements(protyle)));
-            protyle.toolbar.subElement.style.zIndex = (++window.siyuan.zIndex).toString();
+            protyle.toolbar.activateOverlay();
             protyle.toolbar.subElement.classList.remove("fn__none");
             protyle.toolbar.subElementCloseCB = undefined;
             focusByRange(protyle.toolbar.range);
             const position = getSelectionPosition(protyle.wysiwyg.element, protyle.toolbar.range);
-            setPosition(protyle.toolbar.subElement, position.left, position.top + 18, 26);
+            setToolbarPosition(protyle.toolbar.subElement, position.left, position.top + 18, 26);
         });
     }
 }
@@ -34,14 +37,14 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
         "var(--b3-font-color5)", "var(--b3-font-color6)", "var(--b3-font-color7)", "var(--b3-font-color8)",
         "var(--b3-font-color9)", "var(--b3-font-color10)", "var(--b3-font-color11)", "var(--b3-font-color12)",
         "var(--b3-font-color13)"].forEach((item) => {
-        colorHTML += `<button ${item ? `class="color__square" style="color:${item}"` : `class="color__square ariaLabel" data-position="3south" aria-label="${window.siyuan.languages.default}"`} data-type="color">A</button>`;
+        colorHTML += `<button ${item ? `class="color__square" style="color:${item}"` : `class="color__square ariaLabel" data-position="3south" aria-label="${text(protyle, "default")}"`} data-type="color">A</button>`;
     });
     let bgHTML = "";
     ["", "var(--b3-font-background1)", "var(--b3-font-background2)", "var(--b3-font-background3)", "var(--b3-font-background4)",
         "var(--b3-font-background5)", "var(--b3-font-background6)", "var(--b3-font-background7)", "var(--b3-font-background8)",
         "var(--b3-font-background9)", "var(--b3-font-background10)", "var(--b3-font-background11)", "var(--b3-font-background12)",
         "var(--b3-font-background13)"].forEach((item) => {
-        bgHTML += `<button ${item ? `class="color__square" style="background-color:${item}"` : `class="color__square ariaLabel" data-position="3south" aria-label="${window.siyuan.languages.default}"`} data-type="backgroundColor"></button>`;
+        bgHTML += `<button ${item ? `class="color__square" style="background-color:${item}"` : `class="color__square ariaLabel" data-position="3south" aria-label="${text(protyle, "default")}"`} data-type="backgroundColor"></button>`;
     });
 
     const element = document.createElement("div");
@@ -54,12 +57,12 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
         }
     });
     let lastColorHTML = "";
-    const lastFonts = window.siyuan.storage[Constants.LOCAL_FONTSTYLES];
+    const lastFonts = protyle.settings.toolbar.recentFontStyles;
     if (lastFonts.length > 0) {
         lastColorHTML = `<div data-id="lastUsed" class="fn__flex">
-    ${window.siyuan.languages.lastUsed}
+    ${text(protyle, "lastUsed")}
     <span class="fn__space"></span>
-    <kbd class="fn__kbd fn__flex-center${window.siyuan.config.keymap.editor.insert.lastUsed.custom ? "" : " fn__none"}">${updateHotkeyTip(window.siyuan.config.keymap.editor.insert.lastUsed.custom)}</kbd>
+    <kbd class="fn__kbd fn__flex-center${protyle.settings.toolbar.hotkeys.lastUsed ? "" : " fn__none"}">${updateHotkeyTip(protyle.settings.toolbar.hotkeys.lastUsed)}</kbd>
 </div>
 <div class="fn__hr--small"></div>
 <div data-id="lastUsedWrap" class="fn__flex fn__flex-wrap" style="align-items: center">`;
@@ -67,16 +70,16 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
             const lastFontStatus = item.split(Constants.ZWSP);
             switch (lastFontStatus[0]) {
                 case "color":
-                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${window.siyuan.languages.colorFont}${lastFontStatus[1] ? "" : " " + window.siyuan.languages.default}" ${lastFontStatus[1] ? `style="color:${lastFontStatus[1]}"` : ""} data-type="${lastFontStatus[0]}">A</button>`;
+                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${text(protyle, "colorFont")}${lastFontStatus[1] ? "" : " " + text(protyle, "default")}" ${lastFontStatus[1] ? `style="color:${lastFontStatus[1]}"` : ""} data-type="${lastFontStatus[0]}">A</button>`;
                     break;
                 case "backgroundColor":
-                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${window.siyuan.languages.colorPrimary}${lastFontStatus[1] ? "" : " " + window.siyuan.languages.default}" ${lastFontStatus[1] ? `style="background-color:${lastFontStatus[1]}"` : ""} data-type="${lastFontStatus[0]}"></button>`;
+                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${text(protyle, "colorPrimary")}${lastFontStatus[1] ? "" : " " + text(protyle, "default")}" ${lastFontStatus[1] ? `style="background-color:${lastFontStatus[1]}"` : ""} data-type="${lastFontStatus[0]}"></button>`;
                     break;
                 case "style2":
-                    lastColorHTML += `<button data-type="${lastFontStatus[0]}" class="protyle-font__style" style="-webkit-text-stroke: 0.2px var(--b3-theme-on-background);-webkit-text-fill-color : transparent;">${window.siyuan.languages.hollow}</button>`;
+                    lastColorHTML += `<button data-type="${lastFontStatus[0]}" class="protyle-font__style" style="-webkit-text-stroke: 0.2px var(--b3-theme-on-background);-webkit-text-fill-color : transparent;">${text(protyle, "hollow")}</button>`;
                     break;
                 case "style4":
-                    lastColorHTML += `<button data-type="${lastFontStatus[0]}" class="protyle-font__style" style="text-shadow: 1px 1px var(--b3-theme-surface-lighter), 2px 2px var(--b3-theme-surface-lighter), 3px 3px var(--b3-theme-surface-lighter), 4px 4px var(--b3-theme-surface-lighter)">${window.siyuan.languages.shadow}</button>`;
+                    lastColorHTML += `<button data-type="${lastFontStatus[0]}" class="protyle-font__style" style="text-shadow: 1px 1px var(--b3-theme-surface-lighter), 2px 2px var(--b3-theme-surface-lighter), 3px 3px var(--b3-theme-surface-lighter), 4px 4px var(--b3-theme-surface-lighter)">${text(protyle, "shadow")}</button>`;
                     break;
                 case "fontSize":
                     if (!disableFont) {
@@ -84,17 +87,17 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
                     }
                     break;
                 case "style1":
-                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${window.siyuan.languages.color}${lastFontStatus[1] ? "" : " " + window.siyuan.languages.default}" ${lastFontStatus[1] ? `style="background-color:${lastFontStatus[1]};color:${lastFontStatus[2]}"` : ""} data-type="${lastFontStatus[0]}">A</button>`;
+                    lastColorHTML += `<button class="color__square ariaLabel" data-position="3south" aria-label="${text(protyle, "color")}${lastFontStatus[1] ? "" : " " + text(protyle, "default")}" ${lastFontStatus[1] ? `style="background-color:${lastFontStatus[1]};color:${lastFontStatus[2]}"` : ""} data-type="${lastFontStatus[0]}">A</button>`;
                     break;
                 case "clear":
-                    lastColorHTML += `<button style="height: 26px;display: flex;align-items: center;padding: 0 5px;" data-type="${lastFontStatus[0]}" class="protyle-font__style ariaLabel" aria-label="${window.siyuan.languages.clearFontStyle}"><svg class="svg--mid"><use xlink:href="#iconTrashcan"></use></svg></button>`;
+                    lastColorHTML += `<button style="height: 26px;display: flex;align-items: center;padding: 0 5px;" data-type="${lastFontStatus[0]}" class="protyle-font__style ariaLabel" aria-label="${text(protyle, "clearFontStyle")}"><svg class="svg--mid"><use xlink:href="#iconTrashcan"></use></svg></button>`;
                     break;
             }
         });
         lastColorHTML += "</div>";
     }
     let textElement: HTMLElement;
-    let fontSize = window.siyuan.config.editor.fontSize + "px";
+    let fontSize = protyle.settings.editor.fontSize + "px";
     if (nodeElements && nodeElements.length > 0) {
         textElement = nodeElements[0] as HTMLElement;
     } else {
@@ -104,44 +107,44 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
         }
     }
     if (textElement) {
-        fontSize = textElement.style.fontSize || window.siyuan.config.editor.fontSize + "px";
+        fontSize = textElement.style.fontSize || protyle.settings.editor.fontSize + "px";
     }
     element.innerHTML = `${lastColorHTML}
 <div class="fn__hr"></div>
-<div data-id="color">${window.siyuan.languages.color}</div>
+<div data-id="color">${text(protyle, "color")}</div>
 <div class="fn__hr--small"></div>
 <div data-id="colorWrap" class="fn__flex fn__flex-wrap">
-    <button class="color__square ariaLabel" data-position="3south" data-type="style1" aria-label="${window.siyuan.languages.default}">A</button>
+    <button class="color__square ariaLabel" data-position="3south" data-type="style1" aria-label="${text(protyle, "default")}">A</button>
     <button class="color__square" data-type="style1" style="color: var(--b3-card-error-color);background-color: var(--b3-card-error-background);">A</button>
     <button class="color__square" data-type="style1" style="color: var(--b3-card-warning-color);background-color: var(--b3-card-warning-background);">A</button>
     <button class="color__square" data-type="style1" style="color: var(--b3-card-info-color);background-color: var(--b3-card-info-background);">A</button>
     <button class="color__square" data-type="style1" style="color: var(--b3-card-success-color);background-color: var(--b3-card-success-background);">A</button>
 </div>
 <div class="fn__hr"></div>
-<div data-id="colorFont">${window.siyuan.languages.colorFont}</div>
+<div data-id="colorFont">${text(protyle, "colorFont")}</div>
 <div class="fn__hr--small"></div>
 <div data-id="colorFontWrap" class="fn__flex fn__flex-wrap">
     ${colorHTML}
 </div>
 <div class="fn__hr"></div>
-<div data-id="colorPrimary">${window.siyuan.languages.colorPrimary}</div>
+<div data-id="colorPrimary">${text(protyle, "colorPrimary")}</div>
 <div class="fn__hr--small"></div>
 <div data-id="colorPrimaryWrap" class="fn__flex fn__flex-wrap">
     ${bgHTML}
 </div>
 <div class="fn__hr"></div>
-<div data-id="fontStyle">${window.siyuan.languages.fontStyle}</div>
+<div data-id="fontStyle">${text(protyle, "fontStyle")}</div>
 <div class="fn__hr--small"></div>
 <div data-id="fontStyleWrap" class="fn__flex">
-    <button data-type="style2" class="protyle-font__style" style="-webkit-text-stroke: 0.2px var(--b3-theme-on-background);-webkit-text-fill-color : transparent;">${window.siyuan.languages.hollow}</button>
-    <button data-type="style4" class="protyle-font__style" style="text-shadow: 1px 1px var(--b3-theme-surface-lighter), 2px 2px var(--b3-theme-surface-lighter), 3px 3px var(--b3-theme-surface-lighter), 4px 4px var(--b3-theme-surface-lighter)">${window.siyuan.languages.shadow}</button>
+    <button data-type="style2" class="protyle-font__style" style="-webkit-text-stroke: 0.2px var(--b3-theme-on-background);-webkit-text-fill-color : transparent;">${text(protyle, "hollow")}</button>
+    <button data-type="style4" class="protyle-font__style" style="text-shadow: 1px 1px var(--b3-theme-surface-lighter), 2px 2px var(--b3-theme-surface-lighter), 3px 3px var(--b3-theme-surface-lighter), 4px 4px var(--b3-theme-surface-lighter)">${text(protyle, "shadow")}</button>
 </div>
 <div class="fn__hr${disableFont ? " fn__none" : ""}"></div>
 <div data-id="fontSize" class="fn__flex${disableFont ? " fn__none" : ""}">
-    ${window.siyuan.languages.fontSize}
+    ${text(protyle, "fontSize")}
     <span class="fn__flex-1"></span>
     <label class="fn__flex">
-        ${window.siyuan.languages.relativeFontSize}
+        ${text(protyle, "relativeFontSize")}
         <span class="fn__space"></span>
         <input class="b3-switch fn__flex-center" ${fontSize.endsWith("em") ? "checked" : ""} type="checkbox">
         <span class="fn__space--small"></span>
@@ -160,7 +163,7 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
 <div data-id="clearFontStyle" class="fn__flex">
     <div class="fn__space--small"></div>
     <button class="b3-button b3-button--remove fn__block" data-type="clear">
-        <svg><use xlink:href="#iconTrashcan"></use></svg>${window.siyuan.languages.clearFontStyle}
+        <svg><use xlink:href="#iconTrashcan"></use></svg>${text(protyle, "clearFontStyle")}
     </button>
     <div class="fn__space--small"></div>
 </div>`;
@@ -224,15 +227,15 @@ export const appearanceMenu = (protyle: IProtyle, nodeElements?: Element[]) => {
 };
 
 export const fontEvent = (protyle: IProtyle, nodeElements: Element[], type?: string, color?: string) => {
-    let localFontStyles = window.siyuan.storage[Constants.LOCAL_FONTSTYLES];
+    let localFontStyles = [...protyle.settings.toolbar.recentFontStyles];
     if (type) {
         localFontStyles.splice(0, 0, `${type}${Constants.ZWSP}${color}`);
         localFontStyles = [...new Set(localFontStyles)];
         if (localFontStyles.length > 8) {
             localFontStyles.splice(8, 1);
         }
-        window.siyuan.storage[Constants.LOCAL_FONTSTYLES] = localFontStyles;
-        setStorageVal(Constants.LOCAL_FONTSTYLES, window.siyuan.storage[Constants.LOCAL_FONTSTYLES]);
+        protyle.settings.toolbar.setRecentFontStyles(localFontStyles);
+        void protyle.settings.toolbar.persist();
     } else {
         if (localFontStyles.length === 0) {
             type = "style1";
@@ -272,7 +275,7 @@ export const fontEvent = (protyle: IProtyle, nodeElements: Element[], type?: str
                 e.style.fontSize = color;
             }
             if ((type === "fontSize" || type === "clear") && e.getAttribute("data-type") === "NodeCodeBlock") {
-                lineNumberRender(e.querySelector(".hljs"));
+                lineNumberRender(e.querySelector(".hljs"), protyle);
             }
         });
         focusByRange(protyle.toolbar.range);

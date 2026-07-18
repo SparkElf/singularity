@@ -12,6 +12,7 @@ import {
   createPostgresHandshakeBlackhole,
   createIsolatedPostgres,
   isolatedDatabaseUrl,
+  testDatabaseUrl,
 } from "@singularity/database/testing/postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
@@ -138,7 +139,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
   });
 
   test("rejects an S1 migration over nonempty S0 domain data without rewriting it", async () => {
-    const configuredUrl = new URL(process.env.SINGULARITY_TEST_DATABASE_URL!);
+    const configuredUrl = new URL(testDatabaseUrl());
     configuredUrl.searchParams.delete("schema");
     const schemaName = `sg_s1_guard_${randomUUID().replaceAll("-", "")}`;
     const pool = new Pool({ connectionString: configuredUrl.toString() });
@@ -195,9 +196,9 @@ describe("S0-S1 PostgreSQL contracts", () => {
   });
 
   test("rejects a test database URL whose database name is not isolated", async () => {
-    const originalUrl = process.env.SINGULARITY_TEST_DATABASE_URL!;
+    const originalUrl = testDatabaseUrl();
     process.env.SINGULARITY_TEST_DATABASE_URL =
-      "postgresql://singularity:singularity@127.0.0.1:5432/singularity";
+      "postgresql://singularity:singularity@127.0.0.1:55433/singularity";
 
     try {
       await expect(
@@ -209,7 +210,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
   });
 
   test("bounds setup when PostgreSQL accepts TCP without completing its handshake", async () => {
-    const originalUrl = process.env.SINGULARITY_TEST_DATABASE_URL!;
+    const originalUrl = testDatabaseUrl();
     const blackhole = await createPostgresHandshakeBlackhole();
     const blackholeUrl = new URL(originalUrl);
     blackholeUrl.hostname = "127.0.0.1";
@@ -252,7 +253,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
   });
 
   test("removes a newly-created schema when migration setup fails", async () => {
-    const configuredUrl = process.env.SINGULARITY_TEST_DATABASE_URL!;
+    const configuredUrl = testDatabaseUrl();
     const baseUrl = new URL(configuredUrl);
     baseUrl.searchParams.delete("schema");
     const pool = new Pool({ connectionString: baseUrl.toString() });
@@ -277,7 +278,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
   });
 
   test("removes a newly-created schema when migration setup times out", async () => {
-    const configuredUrl = process.env.SINGULARITY_TEST_DATABASE_URL!;
+    const configuredUrl = testDatabaseUrl();
     const baseUrl = new URL(configuredUrl);
     baseUrl.searchParams.delete("schema");
     const pool = new Pool({ connectionString: baseUrl.toString() });

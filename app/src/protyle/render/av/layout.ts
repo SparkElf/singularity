@@ -1,9 +1,10 @@
 import {transaction} from "../../wysiwyg/transaction";
 import {Constants} from "../../../constants";
-import {fetchSyncPost} from "../../../util/fetch";
 import {setPosition} from "../../../util/setPosition";
 import {getCardAspectRatio} from "./gallery/util";
 import {getFieldsByData} from "./view";
+import {protyleContentIdentity} from "../../util/contentLoad";
+import {currentAVOverlay} from "./overlay";
 
 export const getLayoutHTML = (data: IAV) => {
     let html = "";
@@ -250,12 +251,32 @@ export const updateLayout = async (options: {
     options.target.dataset.load = "true";
     options.target.parentElement.querySelector(".av__layout-item--select").classList.remove("av__layout-item--select");
     options.target.classList.add("av__layout-item--select");
-    const response = await fetchSyncPost("/api/av/changeAttrViewLayout", {
-        blockID: options.nodeElement.getAttribute("data-node-id"),
-        avID: options.nodeElement.getAttribute("data-av-id"),
-        layoutType: options.target.getAttribute("data-view-type")
-    });
-    const menuElement = document.querySelector(".av__panel").lastElementChild as HTMLElement;
+    const identity = protyleContentIdentity(options.protyle);
+    let response: IWebSocketData;
+    try {
+        response = await options.protyle.transport!.request<IWebSocketData>("/api/av/changeAttrViewLayout", {
+            blockID: options.nodeElement.getAttribute("data-node-id"),
+            avID: options.nodeElement.getAttribute("data-av-id"),
+            layoutType: options.target.getAttribute("data-view-type")
+        }, {
+            identity,
+            intent: "write",
+            signal: options.protyle.requestSignal,
+        });
+    } catch (error) {
+        if (!options.protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] attribute view layout change failed", {
+                documentId: identity.documentId,
+                notebookId: identity.notebookId,
+                error,
+            });
+        }
+        return;
+    }
+    if (options.protyle.destroyed || !options.nodeElement.isConnected) {
+        return;
+    }
+    const menuElement = currentAVOverlay(options.protyle, "panel")!.lastElementChild as HTMLElement;
     menuElement.innerHTML = getLayoutHTML(response.data);
     // 切换布局类型后菜单高度变化（如表格→看板），需重新定位避免底部溢出视窗
     const tabRect = options.nodeElement.querySelector(".av__views").getBoundingClientRect();

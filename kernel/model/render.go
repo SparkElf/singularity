@@ -175,7 +175,7 @@ func fillBlockRefCount(nodes []*ast.Node) {
 	}
 }
 
-func renderBlockDOMByNodes(nodes []*ast.Node, luteEngine *lute.Lute) string {
+func renderBlockDOMByNodes(nodes []*ast.Node, luteEngine *lute.Lute, contentStore string) string {
 	tree := &parse.Tree{Root: &ast.Node{Type: ast.NodeDocument}, Context: &parse.Context{ParseOption: luteEngine.ParseOptions}}
 	blockRenderer := render.NewProtyleRenderer(tree, luteEngine.RenderOptions, luteEngine.ParseOptions)
 	for _, node := range nodes {
@@ -200,7 +200,7 @@ func renderBlockDOMByNodes(nodes []*ast.Node, luteEngine *lute.Lute) string {
 	if strings.HasPrefix(h, "<li") {
 		h = "<ul>" + h + "</ul>"
 	}
-	return h
+	return FillBlockRefNotebookIDs(h, contentStore)
 }
 
 func renderBlockContentByNodes(nodes []*ast.Node) string {

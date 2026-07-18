@@ -35,7 +35,7 @@ import {insertHTML} from "./insertHTML";
 import {hideElements} from "../ui/hideElements";
 import {insertAttrViewBlockAnimation} from "../render/av/row";
 import * as dayjs from "dayjs";
-import {zoomOut} from "../../menus/protyle";
+import {zoomOut} from "./zoom";
 import {addDragFill, getTypeByCellElement} from "../render/av/cell";
 import {processClonePHElement} from "../render/util";
 import {insertGalleryItemAnimation} from "../render/av/gallery/item";

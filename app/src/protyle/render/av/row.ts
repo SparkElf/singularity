@@ -10,7 +10,6 @@ import {
     renderCell,
     renderCellAttr
 } from "./cell";
-import {fetchPost} from "../../../util/fetch";
 import * as dayjs from "dayjs";
 import {Constants} from "../../../constants";
 import {insertGalleryItemAnimation} from "./gallery/item";
@@ -21,6 +20,8 @@ import {unicode2Emoji} from "../../../emoji";
 import {escapeAttr} from "../../../util/escape";
 import {getCompressURL} from "../../../util/image";
 import {getAVSelectStat, getAvBodyData, resetAVRowSelect, updateAVRowSelect} from "./virtualScroll";
+import {protyleContentIdentity} from "../../util/contentLoad";
+import {closeAVOverlay} from "./overlay";
 
 export const getRowHTML = (options: {
     data: IAVView
@@ -28,6 +29,7 @@ export const getRowHTML = (options: {
     rowIndex: number
     type: TAVView
     pinIndex?: number
+    fileIcon: string
 }) => {
     let html = "";
     if (options.type === "gallery") {
@@ -76,7 +78,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery")}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "gallery", options.fileIcon)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -146,7 +148,7 @@ data-field-id="${kanbanData.fields[fieldsIndex].id}"
 data-dtype="${cell.valueType}" 
 ${cell.value?.isDetached ? ' data-detached="true"' : ""} 
 style="${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban")}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, kanbanData.showIcon, "kanban", options.fileIcon)}</div>`;
             if (kanbanData.displayFieldName) {
                 html += `<div class="av__gallery-field av__gallery-field--name" data-empty="${isEmpty}">
     <div class="av__gallery-name">
@@ -199,7 +201,7 @@ ${cell.value?.isDetached ? ' data-detached="true"' : ""}
 style="width: ${column.width || "200px"};
 ${cell.valueType === "number" ? "text-align: right;" : ""}
 ${cell.bgColor ? `background-color:${cell.bgColor};` : ""}
-${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon)}</div>`;
+${cell.color ? `color:${cell.color};` : ""}">${renderCell(cell.value, options.rowIndex, tableData.showIcon, "table", options.fileIcon)}</div>`;
 
         if (options.pinIndex === index) {
             html += "</div>";
@@ -383,7 +385,8 @@ export const insertAttrViewBlockAnimation = (options: {
 data-wrap="${item.dataset.wrap}" 
 data-dtype="${item.dataset.dtype}" 
 style="width: ${item.style.width};${item.dataset.dtype === "number" ? "text-align: right;" : ""}" 
-${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(colType, null), lineNumber)}</div>`;
+${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(colType, null), lineNumber, true, "table",
+    options.protyle.settings.icons.file)}</div>`;
         if (pinIndex === index) {
             cellsHTML += "</div>";
         }
@@ -396,29 +399,54 @@ ${colType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValue(
 </div>`;
     });
     previousElement.insertAdjacentHTML("afterend", html);
-    fetchPost("/api/av/getAttributeViewAddingBlockDefaultValues", {
+    const ghostRows: Element[] = [];
+    let ghostRow = previousElement.nextElementSibling!;
+    for (let index = 0; index < options.srcIDs.length; index++) {
+        ghostRows.push(ghostRow);
+        ghostRow = ghostRow.nextElementSibling!;
+    }
+    const identity = protyleContentIdentity(options.protyle);
+    void options.protyle.transport!.request<IWebSocketData>("/api/av/getAttributeViewAddingBlockDefaultValues", {
         avID: options.blockElement.getAttribute("data-av-id"),
         viewID: options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
         groupID: options.groupID,
         previousID: options.previousId,
-    }, (response) => {
+    }, {
+        identity,
+        intent: "read",
+        signal: options.protyle.requestSignal,
+    }).then((response) => {
+        if (options.protyle.requestSignal.aborted || options.protyle.destroyed || !options.blockElement.isConnected) {
+            return;
+        }
         if (response.data.values) {
             let popCellElement: HTMLElement;
             const updateIds = Object.keys(response.data.values);
-            options.blockElement.querySelectorAll('[data-type="ghost"]').forEach(rowItem => {
+            ghostRows.forEach(rowItem => {
+                if (!rowItem.isConnected) {
+                    return;
+                }
                 rowItem.querySelectorAll(".av__cell").forEach((cellItem: HTMLElement) => {
                     if (!popCellElement && cellItem.getAttribute("data-detached") === "true") {
                         popCellElement = cellItem;
                     }
                     if (updateIds.includes(cellItem.dataset.colId)) {
                         const cellValue = response.data.values[cellItem.dataset.colId];
-                        cellItem.innerHTML = renderCell(cellValue);
+                        cellItem.innerHTML = renderCell(cellValue, 0, true, "table", options.protyle.settings.icons.file);
                         renderCellAttr(cellItem, cellValue);
                     }
                 });
             });
         }
         setPage(options.blockElement);
+    }).catch((error) => {
+        if (!options.protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] attribute view row defaults failed", {
+                documentId: identity.documentId,
+                notebookId: identity.notebookId,
+                error,
+            });
+        }
     });
 };
 
@@ -630,7 +658,7 @@ const updatePageSize = (options: {
         avID: options.avID,
         blockID
     }]);
-    document.querySelector(".av__panel")?.remove();
+    closeAVOverlay(options.protyle, "panel");
 };
 
 export const setPageSize = (options: {

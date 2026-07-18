@@ -16,7 +16,7 @@ import {
     isMac,
     isWin11
 } from "../protyle/util/compatibility";
-import {setCodeTheme} from "../protyle/render/util";
+import {setCodeTheme} from "../protyle/render/renderContext";
 import {getBackend, getFrontend} from "./functions";
 import {getWorkspaceName} from "./processTitle";
 
@@ -95,7 +95,11 @@ export const loadAssets = (data: Config.IAppearance) => {
         document.head.insertAdjacentHTML("afterbegin", `<meta name="theme-color" content="${getComputedStyle(document.body).getPropertyValue("--b3-body-background").trim()}">`);
     }
     /// #endif
-    setCodeTheme();
+    setCodeTheme({
+        codeBlockThemeDark: data.codeBlockThemeDark,
+        codeBlockThemeLight: data.codeBlockThemeLight,
+        theme: data.mode === 0 ? "light" : "dark",
+    });
 
     const themeScriptElement = document.getElementById("themeScript");
     const themeScriptAddress = `/appearance/themes/${data.mode === 1 ? data.themeDark : data.themeLight}/theme.js?v=${data.themeVer}`;

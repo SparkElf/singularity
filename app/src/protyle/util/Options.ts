@@ -1,8 +1,8 @@
 import {Constants} from "../../constants";
 import {merge} from "./merge";
 import {hintEmbed, hintRef, hintSlash, hintTag} from "../hint/extend";
-import {toolbarKeyToMenu} from "../toolbar/util";
-import {isMobile} from "../../util/functions";
+import {toolbarKeyToMenu} from "../toolbar/config";
+import {isNarrowViewport} from "./browserPlatform";
 
 export class Options {
     public options: IProtyleOptions;
@@ -84,13 +84,13 @@ export class Options {
             actions: ["desktop", "tablet", "mobile", "mp-wechat", "zhihu", "yuque"],
             delay: 0,
             markdown: {
-                paragraphBeginningSpace: window.siyuan.config.export.paragraphBeginningSpace,
+                paragraphBeginningSpace: false,
                 listStyle: false,
                 sanitize: true,
             },
             mode: "both",
         },
-        toolbar: isMobile() ? [
+        toolbar: isNarrowViewport() ? [
             "block-ref",
             "a",
             "|",
@@ -127,20 +127,19 @@ export class Options {
         typewriterMode: false,
         upload: {
             max: 1024 * 1024 * 1024 * 16,
-            url: Constants.UPLOAD_ADDRESS,
             extraData: {},
             fieldName: "file[]",
             filename: (name: string) => name.replace(/[\\/:*?"'<>|\[\]\(\)~!`&{}=#%$]/g, ""),
-            linkToImgUrl: "",
-            withCredentials: false,
         }
     };
 
-    constructor(options: IProtyleOptions) {
+    constructor(options: IProtyleOptions, private readonly settings: TProtyleApplicationSettingsPort) {
         this.options = options;
+        this.defaultOptions.preview.markdown.paragraphBeginningSpace =
+            settings.export.paragraphBeginningSpace;
     }
 
-    public merge(): IProtyleOptions {
+    public merge(): IResolvedProtyleOptions {
         if (this.options) {
             if (this.options.toolbar) {
                 this.options.toolbar = this.mergeToolbar(this.options.toolbar);
@@ -152,10 +151,10 @@ export class Options {
             }
         }
 
-        return merge(this.defaultOptions, this.options);
+        return merge(this.defaultOptions, this.options) as IResolvedProtyleOptions;
     }
 
     private mergeToolbar(toolbar: Array<string | IMenuItem>) {
-        return toolbarKeyToMenu(toolbar);
+        return toolbarKeyToMenu(toolbar, this.settings.toolbar.hotkeys);
     }
 }

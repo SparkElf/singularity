@@ -1,21 +1,28 @@
 export interface ProtyleReadOnlyState {
     host: boolean;
+    application: boolean;
     document: boolean;
     documentUpdatePending: boolean;
 }
 
-export const createProtyleReadOnlyState = (host: boolean): ProtyleReadOnlyState => ({
+export const createProtyleReadOnlyState = (host: boolean, application = false): ProtyleReadOnlyState => ({
     host,
+    application,
     document: false,
     documentUpdatePending: false,
 });
 
-export const isProtyleReadOnly = (state: ProtyleReadOnlyState) => state.host || state.document;
+export const isProtyleReadOnly = (state: ProtyleReadOnlyState) =>
+    state.host || state.application || state.document;
 
 export const canWriteProtyleContent = (state: ProtyleReadOnlyState) => !isProtyleReadOnly(state);
 
 export const setHostReadOnly = (state: ProtyleReadOnlyState, readOnly: boolean) => {
     state.host = readOnly;
+};
+
+export const setApplicationReadOnly = (state: ProtyleReadOnlyState, readOnly: boolean) => {
+    state.application = readOnly;
 };
 
 export const setDocumentReadOnlyFromResponse = (state: ProtyleReadOnlyState, readOnly: boolean) => {

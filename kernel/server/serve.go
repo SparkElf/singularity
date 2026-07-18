@@ -19,6 +19,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"html/template"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/88250/gulu"
+	"github.com/88250/lute/ast"
 	"github.com/emersion/go-webdav/caldav"
 	"github.com/emersion/go-webdav/carddav"
 	"github.com/gin-contrib/gzip"
@@ -50,6 +52,7 @@ import (
 	mcpclient "github.com/siyuan-note/siyuan/kernel/mcp/client"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/server/proxy"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 	"github.com/siyuan-note/siyuan/kernel/util"
 	"github.com/soheilhy/cmux"
 
@@ -68,7 +71,8 @@ const (
 )
 
 var (
-	sessionStore cookie.Store
+	sessionStore          cookie.Store
+	enterpriseServiceAuth *serviceauth.Configuration
 
 	HttpMethods = []string{
 		http.MethodGet,
@@ -143,17 +147,38 @@ func contentResponseMiddlewares() []gin.HandlerFunc {
 }
 
 func Serve(fastMode bool, cookieKey string) {
+	var enterpriseConfigErr error
+	enterpriseServiceAuth, enterpriseConfigErr = serviceauth.LoadFromEnvironment()
+	if enterpriseConfigErr != nil {
+		logging.LogFatalf(logging.ExitCodeSecurityRisk, "load enterprise kernel configuration failed: %s", enterpriseConfigErr)
+	}
+	if enterpriseServiceAuth != nil {
+		util.SSL = true
+	}
+
 	gin.SetMode(gin.ReleaseMode)
 	ginServer := gin.New()
 	ginServer.MaxMultipartMemory = 1024 * 1024 * 32 // 插入较大的资源文件时内存占用较大 https://github.com/siyuan-note/siyuan/issues/5023
-	ginServer.Use(
+	middlewares := []gin.HandlerFunc{
 		model.ControlConcurrency, // 请求串行化 Concurrency control when requesting the kernel API https://github.com/siyuan-note/siyuan/issues/9939
 		model.Timing,
 		model.Recover,
-		model.Activity,   // 记录用户活动时间，用于 AutoFixIndex 的空闲判断
-		corsMiddleware(), // 后端服务支持 CORS 预检请求验证 https://github.com/siyuan-note/siyuan/pull/5593
-		jwtMiddleware,    // 解析 JWT https://github.com/siyuan-note/siyuan/issues/11364
-	)
+	}
+	if enterpriseServiceAuth != nil {
+		middlewares = append(
+			middlewares,
+			enterpriseServiceAuth.Middleware(),
+			model.Activity, // 记录用户活动时间，用于 AutoFixIndex 的空闲判断
+		)
+	} else {
+		middlewares = append(
+			middlewares,
+			model.Activity,   // 记录用户活动时间，用于 AutoFixIndex 的空闲判断
+			corsMiddleware(), // 后端服务支持 CORS 预检请求验证 https://github.com/siyuan-note/siyuan/pull/5593
+			jwtMiddleware,    // 解析 JWT https://github.com/siyuan-note/siyuan/issues/11364
+		)
+	}
+	ginServer.Use(middlewares...)
 	ginServer.Use(contentResponseMiddlewares()...)
 
 	sessionStore = cookie.NewStore([]byte(cookieKey))
@@ -183,10 +208,20 @@ func Serve(fastMode bool, cookieKey string) {
 	serveRepoDiff(ginServer)
 	serveCheckAuth(ginServer)
 	serveFixedStaticFiles(ginServer)
+	if enterpriseServiceAuth != nil {
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/readyz", serviceauth.ServiceIdentityRequired, enterpriseServiceAuth.ReadyHandler(util.Ver))
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/directory/notebooks", serviceauth.ServiceIdentityRequired, api.EnterpriseListDirectoryNotebooks)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/directory/documents", serviceauth.ServiceIdentityRequired, api.EnterpriseListDirectoryDocuments)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/share/verify", serviceauth.ContentIdentityRequired, api.EnterpriseVerifySharedDocument)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/share/document", serviceauth.ContentIdentityRequired, api.EnterpriseReadSharedDocument)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/share/asset", serviceauth.ContentIdentityRequired, api.EnterpriseReadSharedAsset)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/backup", serviceauth.ServiceIdentityRequired, api.EnterpriseCreateBackupHandler(enterpriseServiceAuth.SpaceID()))
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/observation", serviceauth.ServiceIdentityRequired, api.EnterpriseReadObservation)
+	}
 	api.ServeAPI(ginServer)
 
 	var host string
-	if model.Conf.System.NetworkServe || util.ContainerDocker == util.Container {
+	if enterpriseServiceAuth != nil || model.Conf.System.NetworkServe || util.ContainerDocker == util.Container {
 		host = "0.0.0.0"
 	} else {
 		host = "127.0.0.1"
@@ -215,14 +250,17 @@ func Serve(fastMode bool, cookieKey string) {
 	model.Conf.ServerAddrs = util.GetServerAddrs()
 	model.Conf.Save()
 
-	// Generate TLS certificates for local HTTPS + HTTP/2 support
-	certPath, keyPath, certErr := util.GetOrCreateTLSCert()
-	if certErr != nil {
-		logging.LogWarnf("failed to get TLS certificates, local HTTPS/HTTP2 unavailable: %s", certErr)
-		certPath = ""
+	var certPath, keyPath string
+	if enterpriseServiceAuth == nil {
+		var certErr error
+		certPath, keyPath, certErr = util.GetOrCreateTLSCert()
+		if certErr != nil {
+			logging.LogWarnf("failed to get TLS certificates, local HTTPS/HTTP2 unavailable: %s", certErr)
+			certPath = ""
+		}
 	}
 
-	if "" != certPath {
+	if enterpriseServiceAuth != nil || "" != certPath {
 		util.ServerURL, err = url.Parse("https://127.0.0.1:" + port)
 	} else {
 		util.ServerURL, err = url.Parse("http://127.0.0.1:" + port)
@@ -254,16 +292,46 @@ func Serve(fastMode bool, cookieKey string) {
 		go mcpclient.EnsureMCPConnected(model.Conf.AI.MCP.Servers)
 	}
 
-	go func() {
-		time.Sleep(1 * time.Second)
-		go proxy.InitFixedPortService(host, certPath, keyPath)
-		go proxy.InitPublishService()
-		// 反代服务器启动失败不影响核心服务器启动
-	}()
+	if enterpriseServiceAuth == nil {
+		go func() {
+			time.Sleep(1 * time.Second)
+			go proxy.InitFixedPortService(host, certPath, keyPath)
+			go proxy.InitPublishService()
+			// 反代服务器启动失败不影响核心服务器启动
+		}()
+	}
+
+	if enterpriseServiceAuth != nil {
+		observationContext, cancelObservation := context.WithCancel(context.Background())
+		observationStopped := make(chan struct{})
+		go func() {
+			defer close(observationStopped)
+			if observationErr := model.StartEnterpriseObservationSampler(observationContext, time.Minute); observationErr != nil {
+				logging.LogErrorf("kernel.observation sampler stopped: %s", observationErr)
+			}
+		}()
+		defer func() {
+			cancelObservation()
+			<-observationStopped
+		}()
+	}
 
 	httpHandler := ginServer.Handler()
 	util.HttpServer = &http.Server{
 		Handler: httpHandler,
+	}
+	if enterpriseServiceAuth != nil {
+		tlsListener := tls.NewListener(ln, enterpriseServiceAuth.ServerTLSConfig())
+		if err = util.HttpServer.Serve(tlsListener); err != nil {
+			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if !fastMode {
+				logging.LogErrorf("boot enterprise kernel failed: %s", err)
+				os.Exit(logging.ExitCodeUnavailablePort)
+			}
+		}
+		return
 	}
 
 	if "" != certPath {
@@ -327,6 +395,7 @@ func serveExport(ginServer *gin.Engine) {
 	exportGroup := ginServer.Group("/export/", model.CheckAuth)
 
 	exportGroup.GET("/*filepath", func(c *gin.Context) {
+		contentIdentity, enterpriseRequest := serviceauth.RequestContentIdentity(c.Request)
 		relativePath, err := util.CanonicalExportRelativePath(strings.TrimPrefix(c.Request.URL.Path, "/export/"))
 		if err != nil {
 			c.Status(http.StatusUnauthorized)
@@ -344,6 +413,13 @@ func serveExport(ginServer *gin.Engine) {
 			if claimErr != nil {
 				logging.LogWarnf("open managed export failed: %s", claimErr)
 				c.Status(http.StatusGone)
+				return
+			}
+			if enterpriseRequest && claim.BoxID != contentIdentity.NotebookID {
+				if closeErr := claim.Close(); closeErr != nil {
+					logging.LogWarnf("close mismatched managed export claim failed: %s", closeErr)
+				}
+				c.Status(http.StatusForbidden)
 				return
 			}
 			if retainErr := api.RetainManagedEncryptedExportClaim(c, claim); retainErr != nil {
@@ -371,6 +447,10 @@ func serveExport(ginServer *gin.Engine) {
 			if writer.writeErr != nil {
 				logging.LogWarnf("send managed export for notebook [%s] failed: %s", claim.BoxID, writer.writeErr)
 			}
+			return
+		}
+		if enterpriseRequest && model.IsEncryptedBox(contentIdentity.NotebookID) {
+			c.Status(http.StatusForbidden)
 			return
 		}
 
@@ -696,7 +776,7 @@ func setAssetsAttachmentDisposition(c *gin.Context, pathForBaseName string) {
 }
 
 func serveAssets(ginServer *gin.Engine) {
-	ginServer.POST("/upload", model.CheckAuth, model.CheckAdminRole, model.CheckReadonly, model.Upload)
+	ginServer.POST("/upload", model.CheckAuth, model.CheckAdminRole, model.CheckReadonly, validateEnterpriseUploadIdentity, model.Upload)
 
 	ginServer.GET("/assets/*path", model.CheckAuth, func(context *gin.Context) {
 		requestPath := context.Param("path")
@@ -721,6 +801,10 @@ func serveAssets(ginServer *gin.Engine) {
 
 		// 解析 box 查询参数，加密 box 资源按 box 内精确查找（不全局搜索）
 		boxID := context.Query("box")
+		if identity, ok := serviceauth.RequestContentIdentity(context.Request); ok && boxID != identity.NotebookID {
+			context.Status(http.StatusBadRequest)
+			return
+		}
 		var p string
 		var err error
 		if boxID != "" {
@@ -788,6 +872,25 @@ func serveAssets(ginServer *gin.Engine) {
 		}
 		http.ServeFile(context.Writer, context.Request, p)
 	})
+}
+
+func validateEnterpriseUploadIdentity(context *gin.Context) {
+	identity, ok := serviceauth.RequestContentIdentity(context.Request)
+	if !ok {
+		context.Next()
+		return
+	}
+	query := context.Request.URL.Query()
+	if len(query) != 2 || len(query["notebook"]) != 1 || len(query["documentId"]) != 1 || query.Get("notebook") != identity.NotebookID || query.Get("documentId") != identity.DocumentID {
+		context.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	form, err := context.MultipartForm()
+	if err != nil || len(form.Value["notebook"]) != 1 || len(form.Value["id"]) != 1 || form.Value["notebook"][0] != identity.NotebookID || form.Value["id"][0] != identity.DocumentID {
+		context.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	context.Next()
 }
 
 func serveSVG(context *gin.Context, assetAbsPath string) bool {
@@ -1050,11 +1153,16 @@ func serveWebSocket(ginServer *gin.Engine) {
 	util.WebSocketServer = melody.New()
 	util.WebSocketServer.Config.MaxMessageSize = 1024 * 1024 * 8
 
-	ginServer.GET("/ws", func(c *gin.Context) {
+	handler := func(c *gin.Context) {
 		if err := util.WebSocketServer.HandleRequest(c.Writer, c.Request); err != nil {
 			logging.LogErrorf("handle command failed: %s", err)
 		}
-	})
+	}
+	if enterpriseServiceAuth == nil {
+		ginServer.GET("/ws", handler)
+	} else {
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/ws", serviceauth.QueryIdentityRequired, handler)
+	}
 
 	util.WebSocketServer.HandlePong(func(session *melody.Session) {
 		//logging.LogInfof("pong")
@@ -1062,9 +1170,9 @@ func serveWebSocket(ginServer *gin.Engine) {
 
 	util.WebSocketServer.HandleConnect(func(s *melody.Session) {
 		//logging.LogInfof("ws check auth for [%s]", s.Request.RequestURI)
-		authOk := true
+		authOk := enterpriseServiceAuth == nil || serviceauth.Authenticated(s.Request)
 
-		if "" != model.Conf.AccessAuthCode {
+		if enterpriseServiceAuth == nil && "" != model.Conf.AccessAuthCode {
 			session, err := sessionStore.Get(s.Request, "siyuan")
 			if err != nil {
 				authOk = false
@@ -1116,7 +1224,23 @@ func serveWebSocket(ginServer *gin.Engine) {
 			}
 		}
 
-		util.AddPushChan(s)
+		var pushIdentity util.PushChannelIdentity
+		var pushIdentityErr error
+		if enterpriseServiceAuth == nil {
+			pushIdentity, pushIdentityErr = util.ParsePushChannelIdentity(s.Request)
+		} else {
+			pushIdentity, pushIdentityErr = enterprisePushChannelIdentity(s.Request)
+		}
+		if pushIdentityErr != nil {
+			s.CloseWithMsg([]byte("invalid push channel identity"))
+			logging.LogWarnf("closed a websocket with invalid push channel identity")
+			return
+		}
+		if pushIdentityErr = util.AddPushChan(s, pushIdentity); pushIdentityErr != nil {
+			s.CloseWithMsg([]byte("invalid push channel identity"))
+			logging.LogWarnf("register websocket push channel failed")
+			return
+		}
 		//sessionId, _ := s.Get("id")
 		//logging.LogInfof("ws [%s] connected", sessionId)
 	})
@@ -1139,6 +1263,10 @@ func serveWebSocket(ginServer *gin.Engine) {
 	})
 
 	util.WebSocketServer.HandleMessage(func(s *melody.Session, msg []byte) {
+		if enterpriseServiceAuth != nil && serviceauth.Authenticated(s.Request) {
+			s.CloseWithMsg([]byte("client messages forbidden"))
+			return
+		}
 		start := time.Now()
 		logging.LogTracef("request [%s]", shortReqMsg(msg))
 
@@ -1200,6 +1328,27 @@ func serveWebSocket(ginServer *gin.Engine) {
 
 		cmd.Exec(command)
 	})
+}
+
+func enterprisePushChannelIdentity(request *http.Request) (util.PushChannelIdentity, error) {
+	query := request.URL.Query()
+	if len(query) != 3 || len(query["notebookId"]) != 1 || len(query["documentId"]) != 1 || len(query["type"]) != 1 {
+		return util.PushChannelIdentity{}, errors.New("enterprise push channel query is invalid")
+	}
+	notebookID := strings.TrimSpace(query.Get("notebookId"))
+	documentID := strings.TrimSpace(query.Get("documentId"))
+	typ := strings.TrimSpace(query.Get("type"))
+	requestID := strings.TrimSpace(request.Header.Get(serviceauth.RequestIDHeader))
+	if !ast.IsNodeIDPattern(notebookID) || !ast.IsNodeIDPattern(documentID) || typ != "protyle" || requestID == "" {
+		return util.PushChannelIdentity{}, errors.New("enterprise push channel identity is invalid")
+	}
+	return util.PushChannelIdentity{
+		AppID:      enterpriseServiceAuth.SpaceID(),
+		DocumentID: documentID,
+		NotebookID: notebookID,
+		SessionID:  requestID,
+		Type:       typ,
+	}, nil
 }
 
 // encryptedBoxAwareWebdavFS 包装 webdav.Dir，拦截所有指向加密笔记本的访问。

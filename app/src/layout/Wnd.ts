@@ -28,7 +28,7 @@ import {setModelsHash} from "../window/setHeader";
 import {Search} from "../search";
 import {showMessage} from "../dialog/message";
 import {openFileById, updatePanelByEditor} from "../editor/util";
-import {scrollCenter} from "../util/highlightById";
+import {scrollCenter} from "../protyle/util/highlightById";
 import {fetchPost} from "../util/fetch";
 import {getAllModels} from "./getAll";
 import {clearCounter} from "./status";

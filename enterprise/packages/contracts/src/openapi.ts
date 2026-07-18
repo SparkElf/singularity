@@ -7,11 +7,12 @@ export interface OpenApiSchema {
   maxLength?: number;
   minItems?: number;
   minLength?: number;
+  nullable?: boolean;
   oneOf?: OpenApiSchema[];
   pattern?: string;
   properties?: Record<string, OpenApiSchema>;
   required?: string[];
-  type?: "array" | "integer" | "number" | "object" | "string";
+  type?: "array" | "boolean" | "integer" | "number" | "object" | "string";
 }
 
 export const UUID_OPENAPI_SCHEMA: OpenApiSchema = {

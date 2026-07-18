@@ -2,7 +2,8 @@ import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {MenuItem} from "../../menus/Menu";
 import {copySubMenu, exportMd, movePathToMenu, openFileAttr, openFileWechatNotify,} from "../../menus/commonMenuItem";
 import {deleteFile} from "../../editor/deleteFile";
-import {encodeBase64, updateHotkeyTip} from "../util/compatibility";
+import {encodeBase64} from "../util/clipboard";
+import {updateHotkeyTip} from "../util/keyboard";
 import {Constants} from "../../constants";
 import {isEncryptedBox} from "../../util/pathName";
 import {quickMakeCard} from "../../card/makeCard";
@@ -208,6 +209,7 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                         click: () => {
                             protyle.host.dispatch({
                                 type: "open-card-deck-picker",
+                                documentId: protyle.block.rootID,
                                 notebookId: protyle.notebookId,
                                 blockIds: [protyle.block.rootID],
                             });

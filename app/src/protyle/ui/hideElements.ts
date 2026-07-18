@@ -1,17 +1,25 @@
-import {getAllEditor} from "../../layout/getAll";
-import {isIPhone} from "../util/compatibility";
+import {isIPhone} from "../util/browserPlatform";
 
-// "gutter", "toolbar", "select", "hint", "util", "dialog", "gutterOnly"
-export const hideElements = (panels: string[], protyle?: IProtyle, focusHide = false) => {
-    if (!protyle) {
-        if (panels.includes("dialog")) {
-            const dialogLength = window.siyuan.dialogs.length;
-            for (let i = 0; i < dialogLength; i++) {
-                window.siyuan.dialogs[i].destroy();
-            }
-        }
+type TProtyleElement = "gutter" | "toolbar" | "select" | "hint" | "util" | "gutterOnly";
+type TGlobalElement = "toolbar" | "pdfutil" | "gutter";
+
+const hideToolbarUtil = (protyle: IProtyle, focusHide = false) => {
+    if (!protyle.toolbar) {
         return;
     }
+    const pinElement = protyle.toolbar.subElement.querySelector('[data-type="pin"]');
+    if (!protyle.toolbar.isMultiSelectMode() &&
+        (focusHide || !pinElement || pinElement.getAttribute("aria-label") === protyle.localization.text("pin"))) {
+        protyle.toolbar.subElement.classList.add("fn__none");
+        if (protyle.toolbar.subElementCloseCB) {
+            protyle.toolbar.subElementCloseCB();
+            protyle.toolbar.subElementCloseCB = undefined;
+        }
+    }
+};
+
+// "gutter", "toolbar", "select", "hint", "util", "gutterOnly"
+export const hideElements = (panels: TProtyleElement[], protyle: IProtyle, focusHide = false) => {
     if (panels.includes("hint")) {
         clearTimeout(protyle.hint.timeId);
         protyle.hint.element.classList.add("fn__none");
@@ -35,16 +43,8 @@ export const hideElements = (panels: string[], protyle?: IProtyle, focusHide = f
         protyle.toolbar.element.classList.add("fn__none");
         protyle.toolbar.element.style.display = "";
     }
-    if (protyle.toolbar && panels.includes("util")) {
-        const pinElement = protyle.toolbar.subElement.querySelector('[data-type="pin"]');
-        if (!protyle.toolbar.isMultiSelectMode() &&
-            (focusHide || !pinElement || (pinElement && pinElement.getAttribute("aria-label") === window.siyuan.languages.pin))) {
-            protyle.toolbar.subElement.classList.add("fn__none");
-            if (protyle.toolbar.subElementCloseCB) {
-                protyle.toolbar.subElementCloseCB();
-                protyle.toolbar.subElementCloseCB = undefined;
-            }
-        }
+    if (panels.includes("util")) {
+        hideToolbarUtil(protyle, focusHide);
     }
     if (panels.includes("select")) {
         protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").forEach(item => {
@@ -55,27 +55,16 @@ export const hideElements = (panels: string[], protyle?: IProtyle, focusHide = f
     }
 };
 
-// "toolbar", "pdfutil", "gutter", "util"
-export const hideAllElements = (types: string[]) => {
+export const hideAllEditorElements = (editors: TProtyleEditorRegistry) => {
+    editors.forEach((editor) => hideToolbarUtil(editor));
+};
+
+// "toolbar", "pdfutil", "gutter"
+export const hideAllElements = (types: TGlobalElement[]) => {
     if (types.includes("toolbar")) {
         document.querySelectorAll(".protyle-toolbar").forEach((item: HTMLElement) => {
             item.classList.add("fn__none");
             item.style.display = "";
-        });
-    }
-    if (types.includes("util")) {
-        getAllEditor().forEach(item => {
-            if (item.protyle.toolbar) {
-                const pinElement = item.protyle.toolbar.subElement.querySelector('[data-type="pin"]');
-                if (!item.protyle.toolbar.isMultiSelectMode() &&
-                    (!pinElement || (pinElement && pinElement.getAttribute("aria-label") === window.siyuan.languages.pin))) {
-                    item.protyle.toolbar.subElement.classList.add("fn__none");
-                    if (item.protyle.toolbar.subElementCloseCB) {
-                        item.protyle.toolbar.subElementCloseCB();
-                        item.protyle.toolbar.subElementCloseCB = undefined;
-                    }
-                }
-            }
         });
     }
     if (types.includes("pdfutil")) {

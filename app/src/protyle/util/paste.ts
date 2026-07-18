@@ -1,7 +1,7 @@
 import {Constants} from "../../constants";
-import {uploadFiles, uploadLocalFiles} from "../upload";
+import {uploadFiles} from "../upload";
 import {processPasteCode, processRender} from "./processCode";
-import {getTextSiyuanFromTextHTML, readText} from "./compatibility";
+import {getTextSiyuanFromTextHTML, readText} from "./clipboard";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName} from "./hasClosest";
 import {getEditorRange, getSelectionOffset} from "./selection";
 import {blockRender} from "../render/blockRender";
@@ -9,7 +9,7 @@ import {highlightRender} from "../render/highlightRender";
 import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {isDynamicRef, isFileAnnotation} from "../../util/functions";
 import {insertHTML} from "./insertHTML";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "./highlightById";
 import {hideElements} from "../ui/hideElements";
 import {avRender} from "../render/av/render";
 import {cellScrollIntoView, getCellText} from "../render/av/cell";
@@ -17,7 +17,7 @@ import {getCalloutInfo, getContenteditableElement} from "../wysiwyg/getBlock";
 import {clearBlockElement} from "./clear";
 import {removeZWJ} from "./normalizeText";
 import {base64ToURL} from "../../util/image";
-import {resolveLinkDest} from "../toolbar/util";
+import {resolveLinkDest} from "../toolbar/config";
 
 export const beforePaste = (protyle: IProtyle, blockElement: HTMLElement) => {
     // 链接，备注，样式，引用，pdf标注粘贴 https://github.com/siyuan-note/siyuan/issues/11572
@@ -227,14 +227,15 @@ export const enableLuteMarkdownSyntax = (protyle: IProtyle) => {
 };
 
 export const restoreLuteMarkdownSyntax = (protyle: IProtyle) => {
-    protyle.lute.SetInlineAsterisk(window.siyuan.config.editor.markdown.inlineAsterisk);
-    protyle.lute.SetGFMStrikethrough(window.siyuan.config.editor.markdown.inlineStrikethrough);
-    protyle.lute.SetInlineMath(window.siyuan.config.editor.markdown.inlineMath);
-    protyle.lute.SetSub(window.siyuan.config.editor.markdown.inlineSub);
-    protyle.lute.SetSup(window.siyuan.config.editor.markdown.inlineSup);
-    protyle.lute.SetTag(window.siyuan.config.editor.markdown.inlineTag);
-    protyle.lute.SetInlineUnderscore(window.siyuan.config.editor.markdown.inlineUnderscore);
-    protyle.lute.SetMark(window.siyuan.config.editor.markdown.inlineMark);
+    const markdown = protyle.settings.editor.markdown;
+    protyle.lute.SetInlineAsterisk(markdown.inlineAsterisk);
+    protyle.lute.SetGFMStrikethrough(markdown.inlineStrikethrough);
+    protyle.lute.SetInlineMath(markdown.inlineMath);
+    protyle.lute.SetSub(markdown.inlineSub);
+    protyle.lute.SetSup(markdown.inlineSup);
+    protyle.lute.SetTag(markdown.inlineTag);
+    protyle.lute.SetInlineUnderscore(markdown.inlineUnderscore);
+    protyle.lute.SetMark(markdown.inlineMark);
 };
 
 const readLocalFile = async (protyle: IProtyle, localFiles: ILocalFiles[]) => {
@@ -244,7 +245,13 @@ const readLocalFile = async (protyle: IProtyle, localFiles: ILocalFiles[]) => {
         siyuanHTML: "",
         localFiles,
     });
-    uploadLocalFiles(transformed.localFiles, protyle, true);
+    if (transformed.localFiles.length > 0) {
+        protyle.host.dispatch({
+            type: "notify",
+            level: "error",
+            message: protyle.localization.text("uploadError"),
+        });
+    }
 };
 
 export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEvent | IClipboardData) & {
@@ -479,8 +486,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             insertHTML(tempInnerHTML, protyle, isBlock, false, true);
         }
         blockRender(protyle, protyle.wysiwyg.element);
-        processRender(protyle.wysiwyg.element);
-        highlightRender(protyle.wysiwyg.element);
+        processRender(protyle.wysiwyg.element, protyle);
+        highlightRender(protyle.wysiwyg.element, protyle);
         avRender(protyle.wysiwyg.element, protyle);
     } else if (code) {
         if (!code.startsWith('<div data-type="NodeCodeBlock" class="code-block" data-node-id="')) {
@@ -488,7 +495,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             insertHTML(code, protyle);
         } else {
             insertHTML(code, protyle, true, false, true);
-            highlightRender(protyle.wysiwyg.element);
+            highlightRender(protyle.wysiwyg.element, protyle);
         }
         hideElements(["hint"], protyle);
     } else {
@@ -578,7 +585,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                 return;
             }
             fetchPost("/api/lute/html2BlockDOM", {
-                dom: tempElement.innerHTML
+                dom: tempElement.innerHTML,
+                notebook: protyle.notebookId,
             }, (response) => {
                 insertHTML(response.data, protyle, false, false, true);
                 protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]').forEach(item => {
@@ -589,8 +597,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                     }
                 });
                 blockRender(protyle, protyle.wysiwyg.element);
-                processRender(protyle.wysiwyg.element);
-                highlightRender(protyle.wysiwyg.element);
+                processRender(protyle.wysiwyg.element, protyle);
+                highlightRender(protyle.wysiwyg.element, protyle);
                 avRender(protyle.wysiwyg.element, protyle);
                 scrollCenter(protyle, undefined, "nearest", "smooth");
             });
@@ -658,8 +666,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             insertHTML(textPlainDom, protyle, false, false, true);
         }
         blockRender(protyle, protyle.wysiwyg.element);
-        processRender(protyle.wysiwyg.element);
-        highlightRender(protyle.wysiwyg.element);
+        processRender(protyle.wysiwyg.element, protyle);
+        highlightRender(protyle.wysiwyg.element, protyle);
         avRender(protyle.wysiwyg.element, protyle);
     }
     const selectCellElement = nodeElement.querySelector(".av__cell--select");

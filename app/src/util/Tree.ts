@@ -1,16 +1,18 @@
-import {getIconByType} from "../editor/getIcon";
+import {getIconByType} from "../protyle/util/getIconByType";
 import {isMobile} from "./functions";
 import {mathRender} from "../protyle/render/mathRender";
 import {unicode2Emoji} from "../emoji";
 import {Constants} from "../constants";
 import {escapeAriaLabel} from "./escape";
 import {hasClosestByTag} from "../protyle/util/hasClosest";
+import type {ProtyleRendererContext} from "../protyle/render/renderContext";
 
 export class Tree {
     public element: HTMLElement;
     private data: IBlockTree[];
     private blockExtHTML: string;
     private topExtHTML: string;
+    private renderContext: ProtyleRendererContext;
 
     public click: (element: Element, event?: MouseEvent) => void;
     private ctrlClick: (element: HTMLElement, event: MouseEvent) => void;
@@ -22,6 +24,7 @@ export class Tree {
     constructor(options: {
         element: HTMLElement,
         data: IBlockTree[],
+        renderContext: ProtyleRendererContext,
         blockExtHTML?: string,
         topExtHTML?: string,
         click?(element: HTMLElement, event: MouseEvent): void
@@ -38,6 +41,7 @@ export class Tree {
         this.rightClick = options.rightClick;
         this.toggleClick = options.toggleClick;
         this.element = options.element;
+        this.renderContext = options.renderContext;
         this.blockExtHTML = options.blockExtHTML;
         this.topExtHTML = options.topExtHTML;
         this.updateData(options.data);
@@ -50,7 +54,7 @@ export class Tree {
             this.element.innerHTML = `<ul class="b3-list b3-list--background"><li class="b3-list--empty">${window.siyuan.languages.emptyContent}</li></ul>`;
         } else {
             this.element.innerHTML = this.genHTML(this.data);
-            mathRender(this.element);
+            mathRender(this.element, this.renderContext);
         }
     }
 

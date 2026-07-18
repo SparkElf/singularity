@@ -11,11 +11,7 @@ export const getIconByType = (type: string, sub?: string) => {
             iconName = "iconParagraph";
             break;
         case "NodeHeading":
-            if (sub) {
-                iconName = "icon" + sub.toUpperCase();
-            } else {
-                iconName = "iconHeadings";
-            }
+            iconName = sub ? "icon" + sub.toUpperCase() : "iconHeadings";
             break;
         case "NodeBlockquote":
             iconName = "iconQuote";
@@ -24,13 +20,7 @@ export const getIconByType = (type: string, sub?: string) => {
             iconName = "iconCallout";
             break;
         case "NodeList":
-            if (sub === "t") {
-                iconName = "iconCheck";
-            } else if (sub === "o") {
-                iconName = "iconOrderedList";
-            } else {
-                iconName = "iconList";
-            }
+            iconName = sub === "t" ? "iconCheck" : sub === "o" ? "iconOrderedList" : "iconList";
             break;
         case "NodeListItem":
             iconName = "iconListItem";

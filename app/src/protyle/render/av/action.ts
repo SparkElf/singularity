@@ -28,20 +28,21 @@ import * as dayjs from "dayjs";
 import {openCalcMenu} from "./calc";
 import {avRender} from "./render";
 import {addView, openViewMenu} from "./view";
-import {isOnlyMeta, updateHotkeyTip, writeText} from "../../util/compatibility";
+import {writeText} from "../../util/clipboard";
+import {isOnlyMeta, updateHotkeyTip} from "../../util/keyboard";
 import {openSearchAV} from "./relation";
 import {Constants} from "../../../constants";
 import {hideElements} from "../../ui/hideElements";
-import {fetchPost, fetchSyncPost} from "../../../util/fetch";
-import {buildSiYuanBlockUri} from "../../../util/siyuanUri";
-import {scrollCenter} from "../../../util/highlightById";
+import {buildSiYuanBlockUri} from "../../util/blockUri";
+import {scrollCenter} from "../../util/highlightById";
 import {escapeHtml} from "../../../util/escape";
 import {editGalleryItem, openGalleryItemMenu} from "./gallery/util";
 import {clearSelect} from "../../util/clear";
 import {removeCompressURL} from "../../../util/image";
-import {checkFold} from "../../../util/noRelyPCFunction";
+import {requestBlockFold} from "../../util/blockFoldRequest";
+import {protyleContentIdentity} from "../../util/contentLoad";
 
-let foldTimeout: number;
+const foldTimeouts = new WeakMap<IProtyle, number>();
 export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLElement }) => {
     if (isOnlyMeta(event)) {
         return false;
@@ -211,7 +212,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
                 h: rect.height,
                 w: rect.width,
             }, (unicode) => {
-                target.innerHTML = unicode2Emoji(unicode || window.siyuan.storage[Constants.LOCAL_IMAGES].file);
+                target.innerHTML = unicode2Emoji(unicode || protyle.settings.icons.file);
             }, target.querySelector("img"));
             event.preventDefault();
             event.stopPropagation();
@@ -244,8 +245,9 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
                 target.firstElementChild.classList.add("av__group-arrow--open");
                 target.parentElement.nextElementSibling.classList.remove("fn__none");
             }
-            clearTimeout(foldTimeout);
-            foldTimeout = window.setTimeout(() => {
+            clearTimeout(foldTimeouts.get(protyle));
+            foldTimeouts.set(protyle, window.setTimeout(() => {
+                foldTimeouts.delete(protyle);
                 transaction(protyle, [{
                     action: "foldAttrViewGroup",
                     avID: blockElement.dataset.avId,
@@ -259,7 +261,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
                     id: target.dataset.id,
                     data: !isOpen
                 }]);
-            }, Constants.TIMEOUT_COUNT);
+            }, Constants.TIMEOUT_COUNT));
             event.preventDefault();
             event.stopPropagation();
             return true;
@@ -310,6 +312,7 @@ export const avClick = (protyle: IProtyle, event: MouseEvent & { target: HTMLEle
             return true;
         } else if (target.classList.contains("av__cellassetimg")) {
             previewAttrViewImages(
+                protyle,
                 removeCompressURL((target as HTMLImageElement).getAttribute("src")),
                 blockElement.getAttribute("data-av-id"),
                 blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
@@ -397,7 +400,10 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                 console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId});
                 return;
             }
-            checkFold(blockId, notebookId, (zoomIn) => {
+            void requestBlockFold(protyle, {
+                notebookId,
+                documentId: blockId,
+            }).then(({zoomIn}) => {
                 protyle.host.dispatch({
                     type: "open-document",
                     notebookId,
@@ -409,13 +415,17 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     restoreScroll: zoomIn ? "never" : "if-document",
                     zoom: zoomIn,
                 });
+            }).catch((error) => {
+                if (!protyle.requestSignal.aborted) {
+                    console.error("[protyle.transport] block fold request failed", error);
+                }
             });
         };
         const openSubmenus: IMenu[] = [{
             id: "insertRight",
             icon: "iconLayoutRight",
             label: window.siyuan.languages.insertRight,
-            accelerator: `${updateHotkeyTip(window.siyuan.config.keymap.editor.general.insertRight.custom)}/${updateHotkeyTip("⌥" + window.siyuan.languages.click)}`,
+            accelerator: `${updateHotkeyTip(protyle.settings.hotkeys.insertRight)}/${updateHotkeyTip("⌥" + window.siyuan.languages.click)}`,
             click: () => openDocument("split-right"),
         }, {
             id: "insertBottom",
@@ -424,7 +434,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             accelerator: "⇧⌘" + window.siyuan.languages.click,
             click: () => openDocument("split-bottom"),
         }];
-        if (window.siyuan.config.fileTree.openFilesUseCurrentTab) {
+        if (protyle.settings.navigation.openFilesUseCurrentTab) {
             openSubmenus.push({
                 id: "openInNewTab",
                 label: window.siyuan.languages.openInNewTab,
@@ -438,8 +448,24 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             icon: "iconAttr",
             label: window.siyuan.languages.attr,
             click: () => {
-                fetchPost("/api/attr/getBlockAttrs", {id: blockId}, (response) => {
+                const notebookId = targetNotebookIds[0];
+                if (!notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId});
+                    return;
+                }
+                void protyle.transport!.request<IWebSocketData>("/api/attr/getBlockAttrs", {id: blockId}, {
+                    identity: {documentId: blockId, notebookId},
+                    intent: "read",
+                    signal: protyle.requestSignal,
+                }).then((response) => {
+                    if (protyle.requestSignal.aborted || protyle.destroyed) {
+                        return;
+                    }
                     openFileAttr(response.data, "av", protyle);
+                }).catch((error) => {
+                    if (!protyle.requestSignal.aborted) {
+                        console.error("[protyle.transport] AV block attributes request failed", error);
+                    }
                 });
             }
         });
@@ -602,9 +628,13 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                             console.error("[Singularity/ProtyleIdentity] AV block target has no notebook", {blockId: id});
                             return;
                         }
-                        const response = await fetchSyncPost("/api/filetree/getHPathByID", {
+                        const response = await protyle.transport!.request<IWebSocketData>("/api/filetree/getHPathByID", {
                             id,
                             notebook: notebookId,
+                        }, {
+                            identity: {documentId: id, notebookId},
+                            intent: "read",
+                            signal: protyle.requestSignal,
                         });
                         content = response.data;
                     }
@@ -666,7 +696,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
             label: window.siyuan.languages.addToDatabase,
             icon: "iconDatabase",
             click() {
-                openSearchAV(blockElement.getAttribute("data-av-id"), rowElements[0] as HTMLElement, (listItemElement) => {
+                openSearchAV(protyle, blockElement.getAttribute("data-av-id"), rowElements[0] as HTMLElement, (listItemElement) => {
                     const srcs: IOperationSrcs[] = [];
                     const sourceIds: string[] = [];
                     rowElements.forEach(item => {
@@ -936,10 +966,12 @@ export const updateAttrViewCellAnimation = (cellElement: HTMLElement, value: IAV
                     content: cellElement.getAttribute("aria-label").split('<div class="ft__on-surface">')[0],
                 };
             }
-            cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false, viewType);
+            cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
+                viewType, protyle.settings.icons.file);
             cellElement.parentElement.setAttribute("data-empty", cellValueIsEmpty(value).toString());
         } else {
-            cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false);
+            cellElement.innerHTML = renderCell(value, 0, iconElement ? !iconElement.classList.contains("fn__none") : false,
+                "table", protyle.settings.icons.file);
         }
         if (hasDragFill) {
             addDragFill(cellElement);
@@ -955,7 +987,17 @@ export const removeAttrViewColAnimation = (blockElement: Element, id: string) =>
 };
 
 export const duplicateCompletely = (protyle: IProtyle, nodeElement: HTMLElement) => {
-    fetchPost("/api/av/duplicateAttributeViewBlock", {avID: nodeElement.getAttribute("data-av-id")}, (response) => {
+    const identity = protyleContentIdentity(protyle);
+    void protyle.transport!.request<IWebSocketData>("/api/av/duplicateAttributeViewBlock", {
+        avID: nodeElement.getAttribute("data-av-id"),
+    }, {
+        identity,
+        intent: "write",
+        signal: protyle.requestSignal,
+    }).then((response) => {
+        if (protyle.requestSignal.aborted || protyle.destroyed || !nodeElement.isConnected) {
+            return;
+        }
         nodeElement.classList.remove("protyle-wysiwyg--select");
         const tempElement = document.createElement("template");
         tempElement.innerHTML = protyle.lute.SpinBlockDOM(`<div class="av" data-node-id="${response.data.blockID}" data-av-id="${response.data.avID}" data-type="NodeAttributeView" data-av-type="table"></div>`);
@@ -974,5 +1016,13 @@ export const duplicateCompletely = (protyle: IProtyle, nodeElement: HTMLElement)
             action: "delete",
             id: response.data.blockID,
         }]);
+    }).catch((error) => {
+        if (!protyle.requestSignal.aborted) {
+            console.error("[protyle.transport] duplicate attribute view failed", {
+                documentId: identity.documentId,
+                notebookId: identity.notebookId,
+                error,
+            });
+        }
     });
 };

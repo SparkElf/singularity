@@ -142,6 +142,7 @@ export const openDocHistory = (options: {
         participation: "detached",
         content: {mode: "bound", notebookId: options.notebookId},
         initialLoad: "owner",
+        hostReadOnly: true,
     });
     disabledProtyle(historyEditor.protyle);
     const pageNumElement = dialog.element.querySelector('[data-type="jumpRepoPage"]');

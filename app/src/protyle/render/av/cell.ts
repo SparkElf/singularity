@@ -2,13 +2,14 @@ import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {openMenuPanel} from "./openMenuPanel";
 import {updateAttrViewCellAnimation} from "./action";
-import {isNotCtrl} from "../../util/compatibility";
+import {isNotCtrl} from "../../util/keyboard";
 import {isDynamicRef, objEquals} from "../../../util/functions";
-import {fetchPost, fetchSyncPost} from "../../../util/fetch";
 import {focusBlock, focusByRange} from "../../util/selection";
 import * as dayjs from "dayjs";
 import {unicode2Emoji} from "../../../emoji";
 import {getColIconByType, getColId} from "./col";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender, type AVRenderLoad} from "./load";
+import {closeAVOverlay, currentAVOverlay, registerAVOverlay} from "./overlay";
 import {genAVValueHTML} from "./blockAttr";
 import {Constants} from "../../../constants";
 import {hintRef} from "../../hint/extend";
@@ -466,7 +467,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
     if (!type) {
         type = getTypeByCellElement(cellElements[0]);
     }
-    if (type === "updated" || type === "created" || document.querySelector(".av__mask")) {
+    if (type === "updated" || type === "created" || currentAVOverlay(protyle, "cell-editor")) {
         return;
     }
     const blockElement = hasClosestBlock(cellElements[0]);
@@ -532,10 +533,11 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         return;
     }
     window.siyuan.menus.menu.remove();
-    document.body.insertAdjacentHTML("beforeend", `<div class="av__mask" style="z-index: ${++window.siyuan.zIndex}">
-    ${html}
-</div>`);
-    const avMaskElement = document.querySelector(".av__mask");
+    const avMaskElement = document.createElement("div");
+    avMaskElement.className = "av__mask";
+    avMaskElement.innerHTML = html;
+    document.body.append(avMaskElement);
+    registerAVOverlay(protyle, "cell-editor", avMaskElement);
     const inputElement = avMaskElement.querySelector(".b3-text-field") as HTMLInputElement;
     if (inputElement) {
         if (["text", "email", "phone", "block", "template"].includes(type)) {
@@ -544,11 +546,15 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         inputElement.select();
         inputElement.focus();
         if (type === "template") {
-            fetchPost("/api/av/renderAttributeView", {
+            const load = beginAVRenderLoad(protyle, inputElement);
+            void requestAVRender<{data: IAV}>(protyle, load, "/api/av/renderAttributeView", {
                 id: blockElement.dataset.avId,
-                notebook: protyle.notebookId,
+                notebook: load.identity.notebookId,
                 viewID: blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW)
-            }, (response) => {
+            }).then((response) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
                 getFieldsByData(response.data).find((item: IAVColumn) => {
                     if (item.id === getColId(cellElements[0], viewType)) {
                         inputElement.value = item.template;
@@ -556,6 +562,8 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
                         return true;
                     }
                 });
+            }).catch((error) => {
+                reportAVLoadFailure(load, "attribute view template cell", error);
             });
         }
         if (type === "block") {
@@ -583,7 +591,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
                         textPlain = textPlain.substring(2);
                     }
                     hintRef(textPlain, protyle, "av");
-                    avMaskElement?.remove();
+                    closeAVOverlay(protyle, "cell-editor");
                     event.preventDefault();
                     event.stopPropagation();
                 }
@@ -616,7 +624,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
         if ((event.target as HTMLElement).classList.contains("av__mask")
             && document.activeElement.tagName !== "TEXTAREA" && document.activeElement.tagName !== "INPUT") {
             updateCellValueByInput(protyle, type, blockElement, cellElements);
-            avMaskElement?.remove();
+            closeAVOverlay(protyle, "cell-editor");
         }
     };
     avMaskElement.addEventListener("click", (event) => {
@@ -646,11 +654,11 @@ const updateCellValueByInput = (protyle: IProtyle, type: TAVCol, blockElement: H
             return;
         }
     }
-    const avMaskElement = document.querySelector(".av__mask");
+    const avMaskElement = currentAVOverlay(protyle, "cell-editor");
     const avID = blockElement.getAttribute("data-av-id");
     if (type === "template") {
         const colId = getColId(cellElements[0], viewType);
-        const textElement = avMaskElement.querySelector(".b3-text-field") as HTMLInputElement;
+        const textElement = avMaskElement!.querySelector(".b3-text-field") as HTMLInputElement;
         if (textElement.value !== textElement.dataset.template && !blockElement.getAttribute("data-loading")) {
             transaction(protyle, [{
                 action: "updateAttrViewColTemplate",
@@ -670,7 +678,7 @@ const updateCellValueByInput = (protyle: IProtyle, type: TAVCol, blockElement: H
     } else {
         updateCellsValue(protyle, blockElement, type === "checkbox" ? {
             checked: cellElements[0].querySelector("use").getAttribute("xlink:href") === "#iconUncheck"
-        } : (avMaskElement.querySelector(".b3-text-field") as HTMLInputElement).value, cellElements);
+        } : (avMaskElement!.querySelector(".b3-text-field") as HTMLInputElement).value, cellElements);
     }
     if (viewType === "table" &&
         // 兼容新增行后台隐藏
@@ -683,9 +691,7 @@ const updateCellValueByInput = (protyle: IProtyle, type: TAVCol, blockElement: H
     if (!document.querySelector(".b3-dialog")) {
         focusBlock(blockElement);
     }
-    document.querySelectorAll(".av__mask").forEach((item) => {
-        item.remove();
-    });
+    closeAVOverlay(protyle, "cell-editor");
 };
 
 export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLElement, value?: any,
@@ -698,6 +704,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
     let text = "";
     const json: IAVCellValue[][] = [];
     let cellElements: Element[];
+    let metadataLoad: AVRenderLoad | undefined;
     if (cElements?.length > 0) {
         cellElements = cElements;
     } else {
@@ -857,7 +864,12 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
         // formattedContent 在单元格渲染时没有用到，需对比保持一致
         if (type === "date") {
             if (!(value && typeof value === "object" && typeof value.isNotTime === "boolean")) {
-                const response = await fetchSyncPost("/api/av/getAttributeViewKeysByID", {avID: avID, keyIDs: [colId]});
+                metadataLoad ??= beginAVRenderLoad(protyle, nodeElement);
+                const response = await requestAVRender<IWebSocketData>(protyle, metadataLoad,
+                    "/api/av/getAttributeViewKeysByID", {avID: avID, keyIDs: [colId]});
+                if (!metadataLoad.isCurrent()) {
+                    return;
+                }
                 if (response.data[0].date) {
                     cellValue.date.isNotTime = !response.data[0].date.fillSpecificTime;
                 }
@@ -883,7 +895,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
                 data: oldValue
             });
             if (isCustomAttr) {
-                item.innerHTML = genAVValueHTML(cellValue);
+                item.innerHTML = genAVValueHTML(cellValue, protyle.settings.icons.file);
             } else {
                 updateAttrViewCellAnimation(item, cellValue);
             }
@@ -927,7 +939,8 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
     }
 };
 
-export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = true, type: TAVView = "table") => {
+export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: boolean, type: TAVView,
+                           fileIcon: string) => {
     let text = "";
     if ("template" === cellValue.type) {
         // 使用 DOMPurify 过滤危险标签和事件属性，保留安全的 HTML 格式 https://github.com/siyuan-note/siyuan/issues/18169
@@ -943,7 +956,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
         if (cellValue?.isDetached) {
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block.content || "")}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${window.siyuan.languages.more}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || window.siyuan.storage[Constants.LOCAL_IMAGES].file)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${window.siyuan.languages.update}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${window.siyuan.languages.update}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = `<span class="av__celltext" data-content="${cellValue?.number.isNotEmpty ? cellValue?.number.content : ""}">${cellValue?.number.formattedContent || cellValue?.number.content || ""}</span>`;
@@ -991,7 +1004,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
     } else if (cellValue.type === "rollup") {
         let rollupType;
         cellValue?.rollup?.contents?.forEach((item) => {
-            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type) : renderRollup(item, showIcon);
+            const rollupText = ["template", "select", "mSelect", "mAsset", "relation"].includes(item.type) ? renderCell(item, rowIndex, showIcon, type, fileIcon) : renderRollup(item, showIcon, fileIcon);
             if (rollupText) {
                 text += rollupText + (item.type === "checkbox" ? "" : ", ");
             }
@@ -1012,7 +1025,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
                     text += `<span data-row-id="${rowID}" class="av__cell--relation"><span${showIcon ? "" : ' class="fn__none"'}><svg><use xlink:href="#iconLine"></use></svg><span class="fn__space--5"></span></span><span class="av__celltext">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
                 } else {
                     // data-block-id 用于更新 emoji
-                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || window.siyuan.storage[Constants.LOCAL_IMAGES].file)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
+                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${item.block.icon || ""}">${unicode2Emoji(item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || window.siyuan.languages.untitled)}</span></span>`;
                 }
             }
         });
@@ -1030,7 +1043,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex = 0, showIcon = tru
     return text;
 };
 
-const renderRollup = (cellValue: IAVCellValue, showIcon: boolean) => {
+const renderRollup = (cellValue: IAVCellValue, showIcon: boolean, fileIcon: string) => {
     let text = "";
     if (["text"].includes(cellValue.type)) {
         text = cellValue ? Lute.EscapeHTMLStr(cellValue[cellValue.type as "text"].content || "") : "";
@@ -1048,7 +1061,7 @@ const renderRollup = (cellValue: IAVCellValue, showIcon: boolean) => {
         if (cellValue?.isDetached) {
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block?.content || window.siyuan.languages.untitled)}</span>`;
         } else {
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || window.siyuan.storage[Constants.LOCAL_IMAGES].file)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || window.siyuan.languages.untitled)}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-unicode="${cellValue.block.icon || ""}">${unicode2Emoji(cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || window.siyuan.languages.untitled)}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = cellValue?.number.formattedContent || cellValue?.number.content.toString() || "";
@@ -1177,7 +1190,7 @@ export const dragFillCellsValue = (protyle: IProtyle, nodeElement: HTMLElement, 
                 rowID,
                 data
             });
-            item.element.innerHTML = renderCell(data, 0, showIcon);
+            item.element.innerHTML = renderCell(data, 0, showIcon, "table", protyle.settings.icons.file);
             renderCellAttr(item.element, data);
             delete item.colId;
             delete item.element;

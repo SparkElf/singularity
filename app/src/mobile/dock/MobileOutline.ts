@@ -89,6 +89,7 @@ export class MobileOutline extends Model {
         this.tree = new Tree({
             element: this.element.lastElementChild as HTMLElement,
             data: null,
+            renderContext: options.app,
             click: (element: HTMLElement, event) => {
                 if (event) {
                     const actionElement = hasClosestByClassName(event.target as HTMLElement, "b3-list-item__action");
@@ -1180,7 +1181,7 @@ export class MobileOutline extends Model {
                         });
                         // 使用 outer 后元素需要重新查询
                         protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((itemElement: HTMLElement) => {
-                            mathRender(itemElement);
+                            mathRender(itemElement, protyle);
                         });
                         if (index === 0) {
                             const focusElement = protyle.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`);

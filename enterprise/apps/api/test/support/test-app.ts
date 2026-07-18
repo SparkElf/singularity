@@ -3,7 +3,10 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 
 import { createApiApplication } from "../../src/application.js";
+import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 import type { Clock } from "../../src/identity/clock.js";
+import { testAuditConfiguration } from "./audit-configuration.js";
+import { testKernelGatewayConfiguration } from "./kernel-gateway.js";
 
 export const TEST_PUBLIC_ORIGIN = "https://singularity.test";
 
@@ -15,6 +18,7 @@ export interface TestApiApplication {
 
 export interface TestApiApplicationOptions {
   clock?: Clock;
+  kernelGateway?: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
   trustedProxyCidrs?: string;
 }
@@ -23,7 +27,10 @@ export async function startTestApiApplication(
   options: TestApiApplicationOptions = {},
 ): Promise<TestApiApplication> {
   const app = await createApiApplication({
+    auditConfiguration: testAuditConfiguration(),
     databaseUrl: isolatedDatabaseUrl(),
+    kernelGateway:
+      options.kernelGateway ?? testKernelGatewayConfiguration(),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     publicOrigin: `${TEST_PUBLIC_ORIGIN}/`,
     ...(options.clock === undefined ? {} : { clock: options.clock }),

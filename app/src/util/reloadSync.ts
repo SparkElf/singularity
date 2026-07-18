@@ -1,6 +1,6 @@
 import type {App} from "../index";
+import {closeAllDialogs} from "../dialog";
 import {hideMessage} from "../dialog/message";
-import {hideElements} from "../protyle/ui/hideElements";
 import {setEmpty} from "../mobile/util/setEmpty";
 import {fetchPost} from "./fetch";
 import {Constants} from "../constants";
@@ -25,7 +25,7 @@ export const reloadSync = (
     /// #if MOBILE
     if (window.siyuan.mobile.popEditor && window.siyuan.mobile.popEditor.protyle) {
         if (data.removeRootIDs.includes(window.siyuan.mobile.popEditor.protyle.block.rootID)) {
-            hideElements(["dialog"]);
+            closeAllDialogs();
         } else {
             window.siyuan.mobile.popEditor.reload(false, updateReadonly);
         }

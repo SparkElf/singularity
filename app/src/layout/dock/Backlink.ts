@@ -132,6 +132,7 @@ export class Backlink extends Model {
         this.tree = new Tree({
             element: this.element.querySelector(".backlinkList") as HTMLElement,
             data: null,
+            renderContext: options.app,
             click: (element) => {
                 this.toggleItem(element, false);
                 this.setFocus();
@@ -187,6 +188,7 @@ export class Backlink extends Model {
         this.mTree = new Tree({
             element: this.element.querySelector(".backlinkMList") as HTMLElement,
             data: null,
+            renderContext: options.app,
             click: (element) => {
                 this.toggleItem(element, true);
                 this.setFocus();
@@ -550,6 +552,7 @@ export class Backlink extends Model {
                     participation: "live",
                     content: {mode: "bound", notebookId},
                     initialLoad: "owner",
+                    hostReadOnly: window.siyuan.config.readonly,
                     onBacklinkChange: () => {
                         if (!this.abortController.signal.aborted && renderVersion === this.renderVersion &&
                             blockId === this.blockId && notebookId === this.notebookId && editorElement.isConnected) {

@@ -1,9 +1,9 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
-import {genIconHTML} from "./util";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
-export const mermaidRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const mermaidRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let mermaidElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "mermaid" && element.getAttribute("data-render") !== "true") {
         mermaidElements = [element];
@@ -44,7 +44,7 @@ export const mermaidRender = (element: Element, cdn = Constants.PROTYLE_CDN) => 
                     rightPadding: 20
                 }
             };
-            if (window.siyuan.config.appearance.mode === 1) {
+            if (context.settings.appearance.theme === "dark") {
                 config.theme = "dark";
             }
             window.mermaid.initialize(config);
@@ -59,7 +59,7 @@ export const mermaidRender = (element: Element, cdn = Constants.PROTYLE_CDN) => 
             });
             if (hideElements.length > 0) {
                 const observer = new MutationObserver(() => {
-                    initMermaid(hideElements);
+                    initMermaid(hideElements, context);
                     observer.disconnect();
                 });
                 hideElements.forEach(item => {
@@ -74,12 +74,12 @@ export const mermaidRender = (element: Element, cdn = Constants.PROTYLE_CDN) => 
                     }
                 });
             }
-            initMermaid(normalElements);
+            initMermaid(normalElements, context);
         });
     });
 };
 
-const initMermaid = (mermaidElements: Element[]) => {
+const initMermaid = (mermaidElements: Element[], context: ProtyleRendererContext) => {
     const wysiswgElement = hasClosestByClassName(mermaidElements[0], "protyle-wysiwyg", true);
     mermaidElements.forEach(async (item: HTMLElement) => {
         if (item.getAttribute("data-render") === "true") {
@@ -87,7 +87,7 @@ const initMermaid = (mermaidElements: Element[]) => {
         }
         item.setAttribute("data-render", "true");
         if (!item.firstElementChild.classList.contains("protyle-icons")) {
-            item.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement));
+            item.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement));
         }
         const renderElement = item.firstElementChild.nextElementSibling as HTMLElement;
         if (!item.getAttribute("data-content")) {

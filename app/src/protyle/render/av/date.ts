@@ -1,5 +1,6 @@
 import * as dayjs from "dayjs";
 import {genCellValueByElement, updateCellsValue} from "./cell";
+import {currentAVOverlay} from "./overlay";
 
 export const getDateHTML = (cellElements: HTMLElement[]) => {
     const cellValue = genCellValueByElement("date", cellElements[0]).date;
@@ -146,7 +147,7 @@ export const bindDateEvent = (options: {
             }
             if (event.key === "Enter") {
                 submit();
-                document.querySelector(".av__panel")?.dispatchEvent(new CustomEvent("click", {detail: "close"}));
+                currentAVOverlay(options.protyle, "panel")?.dispatchEvent(new CustomEvent("click", {detail: "close"}));
             }
         });
     });

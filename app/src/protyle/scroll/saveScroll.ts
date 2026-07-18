@@ -1,14 +1,18 @@
 import {hasClosestBlock} from "../util/hasClosest";
 import {getSelectionOffset} from "../util/selection";
-import {fetchPost} from "../../util/fetch";
 import {onGet} from "../util/onGet";
 import {Constants} from "../../constants";
-import {setStorageVal} from "../util/compatibility";
 import {isSupportCSSHL} from "../render/searchMarkRender";
-import {isEncryptedBox} from "../../util/pathName";
+import {removeLoading} from "../ui/initUI";
+import {
+    beginProtyleContentLoad,
+    protyleContentIdentity,
+    requestProtyleContent,
+    type ProtyleContentLoad,
+} from "../util/contentLoad";
 
 export const saveScroll = (protyle: IProtyle, getObject = false) => {
-    if (!protyle.wysiwyg.element.firstElementChild || window.siyuan.config.readonly) {
+    if (!protyle.wysiwyg.element.firstElementChild) {
         // 报错或者空白页面
         return undefined;
     }
@@ -50,24 +54,24 @@ export const saveScroll = (protyle: IProtyle, getObject = false) => {
         return attr;
     }
 
-    window.siyuan.storage[Constants.LOCAL_FILEPOSITION][protyle.block.rootID] = attr;
-    return new Promise(resolve => {
-        setStorageVal(Constants.LOCAL_FILEPOSITION, window.siyuan.storage[Constants.LOCAL_FILEPOSITION], () => {
-            resolve(true);
-        });
-    });
+    protyle.settings.localFilePosition.set(protyleContentIdentity(protyle), attr);
+    protyle.settings.localFilePosition.persist();
+    return Promise.resolve(true);
 };
 
 export const getDocByScroll = (options: {
     protyle: IProtyle,
     scrollAttr?: IScrollAttr,
-    mergedOptions?: IProtyleOptions,
+    mergedOptions?: IResolvedProtyleOptions,
     cb?: (keys: string[]) => void
     focus?: boolean,
     updateReadonly?: boolean,
     signal?: AbortSignal,
     isCurrent?: () => boolean,
+    load?: ProtyleContentLoad,
 }) => {
+    const load = options.load ?? beginProtyleContentLoad(options.protyle, options.signal);
+    const isCurrent = () => load.isCurrent() && options.isCurrent?.() !== false;
     let actions: TProtyleAction[] = [];
     if (options.mergedOptions) {
         actions = options.mergedOptions.action;
@@ -88,29 +92,45 @@ export const getDocByScroll = (options: {
             querySubTypes: options.protyle.query?.subTypes,
             highlight: !isSupportCSSHL(),
         };
-        if (isEncryptedBox(options.protyle.notebookId)) {
-            getDocParam.notebook = options.protyle.notebookId;
-        }
-        fetchPost("/api/filetree/getDoc", getDocParam, response => {
-            if (options.isCurrent?.() === false) {
-                return;
-            }
-            if (response.code === 1) {
-                const getDocParam: Record<string, any> = {
-                    id: options.scrollAttr.rootId || options.mergedOptions?.blockId || options.protyle.block?.rootID || options.scrollAttr.startId,
-                    query: options.protyle.query?.key,
-                    queryMethod: options.protyle.query?.method,
-                    queryTypes: options.protyle.query?.types,
-                    querySubTypes: options.protyle.query?.subTypes,
-                    highlight: !isSupportCSSHL(),
-                };
-                if (isEncryptedBox(options.protyle.notebookId)) {
-                    getDocParam.notebook = options.protyle.notebookId;
+        void requestProtyleContent<IWebSocketData>(options.protyle, "/api/filetree/getDoc", getDocParam, load)
+            .then((response) => {
+                if (!isCurrent()) {
+                    return;
                 }
-                fetchPost("/api/filetree/getDoc", getDocParam, response => {
-                    if (options.isCurrent?.() === false) {
-                        return;
-                    }
+                if (response.code === 1) {
+                    const getDocParam: Record<string, any> = {
+                        id: options.scrollAttr.rootId || options.mergedOptions?.blockId || options.protyle.block?.rootID || options.scrollAttr.startId,
+                        query: options.protyle.query?.key,
+                        queryMethod: options.protyle.query?.method,
+                        queryTypes: options.protyle.query?.types,
+                        querySubTypes: options.protyle.query?.subTypes,
+                        highlight: !isSupportCSSHL(),
+                    };
+                    void requestProtyleContent<IWebSocketData>(options.protyle, "/api/filetree/getDoc", getDocParam, load)
+                        .then((response) => {
+                            if (!isCurrent()) {
+                                return;
+                            }
+                            onGet({
+                                scrollPosition: options.mergedOptions?.scrollPosition,
+                                data: response,
+                                protyle: options.protyle,
+                                action: actions,
+                                scrollAttr: options.scrollAttr,
+                                afterCB: options.cb ? () => {
+                                    options.cb(response.data.keywords);
+                                } : undefined,
+                                updateReadonly: options.updateReadonly,
+                                load,
+                            });
+                        }).catch((error) => {
+                            if (isCurrent()) {
+                                removeLoading(options.protyle);
+                                console.error("[protyle.transport] scroll restore failed", error);
+                            }
+                        });
+                } else {
+                    actions.push(Constants.CB_GET_ALL);
                     onGet({
                         scrollPosition: options.mergedOptions?.scrollPosition,
                         data: response,
@@ -120,24 +140,16 @@ export const getDocByScroll = (options: {
                         afterCB: options.cb ? () => {
                             options.cb(response.data.keywords);
                         } : undefined,
-                        updateReadonly: options.updateReadonly
+                        updateReadonly: options.updateReadonly,
+                        load,
                     });
-                }, undefined, undefined, options.signal);
-            } else {
-                actions.push(Constants.CB_GET_ALL);
-                onGet({
-                    scrollPosition: options.mergedOptions?.scrollPosition,
-                    data: response,
-                    protyle: options.protyle,
-                    action: actions,
-                    scrollAttr: options.scrollAttr,
-                    afterCB: options.cb ? () => {
-                        options.cb(response.data.keywords);
-                    } : undefined,
-                    updateReadonly: options.updateReadonly
-                });
-            }
-        }, undefined, undefined, options.signal);
+                }
+            }).catch((error) => {
+                if (isCurrent()) {
+                    removeLoading(options.protyle);
+                    console.error("[protyle.transport] zoom scroll restore failed", error);
+                }
+            });
         return;
     }
     const getDocParam: Record<string, any> = {
@@ -150,23 +162,27 @@ export const getDocByScroll = (options: {
         querySubTypes: options.protyle.query?.subTypes,
         highlight: !isSupportCSSHL(),
     };
-    if (isEncryptedBox(options.protyle.notebookId)) {
-        getDocParam.notebook = options.protyle.notebookId;
-    }
-    fetchPost("/api/filetree/getDoc", getDocParam, response => {
-        if (options.isCurrent?.() === false) {
-            return;
-        }
-        onGet({
-            scrollPosition: options.mergedOptions?.scrollPosition,
-            data: response,
-            protyle: options.protyle,
-            action: actions,
-            scrollAttr: options.scrollAttr,
-            afterCB: options.cb ? () => {
-                options.cb(response.data.keywords);
-            } : undefined,
-            updateReadonly: options.updateReadonly
+    void requestProtyleContent<IWebSocketData>(options.protyle, "/api/filetree/getDoc", getDocParam, load)
+        .then((response) => {
+            if (!isCurrent()) {
+                return;
+            }
+            onGet({
+                scrollPosition: options.mergedOptions?.scrollPosition,
+                data: response,
+                protyle: options.protyle,
+                action: actions,
+                scrollAttr: options.scrollAttr,
+                afterCB: options.cb ? () => {
+                    options.cb(response.data.keywords);
+                } : undefined,
+                updateReadonly: options.updateReadonly,
+                load,
+            });
+        }).catch((error) => {
+            if (isCurrent()) {
+                removeLoading(options.protyle);
+                console.error("[protyle.transport] scroll restore failed", error);
+            }
         });
-    }, undefined, undefined, options.signal);
 };

@@ -15,6 +15,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
+import { truncateTestDatabase } from "./support/database.js";
 import {
   startTestApiApplication,
   TEST_PUBLIC_ORIGIN,
@@ -42,19 +43,6 @@ type InvalidatedAccessLayer =
   | "space"
   | "space-membership"
   | "user";
-
-async function cleanDatabase(database: DatabaseClient): Promise<void> {
-  await database.$transaction(async (transaction) => {
-    await transaction.kernelInstance.deleteMany();
-    await transaction.authSession.deleteMany();
-    await transaction.spaceMembership.deleteMany();
-    await transaction.space.deleteMany();
-    await transaction.organizationMembership.deleteMany();
-    await transaction.organization.deleteMany();
-    await transaction.user.deleteMany();
-    await transaction.systemInstallation.deleteMany();
-  });
-}
 
 function createdInstallation(result: AccessOperationResult): {
   organizationId: string;
@@ -128,7 +116,7 @@ describe("authorized space HTTP contract with PostgreSQL", () => {
   });
 
   afterEach(async () => {
-    await cleanDatabase(database);
+    await truncateTestDatabase(database);
     logger.clear();
   });
 

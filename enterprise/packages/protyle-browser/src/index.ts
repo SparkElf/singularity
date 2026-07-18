@@ -2,6 +2,13 @@ export type {
   CreateProtyleOptions,
   CreateProtyleSessionOptions,
   ProtyleBoundContent,
+  ProtyleApplicationPort,
+  ProtyleApplicationSettings,
+  ProtyleLocalizationPort,
+  ProtyleMessageKey,
+  ProtyleToolbarHotkey,
+  ProtyleToolbarMessageKey,
+  ProtyleContentIdentity,
   ProtyleController,
   ProtyleCoreCommonOptions,
   ProtyleCoreCreateOptions,
@@ -19,7 +26,10 @@ export type {
   ProtyleHostPort,
   ProtyleLocalOnlyContent,
   ProtyleMenuHandle,
+  ProtyleMenuItem,
   ProtyleMenuPort,
+  ProtyleMenuPosition,
+  ProtyleMenuSurface,
   ProtyleOverlayHandle,
   ProtyleOverlayPort,
   ProtyleParticipation,
@@ -28,18 +38,24 @@ export type {
   ProtylePluginPort,
   ProtylePluginSlashItem,
   ProtyleRequestOptions,
+  ProtyleResourcePort,
   ProtyleRuntime,
   ProtyleRuntimeErrorCategory,
+  ProtyleScrollPosition,
   ProtyleSession,
   ProtyleSessionRuntime,
   ProtyleSubscription,
   ProtyleSubscriptionOptions,
   ProtyleSurface,
   ProtyleTransport,
+  ProtyleUploadOptions,
+  ProtyleWorkspaceCoreCreateOptions,
+  ProtyleWorkspaceCoreFactory,
 } from "./contracts.ts";
 
 export { createProtyleEditorRegistry } from "./registry.ts";
 export { createProtyleFactory } from "./factory.ts";
 export { createProtyleMenuPort } from "./menu.ts";
 export { createProtyleOverlayPort } from "./overlays.ts";
+export { createEmptyProtylePluginPort } from "./plugins.ts";
 export { createProtyleSession } from "./session.ts";

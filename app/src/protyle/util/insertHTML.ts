@@ -13,12 +13,10 @@ import {
 } from "./selection";
 import {Constants} from "../../constants";
 import {highlightRender} from "../render/highlightRender";
-import {scrollCenter} from "../../util/highlightById";
 import {updateAttrViewCellAnimation, updateAVName} from "../render/av/action";
 import {updateCellsValue} from "../render/av/cell";
 import {input} from "../wysiwyg/input";
 import {updateListOrder} from "../wysiwyg/list";
-import {fetchPost} from "../../util/fetch";
 import {isIncludeCell} from "./table";
 import {getFieldIdByCellElement, getRowHTML} from "../render/av/row";
 import {getAvBodyData} from "../render/av/virtualScroll";
@@ -27,6 +25,45 @@ import {setFold} from "./blockFold";
 
 // 粘贴时临时插入的占位行标记，遍历结束后统一移除，避免污染虚拟滚动的 renderedStart/renderedEnd/spacer 状态
 const PLACEHOLDER_ROW_CLASS = "av__row--placeholder";
+
+type ContentResponse<TData> = {data: TData};
+
+const requestContent = <TData>(protyle: IProtyle, path: string, body: unknown) =>
+    protyle.transport!.request<ContentResponse<TData>>(path, body, {
+        identity: {
+            documentId: protyle.options.blockId!,
+            notebookId: protyle.notebookId,
+        },
+        intent: "read",
+        signal: protyle.ownerSignal,
+    });
+
+const scrollInsertedContent = (protyle: IProtyle) => {
+    if (protyle.destroyed || protyle.ownerSignal?.aborted || protyle.disabled) {
+        return;
+    }
+    const selection = getSelection();
+    if (!selection?.rangeCount) {
+        return;
+    }
+    const blockElement = hasClosestBlock(selection.getRangeAt(0).startContainer);
+    if (!blockElement) {
+        return;
+    }
+    const elementRect = blockElement.getBoundingClientRect();
+    const contentRect = protyle.contentElement.getBoundingClientRect();
+    const delta = elementRect.bottom > contentRect.bottom
+        ? elementRect.bottom - contentRect.bottom
+        : elementRect.top < contentRect.top
+            ? elementRect.top - contentRect.top
+            : 0;
+    if (delta !== 0) {
+        protyle.contentElement.scroll({
+            top: protyle.contentElement.scrollTop + delta,
+            behavior: "smooth",
+        });
+    }
+};
 
 // 获取当前数据行的下一行。虚拟滚动会把视口外的数据行裁掉，此时 nextElementSibling 指向的是
 // .av__row--util 等非数据行。此处按 data-index 递增，若目标行未渲染则按数据源生成占位行插入后再返回，
@@ -82,7 +119,11 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
         });
     }
     const avID = blockElement.dataset.avId;
-    fetchPost("/api/av/getAttributeViewKeysByAvID", {avID}, async (response) => {
+    void requestContent<IAVColumn[]>(protyle, "/api/av/getAttributeViewKeysByAvID", {avID})
+        .then(async (response) => {
+        if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+            return;
+        }
         const columns: IAVColumn[] = response.data;
         const cellElements: HTMLElement[] = Array.from(blockElement.querySelectorAll(".av__cell--active, .av__cell--select")) || [];
         if (values && Array.isArray(values) && values.length > 0) {
@@ -262,7 +303,12 @@ const processAV = (range: Range, html: string, protyle: IProtyle, blockElement: 
             focusByRange(range);
             updateAVName(protyle, blockElement);
         }
-    });
+        })
+        .catch((error) => {
+            if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                console.error("[protyle.transport] attribute view paste request failed", error);
+            }
+        });
 };
 
 const processTable = (range: Range, html: string, protyle: IProtyle, blockElement: HTMLElement) => {
@@ -372,14 +418,14 @@ export const insertHTML = (html: string, protyle: IProtyle, isBlock = false,
         }
         if (isNodeCodeBlock) {
             blockElement.querySelector('[data-render="true"]')?.removeAttribute("data-render");
-            highlightRender(blockElement);
+            highlightRender(blockElement, protyle);
         } else {
             focusByWbr(blockElement, range);
         }
         blockElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
         updateTransaction(protyle, blockElement, oldHTML);
         setTimeout(() => {
-            scrollCenter(protyle, undefined, "nearest", "smooth");
+            scrollInsertedContent(protyle);
         }, Constants.TIMEOUT_LOAD);
         return;
     }
@@ -679,10 +725,12 @@ export const insertHTML = (html: string, protyle: IProtyle, isBlock = false,
     let foldData;
     if (blockElement.getAttribute("data-type") === "NodeHeading" &&
         blockElement.getAttribute("fold") === "1" && !insertBefore) {
-        fetchPost("/api/block/getHeadingChildrenIDs", {
+        void requestContent<string[]>(protyle, "/api/block/getHeadingChildrenIDs", {
             id: blockElement.getAttribute("data-node-id"),
-            notebook: protyle.notebookId,
-        }, (response) => {
+        }).then((response) => {
+            if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+                return;
+            }
             const childrenIDs: string[] = response.data;
             const previousId = (childrenIDs && childrenIDs.length > 0) ? childrenIDs[childrenIDs.length - 1] : blockElement.getAttribute("data-node-id");
             foldData = setFold(protyle, blockElement, true, false, false, true);
@@ -697,6 +745,10 @@ export const insertHTML = (html: string, protyle: IProtyle, isBlock = false,
             doOperation.splice(0, 0, ...foldData.doOperations);
             undoOperation.push(...foldData.undoOperations);
             transaction(protyle, doOperation, undoOperation);
+        }).catch((error) => {
+            if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                console.error("[protyle.transport] heading children request failed", error);
+            }
         });
         return;
     }

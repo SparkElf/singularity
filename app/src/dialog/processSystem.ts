@@ -15,7 +15,7 @@ import {isMobile} from "../util/functions";
 import {confirmDialog} from "./confirmDialog";
 import {escapeHtml} from "../util/escape";
 import {needSubscribe} from "../util/needSubscribe";
-import {hideAllElements} from "../protyle/ui/hideElements";
+import {hideAllEditorElements} from "../protyle/ui/hideElements";
 import {App} from "../index";
 import {saveScroll} from "../protyle/scroll/saveScroll";
 import {isInAndroid, isInHarmony, isInIOS, setStorageVal} from "../protyle/util/compatibility";
@@ -166,7 +166,7 @@ export const forceQuit = () => {
 };
 
 export const exitSiYuan = async (setCurrentWorkspace = true) => {
-    hideAllElements(["util"]);
+    hideAllEditorElements(window.siyuan.ws.app.protyleEditors);
     /// #if MOBILE
     if (window.siyuan.mobile.editor) {
         await saveScroll(window.siyuan.mobile.editor.protyle);

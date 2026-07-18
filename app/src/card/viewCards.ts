@@ -5,7 +5,7 @@ import {Dialog} from "../dialog";
 import {isMobile} from "../util/functions";
 import {escapeAttr, escapeHtml} from "../util/escape";
 import {getDisplayName, getNotebookName, isEncryptedBox} from "../util/pathName";
-import {getIconByType} from "../editor/getIcon";
+import {getIconByType} from "../protyle/util/getIconByType";
 import {unicode2Emoji} from "../emoji";
 import {addLoading} from "../protyle/ui/initUI";
 import {Constants} from "../constants";
@@ -82,7 +82,7 @@ export const viewCards = (app: App, deckID: string, title: string, deckType: "Tr
                 hideTitleOnZoom: true,
             },
             typewriterMode: false
-        });
+        }, window.siyuan.config.readonly);
         dialog.editors = {
             card: edit
         };

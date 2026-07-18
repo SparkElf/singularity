@@ -1,5 +1,7 @@
 import {hideElements} from "../ui/hideElements";
-import {isMac, isNotCtrl, isOnlyMeta, writeText} from "../util/compatibility";
+import {isMac} from "../util/browserPlatform";
+import {writeText} from "../util/clipboard";
+import {isNotCtrl, isOnlyMeta} from "../util/keyboard";
 import {
     focusBlock,
     focusByRange,
@@ -56,18 +58,18 @@ import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
 import {openAttr} from "../../menus/commonMenuItem";
 import {Constants} from "../../constants";
 import {fetchPost} from "../../util/fetch";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {BlockPanel} from "../../block/Panel";
 import * as dayjs from "dayjs";
 import {highlightRender} from "../render/highlightRender";
-import {countBlockWord} from "../../layout/status";
+import {countBlockStatistics} from "../util/statistics";
 import {moveToDown, moveToUp} from "./move";
 import {beforePaste, pasteAsPlainText} from "../util/paste";
 import {preventScroll} from "../scroll/preventScroll";
 import {getRefCreateSavePath, newFileBySelect} from "../../util/newFile";
-import {removeSearchMark} from "../toolbar/util";
+import {removeSearchMark} from "../util/searchMark";
 import {avKeydown} from "../render/av/keydown";
-import {checkFold} from "../../util/noRelyPCFunction";
+import {requestBlockFold} from "../util/blockFoldRequest";
 import {AIActions} from "../../ai/actions";
 import {openLink} from "../../editor/openLink";
 import {onlyProtyleCommand} from "../../boot/globalEvent/command/protyle";
@@ -242,7 +244,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     }
 
                     nextElement.classList.add("protyle-wysiwyg--select");
-                    countBlockWord([nextElement.getAttribute("data-node-id")]);
+                    countBlockStatistics(protyle, [nextElement.getAttribute("data-node-id")]);
                     const bottom = nextElement.getBoundingClientRect().bottom - protyle.contentElement.getBoundingClientRect().bottom;
                     if (bottom > 0) {
                         protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + bottom;
@@ -283,7 +285,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     }
                     if (previousElement) {
                         previousElement.classList.add("protyle-wysiwyg--select");
-                        countBlockWord([previousElement.getAttribute("data-node-id")]);
+                        countBlockStatistics(protyle, [previousElement.getAttribute("data-node-id")]);
                         const top = previousElement.getBoundingClientRect().top - protyle.contentElement.getBoundingClientRect().top;
                         if (top < 0) {
                             protyle.contentElement.scrollTop = protyle.contentElement.scrollTop + top;
@@ -512,7 +514,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     ids.push(nextElement.getAttribute("data-node-id"));
                     nextElement = event.key === "Home" ? nextElement.previousElementSibling : nextElement.nextElementSibling;
                 }
-                countBlockWord(ids);
+                countBlockStatistics(protyle, ids);
                 if (event.key === "Home") {
                     protyle.wysiwyg.element.firstElementChild.scrollIntoView();
                 } else {
@@ -1372,12 +1374,12 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     window.siyuan.menus.menu.remove(true);
                 } else if (nodeElement.classList.contains("protyle-wysiwyg--select")) {
                     hideElements(["select"], protyle);
-                    countBlockWord([], protyle.block.rootID);
+                    countBlockStatistics(protyle, []);
                 } else {
                     hideElements(["select"], protyle);
                     range.collapse(false);
                     nodeElement.classList.add("protyle-wysiwyg--select");
-                    countBlockWord([nodeElement.getAttribute("data-node-id")], protyle.block.rootID);
+                    countBlockStatistics(protyle, [nodeElement.getAttribute("data-node-id")]);
                 }
             }
             event.stopPropagation();
@@ -1510,7 +1512,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 const newNodeElement = nodeElement.nextElementSibling;
                 nodeElement.remove();
                 updateTransaction(protyle, newNodeElement, html);
-                highlightRender(newNodeElement);
+                highlightRender(newNodeElement, protyle);
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
@@ -1855,7 +1857,10 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
             });
             const id = nodeElement.getAttribute("data-node-id");
-            checkFold(id, protyle.notebookId, (zoomIn) => {
+            void requestBlockFold(protyle, {
+                notebookId: protyle.notebookId,
+                documentId: id,
+            }).then(({zoomIn}) => {
                 protyle.host.dispatch({
                     type: "open-document",
                     notebookId: protyle.notebookId,
@@ -1868,6 +1873,10 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     zoom: zoomIn,
                 });
                 blockPanel.destroy();
+            }).catch((error) => {
+                if (!protyle.requestSignal.aborted) {
+                    console.error("[protyle.transport] block fold request failed", error);
+                }
             });
             return;
         }
@@ -1880,7 +1889,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return;
             }
             if (!event.shiftKey) {
-                document.execCommand("insertHTML", false, window.siyuan.config.editor.codeTabSpaces === 0 ? "\t" : "".padStart(window.siyuan.config.editor.codeTabSpaces, " "));
+                document.execCommand("insertHTML", false, protyle.settings.editor.codeTabSpaces === 0 ? "\t" : "".padStart(protyle.settings.editor.codeTabSpaces, " "));
                 return true;
             }
         }
@@ -1902,84 +1911,68 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
         if (refElement) {
             const id = refElement.getAttribute("data-id");
-            if (matchHotKey(window.siyuan.config.keymap.editor.general.openBy.custom, event)) {
-                checkFold(id, protyle.notebookId, (zoomIn, _action, isRoot) => {
+            const notebookId = refElement.getAttribute("data-notebook-id");
+            const openReference = (disposition: "background-tab" | "current" | "split-bottom" | "split-right") => {
+                if (!id || !notebookId) {
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no notebook", {blockId: id});
+                    return;
+                }
+                void requestBlockFold(protyle, {
+                    notebookId,
+                    documentId: id,
+                }).then(({zoomIn, isRoot}) => {
                     protyle.host.dispatch({
                         type: "open-document",
-                        notebookId: protyle.notebookId,
+                        notebookId,
                         documentId: id,
-                        disposition: "current",
+                        disposition,
                         scope: zoomIn ? "subtree" : "context",
-                        attention: isRoot ? "focus" : "focus-and-highlight",
+                        attention: disposition === "background-tab" ? "highlight" :
+                            (isRoot ? "focus" : "focus-and-highlight"),
                         scroll: "start",
                         restoreScroll: zoomIn ? "never" : "if-document",
                         zoom: zoomIn,
                     });
+                }).catch((error) => {
+                    if (!protyle.requestSignal.aborted) {
+                        console.error("[protyle.transport] block fold request failed", error);
+                    }
                 });
+            };
+            if (matchHotKey(window.siyuan.config.keymap.editor.general.openBy.custom, event)) {
+                openReference("current");
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.refTab.custom, event)) {
                 // 打开块引和编辑器中引用、反链、书签中点击事件需保持一致，都加载上下文
-                checkFold(id, protyle.notebookId, (zoomIn) => {
-                    protyle.host.dispatch({
-                        type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: id,
-                        disposition: "background-tab",
-                        scope: zoomIn ? "subtree" : "context",
-                        attention: "highlight",
-                        scroll: "start",
-                        restoreScroll: zoomIn ? "never" : "if-document",
-                        zoom: zoomIn,
-                    });
-                });
+                openReference("background-tab");
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertRight.custom, event)) {
-                checkFold(id, protyle.notebookId, (zoomIn, _action, isRoot) => {
-                    protyle.host.dispatch({
-                        type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: id,
-                        disposition: "split-right",
-                        scope: zoomIn ? "subtree" : "context",
-                        attention: isRoot ? "focus" : "focus-and-highlight",
-                        scroll: "start",
-                        restoreScroll: zoomIn ? "never" : "if-document",
-                        zoom: zoomIn,
-                    });
-                });
+                openReference("split-right");
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.insertBottom.custom, event)) {
-                checkFold(id, protyle.notebookId, (zoomIn, _action, isRoot) => {
-                    protyle.host.dispatch({
-                        type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: id,
-                        disposition: "split-bottom",
-                        scope: zoomIn ? "subtree" : "context",
-                        attention: isRoot ? "focus" : "focus-and-highlight",
-                        scroll: "start",
-                        restoreScroll: zoomIn ? "never" : "if-document",
-                        zoom: zoomIn,
-                    });
-                });
+                openReference("split-bottom");
                 event.preventDefault();
                 event.stopPropagation();
                 return true;
             } else if (matchHotKey(window.siyuan.config.keymap.editor.general.refPopover.custom, event)) {
                 // open popover
-                window.siyuan.blockPanels.push(new BlockPanel({
-                    app: protyle.app,
-                    isBacklink: false,
-                    notebookId: protyle.notebookId,
-                    targetElement: refElement,
-                    refDefs: [{refID: id}]
-                }));
+                if (id && notebookId) {
+                    window.siyuan.blockPanels.push(new BlockPanel({
+                        app: protyle.app,
+                        isBacklink: false,
+                        notebookId,
+                        targetElement: refElement,
+                        refDefs: [{refID: id}]
+                    }));
+                } else {
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no notebook", {blockId: id});
+                }
                 event.preventDefault();
                 event.stopPropagation();
                 return true;

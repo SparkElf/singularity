@@ -1,5 +1,5 @@
-import {hasClosestBlock, isInEmbedBlock} from "../protyle/util/hasClosest";
-import {focusByRange, getEditorRange} from "../protyle/util/selection";
+import {hasClosestBlock, isInEmbedBlock} from "./hasClosest";
+import {focusByRange, getEditorRange} from "./selection";
 
 export const bgFade = (element: Element) => {
     element.classList.add("protyle-wysiwyg--hl");
@@ -107,7 +107,8 @@ export const scrollCenter = (
     const contentRect = protyle.contentElement.getBoundingClientRect();
     if (position === "start") {
         protyle.contentElement.scroll({
-            top: protyle.contentElement.scrollTop + elementRect.top - contentRect.top - (window.siyuan.config.editor.fontSize * 1.625 * 2 + 24),
+            top: protyle.contentElement.scrollTop + elementRect.top - contentRect.top -
+                (protyle.settings.editor.fontSize * 1.625 * 2 + 24),
             behavior
         });
         return;

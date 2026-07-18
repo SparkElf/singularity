@@ -835,7 +835,7 @@ func GetHeadingDeleteTransactionInNotebook(id, notebookID string) (transaction *
 			op.PreviousID = n.Previous.ID
 		}
 		op.Action = "insert"
-		op.Data = luteEngine.RenderNodeBlockDOM(n)
+		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(n), boxID)
 		transaction.UndoOperations = append(transaction.UndoOperations, op)
 	}
 	return
@@ -872,7 +872,7 @@ func GetHeadingInsertTransactionInNotebook(id, notebookID string) (transaction *
 		op := &Operation{Context: map[string]any{"ignoreProcess": "true"}}
 		op.ID = n.ID
 		op.Action = "insert"
-		op.Data = luteEngine.RenderNodeBlockDOM(n)
+		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(n), boxID)
 		transaction.DoOperations = append(transaction.DoOperations, op)
 
 		op = &Operation{}
@@ -983,7 +983,7 @@ func GetHeadingChildrenDOMInNotebook(id, notebookID string, removeFoldAttr bool)
 	}
 
 	luteEngine := util.NewLute()
-	ret = renderBlockDOMByNodes(nodes, luteEngine)
+	ret = renderBlockDOMByNodes(nodes, luteEngine, boxID)
 	return
 }
 
@@ -1030,7 +1030,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 		op := &Operation{}
 		op.ID = c.ID
 		op.Action = "update"
-		op.Data = luteEngine.RenderNodeBlockDOM(c)
+		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(c), boxID)
 		transaction.UndoOperations = append(transaction.UndoOperations, op)
 
 		c.HeadingLevel += diff
@@ -1043,7 +1043,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 		op = &Operation{}
 		op.ID = c.ID
 		op.Action = "update"
-		op.Data = luteEngine.RenderNodeBlockDOM(c)
+		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(c), boxID)
 		transaction.DoOperations = append(transaction.DoOperations, op)
 	}
 	return
@@ -1097,7 +1097,7 @@ func GetBlockDOMsInBox(ids []string, boxID string) (ret map[string]string) {
 			return ast.WalkContinue
 		})
 
-		ret[id] = luteEngine.RenderNodeBlockDOM(node)
+		ret[id] = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(node), boxID)
 	}
 	return
 }
@@ -1153,7 +1153,7 @@ func GetBlockDOMsWithEmbedInBox(ids []string, boxID string) (ret map[string]stri
 			return ast.WalkContinue
 		})
 
-		htmlContent := luteEngine.RenderNodeBlockDOM(node)
+		htmlContent := FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(node), boxID)
 
 		htmlContent = processEmbedHTML(htmlContent)
 
@@ -1637,7 +1637,7 @@ func getEmbeddedBlock(trees map[string]*parse.Tree, sqlBlock *sql.Block, heading
 
 	luteEngine := NewLute()
 	luteEngine.RenderOptions.ProtyleContenteditable = true
-	dom := renderBlockDOMByNodes(nodes, luteEngine)
+	dom := renderBlockDOMByNodes(nodes, luteEngine, boxID)
 	content := renderBlockContentByNodes(nodes)
 	block = &Block{Box: def.Box, Path: def.Path, HPath: b.HPath, ID: def.ID, Type: def.Type.String(), Content: dom, Markdown: content /* 这里使用 Markdown 字段来临时存储 content */}
 

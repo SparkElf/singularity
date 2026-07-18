@@ -1,9 +1,9 @@
 import {lineNumberRender} from "../render/highlightRender";
 import {transaction} from "../wysiwyg/transaction";
 import {preventScroll} from "../scroll/preventScroll";
-import {hasClosestBlock} from "./hasClosest";
+import {hasClosestBlock, isInEmbedBlock} from "./hasClosest";
 import {focusBlock} from "./selection";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "./highlightById";
 import {clearSelect} from "./clear";
 import {removeFoldHeading} from "./heading";
 import {getSbChildBlockCount, getTopAloneElement} from "../wysiwyg/getBlock";
@@ -27,7 +27,7 @@ export const setFold = (protyle: IProtyle, nodeElement: Element, isOpen?: boolea
         nodeElement.removeAttribute("fold");
         // https://github.com/siyuan-note/siyuan/issues/4411
         nodeElement.querySelectorAll(".protyle-linenumber__rows").forEach((item: HTMLElement) => {
-            lineNumberRender(item.parentElement);
+            lineNumberRender(item.parentElement, protyle);
         });
     } else {
         if (typeof isOpen === "boolean" && isOpen) {
@@ -92,6 +92,22 @@ export const setFold = (protyle: IProtyle, nodeElement: Element, isOpen?: boolea
     // 折叠后，防止滚动条滚动后调用 get 请求 https://github.com/siyuan-note/siyuan/issues/2248
     preventScroll(protyle);
     return {fold: !hasFold ? 1 : 0, undoOperations, doOperations};
+};
+
+export const setFoldById = (data: {
+    id: string,
+    currentNodeID: string,
+}, protyle: IProtyle) => {
+    Array.from(protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${data.id}"]`)).find((item: Element) => {
+        if (!isInEmbedBlock(item)) {
+            const operations = setFold(protyle, item, true, false, true, true);
+            operations.doOperations[0].context = {
+                focusId: data.currentNodeID,
+            };
+            transaction(protyle, operations.doOperations, operations.undoOperations);
+            return true;
+        }
+    });
 };
 
 const isFoldable = (el: Element) => {

@@ -1,23 +1,37 @@
 import {insertHTML} from "../util/insertHTML";
 import {hideMessage, showMessage} from "../../dialog/message";
 import {Constants} from "../../constants";
-import {destroy} from "../util/destroy";
-import {fetchPost} from "../../util/fetch";
 import {getEditorRange} from "../util/selection";
-import {pathPosix} from "../../util/pathName";
 import {genAssetHTML} from "../../asset/renderAssets";
 import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {getContenteditableElement} from "../wysiwyg/getBlock";
 import {getTypeByCellElement, updateCellsValue} from "../render/av/cell";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {confirmDialog} from "../../dialog/confirmDialog";
 import {filesize} from "filesize";
 import {transaction} from "../wysiwyg/transaction";
 import * as dayjs from "dayjs";
 
-interface FileWithPath extends File {
-    path: string;
+interface UploadResponse extends Omit<IWebSocketData, "data"> {
+    data: {
+        errFiles?: string[];
+        succMap: Record<string, string>;
+    };
 }
+
+const isUploadCurrent = (protyle: IProtyle) =>
+    !protyle.destroyed && !protyle.requestSignal.aborted && protyle.element.isConnected;
+
+const isAbort = (error: unknown) =>
+    error instanceof DOMException && error.name === "AbortError";
+
+const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+
+const getFileExtension = (filename: string) => {
+    const lastIndex = filename.lastIndexOf(".");
+    return lastIndex <= 0 ? "" : filename.substring(lastIndex).toLowerCase();
+};
 
 export class Upload {
     public element: HTMLElement;
@@ -40,12 +54,12 @@ const validateFile = (protyle: IProtyle, files: File[]) => {
         let validate = true;
 
         if (!file.name) {
-            errorTip += `<li>${window.siyuan.languages.nameEmpty}</li>`;
+            errorTip += `<li>${protyle.localization.text("nameEmpty")}</li>`;
             validate = false;
         }
 
         if (file.size > protyle.options.upload.max) {
-            errorTip += `<li>${file.name} ${window.siyuan.languages.over} ${protyle.options.upload.max / 1024 / 1024}M</li>`;
+            errorTip += `<li>${file.name} ${protyle.localization.text("over")} ${protyle.options.upload.max / 1024 / 1024}M</li>`;
             validate = false;
         }
 
@@ -69,14 +83,14 @@ const validateFile = (protyle: IProtyle, files: File[]) => {
             });
 
             if (!isAccept) {
-                errorTip += `<li>${file.name} ${window.siyuan.languages.fileTypeError}</li>`;
+                errorTip += `<li>${file.name} ${protyle.localization.text("fileTypeError")}</li>`;
                 validate = false;
             }
         }
 
         if (validate) {
             uploadFileList.push(file);
-            uploadingStr += `<li>${filename} ${window.siyuan.languages.uploading}</li>`;
+            uploadingStr += `<li>${filename} ${protyle.localization.text("uploading")}</li>`;
         }
     }
     let msgId;
@@ -87,8 +101,10 @@ const validateFile = (protyle: IProtyle, files: File[]) => {
     return {files: uploadFileList, msgId};
 };
 
-const genUploadedLabel = async (responseText: string, protyle: IProtyle) => {
-    const response = JSON.parse(responseText);
+const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => {
+    if (!isUploadCurrent(protyle)) {
+        return;
+    }
     let errorTip = "";
 
     if (response.code === 1) {
@@ -100,7 +116,7 @@ const genUploadedLabel = async (responseText: string, protyle: IProtyle) => {
         response.data.errFiles.forEach((data: string) => {
             const lastIndex = data.lastIndexOf(".");
             const filename = lastIndex === -1 ? data : (protyle.options.upload.filename(data.substr(0, lastIndex)) + data.substr(lastIndex));
-            errorTip += `<li>${filename} ${window.siyuan.languages.uploadError}</li>`;
+            errorTip += `<li>${filename} ${protyle.localization.text("uploadError")}</li>`;
         });
         errorTip += "</ul>";
     }
@@ -136,7 +152,7 @@ const genUploadedLabel = async (responseText: string, protyle: IProtyle) => {
     let hasImage = false;
     keys.forEach((key, index) => {
         const path = response.data.succMap[key];
-        const type = pathPosix().extname(key).toLowerCase();
+        const type = getFileExtension(key);
         const filename = protyle.options.upload.filename(key);
         const name = filename.substring(0, filename.length - type.length);
         hasImage = Constants.SIYUAN_ASSETS_IMAGE.includes(type);
@@ -227,6 +243,9 @@ const genUploadedLabel = async (responseText: string, protyle: IProtyle) => {
                 }
                 const operations = await updateCellsValue(protyle, nodeElement,
                     [avAssets[i]], [cellElement], null, null, true);
+                if (!isUploadCurrent(protyle)) {
+                    return;
+                }
                 doOperations.push(...operations.doOperations);
                 undoOperations.push(...operations.undoOperations);
             }
@@ -251,73 +270,33 @@ const genUploadedLabel = async (responseText: string, protyle: IProtyle) => {
     insertHTML(successFileText, protyle, insertBlock);
     // 粘贴图片后定位不准确 https://github.com/siyuan-note/siyuan/issues/13336
     setTimeout(() => {
-        scrollCenter(protyle, undefined, "nearest", "smooth");
-    }, hasImage ? 0 : Constants.TIMEOUT_LOAD);
-};
-
-export const uploadLocalFiles = (files: ILocalFiles[], protyle: IProtyle, isUpload: boolean) => {
-    let msg = "";
-    const assetPaths: string[] = [];
-    files.forEach(item => {
-        if (item.size && Constants.SIZE_UPLOAD_TIP_SIZE <= item.size) {
-            msg += window.siyuan.languages.uploadFileTooLarge.replace("${x}", item.path).replace("${y}", filesize(item.size, {standard: "iec"})) + "<br>";
+        if (isUploadCurrent(protyle)) {
+            scrollCenter(protyle, undefined, "nearest", "smooth");
         }
-        assetPaths.push(item.path);
-    });
-
-    confirmDialog(msg ? window.siyuan.languages.upload : "", msg, () => {
-        const msgId = showMessage(window.siyuan.languages.uploading, 0);
-        fetchPost("/api/asset/insertLocalAssets", {
-            assetPaths,
-            isUpload,
-            id: protyle.block.rootID
-        }, (response) => {
-            hideMessage(msgId);
-            let tip = "";
-            Object.keys(response.data.succMap).forEach(name => {
-                if (response.data.succMap[name].startsWith("file:")) {
-                    tip += name + ", ";
-                }
-            });
-            if (tip) {
-                showMessage(window.siyuan.languages.dndFolderTip.replace("${x}", `<b>${tip.substring(0, tip.length - 2)}</b>`));
-            }
-            genUploadedLabel(JSON.stringify(response), protyle);
-        });
-    });
+    }, hasImage ? 0 : Constants.TIMEOUT_LOAD);
 };
 
 export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferItemList | File[], element?: HTMLInputElement, successCB?: (res: string) => void) => {
     // FileList | DataTransferItemList | File[] => File[]
     let fileList = [];
+    let hasLocalPath = false;
     for (let i = 0; i < files.length; i++) {
         let fileItem = files[i];
         if (fileItem instanceof DataTransferItem) {
             fileItem = fileItem.getAsFile();
         }
         if (0 === fileItem.size && "" === fileItem.type && -1 === fileItem.name.indexOf(".")) {
-            // 文件夹
-            uploadLocalFiles([{path: (fileItem as FileWithPath).path, size: null}], protyle, false);
+            hasLocalPath = true;
         } else {
             fileList.push(fileItem);
         }
     }
-
-    if (protyle.options.upload.handler) {
-        const isValidate = protyle.options.upload.handler(fileList);
-        if (typeof isValidate === "string") {
-            showMessage(isValidate);
-            return;
-        }
-        return;
-    }
-
-    if (!protyle.options.upload.url || !protyle.upload) {
-        if (element) {
-            element.value = "";
-        }
-        showMessage("please config: options.upload.url");
-        return;
+    if (hasLocalPath) {
+        protyle.host.dispatch({
+            type: "notify",
+            level: "error",
+            message: protyle.localization.text("uploadError"),
+        });
     }
 
     if (protyle.options.upload.file) {
@@ -351,73 +330,77 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
     for (let i = 0, iMax = validateResult.files.length; i < iMax; i++) {
         formData.append(protyle.options.upload.fieldName, validateResult.files[i]);
         if (Constants.SIZE_UPLOAD_TIP_SIZE <= validateResult.files[i].size) {
-            msg += window.siyuan.languages.uploadFileTooLarge.replace("${x}", validateResult.files[i].name).replace("${y}", filesize(validateResult.files[i].size, {standard: "iec"})) + "<br>";
+            msg += protyle.localization.text("uploadFileTooLarge")
+                .replace("${x}", validateResult.files[i].name)
+                .replace("${y}", filesize(validateResult.files[i].size, {standard: "iec"})) + "<br>";
         }
     }
-    if (protyle.lite) {
-        formData.append("assetsDirPath", "/assets/");
-    } else {
-        formData.append("id", protyle.block?.rootID);
-        formData.append("notebook", protyle.notebookId);
-    }
-    confirmDialog(msg ? window.siyuan.languages.upload : "", msg, () => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", protyle.options.upload.url);
-        if (protyle.options.upload.token) {
-            xhr.setRequestHeader("X-Upload-Token", protyle.options.upload.token);
+    formData.set("id", protyle.options.blockId!);
+    formData.set("notebook", protyle.notebookId);
+    confirmDialog(msg ? protyle.localization.text("upload") : "", msg, () => {
+        if (!isUploadCurrent(protyle)) {
+            return;
         }
-        if (protyle.options.upload.withCredentials) {
-            xhr.withCredentials = true;
-        }
-
         protyle.upload.isUploading = true;
-        xhr.onreadystatechange = () => {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                protyle.upload.isUploading = false;
-                if (!document.body.contains(protyle.element)) {
-                    // 网络较慢时，页签已经关闭
-                    destroy(protyle);
+        void protyle.transport!.upload<UploadResponse>(formData, {
+            identity: {
+                notebookId: protyle.notebookId,
+                documentId: protyle.options.blockId!,
+            },
+            signal: protyle.requestSignal,
+            onProgress: ({loadedBytes, totalBytes}) => {
+                if (!isUploadCurrent(protyle) || totalBytes === undefined) {
                     return;
                 }
-                if (xhr.status === 200) {
-                    hideMessage(validateResult.msgId);
-                    if (protyle.options.upload.success) {
-                        protyle.options.upload.success(editorElement, xhr.responseText);
-                    } else if (successCB) {
-                        successCB(xhr.responseText);
-                    } else {
-                        let responseText = xhr.responseText;
-                        if (protyle.options.upload.format) {
-                            responseText = protyle.options.upload.format(files as File [], xhr.responseText);
-                        }
-                        genUploadedLabel(responseText, protyle);
-                    }
-                } else if (xhr.status === 0) {
-                    showMessage(window.siyuan.languages["_kernel"][28]);
+                const progress = loadedBytes / totalBytes * 100;
+                protyle.upload.element.style.display = "block";
+                protyle.upload.element.style.width = progress + "%";
+            },
+        }).then((response) => {
+            if (!isUploadCurrent(protyle)) {
+                return;
+            }
+            const responseText = JSON.stringify(response);
+            if (protyle.options.upload.success) {
+                protyle.options.upload.success(editorElement, responseText);
+            } else if (successCB) {
+                successCB(responseText);
+            } else {
+                if (protyle.options.upload.format) {
+                    return genUploadedLabel(
+                        JSON.parse(protyle.options.upload.format(files as File[], responseText)),
+                        protyle,
+                    );
                 } else {
-                    if (protyle.options.upload.error) {
-                        protyle.options.upload.error(xhr.responseText);
-                    } else {
-                        showMessage(xhr.responseText);
-                    }
+                    return genUploadedLabel(response, protyle);
                 }
+            }
+        }, (error) => {
+            if (!isAbort(error) && isUploadCurrent(protyle)) {
+                const message = getErrorMessage(error);
+                console.error("[protyle.transport] asset upload failed", error);
+                if (protyle.options.upload.error) {
+                    protyle.options.upload.error(message);
+                } else {
+                    showMessage(protyle.localization.kernelText(28));
+                }
+            }
+        }).finally(() => {
+            protyle.upload.isUploading = false;
+            hideMessage(validateResult.msgId);
+            if (isUploadCurrent(protyle)) {
                 if (element) {
                     element.value = "";
                 }
                 protyle.upload.element.style.display = "none";
             }
-        };
-        xhr.upload.onprogress = (event: ProgressEvent) => {
-            if (!event.lengthComputable) {
-                return;
+        }).catch((error) => {
+            if (isUploadCurrent(protyle)) {
+                console.error("[protyle.upload] uploaded asset handling failed", error);
+                showMessage(protyle.localization.text("uploadError"));
             }
-            const progress = event.loaded / event.total * 100;
-            protyle.upload.element.style.display = "block";
-            const progressBar = protyle.upload.element;
-            progressBar.style.width = progress + "%";
-        };
-        xhr.send(formData);
+        });
     }, () => {
         hideMessage(validateResult.msgId);
-    });
+    }, false, protyle.requestSignal);
 };

@@ -12,7 +12,7 @@ import {MenuItem} from "../menus/Menu";
 import {getDisplayName, getNotebookIcon, getNotebookName, isEncryptedBox, movePathTo, pathPosix, useShell} from "../util/pathName";
 import {onGet} from "../protyle/util/onGet";
 import {addLoading} from "../protyle/ui/initUI";
-import {getIconByType} from "../editor/getIcon";
+import {getIconByType} from "../protyle/util/getIconByType";
 import {unicode2Emoji} from "../emoji";
 import {hasClosestBlock, hasClosestByClassName, hasClosestByTag} from "../protyle/util/hasClosest";
 import {isIPad, isNotCtrl, setStorageVal, updateHotkeyTip} from "../protyle/util/compatibility";
@@ -42,7 +42,7 @@ import {getUnRefList, openSearchUnRef, unRefMoreMenu} from "./unRef";
 import {getDefaultSubType, getDefaultType} from "./getDefault";
 import {isSupportCSSHL, searchMarkRender} from "../protyle/render/searchMarkRender";
 import {saveKeyList, toggleAssetHistory, toggleReplaceHistory, toggleSearchHistory} from "./toggleHistory";
-import {highlightById} from "../util/highlightById";
+import {highlightById} from "../protyle/util/highlightById";
 import {getSelectionOffset} from "../protyle/util/selection";
 import {getContenteditableElement} from "../protyle/wysiwyg/getBlock";
 import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
@@ -302,7 +302,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
             breadcrumbDocName: true,
             title: true
         },
-    });
+    }, window.siyuan.config.readonly);
     edit.resize();
     const unRefEdit = new EmbeddedProtyleOwner(app, element.querySelector("#searchUnRefPreview") as HTMLElement, {
         render: {
@@ -310,7 +310,7 @@ export const genSearch = (app: App, config: Config.IUILayoutTabSearchConfig, ele
             breadcrumbDocName: true,
             title: true
         },
-    });
+    }, window.siyuan.config.readonly);
     unRefEdit.resize();
     if (closeCB) {
         if (data.layout === 1) {

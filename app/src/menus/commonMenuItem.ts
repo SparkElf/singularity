@@ -30,7 +30,7 @@ import {exportImage} from "../protyle/export/util";
 import {App} from "../index";
 import {renderAVAttribute} from "../protyle/render/av/blockAttr";
 import {openAssetNewWindow} from "../window/openNewWindow";
-import {copyTextByType} from "../protyle/toolbar/util";
+import {copyTextByType} from "../host/copyTextByType";
 import {hideElements} from "../protyle/ui/hideElements";
 import {Protyle} from "../protyle";
 import {hasClosestByClassName} from "../protyle/util/hasClosest";
@@ -184,6 +184,7 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
             participation: "detached",
             content: {mode: "bound", notebookId},
             initialLoad: "owner",
+            hostReadOnly: window.siyuan.config.readonly,
         });
     }
     Object.keys(attrs).forEach(item => {
@@ -436,7 +437,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyBlockRef.custom : undefined,
         label: window.siyuan.languages.copyBlockRef,
         click: () => {
-            copyTextByType(ids, "ref");
+            void copyTextByType(ids, "ref").catch((error: unknown) => {
+                console.error("[protyle-host:copy-text]", error);
+            });
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -447,7 +450,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         label: window.siyuan.languages.copyBlockEmbed,
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyBlockEmbed.custom : undefined,
         click: () => {
-            copyTextByType(ids, "blockEmbed");
+            void copyTextByType(ids, "blockEmbed").catch((error: unknown) => {
+                console.error("[protyle-host:copy-text]", error);
+            });
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -458,7 +463,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         label: window.siyuan.languages.copyProtocol,
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyProtocol.custom : undefined,
         click: () => {
-            copyTextByType(ids, "protocol", notebookId);
+            void copyTextByType(ids, "protocol", notebookId).catch((error: unknown) => {
+                console.error("[protyle-host:copy-text]", error);
+            });
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -469,7 +476,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
         label: window.siyuan.languages.copyProtocolInMd,
         accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyProtocolInMd.custom : undefined,
         click: () => {
-            copyTextByType(ids, "protocolMd", notebookId);
+            void copyTextByType(ids, "protocolMd", notebookId).catch((error: unknown) => {
+                console.error("[protyle-host:copy-text]", error);
+            });
             if (focusElement) {
                 focusBlock(focusElement);
             }
@@ -481,7 +490,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             iconHTML: "",
             label: window.siyuan.languages.copyWebURL,
             click: () => {
-                copyTextByType(ids, "webURL", notebookId);
+                void copyTextByType(ids, "webURL", notebookId).catch((error: unknown) => {
+                    console.error("[protyle-host:copy-text]", error);
+                });
                 if (focusElement) {
                     focusBlock(focusElement);
                 }
@@ -494,7 +505,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             label: window.siyuan.languages.copyHPath,
             accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyHPath.custom : undefined,
             click: () => {
-                copyTextByType(ids, "hPath", notebookId);
+                void copyTextByType(ids, "hPath", notebookId).catch((error: unknown) => {
+                    console.error("[protyle-host:copy-text]", error);
+                });
                 if (focusElement) {
                     focusBlock(focusElement);
                 }
@@ -505,7 +518,9 @@ export const copySubMenu = (ids: string[], accelerator = true, focusElement?: El
             label: window.siyuan.languages.copyID,
             accelerator: accelerator ? window.siyuan.config.keymap.editor.general.copyID.custom : undefined,
             click: () => {
-                copyTextByType(ids, "id");
+                void copyTextByType(ids, "id").catch((error: unknown) => {
+                    console.error("[protyle-host:copy-text]", error);
+                });
                 if (focusElement) {
                     focusBlock(focusElement);
                 }
@@ -644,7 +659,7 @@ export const exportMd = (id: string, notebookId: string) => {
             label: window.siyuan.languages.image,
             icon: "iconImage",
             click: () => {
-                exportImage(id, notebookId);
+                exportImage(window.siyuan.ws.app, id, notebookId);
             }
         },
             /// #if !BROWSER
@@ -852,7 +867,8 @@ export const exportMd = (id: string, notebookId: string) => {
     }).element;
 };
 
-export const openMenu = (app: App, src: string, notebookId: string, onlyMenu: boolean, showAccelerator: boolean) => {
+export const openMenu = (app: App, src: string, notebookId: string, documentId: string,
+                         onlyMenu: boolean, showAccelerator: boolean) => {
     const submenu = [];
     /// #if MOBILE
     submenu.push({
@@ -877,6 +893,7 @@ export const openMenu = (app: App, src: string, notebookId: string, onlyMenu: bo
                 click() {
                     app.protyleHost.dispatch({
                         type: "open-asset",
+                        documentId,
                         notebookId,
                         assetPath: src.trim(),
                         page: parseInt(getSearch("page", src)),
@@ -892,6 +909,7 @@ export const openMenu = (app: App, src: string, notebookId: string, onlyMenu: bo
                 click() {
                     app.protyleHost.dispatch({
                         type: "open-asset",
+                        documentId,
                         notebookId,
                         assetPath: src.trim(),
                         page: parseInt(getSearch("page", src)),

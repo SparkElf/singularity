@@ -42,13 +42,13 @@ import {blockRender} from "../protyle/render/blockRender";
 import {renameAsset} from "../editor/rename";
 import {pushBack} from "../mobile/util/MobileBackFoward";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "./util";
-import {removeInlineType} from "../protyle/toolbar/util";
+import {removeInlineType} from "../protyle/util/inlineType";
 import {alignImgCenter, alignImgLeft} from "../protyle/wysiwyg/commonHotkey";
 import {checkFold, genTagList, renameTag} from "../util/noRelyPCFunction";
 import {hideElements} from "../protyle/ui/hideElements";
 import {emitOpenMenu} from "../plugin/EventBus";
 import {renderAssetsPreview} from "../asset/renderAssets";
-import {upDownHint} from "../util/upDownHint";
+import {upDownHint} from "../protyle/util/upDownHint";
 import {hintRenderAssets} from "../protyle/hint/extend";
 import {Menu} from "../plugin/Menu";
 import {getFirstBlock} from "../protyle/wysiwyg/getBlock";
@@ -60,7 +60,7 @@ import {base64ToURL} from "../util/image";
 import {setPosition} from "../util/setPosition";
 import {setFold} from "../protyle/util/blockFold";
 import {isEncryptedBox, parseSiYuanUriInfo} from "../util/pathName";
-import {buildSiYuanBlockUri} from "../util/siyuanUri";
+import {buildSiYuanBlockUri} from "../protyle/util/blockUri";
 
 const renderAssetList = (element: Element, k: string, position: IPosition, notebookId: string, exts: string[] = []) => {
     const searchParam: { k: string, exts: string[], notebook?: string } = {
@@ -1197,7 +1197,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
                     const value = (event.target as HTMLInputElement).value;
                     imgElement.setAttribute("title", value);
                     titleElement.innerText = value;
-                    mathRender(titleElement);
+                    mathRender(titleElement, protyle);
                 });
                 textElements[2].value = imgElement.getAttribute("alt") || "";
                 element.addEventListener("click", (event) => {
@@ -1462,7 +1462,7 @@ export const imgMenu = (protyle: IProtyle, range: Range, assetElement: HTMLEleme
     const imgSrc = imgElement.getAttribute("src");
     if (imgSrc) {
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_3", type: "separator"}).element);
-        openMenu(protyle.app, imgSrc, protyle.notebookId, false, false);
+        openMenu(protyle.app, imgSrc, protyle.notebookId, protyle.block.rootID, false, false);
     }
     const dataSrc = imgElement.getAttribute("data-src");
     if (dataSrc && dataSrc.startsWith("assets/")) {
@@ -1748,7 +1748,7 @@ style="margin:4px 0;width: ${isMobile() ? "100%" : "360px"}" class="b3-text-fiel
 
     if (linkAddress) {
         window.siyuan.menus.menu.append(new MenuItem({id: "separator_2", type: "separator"}).element);
-        openMenu(protyle.app, linkAddress, protyle.notebookId, false, true);
+        openMenu(protyle.app, linkAddress, protyle.notebookId, protyle.block.rootID, false, true);
         if (linkAddress?.startsWith("assets/")) {
             window.siyuan.menus.menu.append(new MenuItem(exportAsset(linkAddress)).element);
             window.siyuan.menus.menu.append(new MenuItem(writeAssetToClipboard(linkAddress)).element);
@@ -2152,7 +2152,14 @@ export const iframeMenu = (protyle: IProtyle, nodeElement: Element) => {
         subMenus.push({
             type: "separator"
         });
-        return subMenus.concat(openMenu(protyle.app, iframeSrc, protyle.notebookId, true, false) as IMenu[]);
+        return subMenus.concat(openMenu(
+            protyle.app,
+            iframeSrc,
+            protyle.notebookId,
+            protyle.block.rootID,
+            true,
+            false,
+        ) as IMenu[]);
     }
     return subMenus;
 };
@@ -2194,7 +2201,14 @@ export const videoMenu = (protyle: IProtyle, nodeElement: Element, type: string)
             id: "openBy",
             label: window.siyuan.languages.openBy,
             icon: "iconOpen",
-            submenu: openMenu(protyle.app, src, protyle.notebookId, true, false) as IMenu[]
+            submenu: openMenu(
+                protyle.app,
+                src,
+                protyle.notebookId,
+                protyle.block.rootID,
+                true,
+                false,
+            ) as IMenu[]
         });
     }
     if (src && src.startsWith("assets/")) {

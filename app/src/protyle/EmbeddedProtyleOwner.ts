@@ -10,14 +10,17 @@ export class EmbeddedProtyleOwner {
     public readonly app: App;
     public readonly element: HTMLElement;
     private readonly ownerOptions: Omit<IProtyleOptions, "blockId" | "notebookId">;
+    private readonly hostReadOnly: boolean;
     private readonly lifecycle = new OwnerLifecycle();
     private editor?: Protyle;
 
     constructor(app: App, element: HTMLElement,
-                options: Omit<IProtyleOptions, "blockId" | "notebookId">) {
+                options: Omit<IProtyleOptions, "blockId" | "notebookId">,
+                hostReadOnly: boolean) {
         this.app = app;
         this.element = element;
         this.ownerOptions = options;
+        this.hostReadOnly = hostReadOnly;
     }
 
     public get signal(): AbortSignal {
@@ -48,6 +51,7 @@ export class EmbeddedProtyleOwner {
             participation: "live",
             content: {mode: "bound", notebookId},
             initialLoad: "owner",
+            hostReadOnly: this.hostReadOnly,
         });
         if (style !== null) {
             editor.protyle.element.setAttribute("style", style);

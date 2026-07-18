@@ -22,6 +22,7 @@ import {
   authorizedSpacesQueryKey,
   spaceRuntimeQueryKey,
 } from "@/spaces/api.ts";
+import type { SpaceProtyleFactoryProvider } from "@/spaces/SpacePage.tsx";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -29,6 +30,12 @@ const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const CSRF_TOKEN = "A".repeat(43);
+
+const createRouteTestProtyleFactory = vi.fn<SpaceProtyleFactoryProvider>(() => ({
+  create: async () => {
+    throw new Error("Core creation is outside the route contract test scope");
+  },
+}));
 
 const SPACE_A_SUMMARY = {
   organizationId: ORGANIZATION_A,
@@ -83,9 +90,15 @@ function requestBodyText(body: BodyInit | null | undefined): string {
 function mockFetch(
   handler: (...arguments_: Parameters<typeof fetch>) => Response | Promise<Response>,
 ) {
-  return vi.fn<typeof fetch>((...arguments_) =>
-    Promise.resolve().then(() => handler(...arguments_)),
-  );
+  return vi.fn<typeof fetch>((...arguments_) => Promise.resolve().then(() => {
+    const path = requestPath(arguments_[0]);
+    if (path.includes("/content-directory/notebooks")) {
+      return path.endsWith("/content-directory/notebooks")
+        ? jsonResponse({ notebooks: [] })
+        : jsonResponse({ documents: [], locked: false, nextOffset: null });
+    }
+    return handler(...arguments_);
+  }));
 }
 
 function createTestQueryClient() {
@@ -106,7 +119,7 @@ function renderApp(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
-          <App />
+          <App createProtyleFactoryForSpace={createRouteTestProtyleFactory} />
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
@@ -125,6 +138,7 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup();
+  createRouteTestProtyleFactory.mockClear();
   onlineManager.setOnline(true);
   vi.useRealTimers();
   useCsrfStore.setState({ csrfToken: null });
@@ -169,7 +183,7 @@ describe("S1 identity and space routes", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(await screen.findByRole("heading", { name: "空间已就绪" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "选择文档" })).toBeVisible();
     expect(screen.getByText("阅读者")).toBeVisible();
     expect(screen.getAllByText("深空知识空间")).toHaveLength(2);
     expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
@@ -647,8 +661,9 @@ describe("S1 identity and space routes", () => {
     expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "空间已就绪" }),
+      screen.queryByRole("heading", { name: "选择文档" }),
     ).not.toBeInTheDocument();
+    expect(createRouteTestProtyleFactory).not.toHaveBeenCalled();
 
     await act(async () => {
       freshAuthorization.resolve(
@@ -666,10 +681,11 @@ describe("S1 identity and space routes", () => {
     });
 
     expect(
-      await screen.findByRole("heading", { name: "空间已就绪" }),
+      await screen.findByRole("heading", { name: "选择文档" }),
     ).toBeVisible();
     expect(screen.getByText("阅读者")).toBeVisible();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
+    expect(createRouteTestProtyleFactory).toHaveBeenCalledWith(SPACE_A);
   });
 
   it("does not trust cached workspace authorization or runtime while offline", () => {
@@ -704,7 +720,7 @@ describe("S1 identity and space routes", () => {
     expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
     expect(screen.queryByText("管理员")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "空间已就绪" }),
+      screen.queryByRole("heading", { name: "选择文档" }),
     ).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -731,7 +747,7 @@ describe("S1 identity and space routes", () => {
 
     renderApp("/spaces");
     expect(
-      await screen.findByRole("heading", { name: "空间已就绪" }),
+      await screen.findByRole("heading", { name: "选择文档" }),
     ).toBeVisible();
     fireEvent.click(screen.getByRole("link", { name: "返回空间列表" }));
 
@@ -742,7 +758,7 @@ describe("S1 identity and space routes", () => {
       await screen.findByRole("link", { name: /深空知识空间/ }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("heading", { name: "空间已就绪" }),
+      screen.queryByRole("heading", { name: "选择文档" }),
     ).not.toBeInTheDocument();
   });
 
@@ -789,7 +805,7 @@ describe("S1 identity and space routes", () => {
       await screen.findByRole("heading", { name: "内容服务暂不可用" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("heading", { name: "空间已就绪" }),
+      screen.queryByRole("heading", { name: "选择文档" }),
     ).not.toBeInTheDocument();
   });
 
@@ -929,7 +945,7 @@ describe("S1 identity and space routes", () => {
     renderApp("/spaces");
     fireEvent.click(await screen.findByRole("link", { name: /深空知识空间/ }));
     fireEvent.click(await screen.findByRole("link", { name: "星际工程手册" }));
-    expect(await screen.findByRole("heading", { name: "空间已就绪" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "选择文档" })).toBeVisible();
     expect(screen.getAllByText("星际工程手册")).toHaveLength(2);
 
     await act(async () => {
@@ -944,7 +960,7 @@ describe("S1 identity and space routes", () => {
       await firstRuntime.promise;
     });
 
-    expect(screen.getByRole("heading", { name: "空间已就绪" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "选择文档" })).toBeVisible();
     expect(screen.queryByText("内容服务暂不可用")).not.toBeInTheDocument();
     expect(screen.getAllByText("星际工程手册")).toHaveLength(2);
   });

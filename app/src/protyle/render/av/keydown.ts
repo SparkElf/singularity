@@ -4,8 +4,9 @@ import {addDragFill, cellScrollIntoView, popTextCell, updateCellsValue} from "./
 import {avContextmenu} from "./action";
 import {hasClosestByClassName} from "../../util/hasClosest";
 import {Constants} from "../../../constants";
-import {upDownHint} from "../../../util/upDownHint";
+import {upDownHint} from "../../util/upDownHint";
 import {clearSelect} from "../../util/clear";
+import {currentAVOverlay} from "./overlay";
 
 export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyle: IProtyle) => {
     if (!nodeElement.classList.contains("av") || !window.siyuan.menus.menu.element.classList.contains("fn__none")) {
@@ -25,7 +26,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
         if (!rowElement || rowElement.dataset.type === "ghost") {
             return false;
         }
-        const avPanelElement = document.querySelector(".av__panel");
+        const avPanelElement = currentAVOverlay(protyle, "panel");
         if (avPanelElement &&
             (event.key === "Backspace" || event.key === "Delete" || event.key === "Escape" ||
                 event.key.startsWith("ArrowLeft") || event.key === "Enter" || matchHotKey("⇥", event) ||
@@ -204,7 +205,7 @@ export const avKeydown = (event: KeyboardEvent, nodeElement: HTMLElement, protyl
 };
 
 export const bindAVPanelKeydown = (event: KeyboardEvent) => {
-    const avPanelElement = document.querySelector(".av__panel");
+    const avPanelElement = currentAVOverlay(protyle, "panel");
     if (avPanelElement && window.siyuan.menus.menu.element.classList.contains("fn__none")) {
         if ((avPanelElement.querySelector('[data-type="goSearchRollupCol"]') && !avPanelElement.querySelector(".b3-text-field")) ||
             avPanelElement.querySelector('[data-type="addAssetExist"]')) {

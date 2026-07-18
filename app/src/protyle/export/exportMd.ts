@@ -5,7 +5,7 @@ import {hideMessage, showMessage} from "../../dialog/message";
 import {fetchSyncPost} from "../../util/fetch";
 import {isMobile} from "../../util/functions";
 import {isEncryptedBox} from "../../util/pathName";
-import {saveExportFile} from "../util/compatibility";
+import {downloadExportFile} from "../util/download";
 
 // 导出参数对话框 https://github.com/siyuan-note/siyuan/issues/17031
 // 通用部分（8 项）可被各导出格式复用，Markdown 专属部分仅 Markdown 导出使用。
@@ -188,7 +188,7 @@ export const exportMarkdownZip = async(options: IExportMdOptions) => {
                     }
                     return;
                 }
-                saveExportFile(response.data.zip, msgId);
+                downloadExportFile(response.data.zip);
             } catch (error) {
                 showMessage(error instanceof Error ? error.message : String(error), 0, "error");
             } finally {

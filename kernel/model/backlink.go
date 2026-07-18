@@ -384,7 +384,7 @@ func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[st
 		fillBacklinkBlockRefCountInBox(renderNodes, boxID)
 	}
 
-	dom := renderBlockDOMByNodes(renderNodes, luteEngine)
+	dom := renderBlockDOMByNodes(renderNodes, luteEngine, boxID)
 	var blockPaths []*BlockPath
 	if (nil != node.Parent && ast.NodeDocument != node.Parent.Type) || (ast.NodeHeading != node.Type && 0 < treenode.HeadingLevel(node)) {
 		blockPaths = buildBlockBreadcrumb(node, nil, false)

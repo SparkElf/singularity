@@ -8,7 +8,7 @@ import {Wnd} from "../layout/Wnd";
 import {getInstanceById, getWndByLayout} from "../layout/util";
 import {Tab} from "../layout/Tab";
 import {Editor} from "../editor";
-import {scrollCenter} from "./highlightById";
+import {scrollCenter} from "../protyle/util/highlightById";
 import {zoomOut} from "../menus/protyle";
 import {showMessage} from "../dialog/message";
 import {saveScroll} from "../protyle/scroll/saveScroll";
@@ -21,7 +21,7 @@ let forwardStack: IBackStack[] = [];
 let previousIsBack = false;
 
 const focusStack = async (app: App, stack: IBackStack) => {
-    hideElements(["gutter", "toolbar", "hint", "util", "dialog"], stack.protyle);
+    hideElements(["gutter", "toolbar", "hint", "util"], stack.protyle);
     let blockElement: HTMLElement;
     if (!document.contains(stack.protyle.element)) {
         const response = await fetchSyncPost("/api/block/checkBlockExist", {id: stack.protyle.block.rootID});

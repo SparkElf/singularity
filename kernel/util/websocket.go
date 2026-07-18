@@ -17,6 +17,8 @@
 package util
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +29,27 @@ import (
 	"github.com/siyuan-note/eventbus"
 	"github.com/siyuan-note/logging"
 )
+
+type PushChannelIdentity struct {
+	AppID      string
+	DocumentID string
+	NotebookID string
+	SessionID  string
+	Type       string
+}
+
+func ParsePushChannelIdentity(request *http.Request) (PushChannelIdentity, error) {
+	query := request.URL.Query()
+	identity := PushChannelIdentity{
+		AppID:     strings.TrimSpace(query.Get("app")),
+		SessionID: strings.TrimSpace(query.Get("id")),
+		Type:      strings.TrimSpace(query.Get("type")),
+	}
+	if identity.AppID == "" || identity.SessionID == "" || identity.Type == "" {
+		return PushChannelIdentity{}, errors.New("push channel identity is incomplete")
+	}
+	return identity, nil
+}
 
 var (
 	WebSocketServer *melody.Melody
@@ -121,54 +144,42 @@ func SessionsByType(typ string) (ret []*melody.Session) {
 	return
 }
 
-func AddPushChan(session *melody.Session) {
-	appID := strings.TrimSpace(session.Request.URL.Query().Get("app"))
-	if "" == appID {
-		logging.LogErrorf("app id is required")
-		return
+func AddPushChan(session *melody.Session, identity PushChannelIdentity) error {
+	if identity.AppID == "" || identity.SessionID == "" || identity.Type == "" {
+		return errors.New("push channel identity is incomplete")
 	}
-	session.Set("app", appID)
-
-	id := strings.TrimSpace(session.Request.URL.Query().Get("id"))
-	if "" == id {
-		logging.LogErrorf("id is required")
-		return
+	session.Set("app", identity.AppID)
+	session.Set("id", identity.SessionID)
+	session.Set("type", identity.Type)
+	if identity.NotebookID != "" {
+		session.Set("notebookId", identity.NotebookID)
 	}
-	session.Set("id", id)
-
-	typ := strings.TrimSpace(session.Request.URL.Query().Get("type"))
-	if "" == typ {
-		logging.LogErrorf("type is required")
-		return
+	if identity.DocumentID != "" {
+		session.Set("documentId", identity.DocumentID)
 	}
-	session.Set("type", typ)
 
 	if IsAuthSession(session) {
-		if appSessions, ok := authSessions.Load(appID); !ok {
+		if appSessions, ok := authSessions.Load(identity.AppID); !ok {
 			appSess := &sync.Map{}
-			appSess.Store(id, session)
-			authSessions.Store(appID, appSess)
+			appSess.Store(identity.SessionID, session)
+			authSessions.Store(identity.AppID, appSess)
 		} else {
-			(appSessions.(*sync.Map)).Store(id, session)
+			(appSessions.(*sync.Map)).Store(identity.SessionID, session)
 		}
 	} else {
-		if appSessions, ok := sessions.Load(appID); !ok {
+		if appSessions, ok := sessions.Load(identity.AppID); !ok {
 			appSess := &sync.Map{}
-			appSess.Store(id, session)
-			sessions.Store(appID, appSess)
+			appSess.Store(identity.SessionID, session)
+			sessions.Store(identity.AppID, appSess)
 		} else {
-			(appSessions.(*sync.Map)).Store(id, session)
+			(appSessions.(*sync.Map)).Store(identity.SessionID, session)
 		}
 	}
+	return nil
 }
 
 func IsAuthSession(session *melody.Session) bool {
 	id, _ := session.Get("id")
-	if "auth" == id {
-		return true
-	}
-
-	id = session.Request.URL.Query().Get("id")
 	return "auth" == id
 }
 

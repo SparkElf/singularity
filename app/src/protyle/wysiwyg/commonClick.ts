@@ -1,7 +1,7 @@
 import {hasClosestByClassName} from "../util/hasClosest";
 import {openAttr, openFileAttr} from "../../menus/commonMenuItem";
 import {isMobile} from "../../util/functions";
-import {isOnlyMeta} from "../util/compatibility";
+import {isOnlyMeta} from "../util/keyboard";
 
 export const commonClick = (event: MouseEvent & {
     target: HTMLElement

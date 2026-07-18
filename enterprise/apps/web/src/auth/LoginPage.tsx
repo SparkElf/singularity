@@ -1,7 +1,7 @@
-import { loginRequestSchema } from "@singularity/contracts";
+import { loginRequestSchema, oidcStartRequestSchema } from "@singularity/contracts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { OrbitIcon } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Building2Icon, OrbitIcon, RefreshCwIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 
 import {
@@ -9,7 +9,7 @@ import {
   NetworkFailureError,
   isApiProblem,
 } from "@/api/http.ts";
-import { login } from "@/auth/api.ts";
+import { getOidcProviders, login, startOidc } from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { SPACES_PATH, parseReturnTo } from "@/auth/return-to.ts";
 import { clearClientSession } from "@/auth/session-state.ts";
@@ -25,6 +25,8 @@ import {
   FieldLabel,
 } from "@/components/ui/field.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { Separator } from "@/components/ui/separator.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 
 interface LoginState {
@@ -73,6 +75,19 @@ export function LoginPage() {
   const attemptGeneration = useRef(0);
   const mounted = useRef(true);
   const cooldownSeconds = cooldown?.remainingSeconds ?? 0;
+  const oidcProvidersQuery = useQuery({
+    enabled: false,
+    queryKey: ["oidc-login-providers"],
+    queryFn: ({ signal }) => getOidcProviders(signal),
+  });
+  const oidcMutation = useMutation({
+    mutationFn: (request: Parameters<typeof startOidc>[0]) =>
+      startOidc(request),
+    onSuccess: ({ authorizationUrl }) => {
+      window.location.assign(authorizationUrl);
+    },
+  });
+  const refetchOidcProviders = oidcProvidersQuery.refetch;
 
   useLayoutEffect(() => {
     clearClientSession(queryClient);
@@ -87,6 +102,10 @@ export function LoginPage() {
       activeController.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    void refetchOidcProviders();
+  }, [refetchOidcProviders]);
 
   useEffect(() => {
     if (!cooldown) {
@@ -174,13 +193,14 @@ export function LoginPage() {
   };
 
   const hasError = validationError || loginState.error !== null;
+  const oidcProviders = oidcProvidersQuery.data?.providers ?? [];
 
   return (
     <main
       data-singularity-ui
       className="flex min-h-dvh items-center justify-center bg-muted/40 p-6 max-sm:bg-background max-sm:p-4"
     >
-      <section className="w-full max-w-[360px] rounded-md border bg-card p-6 max-sm:border-0 max-sm:p-2">
+      <section className="w-full max-w-[400px] rounded-md border bg-card p-6 max-sm:border-0 max-sm:p-2">
         <div className="mb-6 flex min-w-0 items-center gap-2">
           <OrbitIcon aria-hidden="true" className="size-5 shrink-0" />
           <span className="truncate text-sm font-semibold">奇点</span>
@@ -253,6 +273,87 @@ export function LoginPage() {
             登录
           </Button>
         </form>
+
+        <div className="my-5 flex items-center gap-3">
+          <Separator className="flex-1" />
+          <span className="text-xs text-muted-foreground">单点登录</span>
+          <Separator className="flex-1" />
+        </div>
+
+        <div className="flex min-h-10 flex-col gap-2">
+          {oidcProvidersQuery.isPending ? (
+            <>
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </>
+          ) : null}
+
+          {oidcProvidersQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>无法加载单点登录</AlertTitle>
+              <AlertDescription className="flex items-center justify-between gap-2">
+                <span>请检查网络连接后重试。</span>
+                <Button
+                  aria-label="重新加载单点登录"
+                  onClick={() => void refetchOidcProviders()}
+                  size="icon-sm"
+                  variant="ghost"
+                >
+                  <RefreshCwIcon aria-hidden="true" />
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {oidcProvidersQuery.isSuccess && oidcProviders.length === 0 ? (
+            <p className="py-2 text-center text-sm text-muted-foreground">
+              当前没有可用的单点登录 Provider
+            </p>
+          ) : null}
+
+          {oidcProviders.map((provider) => {
+            const pending =
+              oidcMutation.isPending &&
+              oidcMutation.variables?.providerId === provider.providerId;
+            return (
+              <Button
+                disabled={oidcMutation.isPending}
+                key={provider.providerId}
+                onClick={() => {
+                  const returnTo =
+                    parseReturnTo(location.search, window.location.origin) ??
+                    SPACES_PATH;
+                  const request = oidcStartRequestSchema.safeParse({
+                    providerId: provider.providerId,
+                    returnTo,
+                  });
+                  if (request.success) {
+                    oidcMutation.mutate(request.data);
+                  }
+                }}
+                variant="outline"
+              >
+                {pending ? (
+                  <Spinner data-icon="inline-start" aria-label="正在前往单点登录" />
+                ) : (
+                  <Building2Icon data-icon="inline-start" />
+                )}
+                {provider.name}
+              </Button>
+            );
+          })}
+
+          {oidcMutation.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>无法开始单点登录</AlertTitle>
+              <AlertDescription>
+                {oidcMutation.error instanceof NetworkFailureError
+                  ? "无法连接到服务，请稍后重试。"
+                  : "Provider 未接受登录请求，请重试。"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
       </section>
     </main>
   );

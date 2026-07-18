@@ -36,15 +36,18 @@ import {correctHotkey} from "../boot/globalEvent/commonHotkey";
 import {processIOSPurchaseResponse} from "../util/iOSPurchase";
 import {nbsp2space} from "../protyle/util/normalizeText";
 import {armKeyboardLock, callMobileAppShowKeyboard, canInput, setWebViewFocusable} from "./util/mobileAppUtil";
-import {hideAllElements} from "../protyle/ui/hideElements";
+import {hideAllEditorElements} from "../protyle/ui/hideElements";
 import {initTouchDragBridge} from "../util/touchDragBridge";
 import {appearanceConfigApi} from "../config/tabs/appearanceRuntime";
+import {createProtyleEditorRegistry} from "../../../enterprise/packages/protyle-browser/src";
 
 class App {
     public plugins: import("../plugin").Plugin[] = [];
+    public readonly protyleEditors: TProtyleEditorRegistry;
     public appId: string;
 
     constructor() {
+        this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
         if (checkPublishServiceClosed()) {
             return;
         }
@@ -114,7 +117,7 @@ class App {
                 }
             }
             if (document.contains(event.target) && !hasClosestByClassName(event.target as Element, "protyle-util")) {
-                hideAllElements(["util"]);
+                hideAllEditorElements(this.protyleEditors);
             }
         });
         {
@@ -179,7 +182,7 @@ class App {
                             setNoteBook(() => {
                                 initFramework(this, confResponse.data.start);
                                 initRightMenu(this);
-                                openChangelog();
+                                openChangelog(this);
                             });
                         });
                     });

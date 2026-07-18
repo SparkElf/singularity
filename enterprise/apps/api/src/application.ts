@@ -17,16 +17,28 @@ import {
 
 import { AppModule } from "./app.module.js";
 import {
+  parseOidcClientSecretFiles,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
+import type { AuditConfiguration } from "./audit/audit-writer.service.js";
 import { SystemClock, type Clock } from "./identity/clock.js";
+import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
+import {
+  installKernelGatewayHttpBoundary,
+  KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
+} from "./kernel/install-http-boundary.js";
+import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
+import { KernelWebSocketGateway } from "./kernel/kernel-websocket.gateway.js";
 import { ApiProblemFilter } from "./problem.js";
 
 export interface CreateApiApplicationOptions {
+  auditConfiguration: AuditConfiguration;
   clock?: Clock;
   databaseUrl: string | undefined;
+  kernelGateway: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
+  oidcClientSecretFiles?: string | undefined;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
 }
@@ -35,11 +47,14 @@ export async function createApiApplication(
   options: CreateApiApplicationOptions,
 ): Promise<NestFastifyApplication> {
   const configuration = {
+    oidcClientSecretFiles: parseOidcClientSecretFiles(
+      options.oidcClientSecretFiles,
+    ),
     publicOrigin: parsePublicOrigin(options.publicOrigin),
     trustedProxyCidrs: parseTrustedProxyCidrs(options.trustedProxyCidrs),
   };
   const adapter = new FastifyAdapter({
-    bodyLimit: 16 * 1_024,
+    bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
     genReqId: () => randomUUID(),
     requestIdHeader: false,
     ...(configuration.trustedProxyCidrs.length === 0
@@ -53,12 +68,18 @@ export async function createApiApplication(
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
+      auditConfiguration: options.auditConfiguration,
       clock: options.clock ?? new SystemClock(),
       configuration,
       databaseUrl: options.databaseUrl,
+      kernelGateway: options.kernelGateway,
     }),
     adapter,
     options.logger === undefined ? {} : { logger: options.logger },
+  );
+  installKernelGatewayHttpBoundary(
+    adapter.getInstance(),
+    app.get(KernelGatewayAdmission),
   );
   await app.register(cookie);
   app.useGlobalFilters(new ApiProblemFilter());
@@ -88,5 +109,6 @@ export async function createApiApplication(
   });
 
   await app.init();
+  app.get(KernelWebSocketGateway).attach(app.getHttpServer());
   return app;
 }

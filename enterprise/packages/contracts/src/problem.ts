@@ -6,6 +6,10 @@ import {
   UUID_OPENAPI_SCHEMA,
 } from "./openapi.js";
 
+export const RUNTIME_ACCESS_LOST_HEADER_NAME =
+  "X-Singularity-Runtime-Access-Lost";
+export const RUNTIME_ACCESS_LOST_HEADER_VALUE = "true";
+
 export const apiProblemCodes = [
   "unauthenticated",
   "forbidden",

@@ -14,7 +14,7 @@ const legacyEditorRegistryModules = new Map([
   [join(repositoryRoot, "app/src/layout/dock/Backlink"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
   [join(repositoryRoot, "app/src/layout/dock/Outline"), new Set([join(repositoryRoot, "app/src/layout/getAll")])],
 ]);
-const notebookScopedHostEvents = new Set([
+const contentScopedHostEvents = new Set([
   "open-document",
   "open-document-search",
   "open-outline",
@@ -27,6 +27,13 @@ const notebookScopedHostEvents = new Set([
   "add-blocks-to-agent",
   "refresh-outline",
   "refresh-backlinks",
+  "close-document",
+  "set-document-title",
+  "set-document-icon",
+  "activate-document",
+  "toggle-document-fullscreen",
+  "persist-workspace-layout",
+  "update-document-statistics",
 ]);
 
 function withoutSourceExtension(file) {
@@ -198,11 +205,19 @@ export function auditNotebookScopedHostEventsAst(sourceFile) {
       if (event && ts.isObjectLiteralExpression(event)) {
         const type = getStringProperty(event, "type");
         const isDocumentGraph = type === "open-graph" && getStringProperty(event, "scope") !== "space";
-        if ((notebookScopedHostEvents.has(type) || isDocumentGraph) && !getObjectProperty(event, "notebookId")) {
+        const requiresContentIdentity = contentScopedHostEvents.has(type) || isDocumentGraph;
+        if (requiresContentIdentity && !getObjectProperty(event, "notebookId")) {
           violations.push({
             ruleId: "notebook-scope-missing",
             line: sourceFile.getLineAndCharacterOfPosition(event.getStart(sourceFile)).line + 1,
             message: `${type} must carry the source Protyle notebookId`,
+          });
+        }
+        if (requiresContentIdentity && !getObjectProperty(event, "documentId")) {
+          violations.push({
+            ruleId: "document-scope-missing",
+            line: sourceFile.getLineAndCharacterOfPosition(event.getStart(sourceFile)).line + 1,
+            message: `${type} must carry the source Protyle documentId`,
           });
         }
       }

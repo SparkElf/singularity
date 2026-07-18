@@ -17,7 +17,7 @@ export const addFilesToDatabase = (fileLiElements: Element[]) => {
         }
     });
     if (srcs.length > 0) {
-        openSearchAV("", fileLiElements[0] as HTMLElement, (listItemElement) => {
+        openSearchAV(protyle, "", fileLiElements[0] as HTMLElement, (listItemElement) => {
             const avID = listItemElement.dataset.avId;
             const viewID = listItemElement.dataset.viewId;
             transaction(undefined, [{
@@ -38,7 +38,7 @@ export const addFilesToDatabase = (fileLiElements: Element[]) => {
 
 export const addEditorToDatabase = (protyle: IProtyle, range: Range, type?: string) => {
     if ((range && protyle.title?.editElement?.contains(range.startContainer)) || type === "title") {
-        openSearchAV("", protyle.breadcrumb.element, (listItemElement) => {
+        openSearchAV(protyle, "", protyle.breadcrumb.element, (listItemElement) => {
             const avID = listItemElement.dataset.avId;
             const viewID = listItemElement.dataset.viewId;
             transaction(protyle, [{
@@ -83,7 +83,7 @@ export const addEditorToDatabase = (protyle: IProtyle, range: Range, type?: stri
             targetElement = protyle.wysiwyg.element;
             ids.push(protyle.block.rootID);
         }
-        openSearchAV("", targetElement, (listItemElement) => {
+        openSearchAV(protyle, "", targetElement, (listItemElement) => {
             const srcIDs: string[] = [];
             const srcs: IOperationSrcs[] = [];
             ids.forEach(item => {

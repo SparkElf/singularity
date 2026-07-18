@@ -39,6 +39,7 @@ export const openLink = (protyle: IProtyle, aLink: string, event?: MouseEvent, c
             if (event && event.altKey) {
                 protyle.host.dispatch({
                     type: "open-asset",
+                    documentId: protyle.block.rootID,
                     notebookId: protyle.notebookId,
                     assetPath: linkAddress,
                     page: pdfParams,
@@ -67,6 +68,7 @@ export const openLink = (protyle: IProtyle, aLink: string, event?: MouseEvent, c
             } else {
                 protyle.host.dispatch({
                     type: "open-asset",
+                    documentId: protyle.block.rootID,
                     notebookId: protyle.notebookId,
                     assetPath: linkAddress,
                     page: pdfParams,

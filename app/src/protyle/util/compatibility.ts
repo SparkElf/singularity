@@ -1,8 +1,31 @@
-import {focusByRange} from "./selection";
 import {fetchPost} from "../../util/fetch";
 import {Constants} from "../../constants";
 import {getDefaultSubType, getDefaultType} from "../../search/getDefault";
 import {hideMessage, showMessage} from "../../dialog/message";
+import {
+    getTextSiyuanFromTextHTML,
+    plainTextForClipboard,
+    readClipboard as readBrowserClipboard,
+    readText as readBrowserText,
+    writeText as writeBrowserText,
+} from "./clipboard";
+import {downloadExportFile} from "./download";
+import {getViewportWidth} from "./browserPlatform";
+
+export {encodeBase64, getTextSiyuanFromTextHTML} from "./clipboard";
+export {
+    getEventName,
+    isChromeBrowser,
+    isInEdge,
+    isIPad,
+    isIPhone,
+    isMac,
+    isPhablet,
+    isSafari,
+    isWin11,
+    isWindows,
+} from "./browserPlatform";
+export {isNotCtrl, isOnlyMeta, updateHotkeyAfterTip, updateHotkeyTip} from "./keyboard";
 
 const DOCUMENT_ID_PATTERN = /^\d{14}-\w{7}$/;
 
@@ -19,62 +42,6 @@ export const parseStoredDocumentIdentity = (value: unknown): ILocalDocInfo | und
         return;
     }
     return identity as ILocalDocInfo;
-};
-
-export const isPhablet = () => {
-    return /Android|webOS|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(navigator.userAgent) || isIPhone() || isIPad();
-};
-
-export const encodeBase64 = (text: string): string => {
-    if (typeof Buffer !== "undefined") {
-        return Buffer.from(text, "utf8").toString("base64");
-    } else {
-        const encoder = new TextEncoder();
-        const bytes = encoder.encode(text);
-        let binary = "";
-        const chunkSize = 0x8000; // 避免栈溢出
-
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-            const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-            binary += String.fromCharCode(...chunk);
-        }
-
-        return btoa(binary);
-    }
-};
-
-export const getTextSiyuanFromTextHTML = (html: string) => {
-    if (html.trimStart().startsWith("<html") &&
-        html.substring(0, html.indexOf(">")).includes('xmlns:x="urn:schemas-microsoft-com:office:excel"')) {
-        // 移除 Microsoft Excel 中的 data-siyuan https://github.com/siyuan-note/siyuan/pull/16338
-        return {
-            textSiyuan: "",
-            textHtml: html.replace(/<!--data-siyuan='[^']+'-->/g, "")
-        };
-    }
-    const siyuanMatch = html.match(/<!--data-siyuan='([^']+)'-->/);
-    let textSiyuan = "";
-    let textHtml = html;
-    if (siyuanMatch) {
-        try {
-            if (typeof Buffer !== "undefined") {
-                const decodedBytes = Buffer.from(siyuanMatch[1], "base64");
-                textSiyuan = decodedBytes.toString("utf8");
-            } else {
-                const decoder = new TextDecoder();
-                const bytes = Uint8Array.from(atob(siyuanMatch[1]), char => char.charCodeAt(0));
-                textSiyuan = decoder.decode(bytes);
-            }
-            // 移除注释节点，保持原有的 text/html 内容
-            textHtml = html.replace(/<!--data-siyuan='[^']+'-->/g, "");
-        } catch (e) {
-            console.log("Failed to decode siyuan data from HTML comment:", e);
-        }
-    }
-    return {
-        textSiyuan,
-        textHtml
-    };
 };
 
 export const saveExportFile = (uri: string, msgId?: string) => {
@@ -103,9 +70,7 @@ export const saveExportFile = (uri: string, msgId?: string) => {
             }
             return;
         }
-        const openUrl = new URL(uri, `${location.origin}/`);
-        openUrl.searchParams.set("download", "true");
-        window.open(openUrl.href);
+        downloadExportFile(uri);
         if (msgId) {
             hideMessage(msgId);
         }
@@ -117,19 +82,13 @@ export const saveExportFile = (uri: string, msgId?: string) => {
     }
 };
 
-export const readText = () => {
+export const readText = async () => {
     if (isInAndroid()) {
         return window.JSAndroid.readClipboard();
     } else if (isInHarmony()) {
         return window.JSHarmony.readClipboard();
     }
-    if (typeof navigator.clipboard === "undefined") {
-        alert(window.siyuan.languages.clipboardPermissionDenied);
-        return "";
-    }
-    return navigator.clipboard.readText().catch(() => {
-        alert(window.siyuan.languages.clipboardPermissionDenied);
-    }) || "";
+    return readBrowserText();
 };
 
 
@@ -157,118 +116,26 @@ export const readClipboard = async () => {
         }
         return text;
     }
-    if (typeof navigator.clipboard === "undefined") {
-        alert(window.siyuan.languages.clipboardPermissionDenied);
-        return text;
-    }
-    try {
-        const clipboardContents = await navigator.clipboard.read().catch(() => {
-            alert(window.siyuan.languages.clipboardPermissionDenied);
-        });
-        if (!clipboardContents) {
-            return text;
-        }
-        for (const item of clipboardContents) {
-            if (item.types.includes("text/html")) {
-                const blob = await item.getType("text/html");
-                text.textHTML = await blob.text();
-                const textObj = getTextSiyuanFromTextHTML(text.textHTML);
-                text.textHTML = textObj.textHtml;
-                text.siyuanHTML = textObj.textSiyuan;
-            }
-            if (item.types.includes("text/plain")) {
-                const blob = await item.getType("text/plain");
-                text.textPlain = await blob.text();
-            }
-            if (item.types.includes("image/png")) {
-                const blob = await item.getType("image/png");
-                text.files = [new File([blob], "image.png", {type: "image/png", lastModified: Date.now()})];
-            }
-        }
-        return text;
-    } catch (e) {
-        return text;
-    }
+    return readBrowserClipboard();
 };
 
-export const writeText = (text: string) => {
-    let range: Range;
-    if (getSelection().rangeCount > 0) {
-        range = getSelection().getRangeAt(0).cloneRange();
+export const writeText = async (text: string) => {
+    if (isInAndroid()) {
+        window.JSAndroid.writeClipboard(text);
+        return;
     }
-    try {
-        // navigator.clipboard.writeText 抛出异常不进入 catch，这里需要先处理移动端复制
-        if (isInAndroid()) {
-            window.JSAndroid.writeClipboard(text);
-            return;
-        }
-        if (isInHarmony()) {
-            window.JSHarmony.writeClipboard(text);
-            return;
-        }
-        if (isInIOS()) {
-            window.webkit.messageHandlers.setClipboard.postMessage(text);
-            return;
-        }
-        navigator.clipboard.writeText(text);
-    } catch (e) {
-        if (isInIOS()) {
-            window.webkit.messageHandlers.setClipboard.postMessage(text);
-        } else if (isInAndroid()) {
-            window.JSAndroid.writeClipboard(text);
-        } else if (isInHarmony()) {
-            window.JSHarmony.writeClipboard(text);
-        } else {
-            const textElement = document.createElement("textarea");
-            textElement.value = text;
-            textElement.style.position = "fixed";  //avoid scrolling to bottom
-            document.body.appendChild(textElement);
-            textElement.focus();
-            textElement.select();
-            document.execCommand("copy");
-            document.body.removeChild(textElement);
-            if (range) {
-                focusByRange(range);
-            }
-        }
+    if (isInHarmony()) {
+        window.JSHarmony.writeClipboard(text);
+        return;
     }
+    if (isInIOS()) {
+        window.webkit.messageHandlers.setClipboard.postMessage(text);
+        return;
+    }
+    return writeBrowserText(text);
 };
 
-export const copyPlainText = (text: string) => {
-    text = text.replace(new RegExp(Constants.ZWSP, "g"), ""); // `复制纯文本` 时移除所有零宽空格 https://github.com/siyuan-note/siyuan/issues/6674
-    writeText(text);
-};
-
-// 用户 iPhone 点击延迟/需要双击的处理
-export const getEventName = () => {
-    if (isIPhone()) {
-        return "touchstart";
-    } else {
-        return "click";
-    }
-};
-
-export const isOnlyMeta = (event: KeyboardEvent | MouseEvent) => {
-    if (isMac()) {
-        // mac
-        if (event.metaKey && !event.ctrlKey) {
-            return true;
-        }
-        return false;
-    } else {
-        if (!event.metaKey && event.ctrlKey) {
-            return true;
-        }
-        return false;
-    }
-};
-
-export const isNotCtrl = (event: KeyboardEvent | MouseEvent) => {
-    if (!event.metaKey && !event.ctrlKey) {
-        return true;
-    }
-    return false;
-};
+export const copyPlainText = async (text: string) => writeText(plainTextForClipboard(text));
 
 export const isHuawei = () => {
     return window.siyuan.config.system.osPlatform.toLowerCase().indexOf("huawei") > -1;
@@ -278,47 +145,13 @@ export const isDisabledFeature = (feature: string): boolean => {
     return window.siyuan.config.system.disabledFeatures?.indexOf(feature) > -1;
 };
 
-export const isIPhone = () => {
-    return navigator.userAgent.indexOf("iPhone") > -1;
-};
-
-export const isSafari = () => {
-    const userAgent = navigator.userAgent;
-    return userAgent.includes("Safari") && !userAgent.includes("Chrome") && !userAgent.includes("Chromium");
-};
-
-export const isIPad = () => {
-    return navigator.userAgent.indexOf("iPad") > -1;
-};
-
-export const isMac = () => {
-    return navigator.platform.toUpperCase().indexOf("MAC") > -1;
-};
-
-export const isWin11 = async () => {
-    if (!(navigator as any).userAgentData || !(navigator as any).userAgentData.getHighEntropyValues) {
-        return false;
-    }
-    const ua = await (navigator as any).userAgentData.getHighEntropyValues(["platformVersion"]);
-    if ((navigator as any).userAgentData.platform === "Windows") {
-        if (parseInt(ua.platformVersion.split(".")[0]) >= 13) {
-            return true;
-        }
-    }
-    return false;
-};
-
 export const getScreenWidth = () => {
     if (isInAndroid()) {
         return window.JSAndroid.getScreenWidthPx();
     } else if (isInHarmony()) {
         return window.JSHarmony.getScreenWidthPx();
     }
-    return window.outerWidth;
-};
-
-export const isWindows = () => {
-    return navigator.platform.toUpperCase().indexOf("WIN") > -1;
+    return getViewportWidth();
 };
 
 export const isInAndroid = () => {
@@ -338,67 +171,6 @@ export const isInMobileApp = () => {
 
 export const isInHarmony = () => {
     return window.siyuan.config.system.container === "harmony" && window.JSHarmony;
-};
-
-export const isInEdge = () => {
-    const ua = navigator.userAgent;
-    return ua.indexOf("EdgA/") > -1 || ua.indexOf("Edge/") > -1;
-};
-
-export function isChromeBrowser(): boolean {
-    const nav = window.navigator as Navigator & {
-        userAgentData: {
-            brands: {
-                brand: string;
-                version: string;
-            }[]
-        }
-    };
-    if (nav.userAgentData && Array.isArray(nav.userAgentData.brands)) {
-        const brands = nav.userAgentData.brands.map((b) => b.brand);
-        // Edge、Opera 等 Chromium 内核浏览器 brands 中同样包含 Chromium，需与 userAgent 回退逻辑一致排除
-        if (brands.some((brand) => /Edge|Opera|OPR/i.test(brand))) {
-            return false;
-        }
-        return brands.some((brand) => /Chrome|Chromium/i.test(brand));
-    }
-    // 回退到 userAgent
-    const ua = nav.userAgent || "";
-    const isChromium = /\bChrome\/\d+/i.test(ua) || /\bChromium\/\d+/i.test(ua);
-    const isEdge = /\bEdg(e|A|iOS)?\/\d+/i.test(ua); // Edge Chromium
-    const isOpera = /\b(OPR|Opera)\/\d+/i.test(ua);
-
-    return isChromium && !isEdge && !isOpera;
-}
-
-export const updateHotkeyAfterTip = (hotkey: string, split = " ") => {
-    if (hotkey) {
-        return split + updateHotkeyTip(hotkey);
-    }
-    return "";
-};
-
-// Mac，Windows 快捷键展示
-export const updateHotkeyTip = (hotkey: string) => {
-    if (!hotkey || isMac()) {
-        return hotkey;
-    }
-    const keys = [];
-    if ((hotkey.indexOf("⌘") > -1 || hotkey.indexOf("⌃") > -1)) keys.push("Ctrl");
-    if (hotkey.indexOf("⇧") > -1) keys.push("Shift");
-    if (hotkey.indexOf("⌥") > -1) keys.push("Alt");
-
-    // 不能去最后一个，需匹配 F2
-    const lastKey = hotkey.replace(/[⌘⇧⌥⌃]/g, "");
-    if (lastKey) {
-        keys.push({
-            "⇥": "Tab",
-            "⌫": "Backspace",
-            "⌦": "Delete",
-            "↩": "Enter"
-        }[lastKey] || lastKey);
-    }
-    return keys.join("+");
 };
 
 export const getLocalStorage = (cb: () => void) => {

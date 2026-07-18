@@ -1,12 +1,12 @@
 import {hasClosestByAttribute, hasClosestByClassName} from "../../../util/hasClosest";
 import {getPageSize} from "../groups";
-import {fetchSyncPost} from "../../../../util/fetch";
 import {Constants} from "../../../../constants";
 import {avRender, genTabHeaderHTML} from "../render";
 import {afterRenderGallery, renderGallery} from "../gallery/render";
 import {escapeHtml} from "../../../../util/escape";
 import {getRowHTML} from "../row";
 import {getBodyVirtualData} from "../virtualScroll";
+import {beginAVRenderLoad, requestAVRender, type AVRenderLoad} from "../load";
 
 interface IIds {
     groupId: string,
@@ -33,7 +33,7 @@ const getKanbanTitleHTML = (group: IAVView, counter: number) => {
 </div>`;
 };
 
-const getKanbanHTML = (data: IAVKanban, e: HTMLElement, virtualData: IAVVirtualData) => {
+const getKanbanHTML = (data: IAVKanban, e: HTMLElement, virtualData: IAVVirtualData, fileIcon: string) => {
     let galleryHTML = "";
     // body
     data.cards.forEach((item: IAVGalleryItem, rowIndex: number) => {
@@ -48,7 +48,13 @@ const getKanbanHTML = (data: IAVKanban, e: HTMLElement, virtualData: IAVVirtualD
             e.setAttribute(Constants.ATTRIBUTE_V_SCROLL, "true");
             return true;
         }
-        galleryHTML += getRowHTML({data, row: item, rowIndex, type: "kanban"});
+        galleryHTML += getRowHTML({
+            data,
+            row: item,
+            rowIndex,
+            type: "kanban",
+            fileIcon,
+        });
     });
     galleryHTML += `<div class="av__gallery-add" data-type="av-add-bottom"><svg class="svg"><use xlink:href="#iconAdd"></use></svg><span class="fn__space"></span>${window.siyuan.languages.newRow}</div>`;
     return `<div class="av__gallery av__gallery--small">
@@ -69,7 +75,9 @@ export const renderKanban = async (options: {
     cb?: (data: IAV) => void,
     renderAll: boolean,
     data?: IAV,
+    load?: AVRenderLoad,
 }) => {
+    const load = options.load ?? beginAVRenderLoad(options.protyle, options.blockElement);
     const searchInputElement = options.blockElement.querySelector('[data-type="av-search"]') as HTMLInputElement;
     const editIds: IIds[] = [];
     options.blockElement.querySelectorAll(".av__gallery-fields--edit").forEach(item => {
@@ -129,9 +137,11 @@ export const renderKanban = async (options: {
     let data: IAV = options.data;
     if (!data) {
         const avPageSize = getPageSize(options.blockElement);
-        const response = await fetchSyncPost(created ? "/api/av/renderHistoryAttributeView" : (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"), {
+        const response = await requestAVRender<{data: IAV}>(options.protyle, load,
+            created ? "/api/av/renderHistoryAttributeView" :
+                (snapshot ? "/api/av/renderSnapshotAttributeView" : "/api/av/renderAttributeView"), {
             id: options.blockElement.getAttribute("data-av-id"),
-            notebook: options.protyle.notebookId,
+            notebook: load.identity.notebookId,
             created,
             snapshot,
             pageSize: avPageSize.unGroupPageSize,
@@ -139,11 +149,17 @@ export const renderKanban = async (options: {
             viewID: options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW) || "",
             query: resetData.query.trim()
         });
+        if (!load.isCurrent()) {
+            return;
+        }
         data = response.data;
+    }
+    if (!load.isCurrent()) {
+        return;
     }
     if (data.viewType === "table") {
         options.blockElement.setAttribute("data-av-type", "table");
-        avRender(options.blockElement, options.protyle, options.cb, options.renderAll, data);
+        avRender(options.blockElement, options.protyle, options.cb, options.renderAll, data, load);
         return;
     }
     if (data.viewType === "gallery") {
@@ -153,7 +169,8 @@ export const renderKanban = async (options: {
             protyle: options.protyle,
             cb: options.cb,
             renderAll: options.renderAll,
-            data
+            data,
+            load,
         });
         return;
     }
@@ -177,13 +194,13 @@ export const renderKanban = async (options: {
             }
             bodyHTML += `<div class="av__kanban-group${group.cardSize === 0 ? " av__kanban-group--small" : (group.cardSize === 2 ? " av__kanban-group--big" : "")}"${selectBg}>
     ${getKanbanTitleHTML(group, group.cardCount)}
-    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id])}</div>
+    <div data-group-id="${group.id}" data-page-size="${group.pageSize}" data-dtype="${group.groupKey.type}" data-content="${Lute.EscapeHTMLStr(group.groupValue.text?.content || "")}" class="av__body">${getKanbanHTML(group, options.blockElement, virtualData[group.id], options.protyle.settings.icons.file)}</div>
 </div>`;
         }
     });
     if (options.renderAll) {
         options.blockElement.firstElementChild.outerHTML = `<div class="av__container fn__block">
-    ${genTabHeaderHTML(data, resetData.isSearching || !!resetData.query, !options.protyle.disabled && !hasClosestByAttribute(options.blockElement, "data-type", "NodeBlockQueryEmbed"))}
+    ${genTabHeaderHTML(options.protyle, data, resetData.isSearching || !!resetData.query, !options.protyle.disabled && !hasClosestByAttribute(options.blockElement, "data-type", "NodeBlockQueryEmbed"))}
     <div class="av__kanban${isSelectGroup ? " av__kanban--bg" : ""}">
         ${bodyHTML}
     </div>

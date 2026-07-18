@@ -1,9 +1,9 @@
 import {addScript} from "../util/addScript";
 import {Constants} from "../../constants";
-import {genIconHTML} from "./util";
 import {hasClosestByClassName} from "../util/hasClosest";
+import {genRendererIconHTML, type ProtyleRendererContext} from "./renderContext";
 
-export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) => {
+export const plantumlRender = (element: Element, context: ProtyleRendererContext, cdn = Constants.PROTYLE_CDN) => {
     let plantumlElements: Element[] | NodeListOf<Element> = [];
     if (element.getAttribute("data-subtype") === "plantuml" && element.getAttribute("data-render") !== "true") {
         plantumlElements = [element];
@@ -18,7 +18,7 @@ export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) =>
         plantumlElements.forEach((e: HTMLDivElement) => {
             e.setAttribute("data-render", "true");
             if (!e.firstElementChild.classList.contains("protyle-icons")) {
-                e.insertAdjacentHTML("afterbegin", genIconHTML(wysiswgElement));
+                e.insertAdjacentHTML("afterbegin", genRendererIconHTML(context, wysiswgElement));
             }
             const renderElement = e.firstElementChild.nextElementSibling as HTMLElement;
             if (!e.getAttribute("data-content")) {
@@ -26,7 +26,7 @@ export const plantumlRender = (element: Element, cdn = Constants.PROTYLE_CDN) =>
                 return;
             }
             try {
-                const url = `${window.siyuan.config.editor.plantUMLServePath}${window.plantumlEncoder.encode(Lute.UnEscapeHTMLStr(e.getAttribute("data-content")))}`;
+                const url = `${context.settings.editor.plantUMLServePath}${window.plantumlEncoder.encode(Lute.UnEscapeHTMLStr(e.getAttribute("data-content")))}`;
                 renderElement.innerHTML = `<object type="image/svg+xml" data="${url}"/>`;
                 renderElement.classList.remove("ft__error");
                 renderElement.firstElementChild.addEventListener("error", () => {

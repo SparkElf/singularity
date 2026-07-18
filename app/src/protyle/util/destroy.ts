@@ -1,5 +1,20 @@
-import {hideElements} from "../ui/hideElements";
 import {isSupportCSSHL} from "../render/searchMarkRender";
+
+const hideProtyleUtility = (protyle: IProtyle) => {
+    const toolbar = protyle.toolbar;
+    if (!toolbar || toolbar.isMultiSelectMode()) {
+        return;
+    }
+    const pinElement = toolbar.subElement.querySelector('[data-type="pin"]');
+    const pinIcon = pinElement?.querySelector("use")?.getAttribute("xlink:href") ??
+        pinElement?.querySelector("use")?.getAttribute("href");
+    if (pinIcon === "#iconUnpin") {
+        return;
+    }
+    toolbar.subElement.classList.add("fn__none");
+    toolbar.subElementCloseCB?.();
+    toolbar.subElementCloseCB = undefined;
+};
 
 export const destroy = (protyle: IProtyle) => {
     if (!protyle) {
@@ -11,7 +26,8 @@ export const destroy = (protyle: IProtyle) => {
     protyle.destroyed = true;
     protyle.uiEventController?.abort();
     protyle.editors.unregister(protyle);
-    hideElements(["util"], protyle);
+    hideProtyleUtility(protyle);
+    protyle.toolbar?.destroy();
     if (isSupportCSSHL()) {
         protyle.highlight.markHL.clear();
         protyle.highlight.mark.clear();
@@ -28,7 +44,6 @@ export const destroy = (protyle: IProtyle) => {
     if (protyle.undo) {
         protyle.undo.clear();
     }
-    protyle.ws?.disconnect();
     protyle.plugins.emit({
         type: "destroy-protyle",
         detail: {

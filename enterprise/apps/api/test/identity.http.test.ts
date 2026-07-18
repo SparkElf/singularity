@@ -27,6 +27,7 @@ import { PasswordHasher } from "../src/identity/password-hasher.js";
 import { sessionTokenFromValue } from "../src/identity/session-crypto.js";
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
+import { truncateTestDatabase } from "./support/database.js";
 import {
   startTestApiApplication,
   TEST_PUBLIC_ORIGIN,
@@ -50,19 +51,6 @@ class MutableClock implements Clock {
   set(value: Date): void {
     this.#milliseconds = value.getTime();
   }
-}
-
-async function cleanDatabase(database: DatabaseClient): Promise<void> {
-  await database.$transaction(async (transaction) => {
-    await transaction.kernelInstance.deleteMany();
-    await transaction.authSession.deleteMany();
-    await transaction.spaceMembership.deleteMany();
-    await transaction.space.deleteMany();
-    await transaction.organizationMembership.deleteMany();
-    await transaction.organization.deleteMany();
-    await transaction.user.deleteMany();
-    await transaction.systemInstallation.deleteMany();
-  });
 }
 
 async function expectProblem(
@@ -159,7 +147,7 @@ describe("identity HTTP contract with PostgreSQL", () => {
 
   afterEach(async () => {
     try {
-      await cleanDatabase(database);
+      await truncateTestDatabase(database);
     } finally {
       try {
         await testApi.dispose();

@@ -240,7 +240,7 @@ const createCopyButton = (getText: () => string): HTMLElement => {
     return btn;
 };
 
-export const postRender = (container: HTMLElement, app?: App): void => {
+export const postRender = (container: HTMLElement, app: App): void => {
     container.querySelectorAll(".language-math").forEach((el) => {
         if (el.hasAttribute("data-subtype")) { return; }
         const content = el.textContent || "";
@@ -271,20 +271,17 @@ export const postRender = (container: HTMLElement, app?: App): void => {
     const typographyElements = container.classList.contains("b3-typography")
         ? [container as HTMLElement]
         : Array.from(container.querySelectorAll<HTMLElement>(".b3-typography"));
-    typographyElements.forEach((item) => highlightRender(item));
-    mathRender(container);
-    mermaidRender(container);
-    flowchartRender(container);
-    graphvizRender(container);
-    chartRender(container);
-    mindmapRender(container);
-    abcRender(container);
-    plantumlRender(container);
-    htmlRender(container);
+    typographyElements.forEach((item) => highlightRender(item, app));
+    mathRender(container, app);
+    mermaidRender(container, app);
+    flowchartRender(container, app);
+    graphvizRender(container, app);
+    chartRender(container, app);
+    mindmapRender(container, app);
+    abcRender(container, app);
+    plantumlRender(container, app);
+    htmlRender(container, app);
     addCopyButtons(container);
-    if (!app) {
-        return;
-    }
     // MarkdownStr 渲染出的 siyuan:// 块链接只是普通 <a href>，需补全 data-type/data-href
     // 才能接入全局 popover 浮窗系统；dock 内无 protyle 点击链路，需自行绑定点击打开块。
     container.querySelectorAll<HTMLAnchorElement>('a[href^="siyuan://"]').forEach((a) => {

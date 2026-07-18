@@ -1,4 +1,3 @@
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {focusBlock, focusByWbr, focusSideBlock, getEditorRange} from "../util/selection";
 import {getContenteditableElement, getFirstBlock, getSbChildBlockCount, getTopAloneElement} from "./getBlock";
 import {Constants} from "../../constants";
@@ -6,19 +5,19 @@ import {blockRender} from "../render/blockRender";
 import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
 import {hasClosestBlock, hasClosestByAttribute, hasTopClosestByAttribute, isInEmbedBlock} from "../util/hasClosest";
-import {zoomOut} from "../../menus/protyle";
-import {disabledProtyle, enableProtyle, onGet} from "../util/onGet";
+import {zoomOut} from "../util/zoom";
+import {disabledProtyle, enableProtyle, onGet, setReadonlyByConfig} from "../util/onGet";
 import {avRender, refreshAV} from "../render/av/render";
 import {removeFoldHeading} from "../util/heading";
 import {cancelSB, genEmptyElement, genSBElement, refreshSbResize} from "../../block/util";
 import {hideElements} from "../ui/hideElements";
 import {reloadProtyle} from "../util/reload";
-import {countBlockWord} from "../../layout/status";
 import {resize} from "../util/resize";
 import {processClonePHElement} from "../render/util";
-import {scrollCenter} from "../../util/highlightById";
+import {scrollCenter} from "../util/highlightById";
 import {setFold} from "../util/blockFold";
-import {isEncryptedBox} from "../../util/pathName";
+import {setDocumentReadOnlyFromResponse} from "../runtime/readOnly";
+import {syncBlockRefNotebookIDs} from "../util/blockRefIdentity";
 
 const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
     // 移动到其他文档中，该块需移除
@@ -121,8 +120,8 @@ const promiseTransaction = (options: {
                     }
                 });
                 if (updatedEmbed) {
-                    processRender(protyle.wysiwyg.element);
-                    highlightRender(protyle.wysiwyg.element);
+                    processRender(protyle.wysiwyg.element, protyle);
+                    highlightRender(protyle.wysiwyg.element, protyle);
                     avRender(protyle.wysiwyg.element, protyle);
                 }
                 return;
@@ -255,8 +254,8 @@ const promiseTransaction = (options: {
                     }
                 });
                 cursorElements.forEach(item => {
-                    processRender(item);
-                    highlightRender(item);
+                    processRender(item, protyle);
+                    highlightRender(item, protyle);
                     avRender(item, protyle);
                     blockRender(protyle, item);
                     item.querySelectorAll("wbr").forEach(wbrItem => {
@@ -301,20 +300,33 @@ const promiseTransaction = (options: {
             focusByWbr(emptyElement, range);
         }
     }
-    fetchPost("/api/transactions", {
+    void protyle.transport!.request<IWebSocketData>("/api/transactions", {
+        reqId: Date.now(),
         session: protyle.id,
         app: Constants.SIYUAN_APPID,
         transactions: [{
-            notebook: isEncryptedBox(protyle.notebookId) ? protyle.notebookId : "",
+            notebook: protyle.notebookId,
             doOperations: options.doOperations,
             undoOperations: options.undoOperations,// 目前用于 ws 推送更新大纲
         }]
-    }, (response) => {
-        const ids: string[] = [];
-        protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select").forEach(item => {
-            ids.push(item.getAttribute("data-node-id"));
+    }, {
+        identity: {
+            notebookId: protyle.notebookId,
+            documentId: protyle.options.blockId!,
+        },
+        intent: "write",
+        signal: protyle.ownerSignal,
+    }).then((response) => {
+        if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+            return;
+        }
+        response.data[0].doOperations.forEach((operation: IOperation) => {
+            if (operation.id && typeof operation.data === "string") {
+                protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((item) => {
+                    syncBlockRefNotebookIDs(item, operation.data);
+                });
+            }
         });
-        countBlockWord(ids, protyle.block.rootID, true);
         if (!options.skipSync) {
             response.data[0].doOperations.forEach((operation: IOperation) => {
                 if (operation.action === "unfoldHeading" || operation.action === "foldHeading") {
@@ -330,6 +342,10 @@ const promiseTransaction = (options: {
                 blockRender(protyle, item);
             }
         });
+    }).catch((error) => {
+        if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+            console.error("[protyle.transport] transaction request failed", error);
+        }
     });
 };
 
@@ -419,8 +435,8 @@ const updateBlock = (updateElements: Element[], protyle: IProtyle, operation: IO
             (item.firstElementChild as HTMLElement).scrollTop = tableScrollTop;
         }
 
-        processRender(item);
-        highlightRender(item);
+        processRender(item, protyle);
+        highlightRender(item, protyle);
         avRender(item, protyle);
         blockRender(protyle, item);
     });
@@ -475,8 +491,8 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                 if (protyle.disabled) {
                     disabledProtyle(protyle);
                 }
-                processRender(protyle.wysiwyg.element);
-                highlightRender(protyle.wysiwyg.element);
+                processRender(protyle.wysiwyg.element, protyle);
+                highlightRender(protyle.wysiwyg.element, protyle);
                 avRender(protyle.wysiwyg.element, protyle);
                 blockRender(protyle, protyle.wysiwyg.element);
                 // 展开标题插入的块可能落在超级块内，刷新手柄避免与既有手柄重复/错位
@@ -632,15 +648,11 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                     resize(protyle);
                 }
                 if (data.new[Constants.CUSTOM_SY_READONLY] !== data.old[Constants.CUSTOM_SY_READONLY]) {
-                    let customReadOnly = data.new[Constants.CUSTOM_SY_READONLY];
-                    if (!customReadOnly) {
-                        customReadOnly = window.siyuan.config.editor.readOnly ? "true" : "false";
-                    }
-                    if (customReadOnly === "true") {
-                        disabledProtyle(protyle);
-                    } else {
-                        enableProtyle(protyle);
-                    }
+                    setDocumentReadOnlyFromResponse(
+                        protyle.readonlyState,
+                        data.new[Constants.CUSTOM_SY_READONLY] === "true",
+                    );
+                    setReadonlyByConfig(protyle, false);
                 }
                 if (data.new.icon !== data.old.icon ||
                     data.new["title-img"] !== data.old["title-img"] ||
@@ -649,7 +661,14 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                     protyle.background.ial.tags = data.new.tags;
                     protyle.background.ial["title-img"] = data.new["title-img"];
                     protyle.background.render(protyle.background.ial, protyle.block.rootID);
-                    protyle.model?.parent.setDocIcon(data.new.icon);
+                }
+                if (data.new.icon !== data.old.icon && protyle.surface === "workspace") {
+                    protyle.host.dispatch({
+                        type: "set-document-icon",
+                        notebookId: protyle.notebookId,
+                        documentId: protyle.block.rootID,
+                        icon: data.new.icon,
+                    });
                 }
                 return;
             }
@@ -724,16 +743,29 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                 tempEl.setAttribute("data-node-id", operation.id);
                 tempEl.setAttribute("data-protyle-id", protyle.element.getAttribute("data-id"));
                 updateElements.push(tempEl);
-                fetchPost("/api/block/getBlockDOM", {
+                void protyle.transport!.request<IWebSocketData>("/api/block/getBlockDOM", {
                     id: operation.id,
-                    notebook: protyle.notebookId,
-                }, (response) => {
+                }, {
+                    identity: {
+                        notebookId: protyle.notebookId,
+                        documentId: protyle.options.blockId!,
+                    },
+                    intent: "read",
+                    signal: protyle.ownerSignal,
+                }).then((response) => {
+                    if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+                        return;
+                    }
                     document.querySelectorAll(`.protyle-wysiwyg [data-node-id="${response.data.id}"]`).forEach(item => {
                         if (item.getAttribute("data-protyle-id")) {
                             item.outerHTML = response.data.dom;
                             item.removeAttribute("data-protyle-id");
                         }
                     });
+                }).catch((error) => {
+                    if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                        console.error("[protyle.transport] block DOM request failed", error);
+                    }
                 });
             }
             let range;
@@ -935,8 +967,8 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                         item.removeAttribute(attr);
                     }
                 });
-                processRender(item);
-                highlightRender(item);
+                processRender(item, protyle);
+                highlightRender(item, protyle);
                 avRender(item, protyle);
                 blockRender(protyle, item);
                 // 插入块后刷新所在超级块的拖拽手柄（撤销/重做/同步）
@@ -1325,8 +1357,8 @@ export const turnsIntoTransaction = (options: {
         }
     });
     transaction(options.protyle, doOperations, undoOperations);
-    processRender(options.protyle.wysiwyg.element);
-    highlightRender(options.protyle.wysiwyg.element);
+    processRender(options.protyle.wysiwyg.element, options.protyle);
+    highlightRender(options.protyle.wysiwyg.element, options.protyle);
     avRender(options.protyle.wysiwyg.element, options.protyle);
     blockRender(options.protyle, options.protyle.wysiwyg.element);
     if (range || options.range) {
@@ -1351,11 +1383,12 @@ export const turnsOneInto = async (options: {
         for (const item of options.nodeElement.querySelectorAll('[data-type="NodeHeading"][fold="1"]')) {
             const itemId = item.getAttribute("data-node-id");
             item.removeAttribute("fold");
-            const response = await fetchSyncPost("/api/transactions", {
+            const response = await options.protyle.transport!.request<IWebSocketData>("/api/transactions", {
+                reqId: Date.now(),
                 session: options.protyle.id,
                 app: Constants.SIYUAN_APPID,
                 transactions: [{
-                    notebook: isEncryptedBox(options.protyle.notebookId) ? options.protyle.notebookId : "",
+                    notebook: options.protyle.notebookId,
                     doOperations: [{
                         action: "unfoldHeading",
                         id: itemId,
@@ -1365,7 +1398,17 @@ export const turnsOneInto = async (options: {
                         id: itemId
                     }],
                 }]
+            }, {
+                identity: {
+                    notebookId: options.protyle.notebookId,
+                    documentId: options.protyle.options.blockId!,
+                },
+                intent: "write",
+                signal: options.protyle.ownerSignal,
             });
+            if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted) {
+                return;
+            }
             options.protyle.undo.add([{
                 action: "unfoldHeading",
                 id: itemId,
@@ -1379,7 +1422,19 @@ export const turnsOneInto = async (options: {
     const oldHTML = options.nodeElement.outerHTML;
     let previousId = options.nodeElement.previousElementSibling?.getAttribute("data-node-id");
     if (!options.nodeElement.previousElementSibling && options.protyle.block.showAll) {
-        const response = await fetchSyncPost("/api/block/getBlockRelevantIDs", {id: options.id});
+        const response = await options.protyle.transport!.request<IWebSocketData>("/api/block/getBlockRelevantIDs", {
+            id: options.id,
+        }, {
+            identity: {
+                notebookId: options.protyle.notebookId,
+                documentId: options.protyle.options.blockId!,
+            },
+            intent: "read",
+            signal: options.protyle.ownerSignal,
+        });
+        if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted) {
+            return;
+        }
         previousId = response.data.previousID;
     }
     const parentId = options.nodeElement.parentElement.getAttribute("data-node-id") || options.protyle.block.parentID;
@@ -1426,14 +1481,30 @@ export const turnsOneInto = async (options: {
     focusByWbr(options.protyle.wysiwyg.element, getEditorRange(options.protyle.wysiwyg.element));
     options.protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]').forEach(item => {
         if (item.textContent === "") {
-            fetchPost("/api/block/getRefText", {id: item.getAttribute("data-id")}, (response) => {
+            void options.protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+                id: item.getAttribute("data-id"),
+            }, {
+                identity: {
+                    notebookId: options.protyle.notebookId,
+                    documentId: options.protyle.options.blockId!,
+                },
+                intent: "read",
+                signal: options.protyle.ownerSignal,
+            }).then((response) => {
+                if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted || !item.isConnected) {
+                    return;
+                }
                 item.innerHTML = response.data;
+            }).catch((error) => {
+                if (!options.protyle.destroyed && !options.protyle.ownerSignal?.aborted) {
+                    console.error("[protyle.transport] block reference request failed", error);
+                }
             });
         }
     });
     blockRender(options.protyle, options.protyle.wysiwyg.element);
-    processRender(options.protyle.wysiwyg.element);
-    highlightRender(options.protyle.wysiwyg.element);
+    processRender(options.protyle.wysiwyg.element, options.protyle);
+    highlightRender(options.protyle.wysiwyg.element, options.protyle);
     avRender(options.protyle.wysiwyg.element, options.protyle);
 };
 
@@ -1445,21 +1516,9 @@ export const transaction = (protyle: IProtyle, doOperations: IOperation[], undoO
         return;
     }
     if (!protyle) {
-        // 文档树中点开属性->数据库后的变更操作 & 文档树添加到数据库
-        fetchPost("/api/transactions", {
-            session: Constants.SIYUAN_APPID,
-            app: Constants.SIYUAN_APPID,
-            transactions: [{
-                notebook: "",
-                doOperations
-            }]
-        });
-        return;
+        throw new Error("[protyle.transaction] a bound Protyle is required");
     }
     if (undoOperations) {
-        if (window.siyuan.config.fileTree.openFilesUseCurrentTab && protyle.model) {
-            protyle.model.headElement.classList.remove("item--unupdate");
-        }
         protyle.updated = true;
         protyle.undo.add(doOperations, undoOperations, protyle);
     }
@@ -1513,8 +1572,8 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
             if (protyle.disabled) {
                 disabledProtyle(protyle);
             }
-            processRender(protyle.wysiwyg.element);
-            highlightRender(protyle.wysiwyg.element);
+            processRender(protyle.wysiwyg.element, protyle);
+            highlightRender(protyle.wysiwyg.element, protyle);
             avRender(protyle.wysiwyg.element, protyle);
             blockRender(protyle, protyle.wysiwyg.element);
             // 展开标题插入的块可能落在超级块内，刷新手柄避免与既有手柄重复/错位
@@ -1546,17 +1605,28 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
             const getDocParam: IObject = {
                 id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                 mode: 2,
-                size: window.siyuan.config.editor.dynamicLoadBlocks,
+                size: (protyle.application as ProtyleApplicationPort).settings.editor.dynamicLoadBlocks,
             };
-            if (isEncryptedBox(protyle.notebookId)) {
-                getDocParam.notebook = protyle.notebookId;
-            }
-            fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+            void protyle.transport!.request<IWebSocketData>("/api/filetree/getDoc", getDocParam, {
+                identity: {
+                    notebookId: protyle.notebookId,
+                    documentId: protyle.options.blockId!,
+                },
+                intent: "read",
+                signal: protyle.ownerSignal,
+            }).then((getResponse) => {
+                if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+                    return;
+                }
                 onGet({
                     data: getResponse,
                     protyle,
                     action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
                 });
+            }).catch((error) => {
+                if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                    console.error("[protyle.transport] document append request failed", error);
+                }
             });
         }
         return;

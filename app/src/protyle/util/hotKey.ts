@@ -1,4 +1,5 @@
-import {isMac, isNotCtrl, isOnlyMeta} from "./compatibility";
+import {isMac} from "./browserPlatform";
+import {isNotCtrl, isOnlyMeta} from "./keyboard";
 import {Constants} from "../../constants";
 
 // 是否匹配辅助键 ⌃⌥⇧⌘

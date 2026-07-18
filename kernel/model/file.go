@@ -803,6 +803,7 @@ func GetDocInBox(startID, endID, id string, index int, query string, queryTypes,
 
 	luteEngine.RenderOptions.NodeIndexStart = index
 	dom = luteEngine.Tree2BlockDOM(subTree, luteEngine.RenderOptions, luteEngine.ParseOptions)
+	dom = FillBlockRefNotebookIDs(dom, boxID)
 
 	if 1 > len(keywords) {
 		keywords = []string{}

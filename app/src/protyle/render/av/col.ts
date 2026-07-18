@@ -1,6 +1,5 @@
 import {Menu} from "../../../plugin/Menu";
 import {transaction} from "../../wysiwyg/transaction";
-import {fetchPost, fetchSyncPost} from "../../../util/fetch";
 import {getDefaultOperatorByType, getEditableFilters, hasFilterForColumn} from "./filter";
 import {genCellValue} from "./cell";
 import {getPropertiesHTML, openMenuPanel} from "./openMenuPanel";
@@ -18,6 +17,8 @@ import {Dialog} from "../../../dialog";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldsByData} from "./view";
 import {hasClosestByClassName} from "../../util/hasClosest";
+import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
+import {currentAVOverlay} from "./overlay";
 
 export const getColId = (element: Element, viewType: TAVView) => {
     if (viewType === "table" || hasClosestByClassName(element, "custom-attr")) {
@@ -521,7 +522,13 @@ export const bindEditEvent = (options: {
             toggleUpdateRelationBtn(options.menuElement, avID);
         });
         if (oldValue.avID) {
-            fetchPost("/api/av/getAttributeView", {id: oldValue.avID}, (response) => {
+            const load = beginAVRenderLoad(options.protyle, options.menuElement);
+            void requestAVRender<IWebSocketData>(options.protyle, load, "/api/av/getAttributeView", {
+                id: oldValue.avID,
+            }).then((response) => {
+                if (!load.isCurrent()) {
+                    return;
+                }
                 goSearchElement.querySelector(".b3-menu__accelerator").textContent = oldValue.avID === avID ? window.siyuan.languages.thisDatabase : (response.data.av.name || window.siyuan.languages._kernel[267]);
                 response.data.av.keyValues.find((item: { key: { id: string, name: string } }) => {
                     if (item.key.id === oldValue.backKeyID) {
@@ -531,6 +538,8 @@ export const bindEditEvent = (options: {
                     }
                 });
                 toggleUpdateRelationBtn(options.menuElement, avID);
+            }).catch((error) => {
+                reportAVLoadFailure(load, "attribute view relation column", error);
             });
         } else {
             toggleUpdateRelationBtn(options.menuElement, avID);
@@ -661,7 +670,7 @@ const addAttrViewColAnimation = (options: {
     </div>
 </div>`);
     }
-    const menuElement = document.querySelector(".av__panel .b3-menu") as HTMLElement;
+    const menuElement = currentAVOverlay(options.protyle, "panel")?.lastElementChild as HTMLElement;
     if (menuElement && options.data && options.blockElement.classList.contains("av")) {
         menuElement.innerHTML = getEditHTML({
             protyle: options.protyle,
@@ -853,13 +862,17 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             icon: "iconFilter",
             label: window.siyuan.languages.filter,
             click() {
-                fetchPost("/api/av/renderAttributeView", {
+                const load = beginAVRenderLoad(protyle, blockElement as HTMLElement);
+                void requestAVRender<{data: IAV}>(protyle, load, "/api/av/renderAttributeView", {
                     id: avID,
-                    notebook: protyle.notebookId,
+                    notebook: load.identity.notebookId,
                     viewID,
                     ignoreRows: true,
-                }, (response) => {
-                    const avData = response.data as IAV;
+                }).then((response) => {
+                    if (!load.isCurrent()) {
+                        return;
+                    }
+                    const avData = response.data;
                     // 该字段还没有筛选条件时，创建它的默认筛选条件（其它字段的筛选不影响）；
                     // 已有该字段筛选时直接打开总筛选配置面板，避免每次重复新建
                     if (!hasFilterForColumn(avData.view.filters, colId)) {
@@ -890,6 +903,8 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         type: "filters",
                         data: avData,
                     });
+                }).catch((error) => {
+                    reportAVLoadFailure(load, "attribute view filter metadata", error);
                 });
             }
         });
@@ -898,10 +913,14 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             icon: "iconUp",
             label: window.siyuan.languages.asc,
             click() {
-                fetchPost("/api/av/renderAttributeView", {
+                const load = beginAVRenderLoad(protyle, blockElement as HTMLElement);
+                void requestAVRender<IWebSocketData>(protyle, load, "/api/av/renderAttributeView", {
                     id: avID,
-                    notebook: protyle.notebookId,
-                }, (response) => {
+                    notebook: load.identity.notebookId,
+                }).then((response) => {
+                    if (!load.isCurrent()) {
+                        return;
+                    }
                     transaction(protyle, [{
                         action: "setAttrViewSorts",
                         avID: response.data.id,
@@ -916,6 +935,8 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         data: response.data.view.sorts,
                         blockID
                     }]);
+                }).catch((error) => {
+                    reportAVLoadFailure(load, "attribute view ascending sort", error);
                 });
             }
         });
@@ -924,10 +945,14 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             icon: "iconDown",
             label: window.siyuan.languages.desc,
             click() {
-                fetchPost("/api/av/renderAttributeView", {
+                const load = beginAVRenderLoad(protyle, blockElement as HTMLElement);
+                void requestAVRender<IWebSocketData>(protyle, load, "/api/av/renderAttributeView", {
                     id: avID,
-                    notebook: protyle.notebookId,
-                }, (response) => {
+                    notebook: load.identity.notebookId,
+                }).then((response) => {
+                    if (!load.isCurrent()) {
+                        return;
+                    }
                     transaction(protyle, [{
                         action: "setAttrViewSorts",
                         avID: response.data.id,
@@ -942,6 +967,8 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         data: response.data.view.sorts,
                         blockID
                     }]);
+                }).catch((error) => {
+                    reportAVLoadFailure(load, "attribute view descending sort", error);
                 });
             }
         });
@@ -1071,10 +1098,14 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                 icon: "iconCopy",
                 label: window.siyuan.languages.duplicate,
                 click() {
-                    fetchPost("/api/av/renderAttributeView", {
+                    const load = beginAVRenderLoad(protyle, blockElement as HTMLElement);
+                    void requestAVRender<IWebSocketData>(protyle, load, "/api/av/renderAttributeView", {
                         id: avID,
-                        notebook: protyle.notebookId,
-                    }, (response) => {
+                        notebook: load.identity.notebookId,
+                    }).then((response) => {
+                        if (!load.isCurrent()) {
+                            return;
+                        }
                         duplicateCol({
                             blockElement,
                             viewID,
@@ -1082,6 +1113,8 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                             colId,
                             data: response.data
                         });
+                    }).catch((error) => {
+                        reportAVLoadFailure(load, "attribute view column duplication", error);
                     });
                 }
             });
@@ -1092,12 +1125,33 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
             label: window.siyuan.languages.delete,
             async click() {
                 if (type === "relation") {
-                    const response = await fetchSyncPost("/api/av/getAttributeView", {id: avID});
+                    const load = beginAVRenderLoad(protyle, blockElement as HTMLElement);
+                    let response: IWebSocketData;
+                    try {
+                        response = await requestAVRender<IWebSocketData>(protyle, load,
+                            "/api/av/getAttributeView", {id: avID});
+                    } catch (error) {
+                        reportAVLoadFailure(load, "attribute view relation removal", error);
+                        return;
+                    }
+                    if (!load.isCurrent()) {
+                        return;
+                    }
                     const colData = response.data.av.keyValues.find((item: {
                         key: { id: string }
                     }) => item.key.id === colId);
                     if (colData.key.relation?.isTwoWay) {
-                        const relResponse = await fetchSyncPost("/api/av/getAttributeView", {id: colData.key.relation.avID});
+                        let relResponse: IWebSocketData;
+                        try {
+                            relResponse = await requestAVRender<IWebSocketData>(protyle, load,
+                                "/api/av/getAttributeView", {id: colData.key.relation.avID});
+                        } catch (error) {
+                            reportAVLoadFailure(load, "attribute view reverse relation removal", error);
+                            return;
+                        }
+                        if (!load.isCurrent()) {
+                            return;
+                        }
                         const dialog = new Dialog({
                             title: window.siyuan.languages.removeColConfirm,
                             content: `<div class="b3-dialog__content">
@@ -1181,7 +1235,7 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
         y: cellRect.bottom,
         h: cellRect.height
     });
-    const inputElement = window.siyuan.menus.menu.element.querySelector(".b3-text-field") as HTMLInputElement;
+    const inputElement = menu.element.querySelector(".b3-text-field") as HTMLInputElement;
     if (inputElement) {
         inputElement.select();
         inputElement.focus();

@@ -3,7 +3,7 @@ title: "ADR-011: 企业空间Session组合根前移"
 description: "确定生产Protyle迁移前必须先建立真实空间身份、Gateway和唯一浏览器Session组合根"
 author: "Codex"
 date: "2026-07-14"
-version: "1.4.1"
+version: "1.7.0"
 status: "accepted"
 tags: ["adr", "space", "session", "gateway", "composition-root"]
 ---
@@ -23,6 +23,9 @@ tags: ["adr", "space", "session", "gateway", "composition-root"]
 | 1.3.0 | 2026-07-14 | Codex | 增补S1受控运维、身份与空间发现前置切片，并延后无消费者事件总线 |
 | 1.4.0 | 2026-07-14 | Codex | 闭合S1 Kernel三态生产路径、代理安全、撤权并发与非空浏览器门禁 |
 | 1.4.1 | 2026-07-14 | Codex | S1增量经架构、安全、Schema与测试治理复评通过并接受 |
+| 1.5.0 | 2026-07-18 | Codex | 以ADR-018修正独立运维进程的撤权通知链 |
+| 1.6.0 | 2026-07-18 | Codex | 增加服务认证的空间内容目录，闭合Session到Protyle的真实文档身份选择链 |
+| 1.7.0 | 2026-07-18 | Codex | 区分活动Session的隐藏式404与Kernel业务404，固定响应级撤权标记 |
 
 ## Status
 
@@ -33,6 +36,8 @@ Accepted
 公共`ProtyleSession`要求唯一真实`spaceId`，但当前企业Web只有固定`/workspace`路由，旧思源Web入口也没有组织或空间身份。工作区路径、设备ID、`SIYUAN_APPID`、同步`KernelID`和`cloudName`均属于不同语义，不能近似替代企业空间主键。
 
 原实施顺序先迁移Protyle、后建立NestJS企业控制面和Kernel Gateway，会迫使旧App创建一个无法合法构造的Session。保留可选空间、local Session、占位ID或旧Kernel直连都会形成第二条生产路径，并破坏服务器权威与一空间一Kernel的安全边界。
+
+S3实现后又暴露出下一处身份断层：授权启动响应只产生`spaceId`，而公共Factory和内容Gateway要求请求前已有`notebookId + documentId`。目录尚不存在时，React无法合法取得首文档或渲染文档树，不能用笔记本ID、空值、首响应或DOM代替。
 
 ## Decision
 
@@ -50,7 +55,9 @@ Accepted
 12. S0数据库readiness使用未认证的`GET /api/v1/health/database`，真实查询成功返回`200 {"status":"ready"}`，数据库配置、连接或查询不可用返回`503 {"status":"unavailable"}`。配置只接受PostgreSQL协议，错误结果不保留原始URL；单副本连接池上限5，连接建立与池等待上限3秒，客户端查询上限5秒，PostgreSQL语句上限4秒。响应禁止缓存且不暴露连接信息；它不兼作进程liveness或后续Kernel健康聚合。
 13. 组织/空间角色以`authorization`的小写合同为唯一事实源，浏览器可见Kernel状态以`contracts`的小写合同为唯一事实源；Prisma标识符和PostgreSQL枚举值保持一致，database package不再公开同名大写枚举。
 14. S1以API package内受控运维组合根从部署主机非TTY pipe创建账号、组织、空间、成员及Kernel三态事实；首次初始化使用数据库固定单例行，React从授权空间列表与启动响应建立真实路由。身份使用有界Argon2id、可信来源双键限流、必填公开Origin、HttpOnly Cookie、内存CSRF、条件会话续期和固定行锁顺序，具体合同由ADR-013拥有。
-15. S1所有撤权变更集中到Identity/SpaceAccess Service并由真实HTTP读取新事实，不预建无人消费的`AccessChanged` publisher；S2在SpaceConnectionRegistry首个生产消费者落地时同批增加事务提交后事件和WebSocket证据。
+15. S1所有撤权变更集中到Identity/SpaceAccess Service并由真实HTTP读取新事实，不预建无人消费的`AccessChanged` publisher；S2在SpaceConnectionRegistry首个生产消费者落地时同批增加事务内PostgreSQL通知、API专用监听和WebSocket证据，使独立运维进程与HTTP进程共用提交后失效链，详见ADR-018。
+16. S3与B4之间增加ADR-020空间内容目录。Nest以原生Controller/Guard/Pipe/DI声明三个精确只读端点，先复验当前空间读取权限，再通过mTLS、短期服务JWT和`identity: service`路由调用Kernel内部目录。笔记本、根文档和真实父文档子项按最小字段分页返回；锁定加密库不返回内部文档信息。目录只产生完整选择身份，所有内容Gateway请求仍强制`spaceId + notebookId + documentId`，且不新增自定义handler registry、旧文件树代理或fallback。
+17. 活动Session的组织或空间授权失效仍对外返回`404 + not-found`，并由产生该事实的Gateway授权边界独占写入响应头`X-Singularity-Runtime-Access-Lost: true`。受信Kernel的业务404不得携带该头，Kernel响应也不能通过允许头策略伪造它。浏览器Transport只按该显式标记产生终止性的`forbidden`事件；普通404继续只失败当前操作。该头不进入Problem payload、不表示可重试性，也不建立第二份授权状态。
 
 ## Alternatives
 
@@ -65,6 +72,10 @@ Accepted
 - **使用通用`GET /health`聚合所有依赖**：拒绝。S0只有数据库一个真实依赖，提前聚合会混淆进程、数据库与后续Kernel故障来源。
 - **配置错误直接终止readiness进程**：拒绝。编排系统无法取得稳定503，且URL解析异常可能把原始连接串带入启动日志。
 - **依赖驱动默认无限等待**：拒绝。黑洞连接或池耗尽会让探针堆积，无法可靠驱动流量摘除。
+- **把首文档并入SpaceRuntimeBootstrap**：拒绝。企业运行状态与易变内容目录会耦合，且无法支持完整树、锁态和分页。
+- **直接公开旧思源文件树API**：拒绝。浏览器会接触路径、全局状态和Kernel直连语义，绕过企业目录授权。
+- **活动Session把所有404都当作撤权**：拒绝。缺失资源或Kernel业务404会错误销毁当前Session并清除仍获授权的内容。
+- **给所有Problem增加source/retryable字段**：拒绝。大多数错误不需要来源判别，会扩大全局协议；响应级撤权标记只服务唯一的404语义碰撞。
 
 ## Consequences
 
@@ -73,10 +84,12 @@ Accepted
 - 14个浏览器旧壳`new Protyle(...)`调用点不再机械注入伪Session；主编辑器由React替代，嵌入式所有者随功能迁移，旧所有者退出生产闭包。另1个原生移动点保持范围外。
 - 后端须新增PostgreSQL集成、真实HTTP和真实WebSocket测试；浏览器静态壳不能冒充空间或Gateway证据。
 - 生产系统只有一个活动空间Session、一个同源Gateway路径和一个内容事实源，不保留旧直连或自动fallback。
-- 本期API部署限制单副本；横向扩展前必须把进程内撤权事件替换为跨副本消息总线并新增合同测试。
+- 本期API部署限制单副本；横向扩展前必须把单监听者的PostgreSQL通知链替换为跨副本消息总线并新增合同测试。
 - S1受控运维是正式生产入口但不暴露公网；普通成员管理UI、邀请与自助密码能力仍留在L1后续批次。
 - 认证或权限失效会等待Session销毁并清除编辑器DOM；Kernel或网络故障保留当前内容且只允许显式重试。
 - 私网需同时运维mTLS证书与JWT密钥，换取传输机密性、服务身份和请求级授权的独立边界。
+- React会在空间Session与Protyle Core之间多一个明确目录选择阶段；它增加三条只读合同，但删除全部伪造或推断文档身份的空间。
+- Gateway授权边界新增一个只写响应标记，Transport无需从状态码、正文、路由或当前UI状态推断隐藏式404；Kernel业务404保持非终止。
 
 ## References
 
@@ -88,3 +101,5 @@ Accepted
 6. [ADR-010：Protyle宿主动作与合同所有权](0010-protyle-host-actions-and-contract-ownership.md)
 7. [S1身份与空间启动产品需求](../product/s1-identity-space-startup.md)
 8. [ADR-013：S1受控运维、身份会话与空间发现](0013-s1-identity-space-access.md)
+9. [ADR-018：PostgreSQL跨进程访问失效通知](0018-cross-process-access-change.md)
+10. [ADR-020：空间内容目录引导](0020-space-content-directory-bootstrap.md)

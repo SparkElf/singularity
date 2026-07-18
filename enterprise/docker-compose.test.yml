@@ -1,0 +1,26 @@
+services:
+  singularity-postgres-test:
+    container_name: singularity-postgres-test
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: singularity_test
+      POSTGRES_PASSWORD: singularity_test
+      POSTGRES_USER: singularity_test
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U singularity_test -d singularity_test
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    ports:
+      - "127.0.0.1:55432:5432"
+    restart: "no"
+    stop_grace_period: 30s
+    volumes:
+      - singularity-postgres-test-data:/var/lib/postgresql/data
+
+volumes:
+  singularity-postgres-test-data:
+    name: singularity-postgres-test-data

@@ -16,7 +16,7 @@ import {
 } from "../util/selection";
 import {genHintItemHTML, hintEmbed, hintRef, hintSlash} from "./extend";
 import {getBlockRefAnchorText, newFileByRefHint, newFileInProtyle} from "../../util/newFile";
-import {isAbnormalItem, upDownHint} from "../../util/upDownHint";
+import {isAbnormalItem, upDownHint} from "../util/upDownHint";
 import {setPosition} from "../../util/setPosition";
 import {getContenteditableElement, hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
@@ -40,9 +40,9 @@ import {uploadFiles} from "../upload";
 import {processRender} from "../util/processCode";
 import {AIChat} from "../../ai/chat";
 import {isMobile} from "../../util/functions";
-import {isNotCtrl, isOnlyMeta} from "../util/compatibility";
+import {isNotCtrl, isOnlyMeta} from "../util/keyboard";
 import {avRender} from "../render/av/render";
-import {genIconHTML} from "../render/util";
+import {genRendererIconHTML} from "../render/renderContext";
 import {updateAttrViewCellAnimation} from "../render/av/action";
 import {setFold} from "../util/blockFold";
 
@@ -366,7 +366,7 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                 searchHTML += `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${response.data.blocks.length === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefText)}"><div class="b3-list-item__first"><svg class="b3-list-item__graphic"><use xlink:href="#iconFile"></use></svg>
 <span class="b3-list-item__text">${window.siyuan.languages.newFile} <mark>${response.data.k}</mark></span></div></button>`;
             }
-            response.data.blocks.forEach((item: IBlock, index: number) => {
+            response.data.blocks.forEach((item: IBlock & {box: string; id: string}, index: number) => {
                 let blockRefHTML;
                 if (source === "av") {
                     // av 搜索时需要获取值 https://github.com/siyuan-note/siyuan/issues/12020
@@ -374,9 +374,9 @@ ${unicode2Emoji(emoji.unicode)}</button>`;
                     if (nodeElement) {
                         refText = item.ial["custom-sy-av-s-text-" + nodeElement.getAttribute("data-av-id")] || refText;
                     }
-                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${refText}</span>`;
+                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${refText}</span>`;
                 } else {
-                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-subtype="s">${oldValue}</span>`;
+                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${oldValue}</span>`;
                 }
                 searchHTML += `<button style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${index === 0 ? " b3-list-item--focus" : ""}" data-value="${encodeURIComponent(blockRefHTML)}">
 ${genHintItemHTML(item)}
@@ -607,6 +607,7 @@ ${genHintItemHTML(item)}
                 color: `${tempElement.getAttribute("data-id")}${Constants.ZWSP}${tempElement.getAttribute("data-subtype")}${Constants.ZWSP}${tempElement.textContent}`
             });
             if (refElement[0]) {
+                refElement[0].setAttribute("data-notebook-id", tempElement.getAttribute("data-notebook-id")!);
                 protyle.toolbar.range.setEnd(refElement[0].lastChild, refElement[0].lastChild.textContent.length);
             }
             protyle.toolbar.range.collapse(false);
@@ -684,7 +685,7 @@ ${genHintItemHTML(item)}
             } else if (value === Constants.ZWSP + 4) {
                 // 新建文档
                 newFileInProtyle(protyle, (createDocId, createDocTitle) => {
-                    insertHTML(`<span data-type="block-ref" data-id="${createDocId}" data-subtype="d">${getBlockRefAnchorText(createDocTitle)}</span>`, protyle);
+                    insertHTML(`<span data-type="block-ref" data-id="${createDocId}" data-notebook-id="${protyle.notebookId}" data-subtype="d">${getBlockRefAnchorText(createDocTitle)}</span>`, protyle);
                 });
                 return;
             } else if (value === Constants.ZWSP + 6) {
@@ -696,7 +697,7 @@ ${genHintItemHTML(item)}
                     title: "",
                     md: ""
                 }, () => {
-                    insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
+                    insertHTML(`<span data-type="block-ref" data-id="${newSubDocId}" data-notebook-id="${protyle.notebookId}" data-subtype="d">${getBlockRefAnchorText("")}</span>`, protyle);
                     protyle.host.dispatch({
                         type: "open-document",
                         notebookId: protyle.notebookId,
@@ -781,7 +782,7 @@ ${genHintItemHTML(item)}
                 } else if (editableElement.textContent === "" && nodeElement.getAttribute("data-type") === "NodeParagraph") {
                     let newHTML = "";
                     if (value === "<div>") {
-                        newHTML = `<div data-node-id="${id}" data-type="NodeHTMLBlock" class="render-node" data-subtype="block">${genIconHTML()}<div><protyle-html data-content=""></protyle-html><span style="position: absolute">${Constants.ZWSP}</span></div><div class="protyle-attr" contenteditable="false"></div></div>`;
+                        newHTML = `<div data-node-id="${id}" data-type="NodeHTMLBlock" class="render-node" data-subtype="block">${genRendererIconHTML(protyle)}<div><protyle-html data-content=""></protyle-html><span style="position: absolute">${Constants.ZWSP}</span></div><div class="protyle-attr" contenteditable="false"></div></div>`;
                     } else {
                         editableElement.textContent = textContent;
                         newHTML = protyle.lute.SpinBlockDOM(nodeElement.outerHTML);
@@ -832,7 +833,7 @@ ${genHintItemHTML(item)}
                 } else {
                     let newHTML = protyle.lute.SpinBlockDOM(textContent);
                     if (value === "<div>") {
-                        newHTML = `<div data-node-id="${Lute.NewNodeID()}" data-type="NodeHTMLBlock" class="render-node" data-subtype="block">${genIconHTML()}<div><protyle-html data-content=""></protyle-html><span style="position: absolute">${Constants.ZWSP}</span></div><div class="protyle-attr" contenteditable="false"></div></div>`;
+                        newHTML = `<div data-node-id="${Lute.NewNodeID()}" data-type="NodeHTMLBlock" class="render-node" data-subtype="block">${genRendererIconHTML(protyle)}<div><protyle-html data-content=""></protyle-html><span style="position: absolute">${Constants.ZWSP}</span></div><div class="protyle-attr" contenteditable="false"></div></div>`;
                     }
                     // 列表项内创建列表时保留空段落，避免 ID 冲突和 li>list 非法结构 https://github.com/siyuan-note/siyuan/issues/17890
                     const keepEmptyInLi2 = hasClosestByClassName(nodeElement, "li") &&
@@ -912,9 +913,9 @@ ${genHintItemHTML(item)}
                 }
                 if (value === "<div>" || value === "$$" || (value.indexOf("```") > -1 && (value.length > 3 || nodeElement.classList.contains("render-node")))) {
                     protyle.toolbar.showRender(protyle, nodeElement);
-                    processRender(nodeElement);
+                    processRender(nodeElement, protyle);
                 } else if (value.startsWith("```")) {
-                    highlightRender(nodeElement);
+                    highlightRender(nodeElement, protyle);
                 } else if (value.startsWith("<iframe") || value.startsWith("<video") || value.startsWith("<audio")) {
                     protyle.gutter.renderMenu(protyle, nodeElement);
                     const rect = nodeElement.getBoundingClientRect();

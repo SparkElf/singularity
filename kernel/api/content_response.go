@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 )
 
 const encryptedResponseLifecycleContextKey = "siyuan.encrypted-response-lifecycle"
@@ -156,6 +157,13 @@ func RegisterAllEncryptedResponses(c *gin.Context) error {
 }
 
 func encryptedNotebookForResponse(c *gin.Context, arg map[string]any) (string, error) {
+	if identity, ok := serviceauth.RequestContentIdentity(c.Request); ok {
+		notebook, err := declaredEnterpriseNotebook(c, arg, identity.NotebookID)
+		if err != nil || !model.IsEncryptedBox(notebook) {
+			return "", err
+		}
+		return notebook, nil
+	}
 	boxID, err := encryptedNotebookFromArg(arg)
 	if err != nil || boxID == "" {
 		return boxID, err
@@ -169,6 +177,9 @@ func encryptedNotebookForResponse(c *gin.Context, arg map[string]any) (string, e
 // declaredNotebookForResponse preserves the caller's notebook identity for
 // ownership validation while only encrypted notebooks acquire a response gate.
 func declaredNotebookForResponse(c *gin.Context, arg map[string]any) (string, error) {
+	if identity, ok := serviceauth.RequestContentIdentity(c.Request); ok {
+		return declaredEnterpriseNotebook(c, arg, identity.NotebookID)
+	}
 	if _, provided := arg["notebook"]; !provided {
 		return "", nil
 	}
@@ -185,7 +196,44 @@ func declaredNotebookForResponse(c *gin.Context, arg map[string]any) (string, er
 	return notebook, nil
 }
 
+func declaredEnterpriseNotebook(c *gin.Context, arg map[string]any, notebook string) (string, error) {
+	notebook, err := enterpriseNotebookFromRequest(arg, notebook)
+	if err != nil {
+		return "", err
+	}
+	if model.Conf.GetBox(notebook) == nil {
+		return "", fmt.Errorf("%w: %s", model.ErrBoxNotFound, notebook)
+	}
+	if err = RegisterEncryptedResponse(c, notebook); err != nil {
+		return "", err
+	}
+	return notebook, nil
+}
+
+func enterpriseNotebookFromRequest(arg map[string]any, notebook string) (string, error) {
+	if _, provided := arg["notebook"]; provided {
+		declared, err := requiredNotebookFromArg(arg)
+		if err != nil {
+			return "", err
+		}
+		if declared != notebook {
+			return "", fmt.Errorf("%w: notebook", model.ErrInvalidID)
+		}
+	}
+	return notebook, nil
+}
+
 func requiredNotebookForResponse(c *gin.Context, arg map[string]any) (string, error) {
+	if identity, ok := serviceauth.RequestContentIdentity(c.Request); ok {
+		notebook, err := enterpriseNotebookFromRequest(arg, identity.NotebookID)
+		if err != nil {
+			return "", err
+		}
+		if err = RegisterEncryptedResponse(c, notebook); err != nil {
+			return "", err
+		}
+		return notebook, nil
+	}
 	notebook, err := requiredNotebookFromArg(arg)
 	if err != nil {
 		return "", err
@@ -197,6 +245,18 @@ func requiredNotebookForResponse(c *gin.Context, arg map[string]any) (string, er
 }
 
 func historicalNotebookForResponse(c *gin.Context, arg map[string]any, allowGlobal bool) (string, error) {
+	if identity, ok := serviceauth.RequestContentIdentity(c.Request); ok {
+		notebook, err := enterpriseNotebookFromRequest(arg, identity.NotebookID)
+		if err != nil {
+			return "", err
+		}
+		if model.IsEncryptedBox(notebook) {
+			if err = RegisterEncryptedResponse(c, notebook); err != nil {
+				return "", err
+			}
+		}
+		return notebook, nil
+	}
 	value, provided := arg["notebook"]
 	if !provided {
 		return "", fmt.Errorf("%w: notebook", model.ErrInvalidID)
