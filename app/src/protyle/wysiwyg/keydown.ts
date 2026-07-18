@@ -49,15 +49,12 @@ import {
 } from "./transaction";
 import {fontEvent} from "../toolbar/Font";
 import {addSubList, listIndent, listOutdent, toggleTaskListItem} from "./list";
-import {newFileContentBySelect, rename, replaceFileName} from "../../editor/rename";
+import {newFileContentBySelect} from "../../editor/rename";
 import {cancelSB, insertEmptyBlock, jumpToParent} from "../../block/util";
-import {isEncryptedBox} from "../../util/pathName";
 import {alignImgCenter, alignImgLeft, commonHotkey, downSelect, getStartEndElement, upSelect} from "./commonHotkey";
 import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../../menus/protyle";
 import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
-import {openAttr} from "../../menus/commonMenuItem";
 import {Constants} from "../../constants";
-import {fetchPost} from "../../util/fetch";
 import {scrollCenter} from "../util/highlightById";
 import {BlockPanel} from "../../block/Panel";
 import * as dayjs from "dayjs";
@@ -70,6 +67,7 @@ import {getRefCreateSavePath, newFileBySelect} from "../../util/newFile";
 import {removeSearchMark} from "../util/searchMark";
 import {avKeydown} from "../render/av/keydown";
 import {requestBlockFold} from "../util/blockFoldRequest";
+import {protyleContentIdentity} from "../util/contentLoad";
 import {AIActions} from "../../ai/actions";
 import {openLink} from "../../editor/openLink";
 import {onlyProtyleCommand} from "../../boot/globalEvent/command/protyle";
@@ -78,7 +76,7 @@ import {updateCalloutType} from "./callout";
 import {tabCodeBlock} from "./codeBlock";
 import {getTopBarHeight} from "../../layout/getTopBarHeight";
 
-export const getContentByInlineHTML = (range: Range, cb: (content: string) => void) => {
+export const getContentByInlineHTML = (protyle: IProtyle, range: Range, cb: (content: string) => void) => {
     let html = "";
     Array.from(range.cloneContents().childNodes).forEach((item: HTMLElement) => {
         if (item.nodeType === 3) {
@@ -87,9 +85,12 @@ export const getContentByInlineHTML = (range: Range, cb: (content: string) => vo
             html += item.outerHTML;
         }
     });
-    fetchPost("/api/block/getDOMText", {dom: html}, (response) => {
-        cb(response.data);
-    });
+    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getDOMText", {dom: html}, {
+        identity: protyleContentIdentity(protyle),
+        intent: "read",
+        signal: protyle.requestSignal,
+    }).then((response) => cb(response.data))
+        .catch((error) => console.error("[protyle.transport] inline text conversion failed", error));
 };
 
 export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
@@ -1160,7 +1161,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             // 用于标识复制文本 *
             if (selectText !== "") {
                 // 和复制块引用保持一致 https://github.com/siyuan-note/siyuan/issues/9093
-                getContentByInlineHTML(range, (content) => {
+                getContentByInlineHTML(protyle, range, (content) => {
                     writeText(`${content.trim()} ((${nodeElement.getAttribute("data-node-id")} "*"))`);
                 });
             } else {
@@ -1177,7 +1178,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             event.stopPropagation();
             return true;
         }
-        if (matchHotKey(generalHotkeys.attr, event)) {
+        if (protyle.settings.features.blockAttributes && matchHotKey(generalHotkeys.attr, event)) {
             const topElement = getTopAloneElement(nodeElement);
             if (selectText === "") {
                 const selectElements = protyle.wysiwyg.element.querySelectorAll(".protyle-wysiwyg--select");
@@ -1187,9 +1188,16 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 } else {
                     actionElement = topElement;
                 }
-                openAttr(actionElement, "bookmark", protyle);
+                const identity = protyleContentIdentity(protyle);
+                protyle.host.dispatch({
+                    type: "open-block-attributes",
+                    notebookId: identity.notebookId,
+                    documentId: identity.documentId,
+                    blockId: actionElement.getAttribute("data-node-id")!,
+                    focus: "bookmark",
+                });
             } else {
-                getContentByInlineHTML(range, (content) => {
+                getContentByInlineHTML(protyle, range, (content) => {
                     const oldHTML = topElement.outerHTML;
                     const nameElement = topElement.lastElementChild.querySelector(".protyle-attr--name");
                     if (nameElement) {
@@ -1207,28 +1215,9 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
         if (matchHotKey(generalHotkeys.rename, event) && !protyle.disabled) {
             if (selectText === "") {
-                const docInfoParam: IObject = {
-                    id: protyle.block.rootID
-                };
-                if (isEncryptedBox(protyle.notebookId)) {
-                    docInfoParam.notebook = protyle.notebookId;
-                }
-                fetchPost("/api/block/getDocInfo", docInfoParam, (response) => {
-                    rename({
-                        notebookId: protyle.notebookId,
-                        path: protyle.path,
-                        name: response.data.ial.title,
-                        empty: response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true",
-                        range,
-                        type: "file",
-                    });
-                });
+                protyle.title?.focusInput();
             } else {
-                fetchPost("/api/filetree/renameDoc", {
-                    notebook: protyle.notebookId,
-                    path: protyle.path,
-                    title: replaceFileName(selectText),
-                });
+                protyle.title?.replaceTitle(protyle, selectText);
             }
             event.preventDefault();
             event.stopPropagation();
@@ -1249,12 +1238,16 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 // 导致后续异步回调中 setInlineMark 读到无效 range https://github.com/siyuan-note/siyuan/issues/17896
                 protyle.toolbar.range = range;
                 if (isNewNameFile) {
-                    fetchPost("/api/filetree/getHPathByPath", {
+                    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/filetree/getHPathByPath", {
                         notebook: protyle.notebookId,
                         path: protyle.path,
-                    }, (response) => {
+                    }, {
+                        identity: protyleContentIdentity(protyle),
+                        intent: "read",
+                        signal: protyle.requestSignal,
+                    }).then((response) => {
                         newFileBySelect(protyle, selectText, nodeElement, response.data, protyle.notebookId);
-                    });
+                    }).catch((error) => console.error("[protyle.transport] document path load failed", error));
                 } else {
                     getRefCreateSavePath(protyle.notebookId, protyle.path, (targetNotebookId, hPath) => {
                         newFileBySelect(protyle, selectText, nodeElement, hPath, targetNotebookId);
