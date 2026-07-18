@@ -5,8 +5,9 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build",
-    "dev": "vite --host 0.0.0.0",
+    "build": "pnpm prepare:protyle-runtime && tsc -p tsconfig.json && vite build",
+    "dev": "pnpm prepare:protyle-runtime && vite --host 0.0.0.0",
+    "prepare:protyle-runtime": "node scripts/prepare-protyle-runtime.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test": "vitest run",
     "test:browser-integration": "playwright test --config playwright.integration.config.ts",
