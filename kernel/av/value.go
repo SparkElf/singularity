@@ -465,11 +465,13 @@ func (value *Value) GetValByType(typ KeyType) (ret any) {
 }
 
 type ValueBlock struct {
-	ID      string `json:"id,omitempty"` // 绑定的块 ID，非绑定块时为空
-	Icon    string `json:"icon,omitempty"`
-	Content string `json:"content"`
-	Created int64  `json:"created,omitempty"`
-	Updated int64  `json:"updated,omitempty"`
+	ID         string `json:"id,omitempty"`         // 绑定的块 ID，非绑定块时为空
+	NotebookID string `json:"notebookId,omitempty"` // 仅由渲染响应根据块树派生，不属于 AV 持久化事实
+	DocumentID string `json:"documentId,omitempty"` // 仅由渲染响应根据块树派生，不属于 AV 持久化事实
+	Icon       string `json:"icon,omitempty"`
+	Content    string `json:"content"`
+	Created    int64  `json:"created,omitempty"`
+	Updated    int64  `json:"updated,omitempty"`
 }
 
 type ValueText struct {

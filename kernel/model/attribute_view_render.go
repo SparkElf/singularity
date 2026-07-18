@@ -33,6 +33,7 @@ import (
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/av"
 	"github.com/siyuan-note/siyuan/kernel/sql"
+	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -132,6 +133,9 @@ func renderAttributeView(attrView *av.AttributeView, nodeID, viewID, query strin
 	// 渲染分组视图。当 ignoreRows 时若有已生成的分组则渲染元数据供面板使用，无分组则跳过（生成分组需要行数据）
 	if !ignoreRows || len(view.Groups) > 0 {
 		err = renderAttributeViewGroups(viewable, attrView, view, query, page, pageSize, groupPaging, ignoreRows, boxID, persist)
+	}
+	if err == nil {
+		projectAttributeViewableResponse(viewable)
 	}
 	return
 }
@@ -510,6 +514,205 @@ func renderViewableInstance(viewable av.Viewable, view *av.View, attrView *av.At
 		kanban.Cards = kanban.Cards[start:end]
 	}
 	return
+}
+
+func projectAttributeViewResponseValues(values []*av.Value) []*av.Value {
+	projected := make([]*av.Value, len(values))
+	blocksByID := map[string][]*av.ValueBlock{}
+	var blockIDs []string
+	seenBlockIDs := map[string]struct{}{}
+	seenValues := map[*av.Value]struct{}{}
+
+	var needsProjection func(value *av.Value) bool
+	needsProjection = func(value *av.Value) bool {
+		if value == nil {
+			return false
+		}
+		if value.Block != nil && (value.Block.ID != "" || value.Block.NotebookID != "" || value.Block.DocumentID != "") {
+			return true
+		}
+		if value.Relation != nil {
+			for _, content := range value.Relation.Contents {
+				if needsProjection(content) {
+					return true
+				}
+			}
+		}
+		if value.Rollup != nil {
+			for _, content := range value.Rollup.Contents {
+				if needsProjection(content) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	var collectBlocks func(value *av.Value)
+	collectBlocks = func(value *av.Value) {
+		if value == nil {
+			return
+		}
+		if _, ok := seenValues[value]; ok {
+			return
+		}
+		seenValues[value] = struct{}{}
+		if block := value.Block; block != nil {
+			block.NotebookID = ""
+			block.DocumentID = ""
+			if !value.IsDetached && block.ID != "" {
+				blocksByID[block.ID] = append(blocksByID[block.ID], block)
+				if _, ok := seenBlockIDs[block.ID]; !ok {
+					seenBlockIDs[block.ID] = struct{}{}
+					blockIDs = append(blockIDs, block.ID)
+				}
+			}
+		}
+		if value.Relation != nil {
+			for _, content := range value.Relation.Contents {
+				collectBlocks(content)
+			}
+		}
+		if value.Rollup != nil {
+			for _, content := range value.Rollup.Contents {
+				collectBlocks(content)
+			}
+		}
+	}
+
+	for index, value := range values {
+		projected[index] = value
+		if !needsProjection(value) {
+			continue
+		}
+		clone := value.Clone()
+		if clone == nil {
+			logging.LogErrorf("clone attribute view response value [%s] failed", value.ID)
+			projected[index] = nil
+			continue
+		}
+		projected[index] = clone
+		collectBlocks(clone)
+	}
+
+	for blockID, blockTree := range treenode.GetBlockTrees(blockIDs) {
+		for _, block := range blocksByID[blockID] {
+			block.NotebookID = blockTree.BoxID
+			block.DocumentID = blockTree.RootID
+		}
+	}
+	return projected
+}
+
+func projectAttributeViewResponseKeyValues(keyValues []*av.KeyValues) {
+	var values []*av.Value
+	var slots []**av.Value
+	for _, entry := range keyValues {
+		if entry == nil {
+			continue
+		}
+		for index := range entry.Values {
+			values = append(values, entry.Values[index])
+			slots = append(slots, &entry.Values[index])
+		}
+	}
+	projected := projectAttributeViewResponseValues(values)
+	for index, value := range projected {
+		*slots[index] = value
+	}
+}
+
+func projectAttributeViewableResponse(viewable av.Viewable) {
+	var values []*av.Value
+	var slots []**av.Value
+	appendSlot := func(slot **av.Value) {
+		if slot != nil && *slot != nil {
+			values = append(values, *slot)
+			slots = append(slots, slot)
+		}
+	}
+	appendCalc := func(calc *av.FieldCalc) {
+		if calc != nil {
+			appendSlot(&calc.Result)
+		}
+	}
+
+	var collect func(current av.Viewable)
+	collect = func(current av.Viewable) {
+		if current == nil {
+			return
+		}
+		var instance *av.BaseInstance
+		switch typed := current.(type) {
+		case *av.Table:
+			instance = typed.BaseInstance
+			for _, column := range typed.Columns {
+				if column != nil && column.BaseInstanceField != nil {
+					appendCalc(column.BaseInstanceField.Calc)
+				}
+			}
+			for _, row := range typed.Rows {
+				if row == nil {
+					continue
+				}
+				for _, cell := range row.Cells {
+					if cell != nil && cell.BaseValue != nil {
+						appendSlot(&cell.BaseValue.Value)
+					}
+				}
+			}
+		case *av.Gallery:
+			instance = typed.BaseInstance
+			for _, field := range typed.Fields {
+				if field != nil && field.BaseInstanceField != nil {
+					appendCalc(field.BaseInstanceField.Calc)
+				}
+			}
+			for _, card := range typed.Cards {
+				if card == nil {
+					continue
+				}
+				for _, field := range card.Values {
+					if field != nil && field.BaseValue != nil {
+						appendSlot(&field.BaseValue.Value)
+					}
+				}
+			}
+		case *av.Kanban:
+			instance = typed.BaseInstance
+			for _, field := range typed.Fields {
+				if field != nil && field.BaseInstanceField != nil {
+					appendCalc(field.BaseInstanceField.Calc)
+				}
+			}
+			for _, card := range typed.Cards {
+				if card == nil {
+					continue
+				}
+				for _, field := range card.Values {
+					if field != nil && field.BaseValue != nil {
+						appendSlot(&field.BaseValue.Value)
+					}
+				}
+			}
+		}
+		if instance == nil {
+			return
+		}
+		appendSlot(&instance.GroupValue)
+		if instance.GroupCalc != nil {
+			appendCalc(instance.GroupCalc.FieldCalc)
+		}
+		for _, group := range instance.Groups {
+			collect(group)
+		}
+	}
+
+	collect(viewable)
+	projected := projectAttributeViewResponseValues(values)
+	for index, value := range projected {
+		*slots[index] = value
+	}
 }
 
 func getRenderAttributeViewView(attrView *av.AttributeView, viewID, nodeID, boxID string, persist bool) (ret *av.View, err error) {

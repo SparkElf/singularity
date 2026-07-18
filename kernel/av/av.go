@@ -650,6 +650,142 @@ func SaveAttributeViewInBox(attrView *AttributeView, boxID string) error {
 	return saveAttributeViewInBox(attrView, boxID)
 }
 
+type valueBlockResponseIdentity struct {
+	notebookID string
+	documentID string
+}
+
+func stripAttributeViewResponseIdentities(attrView *AttributeView) (restore func()) {
+	identities := map[*ValueBlock]valueBlockResponseIdentity{}
+	seenValues := map[*Value]struct{}{}
+	seenViews := map[*View]struct{}{}
+
+	var stripValue func(value *Value)
+	stripValue = func(value *Value) {
+		if value == nil {
+			return
+		}
+		if _, ok := seenValues[value]; ok {
+			return
+		}
+		seenValues[value] = struct{}{}
+		if block := value.Block; block != nil {
+			if block.NotebookID != "" || block.DocumentID != "" {
+				identities[block] = valueBlockResponseIdentity{
+					notebookID: block.NotebookID,
+					documentID: block.DocumentID,
+				}
+				block.NotebookID = ""
+				block.DocumentID = ""
+			}
+		}
+		if value.Relation != nil {
+			for _, content := range value.Relation.Contents {
+				stripValue(content)
+			}
+		}
+		if value.Rollup != nil {
+			for _, content := range value.Rollup.Contents {
+				stripValue(content)
+			}
+		}
+	}
+
+	var stripFilter func(filter *ViewFilter)
+	stripFilter = func(filter *ViewFilter) {
+		if filter == nil {
+			return
+		}
+		stripValue(filter.Value)
+		for _, child := range filter.Filters {
+			stripFilter(child)
+		}
+	}
+	stripFilters := func(filters []*ViewFilter) {
+		for _, filter := range filters {
+			stripFilter(filter)
+		}
+	}
+	stripFieldCalc := func(calc *FieldCalc) {
+		if calc != nil {
+			stripValue(calc.Result)
+		}
+	}
+	stripKey := func(key *Key) {
+		if key != nil && key.Rollup != nil && key.Rollup.Calc != nil {
+			stripValue(key.Rollup.Calc.Result)
+		}
+	}
+
+	var stripView func(view *View)
+	stripView = func(view *View) {
+		if view == nil {
+			return
+		}
+		if _, ok := seenViews[view]; ok {
+			return
+		}
+		seenViews[view] = struct{}{}
+		stripFilters(view.Filters)
+		stripKey(view.GroupKey)
+		stripValue(view.GroupVal)
+		if view.GroupCalc != nil {
+			stripFieldCalc(view.GroupCalc.FieldCalc)
+		}
+		if view.Table != nil {
+			stripFilters(view.Table.Filters)
+			for _, column := range view.Table.Columns {
+				if column == nil {
+					continue
+				}
+				if column.BaseField != nil {
+					stripFieldCalc(column.BaseField.Calc)
+				}
+				stripFieldCalc(column.Calc)
+			}
+		}
+		if view.Gallery != nil {
+			stripFilters(view.Gallery.Filters)
+			for _, field := range view.Gallery.CardFields {
+				if field != nil && field.BaseField != nil {
+					stripFieldCalc(field.BaseField.Calc)
+				}
+			}
+		}
+		if view.Kanban != nil {
+			stripFilters(view.Kanban.Filters)
+			for _, field := range view.Kanban.Fields {
+				if field != nil && field.BaseField != nil {
+					stripFieldCalc(field.BaseField.Calc)
+				}
+			}
+		}
+		for _, group := range view.Groups {
+			stripView(group)
+		}
+	}
+
+	for _, keyValues := range attrView.KeyValues {
+		if keyValues == nil {
+			continue
+		}
+		stripKey(keyValues.Key)
+		for _, value := range keyValues.Values {
+			stripValue(value)
+		}
+	}
+	for _, view := range attrView.Views {
+		stripView(view)
+	}
+
+	return func() {
+		for block, identity := range identities {
+			block.NotebookID = identity.notebookID
+			block.DocumentID = identity.documentID
+		}
+	}
+}
+
 func saveAttributeViewInBox(attrView *AttributeView, boxID string) (err error) {
 	if "" == attrView.ID {
 		err = errors.New("av id is empty")
@@ -701,12 +837,14 @@ func saveAttributeViewInBox(attrView *AttributeView, boxID string) (err error) {
 		}
 	}
 
+	restoreResponseIdentities := stripAttributeViewResponseIdentities(attrView)
 	var data []byte
 	if util.UseSingleLineSave {
 		data, err = gulu.JSON.MarshalJSON(attrView)
 	} else {
 		data, err = gulu.JSON.MarshalIndentJSON(attrView, "", "\t")
 	}
+	restoreResponseIdentities()
 	if err != nil {
 		logging.LogErrorf("marshal attribute view [%s] failed: %s", attrView.ID, err)
 		return
