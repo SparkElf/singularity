@@ -196,10 +196,11 @@ var documentRenameCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := model.RenameDoc(tree.Box, tree.Path, title); err != nil {
+		result, err := model.RenameDoc(tree.Box, tree.Path, title)
+		if err != nil {
 			return err
 		}
-		model.AppendPushRenameEntry(tree.Box, tree.Path, title)
+		model.AppendPushRenameEntry(tree.Box, tree.Path, result.Title)
 		fmt.Println(id)
 		return nil
 	},

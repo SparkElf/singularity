@@ -208,11 +208,12 @@ func documentRename(args map[string]any) (CallToolResult, error) {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("load doc failed: %s", err)}}, IsError: true}, nil
 	}
 
-	if err := model.RenameDoc(tree.Box, tree.Path, title); err != nil {
+	result, err := model.RenameDoc(tree.Box, tree.Path, title)
+	if err != nil {
 		return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("rename doc failed: %s", err)}}, IsError: true}, nil
 	}
 
-	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document renamed: %s -> %s", id, title)}}}, nil
+	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("document renamed: %s -> %s", id, result.Title)}}}, nil
 }
 
 func documentMove(args map[string]any) (CallToolResult, error) {
