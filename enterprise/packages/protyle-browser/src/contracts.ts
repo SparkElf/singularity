@@ -705,6 +705,7 @@ export interface ProtyleApplicationSettings {
     readonly rtl: boolean;
     readonly dynamicLoadBlocks: number;
     readonly katexMacros: string;
+    readonly listLogicalOutdent: boolean;
     readonly plantUMLServePath: string;
     readonly readOnly: boolean;
     readonly spellcheck: boolean;

@@ -123,6 +123,7 @@ export function createProtyleApplicationPort(
     fullWidth: true,
     headingEmbedMode: 0,
     katexMacros: "{}",
+    listLogicalOutdent: false,
     markdown: {
       inlineAsterisk: true,
       inlineMark: true,
