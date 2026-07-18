@@ -227,7 +227,13 @@ func searchTag(c *gin.Context) {
 	}
 
 	k := arg["k"].(string)
-	tags := model.SearchTags(k)
+	notebook, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	tags := model.SearchTagsInBox(k, notebook)
 	if 1 > len(tags) {
 		tags = []string{}
 	}

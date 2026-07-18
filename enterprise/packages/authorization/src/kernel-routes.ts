@@ -116,6 +116,7 @@ const PROTYLE_READ_ROUTES = [
   "/api/ref/getBacklinkDoc",
   "/api/ref/getBackmentionDoc",
   "/api/search/getEmbedBlock",
+  "/api/search/searchAsset",
   "/api/search/searchEmbedBlock",
   "/api/search/searchRefBlock",
   "/api/search/searchTag",

@@ -330,6 +330,10 @@ func sortTags(tags Tags, sortVal int) {
 }
 
 func SearchTags(keyword string) (ret []string) {
+	return SearchTagsInBox(keyword, "")
+}
+
+func SearchTagsInBox(keyword, boxID string) (ret []string) {
 	ret = []string{}
 
 	if err := sql.FlushQueue(); err != nil {
@@ -337,7 +341,7 @@ func SearchTags(keyword string) (ret []string) {
 		return
 	}
 
-	labels := labelBlocksByKeyword(keyword)
+	labels := labelBlocksByKeywordInBox(keyword, boxID)
 	keyword = strings.Join(strings.Split(keyword, " "), search.TermSep)
 	for label := range labels {
 		if "" == keyword {
@@ -352,10 +356,10 @@ func SearchTags(keyword string) (ret []string) {
 	return
 }
 
-func labelBlocksByKeyword(keyword string) (ret map[string]TagBlocks) {
+func labelBlocksByKeywordInBox(keyword, boxID string) (ret map[string]TagBlocks) {
 	ret = map[string]TagBlocks{}
 
-	tags := sql.QueryTagSpansByKeyword(keyword, Conf.Search.Limit)
+	tags := sql.QueryTagSpansByKeywordInBox(keyword, Conf.Search.Limit, boxID)
 	set := hashset.New()
 	for _, tag := range tags {
 		set.Add(tag.BlockID)
@@ -368,7 +372,7 @@ func labelBlocksByKeyword(keyword string) (ret map[string]TagBlocks) {
 		return blockIDs[i] > blockIDs[j]
 	})
 
-	sqlBlocks := sql.GetBlocks(blockIDs)
+	sqlBlocks := sql.GetBlocksInBox(blockIDs, boxID)
 	blockMap := map[string]*sql.Block{}
 	for _, block := range sqlBlocks {
 		if nil == block {
