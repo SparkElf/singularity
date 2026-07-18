@@ -21,6 +21,18 @@ COPY enterprise/packages/protyle-browser/package.json packages/protyle-browser/p
 RUN --mount=type=cache,id=singularity-pnpm,target=/pnpm/store \
     pnpm install --filter @singularity/web... --frozen-lockfile
 
+COPY app/package.json app/pnpm-lock.yaml app/.npmrc /workspace/app/
+RUN --mount=type=cache,id=singularity-pnpm,target=/pnpm/store \
+    corepack pnpm@11.12.0 --dir /workspace/app install --frozen-lockfile --ignore-scripts
+
+COPY app/src /workspace/app/src
+COPY app/appearance/emojis/conf.json /workspace/app/appearance/emojis/conf.json
+COPY app/appearance/langs/zh-CN.json /workspace/app/appearance/langs/zh-CN.json
+COPY app/appearance/icons/litheness /workspace/app/appearance/icons/litheness
+COPY app/appearance/fonts/JetBrainsMono-2.304 /workspace/app/appearance/fonts/JetBrainsMono-2.304
+COPY app/appearance/themes/daylight/theme.css /workspace/app/appearance/themes/daylight/theme.css
+COPY app/stage/protyle /workspace/app/stage/protyle
+COPY app/stage/loading-pure.svg /workspace/app/stage/loading-pure.svg
 COPY enterprise/ ./
 
 RUN pnpm --filter @singularity/web build

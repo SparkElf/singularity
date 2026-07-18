@@ -46,16 +46,24 @@
   --sidebar-border: #e0e0e0;
   --sidebar-ring: rgba(53, 117, 240, .54);
   --b3-theme-primary: var(--primary);
+  --b3-theme-primary-light: var(--ring);
   --b3-theme-primary-lightest: var(--accent);
+  --b3-theme-secondary: var(--warning);
   --b3-theme-background: var(--background);
   --b3-theme-surface: var(--secondary);
   --b3-theme-surface-lighter: var(--border);
+  --b3-theme-error: var(--destructive);
+  --b3-theme-success: var(--success);
+  --b3-theme-on-primary: var(--primary-foreground);
+  --b3-theme-on-secondary: var(--primary-foreground);
   --b3-theme-on-background: var(--foreground);
   --b3-theme-on-surface: var(--muted-foreground);
   --b3-border-color: var(--border);
   --b3-border-radius: 6px;
   --b3-border-radius-s: 3px;
   --b3-border-radius-b: 12px;
+  --b3-list-hover: var(--sidebar-accent);
+  --b3-menu-background: var(--popover);
 }
 
 body {

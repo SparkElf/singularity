@@ -163,11 +163,17 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: enterprise/pnpm-lock.yaml
+          cache-dependency-path: |
+            enterprise/pnpm-lock.yaml
+            app/pnpm-lock.yaml
 
       - name: Install enterprise dependencies
         run: pnpm install --frozen-lockfile
         working-directory: enterprise
+
+      - name: Install SiYuan app dependencies
+        run: corepack pnpm@11.12.0 install --frozen-lockfile
+        working-directory: app
 
       - name: Install Playwright Chromium
         run: pnpm --filter @singularity/web exec playwright install --with-deps chromium

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "upstreamVersion": "3.7.2",
+  "publicDirectory": "node_modules/.cache/protyle-runtime/public",
+  "style": {
+    "theme": {
+      "source": "app/appearance/themes/daylight/theme.css",
+      "target": "appearance/themes/daylight/theme.css"
+    },
+    "source": "enterprise/apps/web/src/protyle.scss",
+    "target": "assets/protyle.css"
+  },
+  "directories": [
+    {
+      "source": "app/stage/protyle",
+      "target": "stage/protyle"
+    },
+    {
+      "source": "app/appearance/icons/litheness",
+      "target": "appearance/icons/litheness"
+    },
+    {
+      "source": "app/appearance/fonts/JetBrainsMono-2.304",
+      "target": "appearance/fonts/JetBrainsMono-2.304"
+    }
+  ],
+  "files": [
+    {
+      "source": "app/stage/loading-pure.svg",
+      "target": "stage/loading-pure.svg"
+    }
+  ],
+  "browserScripts": [
+    "stage/protyle/js/lute/lute.min.js",
+    "stage/protyle/js/protyle-html.js",
+    "appearance/icons/litheness/icon.js"
+  ]
+}
