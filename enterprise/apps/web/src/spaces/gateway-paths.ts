@@ -43,6 +43,14 @@ function encodeResourcePath(path: string): string {
   }).join("/");
 }
 
+function encodeKernelExportPath(path: string): string {
+  const prefix = "/export/";
+  if (!path.startsWith(prefix)) {
+    throw new Error("[protyle.gateway] Kernel export path must start with /export/");
+  }
+  return encodeResourcePath(path.slice(prefix.length));
+}
+
 function contentQuery(identity: ProtyleContentIdentity): string {
   // 目录合同已经在网络入口解析并收敛身份；这里仅序列化已收敛值。
   return new URLSearchParams({
@@ -107,6 +115,6 @@ export function createSpaceGatewayResourcePort(
     resolveEmoji: (identity, path) =>
       `${basePath}/emojis/${encodeResourcePath(path)}?${contentQuery(identity)}`,
     resolveExport: (identity, path) =>
-      `${basePath}/exports/${encodeResourcePath(path)}?${contentQuery(identity)}`,
+      `${basePath}/exports/${encodeKernelExportPath(path)}?${contentQuery(identity)}&download=true`,
   };
 }
