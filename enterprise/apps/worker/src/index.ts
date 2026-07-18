@@ -70,4 +70,5 @@ export {
 export { RestorePlatformModule } from "./restore-platform.module.js";
 export { RESTORE_DEPLOYMENT } from "./tokens.js";
 export { WorkerApplication } from "./worker-application.js";
+export { WorkerPlatformModule } from "./worker-platform.module.js";
 export { WorkerModule, type WorkerModuleOptions } from "./worker.module.js";

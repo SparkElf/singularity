@@ -17,7 +17,7 @@ export interface CreateWorkerApplicationOptions {
   readonly configuration: WorkerConfiguration;
   readonly database: DatabaseRuntime;
   readonly logger?: LoggerService | false;
-  readonly restorePlatformModule: DynamicModule | Type<unknown>;
+  readonly restorePlatformModule?: DynamicModule | Type<unknown>;
 }
 
 export async function createWorkerApplication(

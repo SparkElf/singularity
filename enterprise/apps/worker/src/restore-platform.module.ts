@@ -1,7 +1,5 @@
-import type { DynamicModule } from "@nestjs/common";
+import type { DynamicModule, Type } from "@nestjs/common";
 import { Module } from "@nestjs/common";
-import { DatabaseRuntime } from "@singularity/database";
-import { RuntimeKernelDeploymentRegistry } from "@singularity/kernel-client";
 
 import type { RestoreDeploymentConfiguration } from "./configuration.js";
 import {
@@ -14,20 +12,15 @@ import { RESTORE_DEPLOYMENT } from "./tokens.js";
 export class RestorePlatformModule {
   static register(
     configuration: RestoreDeploymentConfiguration,
-    deployments: RuntimeKernelDeploymentRegistry,
-    database: DatabaseRuntime,
+    platformModule: DynamicModule | Type<unknown>,
   ): DynamicModule {
     return {
       module: RestorePlatformModule,
+      imports: [platformModule],
       providers: [
-        { provide: DatabaseRuntime, useValue: database },
         {
           provide: RESTORE_PLATFORM_CONFIGURATION,
           useValue: configuration,
-        },
-        {
-          provide: RuntimeKernelDeploymentRegistry,
-          useValue: deployments,
         },
         ProcessRestoreDeployment,
         {

@@ -1,57 +1,25 @@
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  KernelCredentialService,
   RuntimeKernelDeploymentRegistry,
 } from "@singularity/kernel-client";
+import { DatabaseRuntime } from "@singularity/database";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { RestoreDeploymentConfiguration } from "../src/configuration.js";
 import {
   ProcessRestoreDeployment,
   RestoreDeploymentError,
 } from "../src/restore-deployment.js";
 import type { RestoreSpaceJob } from "../src/worker.js";
+import {
+  CapturingWorkerLogger,
+  restoreDeploymentConfiguration,
+} from "./support/restore-deployment.js";
 
 const roots: string[] = [];
-
-function configuration(rootDirectory: string): RestoreDeploymentConfiguration {
-  const { privateKey } = generateKeyPairSync("ed25519");
-  return {
-    archiveToolPath: process.execPath,
-    credentials: new KernelCredentialService({
-      keyId: "restore-test",
-      privateKey,
-    }),
-    gatewayHostname: "127.0.0.1",
-    handlePrefix: "restore-test",
-    kernelBinaryPath: process.execPath,
-    kernelWorkingDirectory: rootDirectory,
-    maximumArchiveBytes: 1_024,
-    maximumEntryBytes: 1_024,
-    maximumFiles: 10,
-    maximumTotalBytes: 1_024,
-    portRange: { first: 49_152, last: 65_535 },
-    readinessPollMilliseconds: 10,
-    runtimeRootDirectory: rootDirectory,
-    startupTimeoutMilliseconds: 100,
-    tls: {
-      caCertificate: Buffer.from("test"),
-      clientCertificate: Buffer.from("test"),
-      clientPrivateKey: Buffer.from("test"),
-      clientCaCertificateFile: process.execPath,
-      deploymentProfile: "restore-test",
-      gatewayClientDnsName: "gateway.test",
-      serverCertificateFile: process.execPath,
-      serverName: "kernel.test",
-      serverPrivateKeyFile: process.execPath,
-      servicePublicKeysFile: process.execPath,
-    },
-  };
-}
 
 function restoreJob(): RestoreSpaceJob {
   return {
@@ -80,8 +48,10 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     const root = await mkdtemp(join(tmpdir(), "restore-deployment-"));
     roots.push(root);
     const deployment = new ProcessRestoreDeployment(
-      configuration(root),
+      restoreDeploymentConfiguration(root),
+      new DatabaseRuntime(undefined),
       new RuntimeKernelDeploymentRegistry([]),
+      new CapturingWorkerLogger(),
     );
     const job = restoreJob();
 
@@ -105,8 +75,10 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     const root = await mkdtemp(join(tmpdir(), "restore-deployment-"));
     roots.push(root);
     const deployment = new ProcessRestoreDeployment(
-      configuration(root),
+      restoreDeploymentConfiguration(root),
+      new DatabaseRuntime(undefined),
       new RuntimeKernelDeploymentRegistry([]),
+      new CapturingWorkerLogger(),
     );
 
     await expect(deployment.destroyTarget(restoreJob())).resolves.toBeUndefined();
