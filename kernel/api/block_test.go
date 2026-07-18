@@ -155,6 +155,40 @@ func TestHeadingHandlersRequireExplicitNotebook(t *testing.T) {
 	}
 }
 
+func TestCheckBlocksExistRequiresExplicitNotebook(t *testing.T) {
+	setupNotebookArgTest(t)
+	previousMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(previousMode) })
+
+	router := gin.New()
+	router.Use(ContentResponseLifecycle)
+	router.POST("/api/block/checkBlocksExist", checkBlocksExist)
+	body, err := json.Marshal(map[string]any{
+		"ids": []string{"20990101120000-block01"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/block/checkBlocksExist", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTP status = %d, want 200", response.Code)
+	}
+	var result struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != -1 || !strings.Contains(result.Msg, model.ErrInvalidID.Error()) {
+		t.Fatalf("result = %+v, want explicit missing-notebook error", result)
+	}
+}
+
 // TestFoldQueriesRejectInvalidNotebook 验证折叠状态与展开父级查询都通过真实 HTTP handler 返回明确错误。
 func TestFoldQueriesRejectInvalidNotebook(t *testing.T) {
 	_, encryptedID, missingID := setupNotebookArgTest(t)

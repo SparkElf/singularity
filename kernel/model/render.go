@@ -200,7 +200,7 @@ func renderBlockDOMByNodes(nodes []*ast.Node, luteEngine *lute.Lute, contentStor
 	if strings.HasPrefix(h, "<li") {
 		h = "<ul>" + h + "</ul>"
 	}
-	return FillBlockRefNotebookIDs(h, contentStore)
+	return FillBlockRefContentIdentities(h, contentStore)
 }
 
 func renderBlockContentByNodes(nodes []*ast.Node) string {

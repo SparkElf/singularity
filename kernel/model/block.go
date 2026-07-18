@@ -835,7 +835,7 @@ func GetHeadingDeleteTransactionInNotebook(id, notebookID string) (transaction *
 			op.PreviousID = n.Previous.ID
 		}
 		op.Action = "insert"
-		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(n), boxID)
+		op.Data = FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(n), boxID)
 		transaction.UndoOperations = append(transaction.UndoOperations, op)
 	}
 	return
@@ -872,7 +872,7 @@ func GetHeadingInsertTransactionInNotebook(id, notebookID string) (transaction *
 		op := &Operation{Context: map[string]any{"ignoreProcess": "true"}}
 		op.ID = n.ID
 		op.Action = "insert"
-		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(n), boxID)
+		op.Data = FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(n), boxID)
 		transaction.DoOperations = append(transaction.DoOperations, op)
 
 		op = &Operation{}
@@ -1030,7 +1030,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 		op := &Operation{}
 		op.ID = c.ID
 		op.Action = "update"
-		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(c), boxID)
+		op.Data = FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(c), boxID)
 		transaction.UndoOperations = append(transaction.UndoOperations, op)
 
 		c.HeadingLevel += diff
@@ -1043,7 +1043,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 		op = &Operation{}
 		op.ID = c.ID
 		op.Action = "update"
-		op.Data = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(c), boxID)
+		op.Data = FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(c), boxID)
 		transaction.DoOperations = append(transaction.DoOperations, op)
 	}
 	return
@@ -1097,7 +1097,7 @@ func GetBlockDOMsInBox(ids []string, boxID string) (ret map[string]string) {
 			return ast.WalkContinue
 		})
 
-		ret[id] = FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(node), boxID)
+		ret[id] = FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(node), boxID)
 	}
 	return
 }
@@ -1153,7 +1153,7 @@ func GetBlockDOMsWithEmbedInBox(ids []string, boxID string) (ret map[string]stri
 			return ast.WalkContinue
 		})
 
-		htmlContent := FillBlockRefNotebookIDs(luteEngine.RenderNodeBlockDOM(node), boxID)
+		htmlContent := FillBlockRefContentIdentities(luteEngine.RenderNodeBlockDOM(node), boxID)
 
 		htmlContent = processEmbedHTML(htmlContent)
 
