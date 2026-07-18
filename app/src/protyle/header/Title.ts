@@ -115,6 +115,21 @@ export class Title {
     private menuHandle?: TitleMenuHandle;
     private renameGeneration = 0;
 
+    public focusInput() {
+        if (!this.editElement) {
+            return;
+        }
+        focusByOffset(this.editElement, 0, this.editElement.textContent.length);
+    }
+
+    public replaceTitle(protyle: IProtyle, title: string) {
+        if (!this.editElement) {
+            return;
+        }
+        this.writeTitle(normalizeDocumentTitle(protyle, title, this.editElement));
+        this.rename(protyle);
+    }
+
     private closeMenu() {
         const handle = this.menuHandle;
         this.menuHandle = undefined;
