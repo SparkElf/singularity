@@ -272,6 +272,9 @@ export function MembersPage() {
                   const transferringToMember =
                     transferOwnershipMutation.isPending &&
                     transferOwnershipMutation.variables === member.userId;
+                  const readOnlyMember =
+                    member.role === "owner" ||
+                    (member.role === "admin" && !canTransferOwnership);
                   return (
                     <TableRow key={member.userId}>
                       <TableCell>
@@ -282,7 +285,7 @@ export function MembersPage() {
                           </code>
                         </div>
                       </TableCell>
-                      {member.role === "owner" ? (
+                      {readOnlyMember ? (
                         <>
                           <TableCell>
                             <Badge>{organizationRoleLabel(member.role)}</Badge>
@@ -292,24 +295,7 @@ export function MembersPage() {
                               {member.status === "active" ? "活跃" : "停用"}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right">
-                            <ConfirmAction
-                              confirmLabel="撤销全部会话"
-                              description={`将立即撤销 ${member.loginIdentifier} 的全部登录会话。`}
-                              disabled={revokingThisMember}
-                              onConfirm={() => revokeSessionsMutation.mutate(member.userId)}
-                              title="撤销成员会话？"
-                            >
-                              <Button disabled={revokingThisMember} size="sm" variant="outline">
-                                {revokingThisMember ? (
-                                  <Spinner data-icon="inline-start" aria-label="正在撤销" />
-                                ) : (
-                                  <ShieldOffIcon data-icon="inline-start" />
-                                )}
-                                撤销会话
-                              </Button>
-                            </ConfirmAction>
-                          </TableCell>
+                          <TableCell />
                         </>
                       ) : (
                         <>
@@ -340,7 +326,9 @@ export function MembersPage() {
                                 id={`member-role-${member.userId}`}
                                 name="role"
                               >
-                                <option value="admin">管理员</option>
+                                {canTransferOwnership ? (
+                                  <option value="admin">管理员</option>
+                                ) : null}
                                 <option value="member">成员</option>
                               </Select>
                               <label className="sr-only" htmlFor={`member-status-${member.userId}`}>
@@ -366,7 +354,7 @@ export function MembersPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex min-w-[250px] justify-end gap-2">
-                              {canTransferOwnership ? (
+                              {canTransferOwnership && member.status === "active" ? (
                                 <ConfirmAction
                                   confirmLabel="转移所有权"
                                   description={`组织所有权将转移给 ${member.loginIdentifier}，当前所有者将变为管理员。`}
@@ -434,7 +422,9 @@ export function MembersPage() {
             <span className="font-medium">角色</span>
             <Select defaultValue="member" name="role">
               <option value="member">成员</option>
-              <option value="admin">管理员</option>
+              {canTransferOwnership ? (
+                <option value="admin">管理员</option>
+              ) : null}
             </Select>
           </label>
           <label className="flex min-w-0 flex-col gap-1 text-sm">

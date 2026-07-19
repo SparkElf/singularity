@@ -15,11 +15,13 @@ import {
   ORGANIZATION_OIDC_PROVIDERS_PATH_TEMPLATE,
   ORGANIZATION_OWNERSHIP_PATH_TEMPLATE,
   ORGANIZATION_SPACE_GROUP_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GROUP_CANDIDATES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_GROUPS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_AUDIT_EVENTS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_BACKUP_RESTORES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_MEMBER_CANDIDATES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_MEMBERS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_PATH_TEMPLATE,
   ORGANIZATION_SPACE_OBSERVABILITY_PATH_TEMPLATE,
@@ -43,9 +45,11 @@ import {
   organizationMemberSummarySchema,
   organizationMembersResponseSchema,
   spaceGroupGrantsResponseSchema,
+  spaceGroupCandidatesResponseSchema,
   spaceBackupSchema,
   spaceBackupsResponseSchema,
   spaceMembersResponseSchema,
+  spaceMemberCandidatesResponseSchema,
   spaceObservabilitySchema,
   spaceRestoreSchema,
   spaceRestoresResponseSchema,
@@ -157,10 +161,34 @@ export const spaceMembersQueryKey = (
   spaceId: string,
 ) => ["enterprise", organizationId, "spaces", spaceId, "members"] as const;
 
+export const spaceMemberCandidatesQueryKey = (
+  organizationId: string,
+  spaceId: string,
+) =>
+  [
+    "enterprise",
+    organizationId,
+    "spaces",
+    spaceId,
+    "member-candidates",
+  ] as const;
+
 export const spaceGroupGrantsQueryKey = (
   organizationId: string,
   spaceId: string,
 ) => ["enterprise", organizationId, "spaces", spaceId, "groups"] as const;
+
+export const spaceGroupCandidatesQueryKey = (
+  organizationId: string,
+  spaceId: string,
+) =>
+  [
+    "enterprise",
+    organizationId,
+    "spaces",
+    spaceId,
+    "group-candidates",
+  ] as const;
 
 export const managedOidcProvidersQueryKey = (organizationId: string) =>
   ["enterprise", organizationId, "oidc-providers"] as const;
@@ -498,6 +526,22 @@ export function getSpaceMembers(
   );
 }
 
+export function getSpaceMemberCandidates(
+  organizationId: string,
+  spaceId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson(
+    spaceMemberCandidatesResponseSchema,
+    spacePath(
+      ORGANIZATION_SPACE_MEMBER_CANDIDATES_PATH_TEMPLATE,
+      organizationId,
+      spaceId,
+    ),
+    { signal: signal ?? null },
+  );
+}
+
 export async function setSpaceMember(
   organizationId: string,
   spaceId: string,
@@ -542,6 +586,22 @@ export function getSpaceGroupGrants(
     spaceGroupGrantsResponseSchema,
     spacePath(
       ORGANIZATION_SPACE_GROUPS_PATH_TEMPLATE,
+      organizationId,
+      spaceId,
+    ),
+    { signal: signal ?? null },
+  );
+}
+
+export function getSpaceGroupCandidates(
+  organizationId: string,
+  spaceId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson(
+    spaceGroupCandidatesResponseSchema,
+    spacePath(
+      ORGANIZATION_SPACE_GROUP_CANDIDATES_PATH_TEMPLATE,
       organizationId,
       spaceId,
     ),

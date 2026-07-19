@@ -6,7 +6,9 @@ import {
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
   ORGANIZATION_SPACES_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GROUP_CANDIDATES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_GROUP_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_MEMBER_CANDIDATES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE,
   ORGANIZATION_SPACE_PATH_TEMPLATE,
   type AccessOperationResult,
@@ -16,6 +18,9 @@ import {
   buildSpaceRuntimePath,
   loginResponseSchema,
   managedSpaceSummarySchema,
+  managedSpacesResponseSchema,
+  spaceGroupCandidatesResponseSchema,
+  spaceMemberCandidatesResponseSchema,
   spaceRuntimeBootstrapSchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
@@ -386,6 +391,51 @@ describe("space HTTP contracts with PostgreSQL", () => {
     ).toBe(false);
   });
 
+  test("hides an unactivated restore target from the managed space list", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const target = await database.space.create({
+      data: {
+        name: "Restore target",
+        organizationId: installation.organizationId,
+        status: "archived",
+      },
+      select: { id: true },
+    });
+    const backup = await database.spaceBackup.create({
+      data: {
+        createdByUserId: installation.userId,
+        organizationId: installation.organizationId,
+        sourceSpaceId: installation.spaceId,
+        status: "succeeded",
+      },
+      select: { id: true },
+    });
+    await database.spaceRestoreJob.create({
+      data: {
+        backupId: backup.id,
+        createdByUserId: installation.userId,
+        organizationId: installation.organizationId,
+        sourceSpaceId: installation.spaceId,
+        status: "ready_for_activation",
+        targetSpaceId: target.id,
+      },
+    });
+    const spacesPath = buildPath(ORGANIZATION_SPACES_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${spacesPath}`, {
+      headers: { Cookie: owner.cookie },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const spaces = managedSpacesResponseSchema.parse(await response.json());
+    expect(spaces.spaces.map((space) => space.spaceId)).toEqual([
+      installation.spaceId,
+    ]);
+  });
+
   test("grants an organization member direct space access through HTTP", async () => {
     const installation = await initialize();
     const owner = await login(installation.loginIdentifier);
@@ -484,6 +534,123 @@ describe("space HTTP contracts with PostgreSQL", () => {
           role: "viewer",
           spaceId: installation.spaceId,
           spaceName: "Primary Space",
+        },
+      ],
+    });
+  });
+
+  test("lets a delegated space administrator read only active candidates for its exact space", async () => {
+    const installation = await initialize();
+    const delegatedLogin = `delegated-admin-${randomUUID()}@example.test`;
+    const delegatedUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier: delegatedLogin,
+        password,
+      }),
+    );
+    const delegatedSpaceId = createdSpaceId(
+      await operations.execute({
+        operation: "create-space",
+        adminUserId: delegatedUserId,
+        name: "Delegated Space",
+        organizationId: installation.organizationId,
+      }),
+    );
+    const candidateLogin = `candidate-${randomUUID()}@example.test`;
+    const candidateUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier: candidateLogin,
+        password,
+      }),
+    );
+    const inactiveLogin = `inactive-${randomUUID()}@example.test`;
+    const inactiveUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier: inactiveLogin,
+        password,
+      }),
+    );
+    await database.organizationMembership.update({
+      where: {
+        organizationId_userId: {
+          organizationId: installation.organizationId,
+          userId: inactiveUserId,
+        },
+      },
+      data: { status: "inactive" },
+    });
+    const activeGroup = await database.userGroup.create({
+      data: {
+        name: "Candidate group",
+        organizationId: installation.organizationId,
+        status: "active",
+      },
+    });
+    await database.userGroup.create({
+      data: {
+        name: "Disabled group",
+        organizationId: installation.organizationId,
+        status: "disabled",
+      },
+    });
+    const delegated = await login(delegatedLogin);
+    const memberCandidatesPath = buildPath(
+      ORGANIZATION_SPACE_MEMBER_CANDIDATES_PATH_TEMPLATE,
+      {
+        organizationId: installation.organizationId,
+        spaceId: delegatedSpaceId,
+      },
+    );
+    const groupCandidatesPath = buildPath(
+      ORGANIZATION_SPACE_GROUP_CANDIDATES_PATH_TEMPLATE,
+      {
+        organizationId: installation.organizationId,
+        spaceId: delegatedSpaceId,
+      },
+    );
+
+    const memberCandidatesResponse = await fetch(
+      `${testApi.baseUrl}${memberCandidatesPath}`,
+      { headers: { Cookie: delegated.cookie } },
+    );
+    expect(memberCandidatesResponse.status).toBe(200);
+    expect(memberCandidatesResponse.headers.get("cache-control")).toBe(
+      "no-store",
+    );
+    const memberCandidates = spaceMemberCandidatesResponseSchema.parse(
+      await memberCandidatesResponse.json(),
+    );
+    expect(memberCandidates.members).toContainEqual({
+      loginIdentifier: candidateLogin,
+      userId: candidateUserId,
+    });
+    expect(memberCandidates.members).not.toContainEqual(
+      expect.objectContaining({ userId: inactiveUserId }),
+    );
+
+    const groupCandidatesResponse = await fetch(
+      `${testApi.baseUrl}${groupCandidatesPath}`,
+      { headers: { Cookie: delegated.cookie } },
+    );
+    expect(groupCandidatesResponse.status).toBe(200);
+    expect(groupCandidatesResponse.headers.get("cache-control")).toBe(
+      "no-store",
+    );
+    const groupCandidates = spaceGroupCandidatesResponseSchema.parse(
+      await groupCandidatesResponse.json(),
+    );
+    expect(groupCandidates).toEqual({
+      groups: [
+        {
+          groupId: activeGroup.id,
+          groupName: activeGroup.name,
+          groupStatus: "active",
         },
       ],
     });

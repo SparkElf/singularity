@@ -42,7 +42,14 @@ export class SpaceManagementService {
   ): Promise<ManagedSpaceSummary[]> {
     await this.organizations.requireManager(actorUserId, organizationId);
     const spaces = await this.database.client.space.findMany({
-      where: { organizationId },
+      where: {
+        organizationId,
+        targetRestores: {
+          none: {
+            status: { in: [...unactivatedSpaceRestorePersistenceStatuses] },
+          },
+        },
+      },
       select: { id: true, name: true, organizationId: true, status: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
