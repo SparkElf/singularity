@@ -1,9 +1,9 @@
 import type { SpaceRuntimeBootstrap } from "@singularity/contracts";
 import {
-  createEmptyProtylePluginPort,
   createProtyleEditorRegistry,
   createProtyleMenuPort,
   createProtyleOverlayPort,
+  createProtylePluginPort,
   createProtyleSession,
   type ProtyleController,
   type ProtyleHostDispatchEvent,
@@ -12,6 +12,7 @@ import {
   type ProtyleSession,
 } from "@singularity/protyle-browser";
 
+import { createReactProtylePluginContributions } from "@/editor/protyle-plugins.ts";
 import { createSpaceGatewayResourcePort } from "@/spaces/gateway-paths.ts";
 import {
   createSpaceGatewayTransport,
@@ -78,7 +79,9 @@ export function createSpaceProtyleSession(
       (menu) => menu.dispose(),
     ),
     overlays: createProtyleOverlayPort((overlay: HTMLElement) => overlay.remove()),
-    plugins: createEmptyProtylePluginPort<unknown, unknown, ProtyleController>(),
+    plugins: createProtylePluginPort<unknown, unknown, ProtyleController>(
+      createReactProtylePluginContributions(),
+    ),
     resources: createSpaceGatewayResourcePort(space),
     transport,
   };

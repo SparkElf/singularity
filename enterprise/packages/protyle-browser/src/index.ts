@@ -65,5 +65,11 @@ export { createProtyleEditorRegistry } from "./registry.ts";
 export { createProtyleFactory } from "./factory.ts";
 export { createProtyleMenuPort } from "./menu.ts";
 export { createProtyleOverlayPort } from "./overlays.ts";
-export { createEmptyProtylePluginPort } from "./plugins.ts";
+export {
+  createEmptyProtylePluginPort,
+  createProtylePluginPort,
+  type ProtylePluginCommand,
+  type ProtylePluginContribution,
+  type ProtylePluginSlashContribution,
+} from "./plugins.ts";
 export { createProtyleSession } from "./session.ts";
