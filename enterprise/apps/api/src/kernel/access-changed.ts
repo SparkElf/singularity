@@ -92,6 +92,7 @@ export class AccessChangedListener
   implements OnApplicationBootstrap, OnApplicationShutdown
 {
   readonly #logger = new Logger("AccessChangedListener");
+  #failed = false;
   #subscription: DatabaseNotificationSubscription | undefined;
 
   constructor(
@@ -104,20 +105,10 @@ export class AccessChangedListener
       this.#subscription = await this.database.listen(
         ACCESS_CHANGE_CHANNEL,
         (payload) => this.#consume(payload),
-        () => {
-          this.#logger.error({
-            event: "access.notification",
-            outcome: "listener-failed",
-          });
-          this.connections.failNotificationListener();
-        },
+        () => this.#fail("listener-failed"),
       );
     } catch {
-      this.#logger.error({
-        event: "access.notification",
-        outcome: "listener-unavailable",
-      });
-      this.connections.failNotificationListener();
+      this.#fail("listener-unavailable");
       return;
     }
     if (!this.connections.markNotificationListenerReady()) {
@@ -132,11 +123,17 @@ export class AccessChangedListener
   }
 
   async onApplicationShutdown(): Promise<void> {
+    this.#failed = true;
     this.connections.failNotificationListener();
-    await this.#subscription?.close();
+    const subscription = this.#subscription;
+    this.#subscription = undefined;
+    await subscription?.close();
   }
 
   #consume(payload: string): void {
+    if (this.#failed) {
+      return;
+    }
     let decoded: unknown;
     try {
       decoded = JSON.parse(payload);
@@ -145,26 +142,56 @@ export class AccessChangedListener
     }
     const parsed = accessChangeNotificationSchema.safeParse(decoded);
     if (!parsed.success) {
-      this.#logger.error({
-        event: "access.notification",
-        outcome: "invalid-event",
-      });
-      this.connections.failNotificationListener();
+      this.#fail("invalid-event");
       return;
     }
     if (parsed.data.kind === "close") {
       this.connections.closeByAccessChange(parsed.data);
+      const selectorValues: Partial<
+        Record<AccessSelector["kind"], string[]>
+      > = {};
+      for (const selector of parsed.data.selectors) {
+        const values = selectorValues[selector.kind];
+        if (values === undefined) {
+          selectorValues[selector.kind] = [selector.value];
+        } else {
+          values.push(selector.value);
+        }
+      }
+      this.#logger.debug({
+        event: "authorization.change",
+        kind: parsed.data.kind,
+        outcome: "applied",
+        requestId: parsed.data.requestId,
+        selectorKinds: parsed.data.selectors.map((selector) => selector.kind),
+        selectorValues,
+      });
     } else {
       this.connections.refreshSessionExpiry(
         parsed.data.authSessionId,
         new Date(parsed.data.expiresAt),
       );
+      this.#logger.debug({
+        authSessionId: parsed.data.authSessionId,
+        event: "authorization.change",
+        kind: parsed.data.kind,
+        outcome: "applied",
+        requestId: parsed.data.requestId,
+      });
     }
-    this.#logger.debug({
-      event: "authorization.change",
-      kind: parsed.data.kind,
-      outcome: "applied",
-      requestId: parsed.data.requestId,
+  }
+
+  #fail(
+    outcome: "invalid-event" | "listener-failed" | "listener-unavailable",
+  ): void {
+    if (this.#failed) {
+      return;
+    }
+    this.#failed = true;
+    this.#logger.error({
+      event: "access.notification",
+      outcome,
     });
+    this.connections.failNotificationListener();
   }
 }

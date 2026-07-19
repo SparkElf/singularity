@@ -118,47 +118,72 @@ export class DatabaseRuntime {
   async listen(
     channel: string,
     onNotification: (payload: string) => void,
-    onError: (error: Error) => void,
+    onFailure: (error: Error) => void,
   ): Promise<DatabaseNotificationSubscription> {
     if (this.#notificationConfig === undefined) {
       throw this.#state;
     }
 
     const client = new Client(this.#notificationConfig);
-    let closed = false;
+    let state: "opening" | "listening" | "failed" | "closing" | "closed" =
+      "opening";
+    let openingFailure: Error | undefined;
+    let closePromise: Promise<void> | undefined;
     let subscription: DatabaseNotificationSubscription;
     const close = async (): Promise<void> => {
-      if (closed) {
+      if (closePromise !== undefined) {
+        await closePromise;
         return;
       }
-      closed = true;
-      this.#notificationSubscriptions.delete(subscription);
-      client.removeAllListeners();
-      await client.end();
+      closePromise = (async () => {
+        state = "closing";
+        this.#notificationSubscriptions.delete(subscription);
+        client.removeAllListeners();
+        try {
+          await client.end();
+        } finally {
+          state = "closed";
+        }
+      })();
+      await closePromise;
     };
     subscription = { close };
+    const fail = (error: Error): void => {
+      if (state === "opening") {
+        openingFailure ??= error;
+        return;
+      }
+      if (state !== "listening") {
+        return;
+      }
+      state = "failed";
+      onFailure(error);
+    };
     client.on("notification", (notification: Notification) => {
       if (
-        !closed &&
+        state === "listening" &&
         notification.channel === channel &&
         notification.payload !== undefined
       ) {
         onNotification(notification.payload);
       }
     });
-    client.on("error", (error: Error) => {
-      if (!closed) {
-        onError(error);
-      }
+    client.on("error", fail);
+    client.on("end", () => {
+      fail(new Error("PostgreSQL notification connection ended unexpectedly"));
     });
 
     try {
       await client.connect();
       await client.query(`LISTEN ${escapeIdentifier(channel)}`);
+      if (openingFailure !== undefined) {
+        throw openingFailure;
+      }
     } catch (error) {
       await close();
       throw error;
     }
+    state = "listening";
     this.#notificationSubscriptions.add(subscription);
     return subscription;
   }

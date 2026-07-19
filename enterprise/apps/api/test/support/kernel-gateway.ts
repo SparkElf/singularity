@@ -5,9 +5,7 @@ import type {
   IncomingMessage,
   ServerResponse,
 } from "node:http";
-import {
-  createServer,
-} from "node:https";
+import { createServer } from "node:https";
 import { TLSSocket } from "node:tls";
 
 import {
@@ -15,7 +13,7 @@ import {
   RuntimeKernelDeploymentRegistry,
   type KernelDeploymentIdentity,
 } from "@singularity/kernel-client";
-import WebSocket, { WebSocketServer } from "ws";
+import WebSocket, { type RawData, WebSocketServer } from "ws";
 
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 
@@ -55,11 +53,10 @@ export interface TestKernelGatewayOptions {
 }
 
 export interface TestKernelWebSocket {
-  readonly connections: readonly WebSocket[];
+  readonly connectionCount: number;
+  readonly messages: readonly Buffer[];
   broadcast(data: Buffer | string): void;
-  closeAll(code?: number, reason?: string): void;
   nextConnection(): Promise<WebSocket>;
-  terminateAll(): void;
 }
 
 export interface TestKernelGateway {
@@ -106,6 +103,16 @@ async function requestBody(request: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+function websocketDataBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return Buffer.concat(data);
+  }
+  return Buffer.from(data);
+}
+
 function sendResponse(
   reply: ServerResponse,
   response: TestKernelResponse,
@@ -129,6 +136,7 @@ export async function startTestKernelGateway(
     noServer: true,
     perMessageDeflate: false,
   });
+  const websocketMessages: Buffer[] = [];
   const server = createServer(
     {
       ca: TEST_TLS_CERTIFICATE,
@@ -160,6 +168,9 @@ export async function startTestKernelGateway(
     },
   );
   webSocketServer.on("connection", (socket, request) => {
+    socket.on("message", (data) => {
+      websocketMessages.push(websocketDataBuffer(data));
+    });
     options.websocket?.onConnection?.(socket, request.url ?? "/");
   });
   server.on("upgrade", (request, socket, head) => {
@@ -183,13 +194,24 @@ export async function startTestKernelGateway(
   const { privateKey: servicePrivateKey } = generateKeyPairSync("ed25519");
   const handle = "test-kernel";
   let disposed = false;
+  let connectionCount = 0;
   const connectionWaiters: Array<(socket: WebSocket) => void> = [];
+  const queuedConnections: WebSocket[] = [];
   webSocketServer.on("connection", (socket) => {
-    connectionWaiters.shift()?.(socket);
+    connectionCount += 1;
+    const waiter = connectionWaiters.shift();
+    if (waiter !== undefined) {
+      waiter(socket);
+    } else {
+      queuedConnections.push(socket);
+    }
   });
   const websocket: TestKernelWebSocket = {
-    get connections(): readonly WebSocket[] {
-      return [...webSocketServer.clients];
+    get connectionCount(): number {
+      return connectionCount;
+    },
+    get messages(): readonly Buffer[] {
+      return [...websocketMessages];
     },
     broadcast(data): void {
       for (const client of webSocketServer.clients) {
@@ -198,18 +220,12 @@ export async function startTestKernelGateway(
         }
       }
     },
-    closeAll(code = 1011, reason = "service-unavailable"): void {
-      for (const client of webSocketServer.clients) {
-        client.close(code, reason);
-      }
-    },
     nextConnection(): Promise<WebSocket> {
-      return new Promise((resolve) => connectionWaiters.push(resolve));
-    },
-    terminateAll(): void {
-      for (const client of webSocketServer.clients) {
-        client.terminate();
+      const queued = queuedConnections.shift();
+      if (queued !== undefined) {
+        return Promise.resolve(queued);
       }
+      return new Promise((resolve) => connectionWaiters.push(resolve));
     },
   };
   return {
@@ -249,7 +265,11 @@ export async function startTestKernelGateway(
         return;
       }
       disposed = true;
-      websocket.terminateAll();
+      for (const client of webSocketServer.clients) {
+        client.terminate();
+      }
+      connectionWaiters.splice(0);
+      queuedConnections.splice(0);
       await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
       await new Promise<void>((resolve, reject) => {
         server.close((error) =>

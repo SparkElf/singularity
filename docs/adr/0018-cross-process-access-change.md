@@ -23,12 +23,12 @@ L1要求会话撤销、用户或组织停用、空间停用、两级成员变化
 ## Decision
 
 1. PostgreSQL仍是唯一授权事实源。所有影响活动连接的写入在同一业务事务内调用`pg_notify('singularity_access_changed', payload)`；PostgreSQL只在事务提交后投递，回滚不产生通知。
-2. 通知载荷只含`kind`、必要的`authSessionId|userId|organizationId|spaceId`选择键，以及会话续期所需的`absoluteExpiresAt|idleExpiresAt`。不含角色快照、正文、令牌、摘要、密码、Cookie或数据库模型。
+2. 通知载荷只含事件种类、请求ID、必要的选择键和会话续期时间，不含角色快照、正文、令牌、摘要、密码、Cookie或数据库模型。关闭事件的唯一形状是`{kind: "close", reason: "unauthenticated"|"forbidden", requestId, selectors: [{kind: "auth-session"|"user"|"organization"|"space", value}]}`；续期事件的唯一形状是`{kind: "session-expiry", authSessionId, expiresAt, requestId}`。
 3. API启动时先建立一个专用`LISTEN singularity_access_changed`连接，再接受Kernel WebSocket升级。`SpaceConnectionRegistry`是唯一消费者；HTTP授权继续每次读取PostgreSQL，不消费通知缓存。
-4. `kind`只取`close-unauthenticated`、`close-forbidden`、`session-renewed`。关闭事件按载荷中全部已给选择键匹配连接；续期只更新对应`authSessionId`的到期计时器。关闭状态吸收后续事件。
-5. 监听连接异常时，Registry先终止全部上游订阅，再以`1011 + service-unavailable`关闭全部浏览器连接并进入不可用态；后续升级返回服务不可用。进程不在未知事件窗口内重连或继续服务WebSocket，部署层重启API后恢复单一路径。
+4. `kind`只取`close`和`session-expiry`。关闭事件的`reason`决定浏览器关闭码，`selectors`中的多个选择键按交集匹配同一连接；续期只更新对应`authSessionId`的到期计时器。关闭状态吸收后续事件。
+5. 监听连接的`error`或非显式关闭产生的 clean `end`只触发一次失败；Registry先终止全部上游订阅，再以`1011 + service-unavailable`关闭全部浏览器连接并进入不可用态，后续升级返回服务不可用。显式关闭不误报失败；进程不在未知事件窗口内重连或继续服务WebSocket，部署层重启API后恢复单一路径。
 6. `@singularity/database`拥有PostgreSQL通知连接的配置解析、`LISTEN`生命周期和关闭；API领域拥有事件schema、事务内发布及连接选择语义。此边界承担真实数据库协议与生命周期，不建立同形Repository或消息DTO转换层。
-7. 稳定日志标签`authorization.change`记录事件种类、已给选择键、结果与`requestId`；监听异常记录`access.notification`和结果，不记录载荷原文或连接凭证。
+7. 稳定日志标签`authorization.change`记录事件种类、结果与`requestId`；关闭事件另记录`selectorKinds`及按类型分组的必要UUID选择值，续期事件只另记录`authSessionId`。监听异常或无效事件只记录`access.notification`和结果，不记录载荷原文、到期时间或连接凭证。
 
 ## Data Flow
 
@@ -70,7 +70,7 @@ HTTP或独立运维进程
 | --- | --- | --- |
 | 提交投递、回滚不投递 | PostgreSQL integration | 两个独立连接、真实事务与原生runner case |
 | 独立运维进程撤权关闭API连接 | HTTPS/WSS integration | 真实operations组合根、真实API、真实PostgreSQL |
-| 监听异常不继续带权服务 | integration | 终止LISTEN连接，断上游、关浏览器并拒绝新升级 |
+| 监听异常不继续带权服务 | integration | 终止LISTEN连接，断上游、关浏览器并拒绝新升级；驱动边界覆盖`error`/clean `end`去重及显式关闭不误报 |
 | 选择键只关闭受影响连接 | integration | 会话、用户、组织、空间及组合选择键独立case |
 
 实现阶段不逐文件运行测试；L1生产代码与必要测试代码全部就绪、集中代码评审通过后，再由`verification`按矩阵批量执行。
