@@ -18,6 +18,7 @@ package api
 
 import (
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/88250/gulu"
 	"github.com/gin-gonic/gin"
@@ -144,16 +145,48 @@ func getLocalGraph(c *gin.Context) {
 		return
 	}
 
-	if model.IsAdminRoleContext(c) && !model.IsReadOnlyRoleContext(c) {
+	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "id")
+	if enterprise && !identityOK {
+		ret.Code = -1
+		ret.Msg = "document identity is unavailable"
+		return
+	}
+	if enterprise && utf8.RuneCountInString(keyword) > enterpriseDiscoveryQueryMaxRunes {
+		ret.Code = -1
+		ret.Msg = "discovery query is too long"
+		return
+	}
+
+	// Gateway策略将企业文档图谱声明为只读；认证后的文档面板请求不能把浏览器图谱配置
+	// 持久化到Kernel。
+	if !enterprise && model.IsAdminRoleContext(c) && !model.IsReadOnlyRoleContext(c) {
 		model.Conf.Graph.Local = local
 		model.Conf.Save()
 	}
 
-	boxID, nodes, links := model.BuildTreeGraph(id, keyword)
+	var boxID string
+	var nodes []*model.GraphNode
+	var links []*model.GraphLink
+	if enterprise {
+		boxID, nodes, links = model.BuildTreeGraphInBox(
+			documentScope.DocumentID,
+			keyword,
+			documentScope.NotebookID,
+		)
+	} else {
+		boxID, nodes, links = model.BuildTreeGraph(id, keyword)
+	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		publishIgnore := model.GetInvisiblePublishAccess(publishAccess)
 		nodes, links = model.FilterGraphByPublishIgnore(publishIgnore, nodes, links)
+	}
+	if enterprise {
+		ret.Data = map[string]any{
+			"links": enterpriseDiscoveryGraphLinkProjections(links),
+			"nodes": enterpriseDiscoveryLocalGraphProjections(nodes),
+		}
+		return
 	}
 	ret.Data = map[string]any{
 		"id":    id,

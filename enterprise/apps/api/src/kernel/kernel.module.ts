@@ -22,6 +22,8 @@ import { KernelGatewayService } from "./kernel-gateway.service.js";
 import { KernelRuntimeDeploymentSynchronizer } from "./kernel-runtime-deployment-synchronizer.js";
 import { KernelWebSocketGateway } from "./kernel-websocket.gateway.js";
 import { SpaceConnectionRegistry } from "./space-connection.registry.js";
+import { SpaceDiscoveryController } from "./space-discovery.controller.js";
+import { SpaceDiscoveryService } from "./space-discovery.service.js";
 import {
   PublicShareController,
   ShareManagementController,
@@ -75,6 +77,7 @@ function kernelProviders(options: KernelGatewayModuleOptions): Provider[] {
         new KernelPrivateWebSocketClient({ credentials, deployments, policies }),
     },
     AccessChangedListener,
+    SpaceDiscoveryService,
     ContentDirectoryService,
     KernelAccessService,
     KernelGatewayService,
@@ -99,6 +102,7 @@ export class KernelGatewayModule {
       imports: [core],
       controllers: [
         ContentDirectoryController,
+        SpaceDiscoveryController,
         KernelGatewayController,
         PublicShareController,
         ShareManagementController,

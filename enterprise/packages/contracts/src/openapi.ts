@@ -3,8 +3,10 @@ export interface OpenApiSchema {
   enum?: Array<number | string>;
   format?: string;
   items?: OpenApiSchema;
+  maximum?: number;
   maxItems?: number;
   maxLength?: number;
+  minimum?: number;
   minItems?: number;
   minLength?: number;
   nullable?: boolean;

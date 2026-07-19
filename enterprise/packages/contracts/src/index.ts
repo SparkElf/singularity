@@ -1,6 +1,7 @@
 export * from "./audit.js";
 export * from "./backups.js";
 export * from "./content-directory.js";
+export * from "./discovery.js";
 export * from "./identity.js";
 export * from "./groups.js";
 export * from "./observability.js";

@@ -43,6 +43,7 @@ func searchHistory(c *gin.Context) {
 		return
 	}
 	typ := model.HistoryTypeDoc
+	var err error
 	if nil != arg["type"] {
 		typeVal, ok := util.ParseJsonArg[float64]("type", arg, ret, true, false)
 		if !ok {
@@ -58,11 +59,24 @@ func searchHistory(c *gin.Context) {
 		}
 		page = int(pageVal)
 	}
-	notebook, err := historyNotebookForResponse(c, arg)
-	if err != nil {
-		ret.Code = -1
-		ret.Msg = err.Error()
-		return
+	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "query")
+	var notebook string
+	if enterprise {
+		if !identityOK {
+			ret.Code = -1
+			ret.Msg = "document identity is unavailable"
+			return
+		}
+		notebook = documentScope.NotebookID
+		query = documentScope.DocumentID
+		typ = model.HistoryTypeDocID
+	} else {
+		notebook, err = historyNotebookForResponse(c, arg)
+		if err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
 	}
 	histories, pageCount, totalCount, err := model.FullTextSearchHistory(query, notebook, op, typ, page)
 	if err != nil {
