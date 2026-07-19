@@ -1771,7 +1771,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 			return
 		}
 
-		if err = moveTree(tree); err != nil {
+		if err = moveTree(tree, fromBox.ID); err != nil {
 			return
 		}
 	} else {
@@ -1789,7 +1789,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 			return
 		}
 
-		if err = moveTree(tree); err != nil {
+		if err = moveTree(tree, fromBox.ID); err != nil {
 			return
 		}
 		moveSorts(tree.ID, fromBox.ID, toBox.ID)
