@@ -10,6 +10,7 @@ import {
 import { Prisma, PrismaClient } from "./generated/prisma/client.js";
 
 export { Prisma };
+export * from "./audit.js";
 
 const DATABASE_CONNECTION_TIMEOUT_MS = 3_000;
 const DATABASE_QUERY_TIMEOUT_MS = 5_000;

@@ -1,10 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { CreatedDocumentShare } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
 import { PasswordHasher } from "../identity/password-hasher.js";
 import {
@@ -23,7 +22,10 @@ import {
   shareChallengeCookieName,
   shareTokenDigest,
 } from "./share-credentials.js";
-import { SharePasswordRateLimiter } from "./share-password-rate-limiter.js";
+import {
+  SharePasswordRateLimiter,
+  shareSourceDigest,
+} from "./share-password-rate-limiter.js";
 import {
   SHARE_KERNEL,
   type ManagedDocumentShare,
@@ -451,12 +453,7 @@ export class ShareService {
   }
 
   async #activeShare(shareToken: string, now: Date): Promise<ShareRow> {
-    let tokenDigest: string;
-    try {
-      tokenDigest = shareTokenDigest(shareToken);
-    } catch {
-      throw notFound();
-    }
+    const tokenDigest = shareTokenDigest(shareToken);
     const rows = await this.database.client.$queryRaw<ShareRow[]>(
       Prisma.sql`
         SELECT
@@ -497,17 +494,12 @@ export class ShareService {
     requestId: string,
     outcome: string,
   ): void {
-    const sourceDigest = createHash("sha256")
-      .update("singularity.share-source.v1", "utf8")
-      .update(Buffer.from([0]))
-      .update(sourceAddress, "utf8")
-      .digest("hex");
     const context = {
       event: "share.access",
       outcome,
       requestId,
       shareId,
-      sourceDigest,
+      sourceDigest: shareSourceDigest(sourceAddress),
     };
     if (outcome === "allowed" || outcome === "password-accepted") {
       this.#logger.debug(context);

@@ -59,6 +59,7 @@ export function PdfCanvasPreview({
   initialPage,
 }: PdfCanvasPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const activeRenderCleanupRef = useRef<(() => void) | null>(null);
   const [loaded, setLoaded] = useState<LoadedDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(() => normalizePage(initialPage));
   const [status, setStatus] = useState<PreviewStatus>("loading");
@@ -80,6 +81,7 @@ export function PdfCanvasPreview({
       loadingTaskDestroyed = true;
       void loadingTask.destroy().catch(() => undefined);
     };
+    activeRenderCleanupRef.current?.();
     setLoaded(null);
     setRenderError(false);
     setStatus("loading");
@@ -109,6 +111,7 @@ export function PdfCanvasPreview({
         setStatus("ready");
       })
       .catch(() => {
+        destroyLoadingTask();
         if (!disposed && !controller.signal.aborted) {
           setStatus("error");
         }
@@ -116,6 +119,7 @@ export function PdfCanvasPreview({
 
     return () => {
       disposed = true;
+      activeRenderCleanupRef.current?.();
       controller.abort();
       destroyLoadingTask();
       clearCanvas(canvasRef.current);
@@ -123,11 +127,13 @@ export function PdfCanvasPreview({
   }, [data]);
 
   useEffect(() => {
+    activeRenderCleanupRef.current?.();
     const canvas = canvasRef.current;
     const current = loaded;
     if (!canvas || !current || status !== "ready") {
       return;
     }
+    clearCanvas(canvas);
 
     const context = canvas.getContext("2d");
     if (!context) {
@@ -137,12 +143,25 @@ export function PdfCanvasPreview({
 
     let cancelled = false;
     let renderTask: PdfRenderTask | null = null;
+    let cleanedUp = false;
+    const cleanupRender = () => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      cancelled = true;
+      renderTask?.cancel?.();
+      if (activeRenderCleanupRef.current === cleanupRender) {
+        activeRenderCleanupRef.current = null;
+      }
+    };
+    activeRenderCleanupRef.current = cleanupRender;
     setRenderError(false);
 
     const targetPage = Math.min(pageNumber, current.pageCount);
     if (targetPage !== pageNumber) {
       setPageNumber(targetPage);
-      return;
+      return cleanupRender;
     }
 
     void current.document.getPage(targetPage)
@@ -177,14 +196,12 @@ export function PdfCanvasPreview({
       })
       .catch((error: unknown) => {
         if (!cancelled && !isCancelledRenderError(error)) {
+          clearCanvas(canvas);
           setRenderError(true);
         }
       });
 
-    return () => {
-      cancelled = true;
-      renderTask?.cancel?.();
-    };
+    return cleanupRender;
   }, [loaded, pageNumber, status]);
 
   const pageCount = loaded?.pageCount ?? 0;

@@ -1,10 +1,10 @@
 import type { DynamicModule } from "@nestjs/common";
 import { Module } from "@nestjs/common";
 import { kernelRoutePolicies } from "@singularity/authorization";
+import type { AuditConfiguration } from "@singularity/database";
 import { KernelRoutePolicyRegistry } from "@singularity/kernel-client";
 
 import type { ApiConfiguration } from "./configuration.js";
-import type { AuditConfiguration } from "./audit/audit-writer.service.js";
 import { CoreModule } from "./core.module.js";
 import { DatabaseHealthController } from "./database-health.controller.js";
 import type { Clock } from "./identity/clock.js";

@@ -99,6 +99,10 @@ function retryAt(attempt: number): Date | null {
   return attempt < 3 ? new Date(Date.now() + attempt * 60_000) : null;
 }
 
+function backupClaimRetryAt(): Date {
+  return new Date(Date.now() + 15_000);
+}
+
 function baseJob(record: WorkerJobRecord): WorkerJobBase {
   return {
     attempt: record.attempt,
@@ -243,11 +247,15 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
             "kernel_version" = ${archive.kernelVersion},
             "sha256" = ${stored.sha256},
             "size_bytes" = ${stored.sizeBytes},
+            "worker_job_id" = NULL,
+            "worker_attempt" = NULL,
             "completed_at" = CURRENT_TIMESTAMP
           WHERE "id" = ${job.backupId}::uuid
             AND "organization_id" = ${job.organizationId}::uuid
             AND "source_space_id" = ${job.spaceId}::uuid
             AND "status" = 'running'
+            AND "worker_job_id" = ${job.id}::uuid
+            AND "worker_attempt" = ${job.attempt}
         `,
       );
       if (count !== 1) {
@@ -270,14 +278,22 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
         throw error;
       }
       const nextRetryAt =
-        error instanceof WorkerJobError && error.retryAt === null
-          ? null
+        error instanceof WorkerJobError
+          ? error.retryAt
           : retryAt(job.attempt);
+      if (!runningCommitted) {
+        if (error instanceof WorkerJobError) {
+          throw error;
+        }
+        throw new WorkerJobError("backup-execution-failed", nextRetryAt);
+      }
       const transitioned = await this.database.client.$executeRaw(
         Prisma.sql`
           UPDATE "space_backups"
           SET
             "status" = ${nextRetryAt === null ? "failed" : "queued"}::"space_backup_status",
+            "worker_job_id" = NULL,
+            "worker_attempt" = NULL,
             "completed_at" = CASE
               WHEN ${nextRetryAt}::timestamptz IS NULL THEN CURRENT_TIMESTAMP
               ELSE NULL
@@ -285,10 +301,12 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
           WHERE "id" = ${job.backupId}::uuid
             AND "organization_id" = ${job.organizationId}::uuid
             AND "source_space_id" = ${job.spaceId}::uuid
-            AND "status" IN ('queued', 'running')
+            AND "status" = 'running'
+            AND "worker_job_id" = ${job.id}::uuid
+            AND "worker_attempt" = ${job.attempt}
         `,
       );
-      if (transitioned === 1 && (nextRetryAt === null || runningCommitted)) {
+      if (transitioned === 1) {
         this.logger.warn({
           elapsedMs: performance.now() - startedAt,
           event: "backup.job",
@@ -310,7 +328,7 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
               : "not-completed",
         });
       }
-      if (error instanceof WorkerJobError && error.retryAt === null) {
+      if (error instanceof WorkerJobError) {
         throw error;
       }
       throw new WorkerJobError("backup-execution-failed", nextRetryAt);
@@ -321,14 +339,27 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
     return this.database.client.$transaction(async (transaction) => {
       const rows = await transaction.$queryRaw<
         Array<{
+          claimActive: boolean;
           objectKey: string | null;
           status: "queued" | "running" | "succeeded";
+          workerAttempt: number | null;
+          workerJobId: string | null;
         }>
       >(
         Prisma.sql`
           SELECT
+            EXISTS (
+              SELECT 1
+              FROM "worker_jobs" AS claim
+              WHERE claim."id" = backup."worker_job_id"
+                AND claim."status" = 'running'
+                AND claim."attempt" = backup."worker_attempt"
+                AND claim."lease_expires_at" > CURRENT_TIMESTAMP
+            ) AS "claimActive",
             backup."object_key" AS "objectKey",
-            backup."status"
+            backup."status",
+            backup."worker_attempt" AS "workerAttempt",
+            backup."worker_job_id" AS "workerJobId"
           FROM "space_backups" AS backup
           INNER JOIN "organizations" AS organization
             ON organization."id" = backup."organization_id"
@@ -356,6 +387,14 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
       if (current.status === "succeeded") {
         return { outcome: "succeeded-idempotent" };
       }
+      if (
+        current.status === "running" &&
+        (current.claimActive ||
+          (current.workerJobId === job.id &&
+            current.workerAttempt === job.attempt))
+      ) {
+        throw new WorkerJobError("backup-claim-active", backupClaimRetryAt());
+      }
       const objectKey =
         current.objectKey === null
           ? createObjectKey()
@@ -363,7 +402,11 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
       const updated = await transaction.$executeRaw(
         Prisma.sql`
           UPDATE "space_backups"
-          SET "status" = 'running', "object_key" = ${objectKey}
+          SET
+            "status" = 'running',
+            "object_key" = ${objectKey},
+            "worker_job_id" = ${job.id}::uuid,
+            "worker_attempt" = ${job.attempt}
           WHERE "id" = ${job.backupId}::uuid
             AND "organization_id" = ${job.organizationId}::uuid
             AND "source_space_id" = ${job.spaceId}::uuid
@@ -605,7 +648,6 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           },
         });
         await publishKernelDeploymentChange(transaction, {
-          deploymentHandle: result.endpoint.handle,
           kernelInstanceId: result.endpoint.kernelInstanceId,
           kind: "upsert",
           requestId: job.requestId,
@@ -989,10 +1031,12 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         throw new WorkerJobError("restore-state-conflict", null);
       }
       const endpointRows = await transaction.$queryRaw<
-        Array<{ deploymentHandle: string }>
+        Array<{ kernelInstanceId: string; spaceId: string }>
       >(
         Prisma.sql`
-          SELECT "deployment_handle" AS "deploymentHandle"
+          SELECT
+            endpoint."kernel_instance_id" AS "kernelInstanceId",
+            endpoint."space_id" AS "spaceId"
           FROM "kernel_runtime_endpoints" AS endpoint
           INNER JOIN "kernel_instances" AS kernel
             ON kernel."id" = endpoint."kernel_instance_id"
@@ -1013,11 +1057,10 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
       const endpoint = endpointRows[0];
       if (endpoint !== undefined) {
         await publishKernelDeploymentChange(transaction, {
-          deploymentHandle: endpoint.deploymentHandle,
-          kernelInstanceId: job.targetKernelInstanceId,
+          kernelInstanceId: endpoint.kernelInstanceId,
           kind: "remove",
           requestId: job.requestId,
-          spaceId: job.targetSpaceId,
+          spaceId: endpoint.spaceId,
         });
       }
       await transaction.spaceMembership.deleteMany({
@@ -1153,9 +1196,11 @@ interface AuditArchiveRow {
 }
 
 interface ExistingAuditArchiveRow {
+  fromSequence: bigint;
   objectKey: string;
   sha256: string;
   sizeBytes: bigint;
+  throughSequence: bigint;
 }
 
 @Injectable()
@@ -1292,7 +1337,12 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
   async #existing(job: ArchiveAuditJob): Promise<ExistingAuditArchiveRow | null> {
     const rows = await this.database.client.$queryRaw<ExistingAuditArchiveRow[]>(
       Prisma.sql`
-        SELECT "object_key" AS "objectKey", "sha256", "size_bytes" AS "sizeBytes"
+        SELECT
+          "from_sequence" AS "fromSequence",
+          "object_key" AS "objectKey",
+          "sha256",
+          "size_bytes" AS "sizeBytes",
+          "through_sequence" AS "throughSequence"
         FROM "audit_archives"
         WHERE "id" = ${job.id}::uuid
           AND "organization_id" = ${job.organizationId}::uuid
@@ -1302,6 +1352,12 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
     const existing = rows[0];
     if (existing === undefined) {
       return null;
+    }
+    if (
+      existing.fromSequence !== BigInt(job.fromSequence) ||
+      existing.throughSequence !== BigInt(job.throughSequence)
+    ) {
+      throw new WorkerJobError("audit-archive-range-conflict", null);
     }
     const object = await this.objects.digest(
       parseObjectKey(existing.objectKey),

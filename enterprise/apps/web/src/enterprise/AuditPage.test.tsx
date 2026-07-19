@@ -154,4 +154,20 @@ describe("AuditPage", () => {
     );
     expect(requests[0]!.search).toBe("?limit=51");
   });
+
+  test("shows an indeterminate content result as unresolved", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          jsonResponse({ events: [{ ...event(8), outcome: "indeterminate" }] }),
+        ),
+      ),
+    );
+
+    renderAuditPage("organization");
+
+    expect(await screen.findByText("结果未确定")).toBeVisible();
+    expect(screen.queryByText("失败")).not.toBeInTheDocument();
+  });
 });

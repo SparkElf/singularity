@@ -247,27 +247,28 @@ func refreshRefCount(blockID, boxID string) {
 	if refCount == nil {
 		return
 	}
-	util.PushSetDefRefCount(refCount.rootID, blockID, refCount.defIDs, refCount.refCount, refCount.rootRefCount, refCount.boxID)
+	util.PushSetDefRefCount(refCount.notebookID, refCount.documentID, blockID, refCount.defIDs, refCount.refCount, refCount.rootRefCount, refCount.contentStore)
 }
 
 type refCountSnapshot struct {
-	boxID        string
-	rootID       string
+	notebookID   string
+	documentID   string
+	contentStore string
 	defIDs       []string
 	refCount     int
 	rootRefCount int
 }
 
-func loadRefCountSnapshot(blockID, boxID string) *refCountSnapshot {
-	boxID = attributeViewStoreBoxID(boxID)
-	bt := treenode.GetBlockTreeInBox(blockID, boxID)
+func loadRefCountSnapshot(blockID, notebookID string) *refCountSnapshot {
+	contentStore := attributeViewStoreBoxID(notebookID)
+	bt := treenode.GetBlockTreeInBox(blockID, notebookID)
 	if nil == bt {
 		return nil
 	}
 
 	isDoc := bt.ID == bt.RootID
 	var refIDs, rootRefIDs, defIDs []string
-	if boxID == "" {
+	if contentStore == "" {
 		refIDs = sql.QueryRefIDsByDefID(bt.ID, isDoc)
 		if isDoc {
 			rootRefIDs = refIDs
@@ -277,22 +278,23 @@ func loadRefCountSnapshot(blockID, boxID string) *refCountSnapshot {
 			defIDs = append(defIDs, bt.ID)
 		}
 	} else {
-		refIDs = sql.QueryRefIDsByDefIDInBox(bt.ID, isDoc, boxID)
+		refIDs = sql.QueryRefIDsByDefIDInBox(bt.ID, isDoc, contentStore)
 		rootRefIDs = refIDs
 		if isDoc {
-			for _, ref := range sql.QueryRefsByDefIDInBox(bt.ID, true, boxID) {
+			for _, ref := range sql.QueryRefsByDefIDInBox(bt.ID, true, contentStore) {
 				defIDs = append(defIDs, ref.DefBlockID)
 			}
 			defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
 		} else {
-			rootRefIDs = sql.QueryRefIDsByDefIDInBox(bt.RootID, true, boxID)
+			rootRefIDs = sql.QueryRefIDsByDefIDInBox(bt.RootID, true, contentStore)
 			defIDs = append(defIDs, bt.ID)
 		}
 	}
 
 	return &refCountSnapshot{
-		boxID:        boxID,
-		rootID:       bt.RootID,
+		notebookID:   bt.BoxID,
+		documentID:   bt.RootID,
+		contentStore: contentStore,
 		defIDs:       defIDs,
 		refCount:     len(refIDs),
 		rootRefCount: len(rootRefIDs),
@@ -424,7 +426,7 @@ func refreshDynamicRefTexts0(updatedDefNodes map[derivedObjectIdentity]*ast.Node
 				for _, defNode := range changedDefNodes {
 					switch defNode.refType {
 					case "ref-d":
-						task.AppendAsyncTaskWithDelay(task.SetRefDynamicText, 200*time.Millisecond, util.PushSetRefDynamicText, refTreeIdentity.objectID, n.ID, defNode.id, defNode.refText, refTreeIdentity.boxID)
+						task.AppendAsyncTaskWithDelay(task.SetRefDynamicText, 200*time.Millisecond, util.PushSetRefDynamicText, refTree.Box, refTree.ID, n.ID, defNode.id, defNode.refText, refTreeIdentity.boxID)
 					}
 				}
 				return ast.WalkContinue

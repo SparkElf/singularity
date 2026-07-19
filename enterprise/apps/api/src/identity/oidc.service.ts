@@ -18,9 +18,8 @@ import {
   type OidcStartResponse,
   type UpdateOidcProviderRequest,
 } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { ApiConfiguration } from "../configuration.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
 import { conflict, notFound, serviceUnavailable, unauthenticated } from "../problem.js";
@@ -601,7 +600,11 @@ export class OidcService {
             subject: verified.subject,
           },
         },
-        select: { organizationId: true, userId: true },
+        select: {
+          organizationId: true,
+          user: { select: { loginIdentifier: true } },
+          userId: true,
+        },
       });
       let currentUserId: string;
       let createIdentity = false;
@@ -610,21 +613,42 @@ export class OidcService {
           throw unauthenticated();
         }
         currentUserId = identityReference.userId;
-        await transaction.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${currentUserId} FOR SHARE`,
-        );
-        await transaction.$queryRaw(
-          Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
-        );
-        await transaction.$queryRaw(
-          Prisma.sql`
-            SELECT "id"
-            FROM "organization_memberships"
-            WHERE "organization_id" = ${attempt.organizationId}
-              AND "user_id" = ${currentUserId}
-            FOR SHARE
-          `,
-        );
+        if (attempt.invitationId === null) {
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${currentUserId} FOR SHARE`,
+          );
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
+          );
+          await transaction.$queryRaw(
+            Prisma.sql`
+              SELECT "id"
+              FROM "organization_memberships"
+              WHERE "organization_id" = ${attempt.organizationId}
+                AND "user_id" = ${currentUserId}
+              FOR SHARE
+            `,
+          );
+        } else {
+          const invitation = await transaction.organizationInvitation.findUnique({
+            where: { id: attempt.invitationId },
+            select: { loginIdentifier: true },
+          });
+          if (
+            invitation?.loginIdentifier !==
+            identityReference.user.loginIdentifier
+          ) {
+            throw unauthenticated();
+          }
+          await this.organizations.acceptOidcInvitationInTransaction(
+            transaction,
+            attempt.invitationId,
+            attempt.organizationId,
+            currentUserId,
+            now,
+            input.requestId,
+          );
+        }
       } else {
         if (
           attempt.invitationId === null ||

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z, type RefinementCtx } from "zod";
 
 import {
   strictObjectOpenApiSchema,
@@ -13,6 +13,37 @@ export const SPACE_DISCOVERY_MAX_SEARCH_BLOCKS = 64;
 export const SPACE_DISCOVERY_MAX_GRAPH_NODES = 2048;
 export const SPACE_DISCOVERY_MAX_GRAPH_LINKS = 4096;
 
+function unicodeCodePointStringSchema(maximum: number, minimum = 0) {
+  return z.string().superRefine((value, context) => {
+    const length = Array.from(value).length;
+    if (length < minimum || length > maximum) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `String must contain ${minimum} to ${maximum} Unicode code points`,
+      });
+    }
+  });
+}
+
+function requireProjectedGraphEndpoints(
+  graph: {
+    readonly links: readonly { readonly from: string; readonly to: string }[];
+    readonly nodes: readonly { readonly id: string }[];
+  },
+  context: RefinementCtx,
+): void {
+  const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  graph.links.forEach((link, index) => {
+    if (!nodeIds.has(link.from) || !nodeIds.has(link.to)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Graph links must connect projected nodes",
+        path: ["links", index],
+      });
+    }
+  });
+}
+
 export const spaceDiscoverySearchMethods = ["keyword", "preferred"] as const;
 export const spaceDiscoverySearchMethodSchema = z.enum(
   spaceDiscoverySearchMethods,
@@ -21,9 +52,9 @@ export type SpaceDiscoverySearchMethod = z.infer<
   typeof spaceDiscoverySearchMethodSchema
 >;
 
-export const spaceDiscoveryQuerySchema = z
-  .string()
-  .max(SPACE_DISCOVERY_QUERY_MAX_LENGTH);
+export const spaceDiscoveryQuerySchema = unicodeCodePointStringSchema(
+  SPACE_DISCOVERY_QUERY_MAX_LENGTH,
+);
 
 export const spaceDiscoverySearchRequestSchema = z
   .object({
@@ -44,7 +75,9 @@ export type SpaceDiscoveryGraphRequest = z.infer<
 
 export const spaceDiscoveryBlockSchema = z
   .object({
-    content: z.string().max(SPACE_DISCOVERY_BLOCK_CONTENT_MAX_LENGTH),
+    content: unicodeCodePointStringSchema(
+      SPACE_DISCOVERY_BLOCK_CONTENT_MAX_LENGTH,
+    ),
     documentId: contentIdSchema,
     id: contentIdSchema,
     notebookId: contentIdSchema,
@@ -69,10 +102,10 @@ export const spaceDiscoveryGraphNodeSchema = z
   .object({
     documentId: contentIdSchema,
     id: contentIdSchema,
-    label: z
-      .string()
-      .min(1)
-      .max(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH),
+    label: unicodeCodePointStringSchema(
+      SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+      1,
+    ),
     notebookId: contentIdSchema,
   })
   .strict();
@@ -96,7 +129,8 @@ export const spaceDiscoveryGraphResponseSchema = z
       .array(spaceDiscoveryGraphNodeSchema)
       .max(SPACE_DISCOVERY_MAX_GRAPH_NODES),
   })
-  .strict();
+  .strict()
+  .superRefine(requireProjectedGraphEndpoints);
 export type SpaceDiscoveryGraphResponse = z.infer<
   typeof spaceDiscoveryGraphResponseSchema
 >;
@@ -105,7 +139,10 @@ export const documentDiscoveryBacklinkSchema = z
   .object({
     documentId: contentIdSchema,
     notebookId: contentIdSchema,
-    title: z.string().min(1).max(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH),
+    title: unicodeCodePointStringSchema(
+      SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+      1,
+    ),
   })
   .strict();
 export type DocumentDiscoveryBacklink = z.infer<
@@ -133,19 +170,42 @@ export type DocumentDiscoveryHistoryData = z.infer<
   typeof documentDiscoveryHistoryDataSchema
 >;
 
-const documentDiscoveryGraphNodeIdSchema = z
-  .string()
-  .min(1)
-  .max(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH);
+export interface DocumentDiscoveryOutlineItem {
+  children: DocumentDiscoveryOutlineItem[];
+  id: string;
+  name: string;
+}
+
+export const documentDiscoveryOutlineItemSchema:
+  z.ZodType<DocumentDiscoveryOutlineItem> = z.lazy(() =>
+    z
+      .object({
+        children: z.array(documentDiscoveryOutlineItemSchema),
+        id: contentIdSchema,
+        name: unicodeCodePointStringSchema(
+          SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+        ),
+      })
+      .strict()
+  );
+
+export const documentDiscoveryOutlineDataSchema = z.array(
+  documentDiscoveryOutlineItemSchema,
+);
+
+const documentDiscoveryGraphNodeIdSchema = unicodeCodePointStringSchema(
+  SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+  1,
+);
 
 export const documentDiscoveryGraphNodeSchema = z
   .object({
     documentId: contentIdSchema.nullable(),
     id: documentDiscoveryGraphNodeIdSchema,
-    label: z
-      .string()
-      .min(1)
-      .max(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH),
+    label: unicodeCodePointStringSchema(
+      SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+      1,
+    ),
     notebookId: contentIdSchema.nullable(),
   })
   .strict()
@@ -180,7 +240,8 @@ export const documentDiscoveryGraphDataSchema = z
       .array(documentDiscoveryGraphNodeSchema)
       .max(SPACE_DISCOVERY_MAX_GRAPH_NODES),
   })
-  .strict();
+  .strict()
+  .superRefine(requireProjectedGraphEndpoints);
 export type DocumentDiscoveryGraphData = z.infer<
   typeof documentDiscoveryGraphDataSchema
 >;

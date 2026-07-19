@@ -1,6 +1,6 @@
 import { createSecretKey } from "node:crypto";
 
-import type { AuditConfiguration } from "../../src/audit/audit-writer.service.js";
+import type { AuditConfiguration } from "@singularity/database";
 
 export function testAuditConfiguration(): AuditConfiguration {
   return {

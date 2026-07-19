@@ -1,9 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { SpaceConnectionRegistry } from "../src/kernel/space-connection.registry.js";
 
 const SPACE_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_SPACE_ID = "33333333-3333-4333-8333-333333333333";
+const KERNEL_INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("Kernel connection lifecycle", () => {
   test("closes pending and active connections before an endpoint is replaced", () => {
@@ -23,7 +24,12 @@ describe("Kernel connection lifecycle", () => {
       spaceId: SPACE_ID,
       userId: "77777777-7777-4777-8777-777777777777",
     });
-    expect(active.activate(new Date("2026-07-19T11:00:00.000Z"))).toBe(true);
+    expect(
+      active.activate(
+        new Date("2026-07-19T11:00:00.000Z"),
+        KERNEL_INSTANCE_ID,
+      ),
+    ).toBe(true);
     expect(active.bindUpstream(() => activeEvents.push("upstream"))).toBe(true);
 
     const pendingEvents: string[] = [];
@@ -49,7 +55,12 @@ describe("Kernel connection lifecycle", () => {
       spaceId: OTHER_SPACE_ID,
       userId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     });
-    expect(other.activate(new Date("2026-07-19T11:00:00.000Z"))).toBe(true);
+    expect(
+      other.activate(
+        new Date("2026-07-19T11:00:00.000Z"),
+        KERNEL_INSTANCE_ID,
+      ),
+    ).toBe(true);
 
     registry.closeByKernelLifecycle(SPACE_ID);
     active.upstreamMessage(Buffer.from("late"), false);
@@ -61,5 +72,84 @@ describe("Kernel connection lifecycle", () => {
     ]);
     expect(pendingEvents).toEqual(["browser:1011:kernel-unavailable"]);
     expect(otherEvents).toEqual(["push"]);
+    other.browserClosed();
+  });
+
+  test("expires active connections by closing upstream before notifying the browser", () => {
+    vi.useFakeTimers();
+    try {
+      let now = new Date("2026-07-19T10:00:00.000Z");
+      const registry = new SpaceConnectionRegistry({ now: () => now });
+      expect(registry.markNotificationListenerReady()).toBe(true);
+      const events: string[] = [];
+      const handle = registry.registerPending({
+        authSessionId: "44444444-4444-4444-8444-444444444444",
+        closeBrowser: (code, reason) => events.push(`browser:${code}:${reason}`),
+        connectionId: "55555555-5555-4555-8555-555555555555",
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        requestId: "66666666-6666-4666-8666-666666666666",
+        sendBrowser: () => events.push("push"),
+        spaceId: SPACE_ID,
+        userId: "77777777-7777-4777-8777-777777777777",
+      });
+      expect(
+        handle.activate(
+          new Date(now.getTime() + 1_000),
+          KERNEL_INSTANCE_ID,
+        ),
+      ).toBe(true);
+      expect(handle.bindUpstream(() => events.push("upstream"))).toBe(true);
+
+      now = new Date(now.getTime() + 1_000);
+      vi.advanceTimersByTime(1_000);
+      handle.upstreamMessage(Buffer.from("late"), false);
+
+      expect(events).toEqual([
+        "upstream",
+        "browser:4401:unauthenticated",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not schedule session expiry for a pending connection", () => {
+    vi.useFakeTimers();
+    try {
+      let now = new Date("2026-07-19T10:00:00.000Z");
+      const registry = new SpaceConnectionRegistry({ now: () => now });
+      expect(registry.markNotificationListenerReady()).toBe(true);
+      const events: string[] = [];
+      const handle = registry.registerPending({
+        authSessionId: "44444444-4444-4444-8444-444444444444",
+        closeBrowser: (code, reason) => events.push(`browser:${code}:${reason}`),
+        connectionId: "55555555-5555-4555-8555-555555555555",
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        requestId: "66666666-6666-4666-8666-666666666666",
+        sendBrowser: () => events.push("push"),
+        spaceId: SPACE_ID,
+        userId: "77777777-7777-4777-8777-777777777777",
+      });
+
+      registry.refreshSessionExpiry(
+        "44444444-4444-4444-8444-444444444444",
+        new Date(now.getTime() + 1_000),
+      );
+      vi.advanceTimersByTime(1_000);
+      expect(events).toEqual([]);
+
+      now = new Date(now.getTime() + 1_000);
+      expect(
+        handle.activate(
+          new Date(now.getTime() + 1_000),
+          KERNEL_INSTANCE_ID,
+        ),
+      ).toBe(true);
+      now = new Date(now.getTime() + 1_000);
+      vi.advanceTimersByTime(1_000);
+      expect(events).toEqual(["browser:4401:unauthenticated"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

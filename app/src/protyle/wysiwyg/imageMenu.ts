@@ -42,6 +42,7 @@ const IMAGE_PERCENTAGES = [25, 33, 50, 67, 75, 100] as const;
 
 const removeLineBreaks = (value: string) => value.replace(/\n|\r|\u2028|\u2029/g, "");
 const cleanSource = (value: string) => removeLineBreaks(value).trim();
+const isLocalAssetSource = (source: string | null): source is string => source?.startsWith("assets/") ?? false;
 
 const updateImageNetworkMark = (
     protyle: IProtyle,
@@ -211,7 +212,7 @@ const createMetadataEditor = (
 
     const sourceInput = createField(
         protyle.localization.text("imageURL"),
-        imgElement.getAttribute("src") || "",
+        imgElement.getAttribute("data-src") ?? imgElement.getAttribute("src") ?? "",
         false,
     );
     const sourceDivider = document.createElement("div");
@@ -233,8 +234,8 @@ const createMetadataEditor = (
 
     sourceInput.addEventListener("input", () => {
         const value = cleanSource(sourceInput.value);
-        imgElement.setAttribute("src", value);
         imgElement.setAttribute("data-src", value);
+        imgElement.setAttribute("src", resolveProtyleAssetSource(protyle, value));
         updateImageNetworkMark(protyle, assetElement, value);
     }, {signal});
     titleInput.addEventListener("input", () => {
@@ -387,10 +388,10 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
     const imgElement = assetElement.querySelector<HTMLImageElement>("img")!;
     const titleElement = assetElement.querySelector<HTMLElement>(".protyle-action__title span")!;
     const originalHTML = nodeElement.outerHTML;
-    const originalSource = imgElement.getAttribute("src") || "";
-    const originalPersistedSource = imgElement.getAttribute("data-src") || "";
+    const originalDisplaySource = imgElement.getAttribute("src") || "";
+    const originalPersistedSource = imgElement.getAttribute("data-src") ?? "";
     // Kernel OCR 只接收持久化资源路径，不接收 Gateway 解析后的 src。
-    const currentPersistedSource = () => imgElement.getAttribute("data-src") || originalPersistedSource;
+    const currentPersistedSource = () => imgElement.getAttribute("data-src");
     const identity = protyleContentIdentity(protyle);
     const runtime = protyle.session!.runtime as TProtyleRuntime;
     const handle = runtime.menu.open();
@@ -488,11 +489,15 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
                     ocrInput.addEventListener("input", () => {
                         ocrEdited = true;
                     }, {signal: menuSignal});
+                    const persistedSource = currentPersistedSource();
+                    if (!isLocalAssetSource(persistedSource)) {
+                        return;
+                    }
                     void requestImageOperation<ImageOCRResponse>(
                         protyle,
                         menuSignal,
                         "/api/asset/getImageOCRText",
-                        {path: currentPersistedSource()},
+                        {path: persistedSource},
                         "read",
                     ).then((response) => {
                         originalOCR = response.data.text;
@@ -512,13 +517,19 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
                 id: "reOCR",
                 iconHTML: "",
                 label: protyle.localization.text("reOCR"),
-                click: () => requestImageOperation<IWebSocketData>(
-                    protyle,
-                    menuSignal,
-                    "/api/asset/ocr",
-                    {path: currentPersistedSource(), force: true},
-                    "write",
-                ).then(() => undefined),
+                click: () => {
+                    const persistedSource = currentPersistedSource();
+                    if (!isLocalAssetSource(persistedSource)) {
+                        return;
+                    }
+                    return requestImageOperation<IWebSocketData>(
+                        protyle,
+                        menuSignal,
+                        "/api/asset/ocr",
+                        {path: persistedSource, force: true},
+                        "write",
+                    ).then(() => undefined);
+                },
             }],
         });
         menu.addItem({
@@ -542,7 +553,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
         addSizeMenus(handle, protyle, imgElement, assetElement, nodeElement);
     }
 
-    const source = imgElement.getAttribute("src") || "";
+    const source = imgElement.getAttribute("data-src") ?? imgElement.getAttribute("src") ?? "";
     if (source) {
         menu.addItem({id: "separator_3", type: "separator"});
         menu.addItem({
@@ -598,8 +609,8 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
             nodeElement.setAttribute("updated", dayjs().format("YYYYMMDDHHmmss"));
             updateTransaction(protyle, nodeElement, originalHTML);
         };
-        const persistOCR = (source: string) => {
-            if (!ocrEdited || !ocrInput || ocrInput.value === originalOCR) {
+        const persistOCR = (source: string | null) => {
+            if (!isLocalAssetSource(source) || !ocrEdited || !ocrInput || ocrInput.value === originalOCR) {
                 return;
             }
             void requestImageOperation(
@@ -615,7 +626,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
             });
         };
         const newSource = cleanSource(metadata.sourceInput.value);
-        if (originalSource === newSource || !newSource.startsWith("data:image/")) {
+        if (originalPersistedSource === newSource || !newSource.startsWith("data:image/")) {
             persistOCR(currentPersistedSource());
             commit();
             return;
@@ -624,17 +635,17 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
             if (protyle.requestSignal.aborted) {
                 return;
             }
-            imgElement.setAttribute("src", uploadedSource);
             imgElement.setAttribute("data-src", uploadedSource);
+            imgElement.setAttribute("src", resolveProtyleAssetSource(protyle, uploadedSource));
             updateImageNetworkMark(protyle, assetElement, uploadedSource);
             persistOCR(uploadedSource);
             commit();
         }).catch((error) => {
             if (!protyle.requestSignal.aborted) {
                 console.error("[protyle.image-menu] data image upload failed", error);
-                imgElement.setAttribute("src", originalSource);
+                imgElement.setAttribute("src", originalDisplaySource);
                 imgElement.setAttribute("data-src", originalPersistedSource);
-                updateImageNetworkMark(protyle, assetElement, originalPersistedSource || originalSource);
+                updateImageNetworkMark(protyle, assetElement, originalPersistedSource || originalDisplaySource);
                 notify(protyle, "error", protyle.localization.text("uploadError"));
                 persistOCR(originalPersistedSource);
                 commit();

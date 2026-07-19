@@ -31,6 +31,10 @@ export interface RestoreSpaceJob extends WorkerJobBase {
   targetSpaceId: string;
 }
 
+export interface ReconcileContentAuditJob extends WorkerJobBase {
+  kind: "reconcile-content-audit";
+}
+
 export interface SampleKernelJob extends WorkerJobBase {
   kernelInstanceId: string;
   kind: "sample-kernel";
@@ -40,12 +44,14 @@ export interface SampleKernelJob extends WorkerJobBase {
 export type ClaimedWorkerJob =
   | ArchiveAuditJob
   | BackupSpaceJob
+  | ReconcileContentAuditJob
   | RestoreSpaceJob
   | SampleKernelJob;
 
 export const workerJobKinds = [
   "archive-audit",
   "backup-space",
+  "reconcile-content-audit",
   "restore-space",
   "sample-kernel",
 ] as const satisfies readonly ClaimedWorkerJob["kind"][];

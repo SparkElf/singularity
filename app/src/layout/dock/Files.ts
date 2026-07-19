@@ -1145,8 +1145,10 @@ data-type="navigation-root" data-path="/">
         });
     }
 
-    public onRename(data: { path: string, title: string, box: string }) {
-        const fileItemElement = this.element.querySelector(`ul[data-url="${data.box}"] li[data-path="${data.path}"]`);
+    public onRename(data: {notebookId: string, documentId: string, title: string}) {
+        const fileItemElement = this.element.querySelector(
+            `ul[data-url="${data.notebookId}"] li[data-node-id="${data.documentId}"]`,
+        );
         if (!fileItemElement) {
             return;
         }
@@ -1155,7 +1157,9 @@ data-type="navigation-root" data-path="/">
     }
 
     private onMove(response: IWebSocketData) {
-        const sourceElement = this.element.querySelector(`ul[data-url="${response.data.fromNotebook}"] li[data-path="${response.data.fromPath}"]`) as HTMLElement;
+        const sourceElement = this.element.querySelector(
+            `ul[data-url="${response.data.fromNotebook}"] li[data-node-id="${response.data.documentId}"][data-path="${response.data.fromPath}"]`,
+        ) as HTMLElement;
         if (sourceElement) {
             if (sourceElement.nextElementSibling && sourceElement.nextElementSibling.tagName === "UL") {
                 sourceElement.nextElementSibling.remove();

@@ -52,6 +52,7 @@ import {
   removeGroupMember,
   updateOrganizationGroup,
 } from "@/enterprise/api.ts";
+import { authorizedSpacesQueryKey } from "@/spaces/api.ts";
 
 export function GroupsPage() {
   const organizationId = useParams().organizationId ?? "";
@@ -87,9 +88,12 @@ export function GroupsPage() {
       request: Parameters<typeof updateOrganizationGroup>[2];
     }) => updateOrganizationGroup(organizationId, input.groupId, input.request),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: organizationGroupsQueryKey(organizationId),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: organizationGroupsQueryKey(organizationId),
+        }),
+        queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
+      ]);
     },
   });
   const addMemberMutation = useMutation({
@@ -103,6 +107,7 @@ export function GroupsPage() {
         queryClient.invalidateQueries({
           queryKey: organizationGroupsQueryKey(organizationId),
         }),
+        queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
       ]);
     },
   });
@@ -117,6 +122,7 @@ export function GroupsPage() {
         queryClient.invalidateQueries({
           queryKey: organizationGroupsQueryKey(organizationId),
         }),
+        queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
       ]);
     },
   });
@@ -145,9 +151,7 @@ export function GroupsPage() {
   );
   const mutationError =
     createGroupMutation.error ??
-    updateGroupMutation.error ??
-    addMemberMutation.error ??
-    removeMemberMutation.error;
+    updateGroupMutation.error;
 
   return (
     <div className="flex flex-col">

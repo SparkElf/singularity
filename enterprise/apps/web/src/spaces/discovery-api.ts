@@ -10,6 +10,7 @@ import {
   documentDiscoveryBacklinksDataSchema,
   documentDiscoveryGraphDataSchema,
   documentDiscoveryHistoryDataSchema,
+  documentDiscoveryOutlineDataSchema,
   spaceDiscoveryGraphResponseSchema,
   spaceDiscoverySearchResponseSchema,
   type DocumentDiscoveryBacklink,
@@ -18,6 +19,7 @@ import {
   type DocumentDiscoveryGraphLink,
   type DocumentDiscoveryGraphNode,
   type DocumentDiscoveryHistoryData,
+  type DocumentDiscoveryOutlineItem,
   type SpaceDiscoveryBlock,
   type SpaceDiscoveryGraphLink,
   type SpaceDiscoveryGraphRequest,
@@ -34,16 +36,12 @@ import {
   requestJson,
   ResponseContractError,
 } from "@/api/http.ts";
-import { getCsrfToken } from "@/auth/api.ts";
+import { getOrFetchCsrfToken } from "@/auth/api.ts";
 
 export type DiscoveryBlock = SpaceDiscoveryBlock;
 export type DiscoverySearchResult = SpaceDiscoverySearchResponse;
 
-export interface DiscoveryOutlineItem {
-  readonly children: readonly DiscoveryOutlineItem[];
-  readonly id: string;
-  readonly name: string;
-}
+export type DiscoveryOutlineItem = DocumentDiscoveryOutlineItem;
 
 export type DiscoveryBacklinkItem = DocumentDiscoveryBacklink;
 
@@ -93,20 +91,6 @@ function objectValue(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function arrayValue(value: unknown, field: string): readonly unknown[] {
-  if (!Array.isArray(value)) {
-    return contractError(`Discovery response ${field} must be an array`);
-  }
-  return value;
-}
-
-function stringValue(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    return contractError(`Discovery response ${field} must be a string`);
-  }
-  return value;
-}
-
 function kernelData(value: unknown): unknown {
   const result = objectValue(value, "root") as Partial<KernelResult>;
   if (result.code !== 0 || !("data" in result)) {
@@ -141,18 +125,12 @@ function parseSearchResult(value: unknown): DiscoverySearchResult {
   }
 }
 
-function parseOutlineItem(value: unknown): DiscoveryOutlineItem {
-  const item = objectValue(value, "outline item");
-  const children = item.children === undefined
-    ? []
-    : arrayValue(item.children, "outline item.children").map(parseOutlineItem);
-  return {
-    children,
-    id: stringValue(item.id, "outline item.id"),
-    name: typeof item.name === "string" && item.name !== ""
-      ? item.name
-      : stringValue(item.hPath, "outline item.hPath"),
-  };
+function parseOutlineResult(value: unknown): readonly DiscoveryOutlineItem[] {
+  try {
+    return documentDiscoveryOutlineDataSchema.parse(kernelData(value));
+  } catch (cause) {
+    throw new ResponseContractError(cause);
+  }
 }
 
 function parseBacklinksResult(value: unknown): DiscoveryBacklinksResult {
@@ -197,7 +175,7 @@ export function createSpaceDiscoveryClient(input: {
     schema: DiscoveryResponseSchema<T>,
   ): Promise<T> => {
     try {
-      const csrfToken = await getCsrfToken(signal);
+      const csrfToken = await getOrFetchCsrfToken(signal);
       const value = await requestJson(
         schema,
         path,
@@ -206,7 +184,7 @@ export function createSpaceDiscoveryClient(input: {
           credentials: "same-origin",
           headers: {
             "Content-Type": "application/json",
-            [CSRF_HEADER_NAME]: csrfToken.csrfToken,
+            [CSRF_HEADER_NAME]: csrfToken,
           },
           method: "POST",
           redirect: "error",
@@ -221,7 +199,7 @@ export function createSpaceDiscoveryClient(input: {
       if (isApiProblem(error, "unauthenticated")) {
         input.onRuntimeError({
           category: "unauthenticated",
-          requestId: error.problem.requestId,
+          triggeringRequestId: error.problem.requestId,
           type: "runtime-error",
         });
       } else if (
@@ -230,25 +208,23 @@ export function createSpaceDiscoveryClient(input: {
       ) {
         input.onRuntimeError({
           category: "forbidden",
-          requestId: error.problem.requestId,
+          triggeringRequestId: error.problem.requestId,
           type: "runtime-error",
         });
       } else if (error instanceof NetworkFailureError) {
         input.onRuntimeError({
           category: "network-failure",
-          requestId: crypto.randomUUID(),
           type: "runtime-error",
         });
       } else if (isApiProblem(error, "service-unavailable")) {
         input.onRuntimeError({
           category: "kernel-unavailable",
-          requestId: error.problem.requestId,
+          triggeringRequestId: error.problem.requestId,
           type: "runtime-error",
         });
       } else if (error instanceof ResponseContractError) {
         input.onRuntimeError({
           category: "kernel-unavailable",
-          requestId: crypto.randomUUID(),
           type: "runtime-error",
         });
       }
@@ -285,10 +261,10 @@ const GRAPH_TYPES = {
   list: false,
   listItem: false,
   math: false,
-  paragraph: false,
+  paragraph: true,
   super: false,
   table: false,
-  tag: false,
+  tag: true,
 } as const;
 
 const GRAPH_D3 = {
@@ -329,7 +305,7 @@ export async function loadDocumentOutline(input: {
     { id: input.documentId, preview: input.preview },
     requestOptions(contentIdentity(input), input.signal),
   );
-  return arrayValue(kernelData(response), "data").map(parseOutlineItem);
+  return parseOutlineResult(response);
 }
 
 export async function loadDocumentBacklinks(input: {

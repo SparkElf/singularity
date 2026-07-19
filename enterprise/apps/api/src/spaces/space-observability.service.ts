@@ -17,6 +17,7 @@ interface ObservationRow {
   healthErrorCode: string | null;
   healthSampledAt: Date | null;
   healthStatus: "ready" | "unavailable" | null;
+  kernelStatus: "ready" | "starting" | "unavailable";
   kernelVersion: string | null;
   sampleDurationMilliseconds: number | null;
 }
@@ -26,9 +27,15 @@ function healthView(
   now: number,
 ): SpaceObservabilityView["health"] {
   if (row.healthSampledAt === null) {
+    if (row.kernelStatus === "unavailable") {
+      return { reason: "kernel-unavailable", status: "unavailable" };
+    }
     return { reason: "no-sample", status: "unavailable" };
   }
   const sampledAt = row.healthSampledAt.toISOString();
+  if (row.kernelStatus !== "ready") {
+    return { reason: "kernel-unavailable", sampledAt, status: "unavailable" };
+  }
   if (
     row.healthErrorCode !== null ||
     row.healthStatus === null ||
@@ -105,6 +112,7 @@ export class SpaceObservabilityService {
       const rows = await transaction.$queryRaw<ObservationRow[]>(
         Prisma.sql`
           SELECT
+            kernel."status" AS "kernelStatus",
             health."status" AS "healthStatus",
             health."kernel_version" AS "kernelVersion",
             health."sampled_at" AS "healthSampledAt",

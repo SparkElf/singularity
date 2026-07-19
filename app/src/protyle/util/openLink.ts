@@ -1,6 +1,6 @@
 import {protyleContentIdentity} from "./contentLoad";
 
-const parseAssetTarget = (linkAddress: string) => {
+export const parseProtyleAssetTarget = (linkAddress: string) => {
     const pathAndQuery = linkAddress.split("?", 2);
     const path = pathAndQuery[0];
     const pathSegments = path.split("/");
@@ -25,7 +25,7 @@ export const openProtyleLink = (protyle: IProtyle, link: string) => {
     }
     if (linkAddress.toLowerCase().startsWith("assets/")) {
         const identity = protyleContentIdentity(protyle);
-        const target = parseAssetTarget(linkAddress);
+        const target = parseProtyleAssetTarget(linkAddress);
         protyle.host.dispatch({
             type: "open-asset",
             documentId: identity.documentId,

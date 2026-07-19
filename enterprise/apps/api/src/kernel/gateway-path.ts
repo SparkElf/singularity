@@ -26,6 +26,7 @@ export interface KernelContentIdentity {
 }
 
 export interface KernelGatewayTarget {
+  readonly forceDownload: boolean;
   readonly identity: KernelContentIdentity;
   readonly organizationId: string;
   readonly policy: ResolvedKernelRoutePolicy;
@@ -137,6 +138,7 @@ export function parseKernelGatewayTarget(
     return null;
   }
 
+  let forceDownload: boolean;
   let identity: KernelContentIdentity;
   let surface: KernelGatewaySurface;
   let upstreamPath: string;
@@ -149,6 +151,7 @@ export function parseKernelGatewayTarget(
       singleHeader(headers, DOCUMENT_ID_HEADER),
     );
     surface = "api";
+    forceDownload = false;
     upstreamPath = route.remainder.slice("/kernel/api".length);
   } else if (route.remainder.startsWith("/emojis/")) {
     if (
@@ -158,6 +161,7 @@ export function parseKernelGatewayTarget(
     }
     identity = resourceIdentity(route.url.searchParams);
     surface = "asset";
+    forceDownload = false;
     upstreamPath = route.remainder;
   } else if (route.remainder.startsWith("/assets/")) {
     const allowedParameters = route.url.searchParams.has("download")
@@ -172,6 +176,7 @@ export function parseKernelGatewayTarget(
     }
     identity = resourceIdentity(route.url.searchParams);
     surface = "asset";
+    forceDownload = route.url.searchParams.get("download") === "true";
     const upstream = new URL(
       route.remainder,
       "https://kernel.invalid",
@@ -190,6 +195,7 @@ export function parseKernelGatewayTarget(
       singleHeader(headers, DOCUMENT_ID_HEADER),
     );
     surface = "upload";
+    forceDownload = false;
     upstreamPath = `/upload?notebook=${encodeURIComponent(identity.notebookId)}&documentId=${encodeURIComponent(identity.documentId)}`;
   } else if (route.remainder.startsWith("/exports/")) {
     if (
@@ -204,6 +210,7 @@ export function parseKernelGatewayTarget(
     }
     identity = resourceIdentity(route.url.searchParams);
     surface = "export";
+    forceDownload = true;
     const upstream = new URL(
       `/export/${route.remainder.slice("/exports/".length)}`,
       "https://kernel.invalid",
@@ -228,6 +235,7 @@ export function parseKernelGatewayTarget(
     throw new KernelGatewayAdmissionError(403);
   }
   return {
+    forceDownload,
     identity,
     organizationId: route.organizationId,
     policy,

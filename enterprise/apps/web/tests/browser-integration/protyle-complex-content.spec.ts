@@ -23,6 +23,7 @@ const DOCUMENT_C = "20260719000102-docum03";
 const BLOCK_A = "20260719000200-block01";
 const BLOCK_B = "20260719000201-block02";
 const BLOCK_C = "20260719000202-block03";
+const HEADING_A = "20260719000203-headin01";
 const AV_BLOCK = "20260719000300-avblk01";
 const AV_ID = "20990719000301-av00001";
 const AV_VIEW_ID = "20990719000302-avview01";
@@ -32,6 +33,8 @@ const AV_CELL_ID = "20990719000305-avcell01";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
 const GATEWAY_BASE_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
+const CANONICAL_RENAME_TITLE = "内核规范标题";
+const CANONICAL_RENAME_REF_TEXT = "内核规范引用文本";
 
 interface DocumentFixture {
   readonly blockId: string;
@@ -78,6 +81,10 @@ function attributeViewBlock(rendered: boolean): string {
   return `<div class="av" data-node-id="${AV_BLOCK}" data-av-id="${AV_ID}" data-type="NodeAttributeView" data-av-type="table"${rendered ? ` data-render="true"` : ""}><div spellcheck="true"></div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`;
 }
 
+function headingBlock(): string {
+  return `<div data-node-id="${HEADING_A}" data-type="NodeHeading" data-subtype="h2" class="h2" fold="1" updated="20260719000000"><div contenteditable="true" spellcheck="false">折叠标题</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`;
+}
+
 function documentContent(document: DocumentFixture, rendered: boolean): string {
   if (document.documentId === DOCUMENT_A) {
     return [
@@ -85,6 +92,7 @@ function documentContent(document: DocumentFixture, rendered: boolean): string {
         BLOCK_A,
         `${document.text} <span data-type="block-ref" data-id="${BLOCK_B}" data-notebook-id="${NOTEBOOK_A}" data-document-id="${DOCUMENT_B}" data-subtype="s">块目标</span> <span data-type="block-ref" data-id="${DOCUMENT_C}" data-notebook-id="${NOTEBOOK_B}" data-document-id="${DOCUMENT_C}" data-subtype="d">文档目标</span>`,
       ),
+      headingBlock(),
       attributeViewBlock(rendered),
     ].join("");
   }
@@ -220,6 +228,9 @@ function attributeViewResponse(): object {
 function discoveryResponse(kernelPath: string): object {
   if (kernelPath === "/api/ref/getBacklink2") {
     return { code: 0, data: { backlinks: [], backmentions: [] }, msg: "" };
+  }
+  if (kernelPath === "/api/outline/getDocOutline") {
+    return { code: 0, data: [], msg: "" };
   }
   return {
     code: 0,
@@ -426,12 +437,26 @@ async function installGatewayBoundary(
       await fulfillJson(route, { code: 0, data: (body as { transactions?: unknown }).transactions ?? [], msg: "" });
       return;
     }
+    if (kernelPath === "/api/filetree/renameDoc") {
+      await fulfillJson(route, {
+        code: 0,
+        data: {
+          documentId: observed.documentId,
+          empty: false,
+          notebookId: observed.notebookId,
+          refText: CANONICAL_RENAME_REF_TEXT,
+          title: CANONICAL_RENAME_TITLE,
+        },
+        msg: "",
+      });
+      return;
+    }
     if (kernelPath === "/api/av/renderAttributeView") {
       boundary.avRequests.push(observed);
       await fulfillJson(route, attributeViewResponse());
       return;
     }
-    if (kernelPath === "/api/ref/getBacklink2" || kernelPath === "/api/graph/getLocalGraph") {
+    if (kernelPath === "/api/outline/getDocOutline" || kernelPath === "/api/ref/getBacklink2" || kernelPath === "/api/graph/getLocalGraph") {
       boundary.discoveryRequests.push(observed);
       await fulfillJson(route, discoveryResponse(kernelPath));
       return;
@@ -556,7 +581,7 @@ test.describe("Protyle complex-content identity integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
-  test("Core reference menu opens backlinks and graph for the target root document", async ({ page }, testInfo) => {
+  test("Core menus and shortcuts open document panels with explicit identity", async ({ page }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
@@ -582,6 +607,39 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(graphRequest.notebookId).toBe(NOTEBOOK_A);
     expect(graphRequest.documentId).toBe(DOCUMENT_B);
     expect(graphRequest.body).toMatchObject({ id: DOCUMENT_B });
+
+    const focusReference = async (target: Locator) => {
+      await target.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        element.closest<HTMLElement>("[contenteditable=true]")?.focus();
+      });
+    };
+    const crossNotebookReference = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).nth(1);
+    await focusReference(crossNotebookReference);
+    await page.keyboard.press("Control+Alt+B");
+    await expect.poll(() => boundary.discoveryRequests.filter((request) => request.kernelPath === "/api/ref/getBacklink2").length).toBe(2);
+    const shortcutBacklinkRequest = lastRequest(boundary.discoveryRequests, "/api/ref/getBacklink2");
+    expect(shortcutBacklinkRequest.notebookId).toBe(NOTEBOOK_B);
+    expect(shortcutBacklinkRequest.documentId).toBe(DOCUMENT_C);
+
+    await focusReference(crossNotebookReference);
+    await page.keyboard.press("Control+Alt+G");
+    await expect.poll(() => boundary.discoveryRequests.filter((request) => request.kernelPath === "/api/graph/getLocalGraph").length).toBe(2);
+    const shortcutGraphRequest = lastRequest(boundary.discoveryRequests, "/api/graph/getLocalGraph");
+    expect(shortcutGraphRequest.notebookId).toBe(NOTEBOOK_B);
+    expect(shortcutGraphRequest.documentId).toBe(DOCUMENT_C);
+
+    await focusReference(crossNotebookReference);
+    await page.keyboard.press("Control+Alt+O");
+    await expect.poll(() => boundary.discoveryRequests.filter((request) => request.kernelPath === "/api/outline/getDocOutline").length).toBe(1);
+    const shortcutOutlineRequest = lastRequest(boundary.discoveryRequests, "/api/outline/getDocOutline");
+    expect(shortcutOutlineRequest.notebookId).toBe(NOTEBOOK_A);
+    expect(shortcutOutlineRequest.documentId).toBe(DOCUMENT_A);
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
@@ -616,7 +674,300 @@ test.describe("Protyle complex-content identity integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
-  test("filters AV refresh and transactions by their explicit content targets", async ({ page }, testInfo) => {
+  test("applies the canonical rename response and matching document push", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+    const title = editor.locator(".protyle-title__input");
+
+    await title.fill("客户端标题");
+    await title.blur();
+    await expect.poll(() => boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/filetree/renameDoc",
+    ).length).toBe(1);
+    const renameRequest = lastRequest(boundary.kernelRequests, "/api/filetree/renameDoc");
+    expect(renameRequest.notebookId).toBe(NOTEBOOK_A);
+    expect(renameRequest.documentId).toBe(DOCUMENT_A);
+    expect(renameRequest.body).toMatchObject({
+      notebook: NOTEBOOK_A,
+      path: `/${DOCUMENT_A}.sy`,
+      title: "客户端标题",
+    });
+    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+
+    socket!.route.send(JSON.stringify({
+      cmd: "rename",
+      code: 0,
+      data: {
+        documentId: DOCUMENT_A,
+        empty: false,
+        notebookId: NOTEBOOK_B,
+        refText: "错误身份引用文本",
+        title: "错误身份标题",
+      },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+
+    socket!.route.send(JSON.stringify({
+      cmd: "rename",
+      code: 0,
+      data: {
+        documentId: DOCUMENT_A,
+        empty: false,
+        notebookId: NOTEBOOK_A,
+        refText: CANONICAL_RENAME_REF_TEXT,
+        title: CANONICAL_RENAME_TITLE,
+      },
+      msg: "",
+    }));
+    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("routes dynamic reference text and counts by rendered document identity", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+    const dynamicReference = editor.locator(`[data-node-id="${BLOCK_A}"] [data-id="${DOCUMENT_C}"]`);
+    const block = editor.locator(`[data-node-id="${BLOCK_A}"]`);
+    const blockCount = block.locator(":scope > .protyle-attr .protyle-attr--refcount");
+    const titleCount = editor.locator(".protyle-title .protyle-attr--refcount");
+
+    socket!.route.send(JSON.stringify({
+      cmd: "setRefDynamicText",
+      code: 0,
+      data: {
+        blockID: BLOCK_A,
+        defBlockID: DOCUMENT_C,
+        documentId: DOCUMENT_A,
+        notebookId: NOTEBOOK_B,
+        refText: "错误内容库动态文本",
+      },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(dynamicReference).toHaveText("文档目标");
+
+    socket!.route.send(JSON.stringify({
+      cmd: "setRefDynamicText",
+      code: 0,
+      data: {
+        blockID: BLOCK_A,
+        defBlockID: DOCUMENT_C,
+        documentId: DOCUMENT_A,
+        notebookId: NOTEBOOK_A,
+        refText: "动态引用已更新",
+      },
+      msg: "",
+    }));
+    await expect(dynamicReference).toHaveText("动态引用已更新");
+
+    socket!.route.send(JSON.stringify({
+      cmd: "setDefRefCount",
+      code: 0,
+      data: {
+        blockID: BLOCK_A,
+        defIDs: [DOCUMENT_C],
+        documentId: DOCUMENT_B,
+        notebookId: NOTEBOOK_A,
+        refCount: 9,
+        rootRefCount: 8,
+      },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(block).not.toHaveAttribute("refcount");
+    await expect(blockCount).toHaveCount(0);
+    await expect(titleCount).toHaveCount(0);
+
+    socket!.route.send(JSON.stringify({
+      cmd: "setDefRefCount",
+      code: 0,
+      data: {
+        blockID: BLOCK_A,
+        defIDs: [DOCUMENT_C],
+        documentId: DOCUMENT_A,
+        notebookId: NOTEBOOK_A,
+        refCount: 2,
+        rootRefCount: 1,
+      },
+      msg: "",
+    }));
+    await expect(block).toHaveAttribute("refcount", "2");
+    await expect(blockCount).toHaveText("2");
+    await expect(titleCount).toHaveText("1");
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("filters heading and loading lifecycle pushes by exact document identity", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+    const heading = editor.locator(`[data-node-id="${HEADING_A}"]`);
+    const initialTransactions = boundary.transactionRequests.length;
+
+    socket!.route.send(JSON.stringify({
+      cmd: "unfoldHeading",
+      code: 0,
+      data: {
+        currentNodeID: BLOCK_A,
+        documentId: DOCUMENT_A,
+        id: HEADING_A,
+        notebookId: NOTEBOOK_B,
+      },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(heading).toHaveAttribute("fold", "1");
+    expect(boundary.transactionRequests).toHaveLength(initialTransactions);
+
+    socket!.route.send(JSON.stringify({
+      cmd: "unfoldHeading",
+      code: 0,
+      data: {
+        currentNodeID: BLOCK_A,
+        documentId: DOCUMENT_A,
+        id: HEADING_A,
+        notebookId: NOTEBOOK_A,
+      },
+      msg: "",
+    }));
+    await expect(heading).not.toHaveAttribute("fold");
+    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(initialTransactions);
+
+    socket!.route.send(JSON.stringify({
+      cmd: "addLoading",
+      code: 0,
+      data: { documentId: DOCUMENT_A, notebookId: NOTEBOOK_B },
+      msg: "错误身份加载",
+    }));
+    socket!.route.send(JSON.stringify({
+      cmd: "addLoading",
+      code: 0,
+      data: { documentId: DOCUMENT_A, notebookId: NOTEBOOK_A },
+      msg: "正确身份加载",
+    }));
+    await expect(editor.locator(".wysiwygLoading").filter({ hasText: "正确身份加载" })).toHaveCount(1);
+    await expect(editor.locator(".wysiwygLoading")).toHaveCount(1);
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("closes only the workspace document targeted by removeDoc", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+
+    socket!.route.send(JSON.stringify({
+      cmd: "removeDoc",
+      code: 0,
+      data: { documentId: DOCUMENT_A, notebookId: NOTEBOOK_B },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+
+    socket!.route.send(JSON.stringify({
+      cmd: "removeDoc",
+      code: 0,
+      data: { documentId: DOCUMENT_A, notebookId: NOTEBOOK_A },
+      msg: "",
+    }));
+    await expect(page.getByText("选择文档", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("protyle-host")).toHaveCount(0);
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("moves a document only when notebook, document, and source path all match", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+    const initialDocumentRequests = boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/filetree/getDoc",
+    ).length;
+
+    for (const data of [
+      {
+        documentId: DOCUMENT_A,
+        fromNotebook: NOTEBOOK_B,
+        fromPath: `/${DOCUMENT_A}.sy`,
+        newPath: "/wrong-notebook.sy",
+        toNotebook: NOTEBOOK_B,
+        toPath: "/wrong-notebook.sy",
+      },
+      {
+        documentId: DOCUMENT_B,
+        fromNotebook: NOTEBOOK_A,
+        fromPath: `/${DOCUMENT_A}.sy`,
+        newPath: "/wrong-document.sy",
+        toNotebook: NOTEBOOK_B,
+        toPath: "/wrong-document.sy",
+      },
+      {
+        documentId: DOCUMENT_A,
+        fromNotebook: NOTEBOOK_A,
+        fromPath: "/wrong-source-path.sy",
+        newPath: "/wrong-source-path.sy",
+        toNotebook: NOTEBOOK_B,
+        toPath: "/wrong-source-path.sy",
+      },
+    ]) {
+      socket!.route.send(JSON.stringify({ cmd: "moveDoc", code: 0, data, msg: "" }));
+    }
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/filetree/getDoc",
+    )).toHaveLength(initialDocumentRequests);
+    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+
+    socket!.route.send(JSON.stringify({
+      cmd: "moveDoc",
+      code: 0,
+      data: {
+        documentId: DOCUMENT_A,
+        fromNotebook: NOTEBOOK_A,
+        fromPath: `/${DOCUMENT_A}.sy`,
+        newPath: `/moved/${DOCUMENT_A}.sy`,
+        toNotebook: NOTEBOOK_B,
+        toPath: `/moved/${DOCUMENT_A}.sy`,
+      },
+      msg: "",
+    }));
+    await expect.poll(() => boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/filetree/getDoc" &&
+        request.notebookId === NOTEBOOK_B && request.documentId === DOCUMENT_A,
+    ).length).toBe(1);
+    await expect(page.getByTestId("protyle-host").locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("filters AV refresh by its explicit notebook identity", async ({ page }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page, { skipInitialAttributeViewRender: true });
@@ -648,15 +999,26 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(refreshRequest.notebookId).toBe(NOTEBOOK_A);
     expect(refreshRequest.documentId).toBe(DOCUMENT_A);
 
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("updates document references only for the renamed notebook and document", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
+
     const crossNotebookRef = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).nth(1);
     socket!.route.send(JSON.stringify({
       cmd: "rename",
       code: 0,
       data: {
-        box: NOTEBOOK_A,
+        notebookId: NOTEBOOK_A,
+        documentId: DOCUMENT_C,
         empty: false,
-        id: DOCUMENT_C,
-        path: `/${DOCUMENT_C}.sy`,
         refText: "错误内容库重命名",
         title: "错误内容库重命名",
       },
@@ -669,16 +1031,27 @@ test.describe("Protyle complex-content identity integration", () => {
       cmd: "rename",
       code: 0,
       data: {
-        box: NOTEBOOK_B,
+        notebookId: NOTEBOOK_B,
+        documentId: DOCUMENT_C,
         empty: false,
-        id: DOCUMENT_C,
-        path: `/${DOCUMENT_C}.sy`,
         refText: "跨库目标已重命名",
         title: "跨库目标已重命名",
       },
       msg: "",
     }));
     await expect(crossNotebookRef).toHaveText("跨库目标已重命名");
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("reloads only the document named by both identity fields", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
 
     const initialDocumentRequests = boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/filetree/getDoc",
@@ -715,35 +1088,17 @@ test.describe("Protyle complex-content identity integration", () => {
       (request) => request.kernelPath === "/api/filetree/getDoc",
     ).length).toBeGreaterThan(initialDocumentRequests);
 
-    const beforeMoveRequests = boundary.kernelRequests.length;
-    socket!.route.send(JSON.stringify({
-      cmd: "moveDoc",
-      code: 0,
-      data: {
-        fromNotebook: NOTEBOOK_B,
-        fromPath: `/${DOCUMENT_A}.sy`,
-        id: DOCUMENT_A,
-        newPath: "/wrong-source.sy",
-        toNotebook: NOTEBOOK_B,
-        toPath: "/wrong-source.sy",
-      },
-      msg: "",
-    }));
-    socket!.route.send(JSON.stringify({
-      cmd: "moveDoc",
-      code: 0,
-      data: {
-        fromNotebook: NOTEBOOK_A,
-        fromPath: `/${DOCUMENT_A}.sy`,
-        id: DOCUMENT_B,
-        newPath: "/wrong-document.sy",
-        toNotebook: NOTEBOOK_B,
-        toPath: "/wrong-document.sy",
-      },
-      msg: "",
-    }));
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    expect(boundary.kernelRequests).toHaveLength(beforeMoveRequests);
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
+  test("applies transactions only to their explicit content target", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openDocument(page);
+    const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
+    expect(socket).toBeDefined();
 
     const beforeWrongTransaction = await editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`).textContent();
     socket!.route.send(JSON.stringify({

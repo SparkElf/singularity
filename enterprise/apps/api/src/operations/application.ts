@@ -4,9 +4,10 @@ import type { Writable } from "node:stream";
 
 import type { INestApplicationContext, LoggerService } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import type { AuditConfiguration } from "@singularity/database";
 
 import { CoreModule } from "../core.module.js";
-import type { AuditConfiguration } from "../audit/audit-writer.service.js";
+import { DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS } from "../configuration.js";
 import { SystemClock } from "../identity/clock.js";
 import { AccessOperationsService } from "./access-operations.service.js";
 import type { AccessOperationInput } from "./runner.js";
@@ -53,6 +54,8 @@ export async function runAccessOperationsApplication(
         auditConfiguration: options.auditConfiguration,
         clock: new SystemClock(),
         configuration: {
+          contentAuditIndeterminateAfterMilliseconds:
+            DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
           oidcClientSecretFiles: {},
           publicOrigin: "https://operations.invalid",
           trustedProxyCidrs: [],

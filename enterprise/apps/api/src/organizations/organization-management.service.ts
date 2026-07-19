@@ -10,9 +10,8 @@ import type {
   SpaceManagementCapability,
   UpdateOrganizationMemberRequest,
 } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import { unactivatedSpaceRestorePersistenceStatuses } from "../backups/restore-status.persistence.js";
 import type { Clock } from "../identity/clock.js";
 import { IdentityService } from "../identity/identity.service.js";
@@ -643,21 +642,23 @@ export class OrganizationManagementService {
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${targetUserId} FOR UPDATE`,
       );
-      await this.identity.revokeUserSessionsInTransaction(
+      const outcome = await this.identity.revokeUserSessionsInTransaction(
         transaction,
         targetUserId,
         this.clock.now(),
         requestId,
       );
-      await this.audit.appendPermissionChange(transaction, {
-        actorUserId,
-        occurredAt: this.clock.now(),
-        organizationId,
-        requestId,
-        spaceId: null,
-        targetId: targetUserId,
-        targetType: "session",
-      });
+      if (outcome === "revoked") {
+        await this.audit.appendPermissionChange(transaction, {
+          actorUserId,
+          occurredAt: this.clock.now(),
+          organizationId,
+          requestId,
+          spaceId: null,
+          targetId: targetUserId,
+          targetType: "session",
+        });
+      }
     });
   }
 
@@ -847,7 +848,10 @@ export class OrganizationManagementService {
       throw conflict();
     }
     const existingMembershipRows = await transaction.$queryRaw<
-      Array<{ role: "owner" | "admin" | "member"; status: string }>
+      Array<{
+        role: "owner" | "admin" | "member";
+        status: "active" | "inactive";
+      }>
     >(
       Prisma.sql`
         SELECT "role", "status"
@@ -858,6 +862,9 @@ export class OrganizationManagementService {
       `,
     );
     const existingMembership = existingMembershipRows[0];
+    if (existingMembership?.role === "owner") {
+      throw conflict();
+    }
     await transaction.organizationMembership.upsert({
       where: {
         organizationId_userId: {

@@ -50,7 +50,10 @@ const unavailableSampledHealthSchema = z
   })
   .strict();
 const unavailableUnsampledHealthSchema = z
-  .object({ reason: z.literal("no-sample"), status: z.literal("unavailable") })
+  .object({
+    reason: z.enum(["kernel-unavailable", "no-sample"]),
+    status: z.literal("unavailable"),
+  })
   .strict();
 export const spaceHealthViewSchema = z.union([
   availableHealthSchema,
@@ -97,7 +100,7 @@ const UNAVAILABLE_SAMPLED_HEALTH_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
 });
 const UNAVAILABLE_UNSAMPLED_HEALTH_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({
-    reason: { type: "string", enum: ["no-sample"] },
+    reason: { type: "string", enum: ["kernel-unavailable", "no-sample"] },
     status: { type: "string", enum: ["unavailable"] },
   });
 

@@ -15,14 +15,15 @@ import {
   AUTH_SESSION_COOKIE_NAME,
   OPENAPI_DOCUMENT_PATH,
 } from "@singularity/contracts";
+import type { AuditConfiguration } from "@singularity/database";
 
 import { AppModule } from "./app.module.js";
 import {
+  parseContentAuditIndeterminateAfterMilliseconds,
   parseOidcClientSecretFiles,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
-import type { AuditConfiguration } from "./audit/audit-writer.service.js";
 import { SystemClock, type Clock } from "./identity/clock.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
@@ -36,6 +37,7 @@ import { ApiProblemFilter } from "./problem.js";
 export interface CreateApiApplicationOptions {
   auditConfiguration: AuditConfiguration;
   clock?: Clock;
+  contentAuditIndeterminateAfterMilliseconds?: string;
   databaseUrl: string | undefined;
   https?: HttpsServerOptions;
   kernelGateway: KernelGatewayRuntimeConfiguration;
@@ -49,6 +51,10 @@ export async function createApiApplication(
   options: CreateApiApplicationOptions,
 ): Promise<NestFastifyApplication> {
   const configuration = {
+    contentAuditIndeterminateAfterMilliseconds:
+      parseContentAuditIndeterminateAfterMilliseconds(
+        options.contentAuditIndeterminateAfterMilliseconds,
+      ),
     oidcClientSecretFiles: parseOidcClientSecretFiles(
       options.oidcClientSecretFiles,
     ),

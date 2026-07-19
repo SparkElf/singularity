@@ -157,19 +157,15 @@ func ExistsAssetText(asset string) (ret bool) {
 	return
 }
 
-func OcrAsset(asset string) (ret []map[string]any, err error) {
+func OcrAsset(assetKey, assetAbsPath string) (ret []map[string]any, err error) {
 	if !TesseractEnabled {
 		err = errors.New(Langs[Lang][266])
 		return
 	}
-
-	assetsPath := GetDataAssetsAbsPath()
-	assetAbsPath := strings.TrimPrefix(asset, "assets")
-	assetAbsPath = filepath.Join(assetsPath, assetAbsPath)
 	ret = Tesseract(assetAbsPath)
 	assetsTextsLock.Lock()
 	ocrText := GetOcrJsonText(ret)
-	assetsTexts[asset] = ocrText
+	assetsTexts[assetKey] = ocrText
 	assetsTextsLock.Unlock()
 	if "" != ocrText {
 		assetsTextsChanged.Store(true)

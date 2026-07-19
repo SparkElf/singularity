@@ -21,18 +21,19 @@ import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { PasswordHasher } from "../src/identity/password-hasher.js";
+import { CapturingLogger } from "./support/capturing-logger.js";
 import { truncateTestDatabase } from "./support/database.js";
-import {
-  startTestApiApplication,
-  TEST_PUBLIC_ORIGIN,
-  type TestApiApplication,
-} from "./support/test-app.js";
 import {
   startTestKernelGateway,
   type TestKernelGateway,
   type TestKernelRequest,
   type TestKernelResponse,
 } from "./support/kernel-gateway.js";
+import {
+  startTestApiApplication,
+  TEST_PUBLIC_ORIGIN,
+  type TestApiApplication,
+} from "./support/test-app.js";
 
 const USER_PASSWORD = "correct horse battery staple";
 const SHARE_PASSWORD = "protected share password";
@@ -48,6 +49,11 @@ interface AuthenticatedGraph {
   csrfToken: string;
   organizationId: string;
   spaceId: string;
+}
+
+interface AuthenticatedGraphOptions {
+  organizationRole?: "admin" | "member" | "owner";
+  spaceRole?: "admin" | "editor" | "viewer";
 }
 
 function buildPath(
@@ -116,14 +122,17 @@ function kernelResponse(request: TestKernelRequest): TestKernelResponse {
 describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () => {
   let database: DatabaseClient;
   let kernel: TestKernelGateway;
+  let logger: CapturingLogger;
   let testApi: TestApiApplication;
   let userPasswordDigest: string;
 
   beforeAll(async () => {
+    logger = new CapturingLogger();
     kernel = await startTestKernelGateway({ handler: kernelResponse });
     try {
       testApi = await startTestApiApplication({
         kernelGateway: kernel.configuration,
+        logger,
       });
       database = testApi.app.get(DatabaseRuntime).client;
       userPasswordDigest = await testApi.app
@@ -137,6 +146,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
 
   afterEach(async () => {
     await truncateTestDatabase(database);
+    logger.clear();
   });
 
   afterAll(async () => {
@@ -147,7 +157,9 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     }
   });
 
-  async function createAuthenticatedGraph(): Promise<AuthenticatedGraph> {
+  async function createAuthenticatedGraph(
+    options: AuthenticatedGraphOptions = {},
+  ): Promise<AuthenticatedGraph> {
     const userId = randomUUID();
     const organizationId = randomUUID();
     const loginIdentifier = `share-${randomUUID()}@example.test`;
@@ -165,7 +177,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     await database.organizationMembership.create({
       data: {
         organizationId,
-        role: "owner",
+        role: options.organizationRole ?? "owner",
         status: "active",
         userId,
       },
@@ -181,7 +193,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     await database.spaceMembership.create({
       data: {
         organizationId,
-        role: "admin",
+        role: options.spaceRole ?? "admin",
         spaceId: kernel.deployment.spaceId,
         status: "active",
         userId,
@@ -316,6 +328,33 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     );
   });
 
+  test("rejects a space viewer before Kernel verification or persistence", async () => {
+    const graph = await createAuthenticatedGraph({
+      organizationRole: "member",
+      spaceRole: "viewer",
+    });
+    const path = buildPath(ORGANIZATION_SPACE_SHARES_PATH_TEMPLATE, {
+      organizationId: graph.organizationId,
+      spaceId: graph.spaceId,
+    });
+    const requestCount = kernel.requests.length;
+    const response = await fetch(`${testApi.baseUrl}${path}`, {
+      body: JSON.stringify({
+        documentId: DOCUMENT_ID,
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        notebookId: NOTEBOOK_ID,
+        password: null,
+      }),
+      headers: mutationHeaders(graph),
+      method: "POST",
+    });
+
+    expect(response.status).toBe(403);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe("forbidden");
+    expect(kernel.requests).toHaveLength(requestCount);
+    expect(await database.documentShare.count()).toBe(0);
+  });
+
   test("rejects a Kernel projection whose document identity differs from the share", async () => {
     const graph = await createAuthenticatedGraph();
     const share = await createShare(graph, null, OTHER_DOCUMENT_ID);
@@ -380,6 +419,28 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     expect(apiProblemSchema.parse(await required.json()).code).toBe(
       "unauthenticated",
     );
+    expect(required.headers.get("cache-control")).toBe("no-store");
+    expect(required.headers.get("x-robots-tag")).toContain("noindex");
+
+    logger.clear();
+    const denied = await fetch(`${testApi.baseUrl}${challengePath}`, {
+      body: JSON.stringify({ password: "incorrect share password" }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: TEST_PUBLIC_ORIGIN,
+      },
+      method: "POST",
+    });
+    expect(denied.status).toBe(401);
+    expect(apiProblemSchema.parse(await denied.json()).code).toBe(
+      "unauthenticated",
+    );
+    expect(denied.headers.get("set-cookie")).toBeNull();
+    expect(logger.output).toContain("share.access");
+    expect(logger.output).toContain("sourceDigest");
+    expect(logger.output).not.toContain("127.0.0.1");
+    expect(logger.output).not.toContain("incorrect share password");
+    expect(logger.output).not.toContain(share.shareToken);
 
     const challenged = await fetch(`${testApi.baseUrl}${challengePath}`, {
       body: JSON.stringify({ password: SHARE_PASSWORD }),
@@ -408,6 +469,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     expect(document.headers.get("x-content-type-options")).toBe("nosniff");
     expect(document.headers.get("x-robots-tag")).toContain("noindex");
     const payload = sharedDocumentPayloadSchema.parse(await document.json());
+    expect(payload).not.toHaveProperty("documentId");
     expect(payload.html).toContain(
       `/api/v1/shares/${share.shareToken}/assets/${ASSET_ID}`,
     );

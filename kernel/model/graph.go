@@ -27,6 +27,7 @@ import (
 	"github.com/88250/lute/html"
 	"github.com/88250/lute/parse"
 	"github.com/siyuan-note/logging"
+	"github.com/siyuan-note/siyuan/kernel/conf"
 	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
@@ -61,16 +62,21 @@ type GraphArrowsTo struct {
 }
 
 func BuildTreeGraph(id, query string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
-	return buildTreeGraphInBox(id, query, "")
+	return buildTreeGraphInBox(id, query, "", Conf.Graph.Local)
 }
 
 // BuildTreeGraphInBox从显式选择的内容库解析图谱根节点；每个可导航节点仍携带自身源Box和DocumentID，
 // 不把根节点身份复制到关联节点。
 func BuildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
-	return buildTreeGraphInBox(id, query, notebookID)
+	return buildTreeGraphInBox(id, query, notebookID, Conf.Graph.Local)
 }
 
-func buildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+// BuildTreeGraphInBoxWithConfig使用调用方本次请求的局部图配置，不读写共享配置。
+func BuildTreeGraphInBoxWithConfig(id, query, notebookID string, local *conf.LocalGraph) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+	return buildTreeGraphInBox(id, query, notebookID, local)
+}
+
+func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (boxID string, nodes []*GraphNode, links []*GraphLink) {
 	nodes = []*GraphNode{}
 	links = []*GraphLink{}
 
@@ -87,8 +93,8 @@ func buildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*G
 	block := fromSQLBlock(sqlBlock, "", 0)
 
 	stmt := query2Stmt(query)
-	stmt += graphTypeFilter(true)
-	stmt += graphDailyNoteFilter(true)
+	stmt += graphTypeFilter(local.TypeFilter)
+	stmt += graphDailyNoteFilter(local.DailyNote)
 	stmt = strings.ReplaceAll(stmt, "content", "ref.content")
 	forwardlinks, backlinks := buildFullLinks(stmt)
 
@@ -132,7 +138,7 @@ func buildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*G
 			sqlRefBlocks = sql.QueryRefRootBlocksByDefRootIDs([]string{rootID})
 
 			// 关系图日记过滤失效 https://github.com/siyuan-note/siyuan/issues/7547
-			dailyNotesPaths := dailyNotePaths(true)
+			dailyNotesPaths := dailyNotePaths(local.DailyNote)
 			for _, sqlRefBs := range sqlRefBlocks {
 				refBlocks := fromSQLBlocks(&sqlRefBs, "", 0)
 
@@ -160,17 +166,17 @@ func buildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*G
 		}
 	}
 
-	blocks = filterDailyNote(blocks, true)
-	genTreeNodes(blocks, &nodes, &links, true)
-	growTreeGraph(&forwardlinks, &backlinks, &nodes)
+	blocks = filterDailyNote(blocks, local.DailyNote)
+	genTreeNodes(blocks, &nodes, &links, local.NodeSize)
+	growTreeGraph(&forwardlinks, &backlinks, &nodes, local.NodeSize)
 	blocks = append(blocks, forwardlinks...)
 	blocks = append(blocks, backlinks...)
-	buildLinks(&blocks, &links, true)
-	if Conf.Graph.Local.Tag {
+	buildLinks(&blocks, &links, local.Arrow)
+	if local.Tag {
 		p := sqlBlock.Path
-		linkTagBlocks(&blocks, &nodes, &links, p)
+		linkTagBlocks(&blocks, &nodes, &links, p, local.NodeSize)
 	}
-	markLinkedNodes(&nodes, &links, true)
+	markLinkedNodes(&nodes, &links, local.NodeSize)
 	nodes = removeDuplicatedUnescape(nodes)
 	return
 }
@@ -181,8 +187,8 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 
 	stmt := query2Stmt(query)
 	stmt = strings.TrimPrefix(stmt, "select * from blocks where")
-	stmt += graphTypeFilter(false)
-	stmt += graphDailyNoteFilter(false)
+	stmt += graphTypeFilter(Conf.Graph.Global.TypeFilter)
+	stmt += graphDailyNoteFilter(Conf.Graph.Global.DailyNote)
 	stmt = strings.ReplaceAll(stmt, "content", "ref.content")
 	forwardlinks, backlinks := buildFullLinks(stmt)
 
@@ -199,8 +205,8 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 
 	sqlBlocks := sql.GetAllChildBlocks(rootIDs, stmt, Conf.Graph.MaxBlocks)
 	treeBlocks := fromSQLBlocks(&sqlBlocks, "", 0)
-	treeBlocks = filterDailyNote(treeBlocks, false)
-	genTreeNodes(treeBlocks, &nodes, &links, false)
+	treeBlocks = filterDailyNote(treeBlocks, Conf.Graph.Global.DailyNote)
+	genTreeNodes(treeBlocks, &nodes, &links, Conf.Graph.Global.NodeSize)
 	blocks = append(blocks, treeBlocks...)
 
 	// 文档块关联
@@ -215,30 +221,26 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 		rootBlock.Refs = append(rootBlock.Refs, refBlocks...)
 	}
 
-	growTreeGraph(&forwardlinks, &backlinks, &nodes)
+	growTreeGraph(&forwardlinks, &backlinks, &nodes, Conf.Graph.Global.NodeSize)
 	blocks = append(blocks, forwardlinks...)
 	blocks = append(blocks, backlinks...)
-	buildLinks(&blocks, &links, false)
+	buildLinks(&blocks, &links, Conf.Graph.Global.Arrow)
 	if Conf.Graph.Global.Tag {
-		linkTagBlocks(&blocks, &nodes, &links, "")
+		linkTagBlocks(&blocks, &nodes, &links, "", Conf.Graph.Global.NodeSize)
 	}
-	markLinkedNodes(&nodes, &links, false)
+	markLinkedNodes(&nodes, &links, Conf.Graph.Global.NodeSize)
 	pruneUnref(&nodes, &links)
 	nodes = removeDuplicatedUnescape(nodes)
 	return
 }
 
-func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p string) {
+func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p string, nodeSize float64) {
 	tagSpans := sql.QueryTagSpans(p)
 	if 1 > len(tagSpans) {
 		return
 	}
 
 	isGlobal := "" == p
-	nodeSize := Conf.Graph.Global.NodeSize
-	if !isGlobal {
-		nodeSize = Conf.Graph.Local.NodeSize
-	}
 
 	// 构造标签节点
 	var tagNodes []*GraphNode
@@ -304,12 +306,12 @@ func tagNodeIn(tagNodes []*GraphNode, content string) *GraphNode {
 	return nil
 }
 
-func growTreeGraph(forwardlinks, backlinks *[]*Block, nodes *[]*GraphNode) {
+func growTreeGraph(forwardlinks, backlinks *[]*Block, nodes *[]*GraphNode, nodeSize float64) {
 	forwardDepth, backDepth := 0, 0
-	growLinkedNodes(forwardlinks, backlinks, nodes, nodes, &forwardDepth, &backDepth)
+	growLinkedNodes(forwardlinks, backlinks, nodes, nodes, &forwardDepth, &backDepth, nodeSize)
 }
 
-func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode, forwardDepth, backDepth *int) {
+func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode, forwardDepth, backDepth *int, nodeSize float64) {
 	if 1 > len(*nodes) {
 		return
 	}
@@ -333,7 +335,7 @@ func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode
 							Box:        refDef.Box,
 							DocumentID: refDef.RootID,
 							Path:       refDef.Path,
-							Size:       Conf.Graph.Local.NodeSize,
+							Size:       nodeSize,
 							Type:       refDef.Type,
 						}
 						nodeTitleLabel(defNode, nodeContentByBlock(refDef))
@@ -359,7 +361,7 @@ func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode
 							Box:        ref.Box,
 							DocumentID: ref.RootID,
 							Path:       ref.Path,
-							Size:       Conf.Graph.Local.NodeSize,
+							Size:       nodeSize,
 							Type:       ref.Type,
 						}
 						nodeTitleLabel(refNode, nodeContentByBlock(ref))
@@ -375,7 +377,7 @@ func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode
 	*generation = append(*generation, *backGeneration...)
 	*forwardDepth++
 	*backDepth++
-	growLinkedNodes(forwardlinks, backlinks, generation, nodes, forwardDepth, backDepth)
+	growLinkedNodes(forwardlinks, backlinks, generation, nodes, forwardDepth, backDepth, nodeSize)
 	*nodes = append(*nodes, *generation...)
 }
 
@@ -388,7 +390,7 @@ func existNodes(nodes *[]*GraphNode, id string) bool {
 	return false
 }
 
-func buildLinks(defs *[]*Block, links *[]*GraphLink, local bool) {
+func buildLinks(defs *[]*Block, links *[]*GraphLink, arrow bool) {
 	for _, def := range *defs {
 		for _, ref := range def.Refs {
 			link := &GraphLink{
@@ -396,26 +398,15 @@ func buildLinks(defs *[]*Block, links *[]*GraphLink, local bool) {
 				To:   def.ID,
 				Ref:  true,
 			}
-			if local {
-				if Conf.Graph.Local.Arrow {
-					link.Arrows = &GraphArrows{To: &GraphArrowsTo{Enabled: true}}
-				}
-			} else {
-				if Conf.Graph.Global.Arrow {
-					link.Arrows = &GraphArrows{To: &GraphArrowsTo{Enabled: true}}
-				}
+			if arrow {
+				link.Arrows = &GraphArrows{To: &GraphArrowsTo{Enabled: true}}
 			}
 			*links = append(*links, link)
 		}
 	}
 }
 
-func genTreeNodes(blocks []*Block, nodes *[]*GraphNode, links *[]*GraphLink, local bool) {
-	nodeSize := Conf.Graph.Local.NodeSize
-	if !local {
-		nodeSize = Conf.Graph.Global.NodeSize
-	}
-
+func genTreeNodes(blocks []*Block, nodes *[]*GraphNode, links *[]*GraphLink, nodeSize float64) {
 	for _, block := range blocks {
 		node := &GraphNode{
 			ID:         block.ID,
@@ -436,12 +427,7 @@ func genTreeNodes(blocks []*Block, nodes *[]*GraphNode, links *[]*GraphLink, loc
 	}
 }
 
-func markLinkedNodes(nodes *[]*GraphNode, links *[]*GraphLink, local bool) {
-	nodeSize := Conf.Graph.Local.NodeSize
-	if !local {
-		nodeSize = Conf.Graph.Global.NodeSize
-	}
-
+func markLinkedNodes(nodes *[]*GraphNode, links *[]*GraphLink, nodeSize float64) {
 	tmpLinks := (*links)[:0]
 	for _, link := range *links {
 		var sourceFound, targetFound bool
@@ -535,86 +521,46 @@ func nodeContentByBlock(block *Block) (ret string) {
 	return
 }
 
-func graphTypeFilter(local bool) string {
+func graphTypeFilter(typeFilter *conf.TypeFilter) string {
 	var inList []string
 
-	paragraph := Conf.Graph.Local.Paragraph
-	if !local {
-		paragraph = Conf.Graph.Global.Paragraph
-	}
-	if paragraph {
+	if typeFilter.Paragraph {
 		inList = append(inList, "'p'")
 	}
 
-	heading := Conf.Graph.Local.Heading
-	if !local {
-		heading = Conf.Graph.Global.Heading
-	}
-	if heading {
+	if typeFilter.Heading {
 		inList = append(inList, "'h'")
 	}
 
-	math := Conf.Graph.Local.Math
-	if !local {
-		math = Conf.Graph.Global.Math
-	}
-	if math {
+	if typeFilter.Math {
 		inList = append(inList, "'m'")
 	}
 
-	code := Conf.Graph.Local.Code
-	if !local {
-		code = Conf.Graph.Global.Code
-	}
-	if code {
+	if typeFilter.Code {
 		inList = append(inList, "'c'")
 	}
 
-	table := Conf.Graph.Local.Table
-	if !local {
-		table = Conf.Graph.Global.Table
-	}
-	if table {
+	if typeFilter.Table {
 		inList = append(inList, "'t'")
 	}
 
-	list := Conf.Graph.Local.List
-	if !local {
-		list = Conf.Graph.Global.List
-	}
-	if list {
+	if typeFilter.List {
 		inList = append(inList, "'l'")
 	}
 
-	listItem := Conf.Graph.Local.ListItem
-	if !local {
-		listItem = Conf.Graph.Global.ListItem
-	}
-	if listItem {
+	if typeFilter.ListItem {
 		inList = append(inList, "'i'")
 	}
 
-	blockquote := Conf.Graph.Local.Blockquote
-	if !local {
-		blockquote = Conf.Graph.Global.Blockquote
-	}
-	if blockquote {
+	if typeFilter.Blockquote {
 		inList = append(inList, "'b'")
 	}
 
-	super := Conf.Graph.Local.Super
-	if !local {
-		super = Conf.Graph.Global.Super
-	}
-	if super {
+	if typeFilter.Super {
 		inList = append(inList, "'s'")
 	}
 
-	callout := Conf.Graph.Local.Callout
-	if !local {
-		callout = Conf.Graph.Global.Callout
-	}
-	if callout {
+	if typeFilter.Callout {
 		inList = append(inList, "'callout'")
 	}
 
@@ -622,15 +568,10 @@ func graphTypeFilter(local bool) string {
 	return " AND ref.type IN (" + strings.Join(inList, ",") + ")"
 }
 
-func filterDailyNote(blocks []*Block, local bool) (ret []*Block) {
+func filterDailyNote(blocks []*Block, includeDailyNote bool) (ret []*Block) {
 	// Graph dailynote filtering not working https://github.com/siyuan-note/siyuan/issues/16463
 
-	dailyNote := Conf.Graph.Local.DailyNote
-	if !local {
-		dailyNote = Conf.Graph.Global.DailyNote
-	}
-
-	if dailyNote {
+	if includeDailyNote {
 		ret = blocks
 		return
 	}
@@ -650,8 +591,8 @@ func filterDailyNote(blocks []*Block, local bool) (ret []*Block) {
 	return
 }
 
-func graphDailyNoteFilter(local bool) string {
-	dailyNotesPaths := dailyNotePaths(local)
+func graphDailyNoteFilter(includeDailyNote bool) string {
+	dailyNotesPaths := dailyNotePaths(includeDailyNote)
 	if 1 > len(dailyNotesPaths) {
 		return ""
 	}
@@ -663,13 +604,8 @@ func graphDailyNoteFilter(local bool) string {
 	return buf.String()
 }
 
-func dailyNotePaths(local bool) (ret []string) {
-	dailyNote := Conf.Graph.Local.DailyNote
-	if !local {
-		dailyNote = Conf.Graph.Global.DailyNote
-	}
-
-	if dailyNote {
+func dailyNotePaths(includeDailyNote bool) (ret []string) {
+	if includeDailyNote {
 		return
 	}
 
@@ -713,12 +649,9 @@ func query2Stmt(queryStr string) (ret string) {
 		for _, tag := range tags {
 			queryStr = strings.ReplaceAll(queryStr, "#"+tag+"#", "")
 		}
-		parts := strings.Split(queryStr, " ")
+		parts := strings.Fields(queryStr)
 
 		for i, part := range parts {
-			if "" == part {
-				continue
-			}
 			part = strings.ReplaceAll(part, "'", "''")
 			buf.WriteString("(content LIKE '%" + part + "%'")
 			buf.WriteString(Conf.Search.NAMFilter(part))
@@ -729,19 +662,23 @@ func query2Stmt(queryStr string) (ret string) {
 		}
 
 		if 0 < len(tags) {
+			escapedTags := make([]string, len(tags))
+			for i, tag := range tags {
+				escapedTags[i] = strings.ReplaceAll(tag, "'", "''")
+			}
 			if 0 < buf.Len() {
 				buf.WriteString(" OR ")
 			}
-			for i, tag := range tags {
+			for i, tag := range escapedTags {
 				buf.WriteString("(content LIKE '%#" + tag + "#%')")
-				if i < len(tags)-1 {
+				if i < len(escapedTags)-1 {
 					buf.WriteString(" AND ")
 				}
 			}
 			buf.WriteString(" OR ")
-			for i, tag := range tags {
+			for i, tag := range escapedTags {
 				buf.WriteString("ial LIKE '%tags=\"%" + tag + "%\"%'")
-				if i < len(tags)-1 {
+				if i < len(escapedTags)-1 {
 					buf.WriteString(" AND ")
 				}
 			}

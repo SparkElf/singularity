@@ -167,6 +167,12 @@ jobs:
             enterprise/pnpm-lock.yaml
             app/pnpm-lock.yaml
 
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: kernel/go.mod
+          cache-dependency-path: kernel/go.sum
+
       - name: Install enterprise dependencies
         run: pnpm install --frozen-lockfile
         working-directory: enterprise
@@ -181,6 +187,67 @@ jobs:
 
       - name: Verify S0-S3
         run: pnpm verify:s0-s3
+        working-directory: enterprise
+
+  p5-e2e:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    needs: repository-governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SINGULARITY_TEST_DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: singularity_test
+          POSTGRES_PASSWORD: singularity_test
+          POSTGRES_DB: singularity_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U singularity_test -d singularity_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            enterprise/pnpm-lock.yaml
+            app/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: kernel/go.mod
+          cache-dependency-path: kernel/go.sum
+
+      - name: Install enterprise dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Install SiYuan app dependencies
+        run: corepack pnpm@11.12.0 install --frozen-lockfile
+        working-directory: app
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @singularity/web exec playwright install --with-deps chromium
+        working-directory: enterprise
+
+      - name: Run P5 real-chain E2E
+        run: pnpm test:e2e
         working-directory: enterprise
 
   kernel-baseline:
@@ -327,12 +394,19 @@ jobs:
             docker rm --force singularity-api-smoke singularity-worker-smoke singularity-web-smoke >/dev/null 2>&1 || true
             rm -rf "$secret_dir"
           }
-          wait_for_url() {
+          wait_for_health() {
             local container="$1"
-            local url="$2"
-            for _ in {1..30}; do
-              if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then
+            for _ in {1..60}; do
+              local state
+              local health
+              state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container" 2>/dev/null || true)"
+              if [ "$state" = "running" ] && [ "$health" = "healthy" ]; then
                 return 0
+              fi
+              if [ "$state" != "running" ] || [ "$health" = "unhealthy" ]; then
+                docker logs "$container"
+                return 1
               fi
               sleep 1
             done
@@ -385,6 +459,8 @@ jobs:
           docker run --detach --name singularity-worker-smoke --network host \
             --mount "type=bind,source=$secret_dir,target=/run/secrets/singularity,readonly" \
             --env DATABASE_URL="$DATABASE_URL" \
+            --env SINGULARITY_AUDIT_HMAC_KEY="$audit_key" \
+            --env SINGULARITY_AUDIT_KEY_VERSION="ci-audit-v1" \
             --env SINGULARITY_KERNEL_DEPLOYMENTS_FILE="/run/secrets/singularity/deployments.json" \
             --env SINGULARITY_KERNEL_SERVICE_KEY_ID="ci-key" \
             --env SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE="/run/secrets/singularity/service.key" \
@@ -403,21 +479,12 @@ jobs:
             --env SINGULARITY_WORKER_RESTORE_TLS_PROFILE="ci-runtime" \
             "$WORKER_IMAGE"
           docker run --detach --name singularity-web-smoke --network host "$WEB_IMAGE"
-          wait_for_url singularity-api-smoke http://127.0.0.1:3001/api/v1/health/database
-          wait_for_url singularity-web-smoke http://127.0.0.1:8080/healthz
+          wait_for_health singularity-api-smoke
+          wait_for_health singularity-worker-smoke
+          wait_for_health singularity-web-smoke
           curl --fail --silent --show-error http://127.0.0.1:3001/api/v1/health/database \
             | jq --exit-status '. == {"status":"ready"}' >/dev/null
           test "$(curl --fail --silent --show-error http://127.0.0.1:8080/healthz)" = "ok"
-          for _ in {1..30}; do
-            if [ "$(docker inspect --format '{{.State.Status}}' singularity-worker-smoke 2>/dev/null || true)" = "running" ]; then
-              break
-            fi
-            sleep 1
-          done
-          if [ "$(docker inspect --format '{{.State.Status}}' singularity-worker-smoke 2>/dev/null || true)" != "running" ]; then
-            docker logs singularity-worker-smoke
-            exit 1
-          fi
 
       - name: Prepare supply-chain reports
         run: mkdir -p artifacts/supply-chain

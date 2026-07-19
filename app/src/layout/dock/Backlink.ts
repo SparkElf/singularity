@@ -355,7 +355,7 @@ export class Backlink extends Model {
         if (data && this.type === "local") {
             switch (data.cmd) {
                 case "rename":
-                    if (this.rootId === data.data.id) {
+                    if (this.notebookId === data.data.notebookId && this.rootId === data.data.documentId) {
                         this.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
                     }
                     break;

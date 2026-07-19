@@ -15,9 +15,10 @@ import {
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { DiscoveryPanel } from "@/spaces/DiscoveryPanel.tsx";
-import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
+import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -56,6 +57,7 @@ function createTestSession(
   request: ProtyleTransport<unknown>["request"] = async () => {
     throw new Error("Gateway transport is outside the current Discovery contract");
   },
+  hostDispatch: SpaceProtyleRuntime["host"]["dispatch"] = () => undefined,
 ): ProtyleSession<SpaceProtyleRuntime> {
   const upload: ProtyleTransport<unknown>["upload"] = async () => {
     throw new Error("Gateway upload is outside the space-search contract");
@@ -72,7 +74,7 @@ function createTestSession(
     retrySubmission: () => Promise.resolve(),
     runtime: {
       editors: createProtyleEditorRegistry<ProtyleController>(),
-      host: { dispatch: () => undefined },
+      host: { dispatch: hostDispatch },
       menu: createProtyleMenuPort(menuSurface, () => undefined),
       overlays: createProtyleOverlayPort<HTMLElement>(() => undefined),
       plugins: createEmptyProtylePluginPort<unknown, unknown, ProtyleController>(),
@@ -92,6 +94,7 @@ function createTestSession(
 afterEach(async () => {
   cleanup();
   useDiscoveryStore.setState({ panel: null, requestRevision: 0 });
+  useCsrfStore.getState().clearCsrfToken();
   for (const session of sessions) {
     await session.dispose();
   }
@@ -103,12 +106,14 @@ afterEach(async () => {
 describe("DiscoveryPanel", () => {
   it("uses the public space contract and navigates with response-owned identity", async () => {
     const requests: Array<{ readonly body: unknown; readonly path: string }> = [];
+    let csrfRequestCount = 0;
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(
         input instanceof Request ? input.url : String(input),
         window.location.origin,
       );
       if (url.pathname === "/api/v1/auth/csrf") {
+        csrfRequestCount += 1;
         return jsonResponse({ csrfToken: CSRF_TOKEN });
       }
       requests.push({
@@ -150,12 +155,49 @@ describe("DiscoveryPanel", () => {
     }]);
     expect(requests[0]?.body).not.toHaveProperty("notebookId");
     expect(requests[0]?.body).not.toHaveProperty("documentId");
+    expect(csrfRequestCount).toBe(1);
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
 
     result.click();
     expect(onNavigate).toHaveBeenCalledWith({
       blockId: BLOCK_ID,
       documentId: DOCUMENT_ID,
       notebookId: NOTEBOOK_ID,
+    });
+
+    act(() => {
+      useDiscoveryStore.getState().setQuery("orbit");
+      useDiscoveryStore.getState().submitQuery();
+    });
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(csrfRequestCount).toBe(1);
+  });
+
+  it("reports a space discovery network failure without inventing correlation identity", async () => {
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const hostDispatch = vi.fn<SpaceProtyleRuntime["host"]["dispatch"]>();
+    useDiscoveryStore.getState().openSpaceSearch({
+      method: "preferred",
+      query: "nebula",
+      queryMode: "replace",
+      spaceId: SPACE_ID,
+    });
+
+    render(
+      <DiscoveryPanel
+        onNavigate={vi.fn()}
+        organizationId={ORGANIZATION_ID}
+        session={createTestSession(undefined, hostDispatch)}
+        spaceId={SPACE_ID}
+      />,
+    );
+
+    expect(await screen.findByText("无法读取")).toBeVisible();
+    expect(hostDispatch).toHaveBeenCalledWith({
+      category: "network-failure",
+      type: "runtime-error",
     });
   });
 
@@ -270,7 +312,11 @@ describe("DiscoveryPanel", () => {
     const outlineRequest = vi.fn<ProtyleTransport<unknown>["request"]>()
       .mockResolvedValue({
         code: 0,
-        data: [{ children: [], hPath: "第一文档 / 大纲", id: BLOCK_ID, name: "大纲" }],
+        data: [{
+          children: [{ children: [], id: BLOCK_B, name: "子大纲" }],
+          id: BLOCK_ID,
+          name: "大纲",
+        }],
       });
 
     render(
@@ -283,6 +329,7 @@ describe("DiscoveryPanel", () => {
     );
 
     expect(await screen.findByRole("button", { name: "大纲" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "子大纲" })).toBeVisible();
     expect(outlineRequest).toHaveBeenCalledWith(
       "/api/outline/getDocOutline",
       { id: DOCUMENT_ID, preview: false },

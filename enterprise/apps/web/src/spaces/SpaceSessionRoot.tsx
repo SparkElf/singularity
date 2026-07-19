@@ -11,11 +11,11 @@ import {
   useState,
 } from "react";
 
-import { getCsrfToken } from "@/auth/api.ts";
-import { useCsrfStore } from "@/auth/csrf-store.ts";
+import { getOrFetchCsrfToken } from "@/auth/api.ts";
 import {
   activateContentSelectionScope,
   clearContentSelection,
+  freezeContentSelectionScope,
   isContentSelectionScopeActive,
   releaseContentSelectionScope,
   selectContentDocument,
@@ -43,6 +43,11 @@ interface OwnedSession {
   readonly session: ProtyleSession<SpaceProtyleRuntime>;
 }
 
+type RuntimeCorrelation = Pick<
+  ProtyleRuntimeErrorEvent,
+  "documentId" | "triggeringRequestId"
+>;
+
 export interface SpaceSessionRootProps {
   readonly bootstrap: ReadySpaceRuntimeBootstrap | null;
   readonly children: (composition: SpaceSessionComposition | null) => ReactNode;
@@ -58,19 +63,10 @@ export interface SpaceSessionRootProps {
   readonly retryRuntime: () => Promise<SpaceRuntimeBootstrap>;
 }
 
-async function readSessionCsrfToken(signal: AbortSignal): Promise<string> {
-  const storedToken = useCsrfStore.getState().csrfToken;
-  if (storedToken) {
-    return storedToken;
-  }
-  const response = await getCsrfToken(signal);
-  useCsrfStore.getState().setCsrfToken(response.csrfToken);
-  return response.csrfToken;
-}
-
 async function disposeOwnedSession(
   owned: OwnedSession,
   portalRoot: HTMLElement,
+  correlation?: RuntimeCorrelation,
 ): Promise<void> {
   owned.session.runtime.transport.freeze();
   try {
@@ -80,6 +76,10 @@ async function disposeOwnedSession(
       phase: "dispose",
       result: "completed",
       spaceId: owned.session.spaceId,
+      ...(correlation?.documentId ? { documentId: correlation.documentId } : {}),
+      ...(correlation?.triggeringRequestId
+        ? { triggeringRequestId: correlation.triggeringRequestId }
+        : {}),
     });
   } catch {
     console.error("[protyle.lifecycle]", {
@@ -87,6 +87,10 @@ async function disposeOwnedSession(
       phase: "dispose",
       result: "failed",
       spaceId: owned.session.spaceId,
+      ...(correlation?.documentId ? { documentId: correlation.documentId } : {}),
+      ...(correlation?.triggeringRequestId
+        ? { triggeringRequestId: correlation.triggeringRequestId }
+        : {}),
     });
   } finally {
     portalRoot.replaceChildren();
@@ -197,7 +201,7 @@ export function SpaceSessionRoot({
         bootstrap: targetBootstrap,
         createProtyleMenuSurface: (options) =>
           menuSurfaceFactoryRef.current(options),
-        getCsrfToken: readSessionCsrfToken,
+        getCsrfToken: getOrFetchCsrfToken,
         onHostEvent: (event) => {
           const active = activeSessionRef.current;
           const currentBootstrap = bootstrapRef.current;
@@ -205,6 +209,8 @@ export function SpaceSessionRoot({
             !active ||
             active.generation !== generation ||
             active.scope !== nextScope ||
+            generation !== generationRef.current ||
+            selectionScopeRef.current !== nextScope ||
             !currentBootstrap ||
             !sameSpace(currentBootstrap, nextScope)
           ) {
@@ -213,6 +219,12 @@ export function SpaceSessionRoot({
               phase: "host-event",
               result: "stale-generation-rejected",
               spaceId: targetBootstrap.spaceId,
+              ...(event.type === "runtime-error" && event.documentId
+                ? { documentId: event.documentId }
+                : {}),
+              ...(event.type === "runtime-error" && event.triggeringRequestId
+                ? { triggeringRequestId: event.triggeringRequestId }
+                : {}),
             });
             return;
           }
@@ -237,20 +249,23 @@ export function SpaceSessionRoot({
           }
 
           ++generationRef.current;
-          activeSessionRef.current = null;
-          releaseContentSelectionScope(nextScope);
-          if (selectionScopeRef.current === nextScope) {
-            selectionScopeRef.current = null;
-          }
-          if (mountedRef.current) {
-            setSelectionScope(null);
-          }
+          freezeContentSelectionScope(nextScope);
           active.session.runtime.transport.freeze();
           if (mountedRef.current) {
             setPhase("disposing");
           }
           lifecycleQueueRef.current = lifecycleQueueRef.current.then(async () => {
-            await disposeOwnedSession(active, portalRoot);
+            await disposeOwnedSession(active, portalRoot, event);
+            if (activeSessionRef.current === active) {
+              activeSessionRef.current = null;
+            }
+            if (selectionScopeRef.current === nextScope) {
+              releaseContentSelectionScope(nextScope);
+              selectionScopeRef.current = null;
+              if (mountedRef.current) {
+                setSelectionScope(null);
+              }
+            }
             if (mountedRef.current) {
               setRenderedSession((current) =>
                 current === active.session ? null : current,
@@ -263,6 +278,10 @@ export function SpaceSessionRoot({
               phase: "access-loss",
               result: "notification-failed",
               spaceId: targetBootstrap.spaceId,
+              ...(event.documentId ? { documentId: event.documentId } : {}),
+              ...(event.triggeringRequestId
+                ? { triggeringRequestId: event.triggeringRequestId }
+                : {}),
             });
           });
         },

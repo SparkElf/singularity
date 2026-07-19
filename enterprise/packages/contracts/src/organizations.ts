@@ -1,7 +1,14 @@
 import { organizationRoles } from "@singularity/authorization";
 import { z } from "zod";
 
-import { loginIdentifierSchema, passwordSchema } from "./identity.js";
+import {
+  CSRF_TOKEN_OPENAPI_SCHEMA,
+  LOGIN_IDENTIFIER_MAX_LENGTH,
+  LOGIN_IDENTIFIER_MIN_LENGTH,
+  loginIdentifierSchema,
+  passwordSchema,
+  sessionTokenSchema,
+} from "./identity.js";
 import {
   strictObjectOpenApiSchema,
   UUID_OPENAPI_SCHEMA,
@@ -77,8 +84,7 @@ export type EnterpriseManagementAccessResponse = z.infer<
 >;
 
 const dateTimeSchema = z.string().datetime({ offset: true });
-const invitationTokenPattern = /^[A-Za-z0-9_-]{43}$/;
-export const invitationTokenSchema = z.string().regex(invitationTokenPattern);
+export const invitationTokenSchema = sessionTokenSchema;
 
 export const organizationPathParametersSchema = z
   .object({ organizationId: uuidSchema })
@@ -206,10 +212,8 @@ const DATE_TIME_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   format: "date-time",
 };
-export const INVITATION_TOKEN_OPENAPI_SCHEMA: OpenApiSchema = {
-  type: "string",
-  pattern: invitationTokenPattern.source,
-};
+export const INVITATION_TOKEN_OPENAPI_SCHEMA: OpenApiSchema =
+  CSRF_TOKEN_OPENAPI_SCHEMA;
 
 export const ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({
@@ -253,8 +257,12 @@ export const ORGANIZATION_MEMBERS_RESPONSE_OPENAPI_SCHEMA =
   });
 export const CREATE_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({
-    expiresInHours: { type: "integer" },
-    loginIdentifier: { type: "string" },
+    expiresInHours: { type: "integer", minimum: 1, maximum: 720 },
+    loginIdentifier: {
+      type: "string",
+      minLength: LOGIN_IDENTIFIER_MIN_LENGTH,
+      maxLength: LOGIN_IDENTIFIER_MAX_LENGTH,
+    },
     role: ASSIGNABLE_ORGANIZATION_ROLE_OPENAPI_SCHEMA,
   });
 export const ORGANIZATION_INVITATION_SUMMARY_OPENAPI_SCHEMA =

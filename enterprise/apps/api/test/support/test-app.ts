@@ -22,6 +22,7 @@ export interface TestApiApplication {
 
 export interface TestApiApplicationOptions {
   clock?: Clock;
+  contentAuditIndeterminateAfterMilliseconds?: string;
   https?: boolean;
   kernelGateway?: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
@@ -33,6 +34,12 @@ export async function startTestApiApplication(
 ): Promise<TestApiApplication> {
   const app = await createApiApplication({
     auditConfiguration: testAuditConfiguration(),
+    ...(options.contentAuditIndeterminateAfterMilliseconds === undefined
+      ? {}
+      : {
+          contentAuditIndeterminateAfterMilliseconds:
+            options.contentAuditIndeterminateAfterMilliseconds,
+        }),
     databaseUrl: isolatedDatabaseUrl(),
     ...(options.https === true
       ? {

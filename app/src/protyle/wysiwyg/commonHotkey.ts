@@ -1,6 +1,6 @@
 import {matchHotKey} from "../util/hotKey";
 import {isMac} from "../util/browserPlatform";
-import {focusBlock, getSelectionOffset, setFirstNodeRange, setLastNodeRange,} from "../util/selection";
+import {focusBlock, getEditorRange, getSelectionOffset, setFirstNodeRange, setLastNodeRange,} from "../util/selection";
 import {getContenteditableElement, getNextBlock} from "./getBlock";
 import {hideElements} from "../ui/hideElements";
 import {countBlockStatistics} from "../util/statistics";
@@ -12,16 +12,62 @@ import * as dayjs from "dayjs";
 import {net2LocalAssets} from "../breadcrumb/action";
 import {processClonePHElement} from "../render/util";
 import {copyBlockText} from "../util/copyBlockText";
-import {hasClosestByTag, hasTopClosestByClassName} from "../util/hasClosest";
+import {hasClosestByAttribute, hasClosestByTag, hasTopClosestByClassName} from "../util/hasClosest";
 import {removeEmbed} from "./removeEmbed";
 import {clearBlockElement} from "../util/clear";
 import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "../util/contentLoad";
+import {getBlockRefContentTarget} from "../util/blockRefIdentity";
 
 export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElement?: HTMLElement) => {
     if (protyle.content.mode === "local-only") {
         return protyle.plugins.runEditorCommand(protyle, event, matchHotKey) || undefined;
     }
     const hotkeys = protyle.settings.hotkeys.editor.general;
+    const identity = protyleContentIdentity(protyle);
+    const getPanelTarget = () => {
+        const range = getEditorRange(protyle.wysiwyg.element);
+        const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
+        if (!refElement) {
+            return identity;
+        }
+        const target = getBlockRefContentTarget(refElement);
+        if (!target) {
+            console.error("[protyle.identity] block reference shortcut target is incomplete");
+            return;
+        }
+        return {notebookId: target.notebookId, documentId: target.documentId};
+    };
+    if (matchHotKey(hotkeys.backlinks, event)) {
+        const target = getPanelTarget();
+        event.preventDefault();
+        event.stopPropagation();
+        if (!target) {
+            return true;
+        }
+        protyle.host.dispatch({type: "open-backlinks", ...target});
+        return true;
+    }
+    if (matchHotKey(hotkeys.graphView, event)) {
+        const target = getPanelTarget();
+        event.preventDefault();
+        event.stopPropagation();
+        if (!target) {
+            return true;
+        }
+        protyle.host.dispatch({type: "open-graph", scope: "document", ...target});
+        return true;
+    }
+    if (matchHotKey(hotkeys.outline, event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        protyle.host.dispatch({
+            type: "open-outline",
+            notebookId: identity.notebookId,
+            documentId: identity.documentId,
+            preview: !protyle.preview.element.classList.contains("fn__none"),
+        });
+        return true;
+    }
     if (matchHotKey(hotkeys.netImg2LocalAsset, event)) {
         net2LocalAssets(protyle, "Img");
         event.preventDefault();

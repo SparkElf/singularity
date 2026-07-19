@@ -74,19 +74,13 @@ import {
 
 import { requestJson, requestNoContent } from "@/api/http.ts";
 import { buildApiPath as buildPath } from "@/api/path.ts";
-import { getCsrfToken } from "@/auth/api.ts";
-import { useCsrfStore } from "@/auth/csrf-store.ts";
+import { getOrFetchCsrfToken } from "@/auth/api.ts";
 
 async function mutationHeaders(
   signal?: AbortSignal,
   contentType = false,
 ): Promise<Record<string, string>> {
-  let csrfToken = useCsrfStore.getState().csrfToken;
-  if (csrfToken === null) {
-    const response = await getCsrfToken(signal);
-    csrfToken = response.csrfToken;
-    useCsrfStore.getState().setCsrfToken(csrfToken);
-  }
+  const csrfToken = await getOrFetchCsrfToken(signal);
   return {
     [CSRF_HEADER_NAME]: csrfToken,
     ...(contentType ? { "Content-Type": "application/json" } : {}),

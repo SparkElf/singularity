@@ -34,7 +34,6 @@ import {
 } from "@/assets/AssetPreviewSurface.tsx";
 import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
 import { SPACES_PATH, locationTarget } from "@/auth/return-to.ts";
-import { clearClientSession } from "@/auth/session-state.ts";
 import { useLogout } from "@/auth/use-logout.ts";
 import {
   Alert,
@@ -771,7 +770,6 @@ export function SpacePage({
     );
     useDiscoveryStore.getState().close(failedBootstrap.spaceId);
     if (category === "unauthenticated") {
-      clearClientSession(queryClient);
       return;
     }
     await Promise.all([
@@ -786,31 +784,18 @@ export function SpacePage({
     ]);
   }, [queryClient]);
   const handleDirectoryAccessLost = useCallback(async (
-    category: ContentDirectoryAccessLoss,
+    event: ContentDirectoryAccessLoss,
   ) => {
     const composition = compositionRef.current;
-    if (isCurrentSpaceComposition(composition, identity)) {
-      composition.clearSelection();
-    }
-    compositionRef.current = null;
-    setSessionFailure({ category, routeKey });
-    setAssetPreviewRequest(null);
-    useDiscoveryStore.getState().close(spaceId);
-    if (category === "unauthenticated") {
-      clearClientSession(queryClient);
+    if (!isCurrentSpaceComposition(composition, identity)) {
       return;
     }
-    await Promise.all([
-      queryClient.invalidateQueries({
-        exact: true,
-        queryKey: authorizedSpacesQueryKey,
-      }),
-      queryClient.invalidateQueries({
-        exact: true,
-        queryKey: spaceRuntimeQueryKey(identity),
-      }),
-    ]);
-  }, [identity, queryClient, routeKey]);
+    if (composition.session) {
+      composition.session.runtime.host.dispatch(event);
+      return;
+    }
+    await handleSessionAccessLost(event, composition.bootstrap);
+  }, [handleSessionAccessLost, identity]);
   const queueNavigation = useCallback((
     targetSpaceId: string,
     navigation: ProtyleDocumentNavigation,

@@ -39,35 +39,82 @@ import {
   publicShareQueryKey,
 } from "@/shares/api.ts";
 
-const BLOCKED_ELEMENTS = new Set([
-  "base",
-  "button",
-  "canvas",
-  "embed",
-  "frame",
-  "frameset",
-  "form",
-  "head",
-  "html",
-  "iframe",
-  "input",
-  "link",
-  "math",
-  "meta",
-  "object",
-  "portal",
-  "script",
-  "select",
-  "style",
-  "svg",
-  "textarea",
-  "template",
-  "title",
+const ALLOWED_ELEMENTS = new Set([
+  "a",
+  "abbr",
+  "address",
+  "article",
+  "audio",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "cite",
+  "code",
+  "col",
+  "colgroup",
+  "dd",
+  "del",
+  "details",
+  "dfn",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "i",
+  "img",
+  "ins",
+  "kbd",
+  "li",
+  "main",
+  "mark",
+  "nav",
+  "ol",
+  "p",
+  "picture",
+  "pre",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "section",
+  "small",
+  "source",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "time",
+  "tr",
+  "u",
+  "ul",
+  "var",
+  "video",
+  "wbr",
 ]);
 
 const ALLOWED_ATTRIBUTES = new Set([
   "alt",
-  "checked",
   "class",
   "colspan",
   "controls",
@@ -76,11 +123,9 @@ const ALLOWED_ATTRIBUTES = new Set([
   "loading",
   "loop",
   "muted",
-  "name",
   "open",
   "poster",
   "rel",
-  "role",
   "rowspan",
   "start",
   "title",
@@ -88,20 +133,27 @@ const ALLOWED_ATTRIBUTES = new Set([
   "width",
 ]);
 
-const CUSTOM_ASSET_PREFIX = "singularity-share-asset:";
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
 function assetIdFromUrl(value: string, shareToken: string): string | null {
-  if (value.startsWith(CUSTOM_ASSET_PREFIX)) {
-    const assetId = value.slice(CUSTOM_ASSET_PREFIX.length);
-    return /^[a-f0-9]{64}$/.test(assetId) ? assetId : null;
-  }
-  const assetPathPrefix = publicShareAssetPath(shareToken, "");
-  if (!value.startsWith(assetPathPrefix)) {
+  let url: URL;
+  try {
+    url = new URL(value, window.location.origin);
+  } catch {
     return null;
   }
-  const assetId = value.slice(assetPathPrefix.length);
-  return /^[a-f0-9]{64}$/.test(assetId) ? assetId : null;
+  const assetId = url.pathname.split("/").at(-1);
+  if (
+    assetId === undefined ||
+    url.origin !== window.location.origin ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    !/^[a-f0-9]{64}$/.test(assetId) ||
+    url.pathname !== publicShareAssetPath(shareToken, assetId)
+  ) {
+    return null;
+  }
+  return assetId;
 }
 
 function isSafeExternalUrl(value: string): boolean {
@@ -132,7 +184,7 @@ function sanitizeSharedElement(
   assets: ReadonlyMap<string, SharedAssetDescriptor>,
 ): void {
   const tagName = element.tagName.toLowerCase();
-  if (BLOCKED_ELEMENTS.has(tagName)) {
+  if (!ALLOWED_ELEMENTS.has(tagName)) {
     element.remove();
     return;
   }
@@ -197,9 +249,10 @@ function sanitizeSharedHtml(
 ): string {
   const template = document.createElement("template");
   template.innerHTML = html;
-  const assets = new Map(
-    descriptors.map((descriptor) => [descriptor.assetId, descriptor]),
-  );
+  const assets = new Map<string, SharedAssetDescriptor>();
+  for (const descriptor of descriptors) {
+    assets.set(descriptor.assetId, descriptor);
+  }
   for (const child of [...template.content.children]) {
     sanitizeSharedElement(child, shareToken, assets);
   }
@@ -235,6 +288,16 @@ function ShareState({
         {action ? <EmptyContent>{action}</EmptyContent> : null}
       </Empty>
     </main>
+  );
+}
+
+function UnavailableShareState() {
+  return (
+    <ShareState
+      description="链接可能已过期、已撤销，或原文档已不再属于该空间。"
+      icon={SearchXIcon}
+      title="分享不存在或已失效"
+    />
   );
 }
 
@@ -423,22 +486,19 @@ function SharedDocument({
   );
 }
 
-function PublicSharePageContent({ routeToken }: { routeToken: string }) {
-  const tokenResult = shareTokenSchema.safeParse(routeToken);
-  const shareToken = tokenResult.success ? tokenResult.data : null;
+function ValidPublicSharePageContent({ shareToken }: { shareToken: string }) {
   const queryClient = useQueryClient();
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const shareQuery = useQuery({
     gcTime: 0,
-    enabled: shareToken !== null,
-    queryKey: publicShareQueryKey(shareToken ?? ""),
-    queryFn: ({ signal }) => getPublicShare(shareToken as string, signal),
+    queryKey: publicShareQueryKey(shareToken),
+    queryFn: ({ signal }) => getPublicShare(shareToken, signal),
     refetchOnMount: "always",
     staleTime: 0,
   });
   const challengeMutation = useMutation({
     mutationFn: (password: string) =>
-      createPublicShareChallenge(shareToken as string, { password }),
+      createPublicShareChallenge(shareToken, { password }),
     onError: (error) => {
       if (error instanceof ApiProblemError && error.retryAfterSeconds !== null) {
         setCooldownSeconds(error.retryAfterSeconds);
@@ -447,7 +507,7 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
     onSuccess: async () => {
       setCooldownSeconds(0);
       await queryClient.invalidateQueries({
-        queryKey: publicShareQueryKey(shareToken as string),
+        queryKey: publicShareQueryKey(shareToken),
       });
     },
   });
@@ -462,16 +522,6 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
     return () => window.clearInterval(timer);
   }, [cooldownSeconds]);
 
-  if (shareToken === null) {
-    return (
-      <ShareState
-        description="分享地址格式不正确，请向分享创建者索取新的链接。"
-        icon={SearchXIcon}
-        title="分享地址无效"
-      />
-    );
-  }
-
   if (shareQuery.isPending || shareQuery.isFetching) {
     return (
       <ShareState
@@ -480,6 +530,10 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
         title="正在打开分享"
       />
     );
+  }
+
+  if (isApiProblem(challengeMutation.error, "not-found")) {
+    return <UnavailableShareState />;
   }
 
   if (isApiProblem(shareQuery.error, "unauthenticated")) {
@@ -494,13 +548,7 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
   }
 
   if (isApiProblem(shareQuery.error, "not-found")) {
-    return (
-      <ShareState
-        description="链接可能已过期、已撤销，或原文档已不再属于该空间。"
-        icon={SearchXIcon}
-        title="分享不存在或已失效"
-      />
-    );
+    return <UnavailableShareState />;
   }
 
   if (shareQuery.error) {
@@ -526,8 +574,26 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
   return <SharedDocument payload={shareQuery.data} shareToken={shareToken} />;
 }
 
+function PublicSharePageContent({
+  routeToken,
+}: {
+  routeToken: string | undefined;
+}) {
+  const tokenResult = shareTokenSchema.safeParse(routeToken);
+  if (!tokenResult.success) {
+    return (
+      <ShareState
+        description="分享地址格式不正确，请向分享创建者索取新的链接。"
+        icon={SearchXIcon}
+        title="分享地址无效"
+      />
+    );
+  }
+  return <ValidPublicSharePageContent shareToken={tokenResult.data} />;
+}
+
 export function PublicSharePage() {
-  const { shareToken = "" } = useParams();
+  const { shareToken } = useParams();
 
   return <PublicSharePageContent key={shareToken} routeToken={shareToken} />;
 }

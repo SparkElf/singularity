@@ -10,6 +10,7 @@ import {
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
   ENTERPRISE_MANAGEMENT_ACCESS_PATH,
+  INVITATION_TOKEN_OPENAPI_SCHEMA,
   ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH,
@@ -18,7 +19,9 @@ import {
   PUBLIC_SHARE_CONTROLLER_PATH,
   CHANGE_DOCUMENT_SHARE_PASSWORD_REQUEST_OPENAPI_SCHEMA,
   CREATE_DOCUMENT_SHARE_REQUEST_OPENAPI_SCHEMA,
+  CREATE_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
   CREATE_SHARE_CHALLENGE_REQUEST_OPENAPI_SCHEMA,
+  SHARED_DOCUMENT_PAYLOAD_OPENAPI_SCHEMA,
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
   SPACE_RUNTIME_CONTROLLER_PATH,
   SPACE_RUNTIME_PATH_TEMPLATE,
@@ -30,11 +33,14 @@ import {
   apiProblemSchema,
   auditEventsQuerySchema,
   auditEventsResponseSchema,
+  auditOutcomes,
   auditTargetTypes,
   authorizedSpacesResponseSchema,
   buildSpaceRuntimePath,
   createDocumentShareRequestSchema,
+  createOrganizationInvitationRequestSchema,
   enterpriseManagementAccessResponseSchema,
+  invitationTokenSchema,
   kernelInstanceStates,
   loginRequestSchema,
   managedDocumentSharesResponseSchema,
@@ -45,6 +51,7 @@ import {
   spaceRestoreSchema,
   spaceRestoresResponseSchema,
   spaceRuntimeBootstrapSchema,
+  sharedDocumentPayloadSchema,
   unactivatedSpaceRestoreStatuses,
 } from "../dist/index.js";
 
@@ -91,6 +98,64 @@ describe("HTTP contracts", () => {
         loginIdentifier: "alice@example.com",
         password: "😀".repeat(11),
       }).success,
+      false,
+    );
+  });
+
+  test("aligns organization invitation normalization and expiry limits with OpenAPI", () => {
+    const canonicalToken = "A".repeat(43);
+    const noncanonicalToken = `${"A".repeat(42)}B`;
+    assert.deepEqual(
+      createOrganizationInvitationRequestSchema.parse({
+        expiresInHours: 24,
+        loginIdentifier: "  Ａlice@Example.COM  ",
+        role: "member",
+      }),
+      {
+        expiresInHours: 24,
+        loginIdentifier: "alice@example.com",
+        role: "member",
+      },
+    );
+    assert.equal(
+      createOrganizationInvitationRequestSchema.safeParse({
+        expiresInHours: 0,
+        loginIdentifier: "alice@example.com",
+        role: "member",
+      }).success,
+      false,
+    );
+    assert.equal(
+      createOrganizationInvitationRequestSchema.safeParse({
+        expiresInHours: 721,
+        loginIdentifier: "alice@example.com",
+        role: "member",
+      }).success,
+      false,
+    );
+    assert.equal(invitationTokenSchema.safeParse(canonicalToken).success, true);
+    assert.equal(
+      invitationTokenSchema.safeParse(noncanonicalToken).success,
+      false,
+    );
+    assert.deepEqual(
+      CREATE_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA.properties
+        .expiresInHours,
+      { maximum: 720, minimum: 1, type: "integer" },
+    );
+    assert.deepEqual(
+      CREATE_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA.properties
+        .loginIdentifier,
+      { maxLength: 254, minLength: 3, type: "string" },
+    );
+    assert.equal(
+      new RegExp(INVITATION_TOKEN_OPENAPI_SCHEMA.pattern).test(canonicalToken),
+      true,
+    );
+    assert.equal(
+      new RegExp(INVITATION_TOKEN_OPENAPI_SCHEMA.pattern).test(
+        noncanonicalToken,
+      ),
       false,
     );
   });
@@ -285,6 +350,28 @@ describe("HTTP contracts", () => {
       }).success,
       true,
     );
+    const publicDocument = {
+      assets: [],
+      html: "<p>Shared content</p>",
+      title: "Shared document",
+    };
+    assert.deepEqual(
+      sharedDocumentPayloadSchema.parse(publicDocument),
+      publicDocument,
+    );
+    assert.equal(
+      sharedDocumentPayloadSchema.safeParse({
+        assets: [],
+        documentId: "20260718010101-abcdefg",
+        html: "<p>Shared content</p>",
+        title: "Shared document",
+      }).success,
+      false,
+    );
+    assert.equal(
+      "documentId" in SHARED_DOCUMENT_PAYLOAD_OPENAPI_SCHEMA.properties,
+      false,
+    );
     assert.equal(
       ORGANIZATION_SPACE_SHARES_CONTROLLER_PATH,
       "/api/v1/organizations/:organizationId/spaces/:spaceId/shares",
@@ -304,7 +391,7 @@ describe("HTTP contracts", () => {
     );
   });
 
-  test("normalizes audit pagination and exposes every control-plane target", () => {
+  test("normalizes audit pagination and exposes every target and outcome", () => {
     assert.deepEqual(auditEventsQuerySchema.parse({}), {
       beforeSequence: null,
       limit: 50,
@@ -343,6 +430,33 @@ describe("HTTP contracts", () => {
     assert.deepEqual(
       AUDIT_EVENT_OPENAPI_SCHEMA.properties.targetType.enum,
       [...auditTargetTypes],
+    );
+    assert.deepEqual(
+      AUDIT_EVENT_OPENAPI_SCHEMA.properties.outcome.enum,
+      [...auditOutcomes],
+    );
+    assert.equal(
+      auditEventsResponseSchema.safeParse({
+        events: [
+          {
+            action: "content.edit",
+            actorUserId: userId,
+            auditEventId: operationId,
+            keyVersion: "audit-v1",
+            mac: "b".repeat(64),
+            occurredAt: "2026-07-18T00:00:00.000Z",
+            organizationId,
+            outcome: "indeterminate",
+            previousMac: "a".repeat(64),
+            requestId,
+            sequence: "2",
+            spaceId,
+            targetId: "20260718010101-abcdefg",
+            targetType: "document",
+          },
+        ],
+      }).success,
+      true,
     );
     assert.equal(
       ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
@@ -459,6 +573,15 @@ describe("HTTP contracts", () => {
           status: "unavailable",
         },
         health: { reason: "no-sample", status: "unavailable" },
+        organizationId,
+        spaceId,
+      }).success,
+      true,
+    );
+    assert.equal(
+      spaceObservabilitySchema.safeParse({
+        capacity: { reason: "no-sample", status: "unavailable" },
+        health: { reason: "kernel-unavailable", status: "unavailable" },
         organizationId,
         spaceId,
       }).success,

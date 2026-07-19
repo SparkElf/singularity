@@ -3,19 +3,27 @@ import { test } from "node:test";
 
 import {
   parseArguments,
+  probeWorkerRuntimeArtifacts,
   validateContainerMetadata,
 } from "./verify-container-metadata.mjs";
 
 const revision = "revision-123";
 const upstreamCommit = "upstream-123";
 
-function inspectedImage({ command, healthcheck, port, title, user }) {
+function inspectedImage({ command, environment = [], healthcheck, port, startPeriod, title, user }) {
   const exposedPorts = port === null ? {} : { [port]: {} };
   return {
     Config: {
       Cmd: command,
+      Env: environment,
       ExposedPorts: exposedPorts,
-      Healthcheck: { Test: healthcheck },
+      Healthcheck: {
+        Interval: 30_000_000_000,
+        Retries: 3,
+        StartPeriod: startPeriod,
+        Test: healthcheck,
+        Timeout: 5_000_000_000,
+      },
       Labels: {
         "io.singularity.upstream.commit": upstreamCommit,
         "org.opencontainers.image.licenses": "AGPL-3.0-or-later",
@@ -38,6 +46,7 @@ function apiImage() {
       "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
     ],
     port: "3001/tcp",
+    startPeriod: 10_000_000_000,
     title: "Singularity Enterprise API",
     user: "65532",
   });
@@ -48,6 +57,7 @@ function webImage() {
     command: ["nginx", "-g", "daemon off;"],
     healthcheck: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"],
     port: "8080/tcp",
+    startPeriod: 5_000_000_000,
     title: "Singularity Enterprise Web",
     user: "101",
   });
@@ -56,13 +66,23 @@ function webImage() {
 function workerImage() {
   return inspectedImage({
     command: ["dist/main.js"],
+    environment: [
+      "HOME=/var/lib/singularity-worker/home",
+      "NODE_ENV=production",
+      "SINGULARITY_WORKER_OBJECT_STORE_ROOT=/var/lib/singularity-worker/objects",
+      "SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL=/opt/singularity-kernel/kernel",
+      "SINGULARITY_WORKER_RESTORE_KERNEL_BINARY=/opt/singularity-kernel/kernel",
+      "SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY=/opt/singularity-kernel",
+      "SINGULARITY_WORKER_RESTORE_RUNTIME_ROOT=/var/lib/singularity-worker/runtime",
+    ],
     healthcheck: [
       "CMD",
       "/nodejs/bin/node",
       "-e",
-      "try{process.kill(1,0)}catch{process.exit(1)}",
+      "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error();for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch{process.exit(1)}",
     ],
     port: null,
+    startPeriod: 10_000_000_000,
     title: "Singularity Enterprise Worker",
     user: "65532",
   });
@@ -108,11 +128,12 @@ test("Web metadata requires its nonroot user, port, and nginx command", () => {
   ]);
 });
 
-test("Worker metadata requires its nonroot user, command, and process healthcheck", () => {
+test("Worker metadata requires its nonroot user, command, and complete healthcheck", () => {
   const worker = workerImage();
   worker.Config.User = "0";
   worker.Config.Cmd = ["other.js"];
   worker.Config.Healthcheck.Test = ["CMD", "true"];
+  worker.Config.Healthcheck.Interval = 60_000_000_000;
   worker.Config.ExposedPorts = { "9090/tcp": {} };
 
   assert.deepEqual(
@@ -124,6 +145,58 @@ test("Worker metadata requires its nonroot user, command, and process healthchec
       "worker:test: healthcheck mismatch for Singularity Enterprise Worker",
     ],
   );
+});
+
+test("Worker metadata requires the production object, Kernel, appearance, and runtime paths", () => {
+  const worker = workerImage();
+  worker.Config.Env.push(
+    "SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL=/tmp/untrusted-kernel",
+  );
+
+  assert.deepEqual(
+    validate(["api:test", "worker:test", "web:test"], [apiImage(), worker, webImage()]),
+    [
+      "worker:test: environment mismatch for Singularity Enterprise Worker: " +
+        "SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL",
+    ],
+  );
+});
+
+test("Worker artifact probe runs the image read-only and offline, then executes restore-archive", () => {
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ args, command, options });
+    return { status: 0 };
+  };
+
+  assert.deepEqual(probeWorkerRuntimeArtifacts("worker:test", run), []);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.command, "docker");
+    assert.deepEqual(call.args.slice(0, 5), ["run", "--rm", "--network=none", "--pull=never", "--read-only"]);
+    assert.equal(call.options.encoding, "utf8");
+  }
+  assert.equal(calls[0].args[5], "--entrypoint=/nodejs/bin/node");
+  assert.equal(calls[0].args[6], "worker:test");
+  assert.match(calls[0].args[8], /appearance.*langs.*en\.json/u);
+  assert.deepEqual(calls[1].args.slice(5), [
+    "--entrypoint=/opt/singularity-kernel/kernel",
+    "worker:test",
+    "workspace",
+    "restore-archive",
+    "--help",
+  ]);
+});
+
+test("Worker artifact probe fails when the bundled restore-archive executable cannot start", () => {
+  let call = 0;
+  const failures = probeWorkerRuntimeArtifacts("worker:test", () => ({
+    status: call++ === 0 ? 0 : 1,
+  }));
+
+  assert.deepEqual(failures, [
+    "worker:test: Kernel restore-archive executable probe failed",
+  ]);
 });
 
 test("API metadata rejects an arbitrary successful healthcheck command", () => {
@@ -154,10 +227,10 @@ test("OCI provenance labels remain mandatory", () => {
   assert.deepEqual(
     validate(["api:test", "worker:test", "web:test"], [api, workerImage(), webImage()]),
     [
-    "api:test: revision label mismatch",
-    "api:test: upstream label mismatch",
-    "api:test: license label mismatch",
-    "api:test: source label mismatch",
+      "api:test: revision label mismatch",
+      "api:test: upstream label mismatch",
+      "api:test: license label mismatch",
+      "api:test: source label mismatch",
     ],
   );
 });

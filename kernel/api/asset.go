@@ -17,6 +17,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -103,6 +104,36 @@ func fullReindexAssetContent(c *gin.Context) {
 	model.ReindexAssetContent()
 }
 
+type resolvedImageOCRAsset struct {
+	absPath   string
+	assetKey  string
+	encrypted bool
+}
+
+func resolveImageOCRAsset(c *gin.Context, arg map[string]any) (resolvedImageOCRAsset, error) {
+	assetPath, ok := arg["path"].(string)
+	if !ok || strings.TrimSpace(assetPath) == "" {
+		return resolvedImageOCRAsset{}, errors.New("field [path] must be a non-empty string")
+	}
+	notebookID, err := declaredNotebookForResponse(c, arg)
+	if err != nil {
+		return resolvedImageOCRAsset{}, err
+	}
+	absPath, err := model.GetAssetAbsPathInBox(assetPath, notebookID)
+	if err != nil {
+		return resolvedImageOCRAsset{}, err
+	}
+	assetKey, err := filepath.Rel(util.DataDir, absPath)
+	if err != nil {
+		return resolvedImageOCRAsset{}, err
+	}
+	return resolvedImageOCRAsset{
+		absPath:   absPath,
+		assetKey:  filepath.ToSlash(assetKey),
+		encrypted: model.IsEncryptedAssetPath(absPath),
+	}, nil
+}
+
 func getImageOCRText(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
@@ -112,18 +143,13 @@ func getImageOCRText(c *gin.Context) {
 		return
 	}
 
-	var path string
-	if nil == arg["path"] {
-		ret.Data = map[string]any{
-			"text": "",
-		}
+	asset, err := resolveImageOCRAsset(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
-
-	path = arg["path"].(string)
-
-	// 加密笔记本的资源不参与全局 OCR（OCR 文本存在全局 data/assets/ocr-texts.json）
-	if absPath, absErr := model.GetAssetAbsPathInBox(path, ""); absErr == nil && model.IsEncryptedAssetPath(absPath) {
+	if asset.encrypted {
 		ret.Data = map[string]any{
 			"text": "",
 		}
@@ -131,7 +157,7 @@ func getImageOCRText(c *gin.Context) {
 	}
 
 	ret.Data = map[string]any{
-		"text": util.GetAssetText(path),
+		"text": util.GetAssetText(asset.assetKey),
 	}
 }
 
@@ -144,14 +170,22 @@ func setImageOCRText(c *gin.Context) {
 		return
 	}
 
-	path := arg["path"].(string)
-	text := arg["text"].(string)
-
-	// 加密笔记本的资源不参与全局 OCR
-	if absPath, absErr := model.GetAssetAbsPathInBox(path, ""); absErr == nil && model.IsEncryptedAssetPath(absPath) {
+	asset, err := resolveImageOCRAsset(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
 		return
 	}
-	util.SetAssetText(path, text)
+	text, ok := arg["text"].(string)
+	if !ok {
+		ret.Code = -1
+		ret.Msg = "field [text] must be a string"
+		return
+	}
+	if asset.encrypted {
+		return
+	}
+	util.SetAssetText(asset.assetKey, text)
 
 	// 刷新 OCR 结果到数据库
 	util.NodeOCRQueueLock.Lock()
@@ -175,17 +209,20 @@ func ocr(c *gin.Context) {
 		return
 	}
 
-	path := arg["path"].(string)
-
-	// 加密笔记本的资源不参与全局 OCR
-	if absPath, absErr := model.GetAssetAbsPathInBox(path, ""); absErr == nil && model.IsEncryptedAssetPath(absPath) {
+	asset, err := resolveImageOCRAsset(c, arg)
+	if err != nil {
+		ret.Code = -1
+		ret.Msg = err.Error()
+		return
+	}
+	if asset.encrypted {
 		ret.Code = -1
 		ret.Msg = "OCR is not supported for assets in encrypted notebooks"
 		ret.Data = map[string]any{"closeTimeout": 3000}
 		return
 	}
 
-	ocrJSON, err := util.OcrAsset(path)
+	ocrJSON, err := util.OcrAsset(asset.assetKey, asset.absPath)
 	if nil != err {
 		ret.Code = -1
 		ret.Msg = err.Error()

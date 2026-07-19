@@ -1,7 +1,10 @@
 import type { IncomingMessage } from "node:http";
 
 import { Injectable } from "@nestjs/common";
-import { sharedDocumentPayloadSchema } from "@singularity/contracts";
+import {
+  contentIdSchema,
+  sharedDocumentPayloadSchema,
+} from "@singularity/contracts";
 import { DatabaseRuntime } from "@singularity/database";
 import {
   KernelPrivateClient,
@@ -19,6 +22,9 @@ const VERIFY_PATH = "/internal/enterprise/share/verify";
 const DOCUMENT_PATH = "/internal/enterprise/share/document";
 const ASSET_PATH = "/internal/enterprise/share/asset";
 const MAX_DOCUMENT_RESPONSE_BYTES = 16 * 1_024 * 1_024;
+const kernelSharedDocumentPayloadSchema = sharedDocumentPayloadSchema.extend({
+  documentId: contentIdSchema,
+});
 
 function stringHeader(
   message: IncomingMessage,
@@ -51,11 +57,15 @@ function sharedDocument(
   value: unknown,
   expectedDocumentId: string,
 ): SharedDocumentPayload {
-  const parsed = sharedDocumentPayloadSchema.safeParse(value);
+  const parsed = kernelSharedDocumentPayloadSchema.safeParse(value);
   if (!parsed.success || parsed.data.documentId !== expectedDocumentId) {
     throw serviceUnavailable();
   }
-  return parsed.data;
+  return {
+    assets: parsed.data.assets,
+    html: parsed.data.html,
+    title: parsed.data.title,
+  };
 }
 
 @Injectable()

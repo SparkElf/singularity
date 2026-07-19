@@ -2,8 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
 import { isApiProblem } from "@/api/http.ts";
-import { getCsrfToken, logout } from "@/auth/api.ts";
-import { useCsrfStore } from "@/auth/csrf-store.ts";
+import { getOrFetchCsrfToken, logout } from "@/auth/api.ts";
 import { LOGIN_PATH } from "@/auth/return-to.ts";
 import { clearClientSession } from "@/auth/session-state.ts";
 
@@ -18,13 +17,7 @@ export function useLogout() {
 
   return useMutation({
     mutationFn: async () => {
-      let csrfToken = useCsrfStore.getState().csrfToken;
-      if (!csrfToken) {
-        const response = await getCsrfToken();
-        csrfToken = response.csrfToken;
-        useCsrfStore.getState().setCsrfToken(csrfToken);
-      }
-
+      const csrfToken = await getOrFetchCsrfToken();
       await logout(csrfToken);
     },
     onError: (error) => {

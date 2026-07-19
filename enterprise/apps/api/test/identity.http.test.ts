@@ -66,6 +66,12 @@ interface OidcTokenExchange {
   body: URLSearchParams;
 }
 
+interface ConfiguredOidcIdToken {
+  mode: OidcIdTokenMode;
+  nonce: string;
+  subject: string;
+}
+
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     headers: { "Content-Type": "application/json" },
@@ -108,23 +114,31 @@ class OidcProviderBoundary {
   jwksRequests = 0;
 
   #discoveryMalformed = false;
-  #idToken:
-    | { mode: OidcIdTokenMode; nonce: string; subject: string }
-    | undefined;
+  #idToken: ConfiguredOidcIdToken | undefined;
+  readonly #idTokensByAuthorizationCode = new Map<
+    string,
+    ConfiguredOidcIdToken
+  >();
   #jwksMode: OidcJwksMode = "available";
 
   constructor(private readonly now: () => Date) {}
 
   configureIdToken(input: {
+    code?: string;
     mode?: OidcIdTokenMode;
     nonce: string;
     subject: string;
   }): void {
-    this.#idToken = {
+    const configured: ConfiguredOidcIdToken = {
       mode: input.mode ?? "valid",
       nonce: input.nonce,
       subject: input.subject,
     };
+    if (input.code === undefined) {
+      this.#idToken = configured;
+    } else {
+      this.#idTokensByAuthorizationCode.set(input.code, configured);
+    }
   }
 
   makeJwksUnavailable(): void {
@@ -161,13 +175,19 @@ class OidcProviderBoundary {
       }
       if (url === this.tokenEndpoint) {
         const request = new Request(input, init);
-        const idToken = this.#idToken;
+        const body = new URLSearchParams(await request.text());
+        const authorizationCode = body.get("code");
+        const idToken =
+          (authorizationCode === null
+            ? undefined
+            : this.#idTokensByAuthorizationCode.get(authorizationCode)) ??
+          this.#idToken;
         if (idToken === undefined) {
           throw new Error("The external OIDC identity was not configured");
         }
         this.tokenExchanges.push({
           authorization: request.headers.get("authorization"),
-          body: new URLSearchParams(await request.text()),
+          body,
         });
         const nowSeconds = Math.floor(this.now().getTime() / 1_000);
         const nonce =
@@ -1294,6 +1314,142 @@ describe("identity HTTP contract with PostgreSQL", () => {
     ).resolves.toEqual({ organizationId, userId: user.id });
     await expect(
       database.authSession.count({ where: { revokedAt: null, userId: user.id } }),
+    ).resolves.toBe(1);
+  });
+
+  test("consumes one invitation when existing-identity OIDC callbacks race", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    const existingUser = await database.user.findUniqueOrThrow({
+      where: { id: graph.userId },
+      select: { loginIdentifier: true },
+    });
+    await database.organizationMembership.update({
+      where: {
+        organizationId_userId: {
+          organizationId: graph.organizationId,
+          userId: graph.userId,
+        },
+      },
+      data: { status: "inactive" },
+    });
+    const ownerId = await createUser(`oidc-race-owner-${randomUUID()}@example.test`);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "owner",
+        status: "active",
+        userId: ownerId,
+      },
+    });
+    const invitation = await testApi.app
+      .get(OrganizationManagementService)
+      .createInvitation({
+        actorUserId: ownerId,
+        expiresInHours: 24,
+        loginIdentifier: existingUser.loginIdentifier,
+        organizationId: graph.organizationId,
+        requestId: randomUUID(),
+        role: "admin",
+      });
+    providerBoundary.install();
+
+    const starts = await Promise.all([
+      oidcStartRequest(testApi.baseUrl, {
+        invitationToken: invitation.invitationToken,
+        providerId: graph.providerId,
+      }),
+      oidcStartRequest(testApi.baseUrl, {
+        invitationToken: invitation.invitationToken,
+        providerId: graph.providerId,
+      }),
+    ]);
+    expect(starts.map((response) => response.status)).toEqual([200, 200]);
+    const flows = await Promise.all(
+      starts.map(async (response) => {
+        const flowCookie = cookiePair(
+          requireNamedSetCookie(response, oidcFlowCookieName),
+        );
+        const authorization = new URL(
+          oidcStartResponseSchema.parse(await response.json()).authorizationUrl,
+        );
+        return {
+          flowCookie,
+          nonce: requireSearchParameter(authorization, "nonce"),
+          state: requireSearchParameter(authorization, "state"),
+        };
+      }),
+    );
+    const [firstFlow, secondFlow] = flows;
+    if (firstFlow === undefined || secondFlow === undefined) {
+      throw new Error("Both OIDC authorization attempts must be available");
+    }
+    const firstCode = "existing-invitation-race-one";
+    const secondCode = "existing-invitation-race-two";
+    providerBoundary.configureIdToken({
+      code: firstCode,
+      nonce: firstFlow.nonce,
+      subject: graph.subject,
+    });
+    providerBoundary.configureIdToken({
+      code: secondCode,
+      nonce: secondFlow.nonce,
+      subject: graph.subject,
+    });
+
+    const callbacks = await Promise.all([
+      oidcCallbackRequest(testApi.baseUrl, {
+        code: firstCode,
+        cookie: firstFlow.flowCookie,
+        state: firstFlow.state,
+      }),
+      oidcCallbackRequest(testApi.baseUrl, {
+        code: secondCode,
+        cookie: secondFlow.flowCookie,
+        state: secondFlow.state,
+      }),
+    ]);
+    const accepted = callbacks.find((response) => response.status === 303);
+    const conflicted = callbacks.find((response) => response.status === 409);
+    if (accepted === undefined || conflicted === undefined) {
+      throw new Error("Exactly one OIDC callback must consume the invitation");
+    }
+    expect(accepted.headers.get("location")).toBe("/spaces");
+    await expectProblem(conflicted, 409, "conflict");
+    expect(providerBoundary.tokenExchanges).toHaveLength(2);
+    await expect(
+      database.organizationMembership.findUniqueOrThrow({
+        where: {
+          organizationId_userId: {
+            organizationId: graph.organizationId,
+            userId: graph.userId,
+          },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "admin", status: "active" });
+    await expect(
+      database.organizationInvitation.findUniqueOrThrow({
+        where: { id: invitation.invitationId },
+        select: { acceptedAt: true, acceptedByUserId: true },
+      }),
+    ).resolves.toEqual({
+      acceptedAt: initialTime,
+      acceptedByUserId: graph.userId,
+    });
+    await expect(
+      database.authSession.count({
+        where: { revokedAt: null, userId: graph.userId },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId: graph.organizationId,
+          targetId: graph.userId,
+          targetType: "membership",
+        },
+      }),
     ).resolves.toBe(1);
   });
 

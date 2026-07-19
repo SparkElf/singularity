@@ -271,7 +271,8 @@ export type ProtyleHostEvent =
   | {
       type: "runtime-error";
       category: ProtyleRuntimeErrorCategory;
-      requestId: string;
+      documentId?: string;
+      triggeringRequestId?: string;
     }
   | {
       type: "notify";

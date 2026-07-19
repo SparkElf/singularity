@@ -3,6 +3,7 @@ import { DiscoveryService } from "@nestjs/core";
 import type {
   ArchiveAuditJob,
   ClaimedWorkerJob,
+  ReconcileContentAuditJob,
   SampleKernelJob,
   WorkerJobKind,
 } from "./worker.js";
@@ -14,10 +15,14 @@ export interface WorkerJobHandlerDeclaration {
 export const HandlesWorkerJob =
   DiscoveryService.createDecorator<WorkerJobHandlerDeclaration>();
 
-export type ScheduledWorkerJob = ArchiveAuditJob | SampleKernelJob;
+export type ScheduledWorkerJob =
+  | ArchiveAuditJob
+  | ReconcileContentAuditJob
+  | SampleKernelJob;
 
 export const scheduledWorkerJobKinds = [
   "archive-audit",
+  "reconcile-content-audit",
   "sample-kernel",
 ] as const satisfies readonly ScheduledWorkerJob["kind"][];
 

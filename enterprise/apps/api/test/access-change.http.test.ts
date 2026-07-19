@@ -31,6 +31,7 @@ import WebSocket from "ws";
 import { AccessChangedPublisher, ACCESS_CHANGE_CHANNEL } from "../src/kernel/access-changed.js";
 import { runAccessOperationsApplication } from "../src/operations/application.js";
 import { PasswordHasher } from "../src/identity/password-hasher.js";
+import { KernelWebSocketGateway } from "../src/kernel/kernel-websocket.gateway.js";
 import { truncateTestDatabase } from "./support/database.js";
 import { testAuditConfiguration } from "./support/audit-configuration.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
@@ -133,10 +134,10 @@ function requestHttps(
   });
 }
 
-async function openBrowserSocket(
+function createBrowserSocket(
   baseUrl: string,
   graph: Graph,
-): Promise<WebSocket> {
+): WebSocket {
   const url = new URL(
     `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel/ws`,
     baseUrl,
@@ -146,13 +147,20 @@ async function openBrowserSocket(
     notebookId: NOTEBOOK_ID,
     type: "protyle",
   }).toString();
+  return new WebSocket(url, {
+    ca: TEST_TLS_CERTIFICATE,
+    headers: { Cookie: graph.cookie },
+    origin: TEST_PUBLIC_ORIGIN,
+    rejectUnauthorized: true,
+  });
+}
+
+async function openBrowserSocket(
+  baseUrl: string,
+  graph: Graph,
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, {
-      ca: TEST_TLS_CERTIFICATE,
-      headers: { Cookie: graph.cookie },
-      origin: TEST_PUBLIC_ORIGIN,
-      rejectUnauthorized: true,
-    });
+    const socket = createBrowserSocket(baseUrl, graph);
     socket.once("open", () => resolve(socket));
     socket.once("unexpected-response", (_request, response) => {
       response.resume();
@@ -278,8 +286,9 @@ async function createGraph(
   };
 }
 
-async function holdSpaceGroupGrantTable(
+async function holdDatabaseLock(
   database: DatabaseClient,
+  statement: Prisma.Sql,
 ): Promise<{ lockerPid: number; release(): void; completed: Promise<void> }> {
   let resolveLocked!: (pid: number) => void;
   let rejectLocked!: (reason?: unknown) => void;
@@ -293,9 +302,7 @@ async function holdSpaceGroupGrantTable(
   });
   const completed = database.$transaction(
     async (transaction) => {
-      await transaction.$executeRaw(
-        Prisma.sql`LOCK TABLE "space_group_grants" IN ACCESS EXCLUSIVE MODE`,
-      );
+      await transaction.$executeRaw(statement);
       const rows = await transaction.$queryRaw<Array<{ pid: number }>>(
         Prisma.sql`SELECT pg_backend_pid() AS pid`,
       );
@@ -336,7 +343,7 @@ async function waitForBlockedBackend(
       return;
     }
     if (Date.now() >= deadline) {
-      throw new Error("The connection revalidation did not wait on the table lock");
+      throw new Error("The request did not wait on the database table lock");
     }
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
@@ -414,10 +421,11 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
           throw new Error("rollback-notification");
         }),
       ).rejects.toThrow("rollback-notification");
-      committedSessionId = randomUUID();
+      const sessionId = randomUUID();
+      committedSessionId = sessionId;
       await database.$transaction(async (transaction) => {
         await publisher.refreshSessionExpiry(transaction, {
-          authSessionId: committedSessionId,
+          authSessionId: sessionId,
           expiresAt: committedExpiresAt,
           requestId: committedRequestId,
         });
@@ -485,6 +493,32 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     expect(logger.output).toContain(`user: [ '${graph.userId}' ]`);
   });
 
+  test("correlates an active WebSocket route with its upstream request and Kernel instance", async () => {
+    const graph = await createGraph(database, passwordDigest, testApi, kernel);
+    logger.clear();
+    const socket = await openBrowserSocket(testApi.baseUrl, graph);
+    socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    try {
+      const connection = kernel.websocket.connections.at(-1);
+      expect(connection).toBeDefined();
+      const requestId = connection?.headers["x-singularity-request-id"];
+      expect(requestId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      await expect
+        .poll(() => logger.output, { timeout: NOTIFICATION_TIMEOUT_MS })
+        .toContain("outcome: 'websocket-active'");
+      expect(logger.output).toContain(
+        `kernelInstanceId: '${kernel.deployment.kernelInstanceId}'`,
+      );
+      expect(logger.output).toContain(`requestId: '${String(requestId)}'`);
+    } finally {
+      socket.terminate();
+      upstream.terminate();
+    }
+  });
+
   test("does not activate a pending connection after a committed revocation wins the revalidation lock", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
     const group = await database.userGroup.create({
@@ -509,7 +543,10 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
         spaceId: graph.spaceId,
       },
     });
-    const lock = await holdSpaceGroupGrantTable(database);
+    const lock = await holdDatabaseLock(
+      database,
+      Prisma.sql`LOCK TABLE "space_group_grants" IN ACCESS EXCLUSIVE MODE`,
+    );
     let socket: WebSocket | undefined;
     try {
       socket = await openBrowserSocket(testApi.baseUrl, graph);
@@ -676,5 +713,61 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     await upstreamClosePromise;
     expect(logger.output).toContain("invalid-event");
     expect(logger.output).not.toContain(sensitiveSentinel);
+  });
+
+  test("terminates active and pending WebSocket work before late pushes during shutdown", async () => {
+    const graph = await createGraph(database, passwordDigest, testApi, kernel);
+    const activeSocket = await openBrowserSocket(testApi.baseUrl, graph);
+    activeSocket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const received: string[] = [];
+    activeSocket.on("message", (data) => received.push(data.toString()));
+    const activeBrowserClose = closed(activeSocket);
+    const upstreamClose = closed(upstream);
+    let lock: Awaited<ReturnType<typeof holdDatabaseLock>> | undefined;
+    let pendingSocket: WebSocket | undefined;
+    try {
+      lock = await holdDatabaseLock(
+        database,
+        Prisma.sql`LOCK TABLE "auth_sessions" IN ACCESS EXCLUSIVE MODE`,
+      );
+      pendingSocket = createBrowserSocket(testApi.baseUrl, graph);
+      pendingSocket.on("error", () => undefined);
+      const pendingBrowserClose = closed(pendingSocket);
+      await waitForBlockedBackend(database, lock.lockerPid);
+
+      testApi.app.get(KernelWebSocketGateway).onApplicationShutdown();
+      kernel.websocket.broadcast(Buffer.from("late-shutdown-push"));
+
+      await expect(
+        withTimeout(
+          activeBrowserClose,
+          "active browser socket stayed open during shutdown",
+        ),
+      ).resolves.toEqual({ code: 1011, reason: "kernel-unavailable" });
+      await withTimeout(
+        upstreamClose,
+        "active Kernel upstream stayed open during shutdown",
+      );
+      await withTimeout(
+        pendingBrowserClose,
+        "pending WebSocket upgrade stayed open during shutdown",
+      );
+      expect(pendingSocket.readyState).toBe(WebSocket.CLOSED);
+
+      lock.release();
+      await lock.completed;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toEqual([]);
+      expect(kernel.websocket.connectionCount).toBe(0);
+    } finally {
+      lock?.release();
+      if (lock !== undefined) {
+        await Promise.allSettled([lock.completed]);
+      }
+      pendingSocket?.terminate();
+      activeSocket.terminate();
+      upstream.terminate();
+    }
   });
 });

@@ -1,4 +1,4 @@
--- ADR-017 audit_events privilege boundary.
+-- ADR-017/027 audit event and delivery-state privilege boundary.
 --
 -- This is a deployment-time ACL script, not a Prisma migration.  The caller
 -- must provide all identifiers explicitly with psql -v/--set.  No role,
@@ -80,7 +80,11 @@ SELECT
         JOIN pg_namespace AS namespace
           ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = :'singularity_schema'
-          AND relation.relname IN ('audit_events', 'organization_audit_sequences')
+          AND relation.relname IN (
+              'audit_events',
+              'content_audit_intents',
+              'organization_audit_sequences'
+          )
           AND pg_get_userbyid(relation.relowner) IN (
               :'audit_writer_role', :'audit_reader_role'
           )
@@ -96,7 +100,10 @@ SELECT
         AS audit_events_exists,
     to_regclass(
         format('%I.%I', :'singularity_schema', 'organization_audit_sequences')
-    ) IS NOT NULL AS audit_sequences_exists;
+    ) IS NOT NULL AS audit_sequences_exists,
+    to_regclass(
+        format('%I.%I', :'singularity_schema', 'content_audit_intents')
+    ) IS NOT NULL AS content_audit_intents_exists;
 \gset
 \if :audit_events_exists
 \else
@@ -105,6 +112,10 @@ SELECT
 \if :audit_sequences_exists
 \else
   \error 'organization_audit_sequences is missing; apply the L1 Prisma migration first'
+\endif
+\if :content_audit_intents_exists
+\else
+  \error 'content_audit_intents is missing; apply the ADR-027 Prisma migration first'
 \endif
 
 SELECT
@@ -164,6 +175,9 @@ REVOKE ALL PRIVILEGES
     FROM PUBLIC, :"audit_writer_role", :"audit_reader_role";
 REVOKE ALL PRIVILEGES
     ON TABLE :"singularity_schema"."organization_audit_sequences"
+    FROM PUBLIC, :"audit_writer_role", :"audit_reader_role";
+REVOKE ALL PRIVILEGES
+    ON TABLE :"singularity_schema"."content_audit_intents"
     FROM PUBLIC, :"audit_writer_role", :"audit_reader_role";
 
 GRANT USAGE

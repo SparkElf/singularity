@@ -1,6 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 import type { SpaceRuntimeBootstrap } from "@singularity/contracts";
-import type { ProtyleSession } from "@singularity/protyle-browser";
+import type {
+  ProtyleController,
+  ProtyleSession,
+} from "@singularity/protyle-browser";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +12,7 @@ import type {
   SpaceProtyleRuntime,
   SpaceSessionComposition,
 } from "@/spaces/space-session.ts";
+import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import { SpaceSessionRoot } from "@/spaces/SpaceSessionRoot.tsx";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
@@ -144,14 +148,27 @@ describe("SpaceSessionRoot", () => {
 
   it("disposes a terminal runtime before clearing the owner and notifying access loss", async () => {
     let activeSession: ProtyleSession<SpaceProtyleRuntime> | null = null;
+    let activeComposition: SpaceSessionComposition | null = null;
     let firstSession: ProtyleSession<SpaceProtyleRuntime> | null = null;
-    const notificationGate = deferred<void>();
+    const pluginDisposalGate = deferred<void>();
+    const lifecycleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const editorNode = document.createElement("div");
+    editorNode.dataset.testid = "owned-editor-dom";
+    document.body.append(editorNode);
+    const controller = {
+      destroy: vi.fn(() => editorNode.remove()),
+      focus: vi.fn(),
+      navigateDocument: vi.fn(async () => undefined),
+      setHostReadOnly: vi.fn(),
+    } satisfies ProtyleController;
     const onAccessLost = vi.fn(async () => {
       expect(firstSession).not.toBeNull();
+      expect(controller.destroy).toHaveBeenCalledOnce();
+      expect(editorNode).not.toBeInTheDocument();
+      expect(useContentSelectionStore.getState().selection).toBeNull();
       await expect(firstSession!.retrySubmission()).rejects.toThrowError(
         /after disposal/,
       );
-      await notificationGate.promise;
     });
     render(
       <SpaceSessionRoot
@@ -162,6 +179,7 @@ describe("SpaceSessionRoot", () => {
         retryRuntime={vi.fn()}
       >
         {(composition) => {
+          activeComposition = composition;
           activeSession = composition?.session ?? null;
           firstSession ??= composition?.session ?? null;
           return <div>{composition?.session?.spaceId ?? "none"}</div>;
@@ -171,52 +189,96 @@ describe("SpaceSessionRoot", () => {
 
     expect(await screen.findByText(SPACE_A)).toBeVisible();
     expect(firstSession).not.toBeNull();
+    const firstComposition = activeComposition as SpaceSessionComposition;
     act(() => {
-      firstSession!.runtime.host.dispatch({
-        category: "forbidden",
-        requestId: "99999999-9999-4999-8999-999999999999",
-        type: "runtime-error",
-      });
+      expect(firstComposition.selectDocument({
+        documentId: "20260718000100-docum01",
+        notebookId: "20260718000000-noteb01",
+      })).toBe(true);
+      firstSession!.runtime.editors.register(controller);
     });
+    const pluginDispose = vi
+      .spyOn(firstSession!.runtime.plugins, "dispose")
+      .mockImplementation(() => pluginDisposalGate.promise);
 
+    try {
+      act(() => {
+        firstSession!.runtime.host.dispatch({
+          category: "forbidden",
+          documentId: "20260718000100-docum01",
+          triggeringRequestId: "99999999-9999-4999-8999-999999999999",
+          type: "runtime-error",
+        });
+      });
+
+      await waitFor(() => expect(pluginDispose).toHaveBeenCalledOnce());
+      expect(onAccessLost).not.toHaveBeenCalled();
+      expect(activeSession).toBe(firstSession);
+      expect(controller.destroy).toHaveBeenCalledOnce();
+      expect(useContentSelectionStore.getState().selection).toEqual({
+        documentId: "20260718000100-docum01",
+        notebookId: "20260718000000-noteb01",
+        spaceId: SPACE_A,
+      });
+      act(() => {
+        expect(firstComposition.selectDocument({
+          documentId: "20260718000101-stale01",
+          notebookId: "20260718000000-noteb01",
+        })).toBe(false);
+        expect(firstComposition.clearSelection()).toBe(false);
+      });
+    } finally {
+      pluginDisposalGate.resolve();
+    }
     await waitFor(() => expect(onAccessLost).toHaveBeenCalledOnce());
     expect(screen.getByText("none")).toBeVisible();
     expect(activeSession).toBeNull();
-    notificationGate.resolve();
-  });
-
-  it("keeps the current session mounted when the content service is temporarily unavailable", async () => {
-    let activeSession: ProtyleSession<SpaceProtyleRuntime> | null = null;
-    const onAccessLost = vi.fn();
-    render(
-      <SpaceSessionRoot
-        bootstrap={readyBootstrap(SPACE_A)}
-        createProtyleMenuSurface={createTestProtyleMenuSurface}
-        onAccessLost={onAccessLost}
-        onHostEvent={vi.fn()}
-        retryRuntime={vi.fn()}
-      >
-        {(composition) => {
-          activeSession = composition?.session ?? null;
-          return <div>{composition?.session?.spaceId ?? "none"}</div>;
-        }}
-      </SpaceSessionRoot>,
+    expect(lifecycleInfo).toHaveBeenCalledWith(
+      "[protyle.lifecycle]",
+      expect.objectContaining({
+        documentId: "20260718000100-docum01",
+        phase: "dispose",
+        result: "completed",
+        triggeringRequestId: "99999999-9999-4999-8999-999999999999",
+      }),
     );
-
-    expect(await screen.findByText(SPACE_A)).toBeVisible();
-    act(() => {
-      activeSession!.runtime.host.dispatch({
-        category: "kernel-unavailable",
-        requestId: "99999999-9999-4999-8999-999999999999",
-        type: "runtime-error",
-      });
-    });
-
-    expect(screen.getByText(SPACE_A)).toBeVisible();
-    const currentSession = activeSession as ProtyleSession<SpaceProtyleRuntime>;
-    expect(currentSession.spaceId).toBe(SPACE_A);
-    expect(onAccessLost).not.toHaveBeenCalled();
+    editorNode.remove();
   });
+
+  it.each(["kernel-unavailable", "network-failure"] as const)(
+    "keeps the current session mounted after a non-terminal %s event",
+    async (category) => {
+      let activeSession: ProtyleSession<SpaceProtyleRuntime> | null = null;
+      const onAccessLost = vi.fn();
+      render(
+        <SpaceSessionRoot
+          bootstrap={readyBootstrap(SPACE_A)}
+          createProtyleMenuSurface={createTestProtyleMenuSurface}
+          onAccessLost={onAccessLost}
+          onHostEvent={vi.fn()}
+          retryRuntime={vi.fn()}
+        >
+          {(composition) => {
+            activeSession = composition?.session ?? null;
+            return <div>{composition?.session?.spaceId ?? "none"}</div>;
+          }}
+        </SpaceSessionRoot>,
+      );
+
+      expect(await screen.findByText(SPACE_A)).toBeVisible();
+      act(() => {
+        activeSession!.runtime.host.dispatch({
+          category,
+          type: "runtime-error",
+        });
+      });
+
+      expect(screen.getByText(SPACE_A)).toBeVisible();
+      const currentSession = activeSession as ProtyleSession<SpaceProtyleRuntime>;
+      expect(currentSession.spaceId).toBe(SPACE_A);
+      expect(onAccessLost).not.toHaveBeenCalled();
+    },
+  );
 
   it("forwards non-terminal host events to the React mediator with the bound space", async () => {
     let activeSession: ProtyleSession<SpaceProtyleRuntime> | null = null;

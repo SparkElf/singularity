@@ -34,6 +34,7 @@ import {
   kernelDeploymentInstanceIdSchema,
   kernelRuntimeEndpointSchema,
   RuntimeKernelDeploymentRegistry,
+  type KernelDeploymentChangedEvent,
   type KernelRuntimeEndpoint,
 } from "@singularity/kernel-client";
 import { z } from "zod";
@@ -230,8 +231,38 @@ function processArgument(
   arguments_: readonly string[],
   name: string,
 ): string | undefined {
-  const index = arguments_.indexOf(name);
-  return index < 0 ? undefined : arguments_[index + 1];
+  let count = 0;
+  let value: string | undefined;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    if (arguments_[index] !== name) {
+      continue;
+    }
+    count += 1;
+    const next = arguments_[index + 1];
+    if (next === undefined || next.startsWith("-")) {
+      return undefined;
+    }
+    value = next;
+  }
+  return count === 1 ? value : undefined;
+}
+
+function processEnvironmentValue(
+  entries: readonly string[],
+  name: string,
+): string | undefined {
+  let count = 0;
+  let value: string | undefined;
+  for (const entry of entries) {
+    const separator = entry.indexOf("=");
+    const key = separator < 0 ? entry : entry.slice(0, separator);
+    if (key !== name) {
+      continue;
+    }
+    count += 1;
+    value = separator < 0 ? undefined : entry.slice(separator + 1);
+  }
+  return count === 1 ? value : undefined;
 }
 
 function childPath(root: string, name: string): string {
@@ -321,7 +352,7 @@ export class ProcessRestoreDeployment
         throw new RestoreDeploymentError("restore-aborted");
       }
 
-      target.process = await this.#startKernel(target, input.job);
+      await this.#startKernel(target, input.job);
       const ready = await this.#waitForKernel(
         target,
         input.job,
@@ -417,9 +448,7 @@ export class ProcessRestoreDeployment
           spaceId: job.targetSpaceId,
           workspaceDirectory,
         };
-        for (const pid of await this.#findPersistedProcesses(identity)) {
-          await this.#terminatePersistedProcess(pid, identity);
-        }
+        await this.#terminatePersistedTargetProcesses(null, identity);
         await this.#removeWorkspaceAndMetadata(workspaceDirectory, metadataPath);
         return;
       }
@@ -450,14 +479,13 @@ export class ProcessRestoreDeployment
       kernelInstanceId: metadata.kernelInstanceId,
       spaceId: metadata.spaceId,
     });
-    if (metadata.pid !== null) {
-      await this.#terminatePersistedProcess(metadata.pid, {
-        kernelInstanceId: metadata.kernelInstanceId,
-        port: metadata.port,
-        spaceId: metadata.spaceId,
-        workspaceDirectory,
-      });
-    }
+    const identity: PersistedProcessIdentity = {
+      kernelInstanceId: metadata.kernelInstanceId,
+      port: metadata.port,
+      spaceId: metadata.spaceId,
+      workspaceDirectory,
+    };
+    await this.#terminatePersistedTargetProcesses(metadata.pid, identity);
     await this.#removeWorkspaceAndMetadata(workspaceDirectory, metadataPath);
     this.#allocatedPorts.delete(metadata.port);
   }
@@ -873,7 +901,7 @@ export class ProcessRestoreDeployment
   async #startKernel(
     target: TargetRuntime,
     job: RestoreSpaceJob,
-  ): Promise<ChildProcess> {
+  ): Promise<void> {
     await this.#assertKernelLaunchConfiguration();
     const child = spawn(
       this.#configuration.kernelBinaryPath,
@@ -901,6 +929,7 @@ export class ProcessRestoreDeployment
           SINGULARITY_KERNEL_GATEWAY_CLIENT_DNS_NAME:
             this.#configuration.tls.gatewayClientDnsName,
           SINGULARITY_KERNEL_INSTANCE_ID: job.targetKernelInstanceId,
+          SINGULARITY_KERNEL_LISTEN_ADDRESS: RESTORE_KERNEL_HOSTNAME,
           SINGULARITY_KERNEL_SERVICE_KEYS_FILE:
             this.#configuration.tls.servicePublicKeysFile,
           SINGULARITY_KERNEL_SPACE_ID: job.targetSpaceId,
@@ -915,13 +944,13 @@ export class ProcessRestoreDeployment
         windowsHide: true,
       },
     );
+    target.process = child;
     child.stderr?.on("data", (raw: unknown) => {
       const chunk = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
       target.stderrTail = (target.stderrTail + chunk).slice(
         -MAXIMUM_PROCESS_OUTPUT_BYTES,
       );
     });
-    return child;
   }
 
   async #waitForKernel(
@@ -1271,28 +1300,27 @@ export class ProcessRestoreDeployment
         this.#configuration.runtimeRootDirectory,
         parsed.workspaceDirectoryName,
       );
-      const workspaceValid = await this.#isTrustedPersistedWorkspace(
-        workspaceDirectory,
-      );
-      if (!workspaceValid) {
+      if (parsed.state === "starting") {
+        if (await this.#hasActiveRestoreClaim(parsed.kernelInstanceId)) {
+          continue;
+        }
+        const identity: PersistedProcessIdentity = {
+          kernelInstanceId: parsed.kernelInstanceId,
+          port: parsed.port,
+          spaceId: parsed.spaceId,
+          workspaceDirectory,
+        };
+        await this.#terminatePersistedTargetProcesses(parsed.pid, identity);
         await this.#removeWorkspaceAndMetadata(
           workspaceDirectory,
           metadataPath,
         );
         continue;
       }
-      if (parsed.state === "starting") {
-        if (await this.#hasActiveRestoreClaim(parsed.kernelInstanceId)) {
-          continue;
-        }
-        if (parsed.pid !== null) {
-          await this.#terminatePersistedProcess(parsed.pid, {
-            kernelInstanceId: parsed.kernelInstanceId,
-            port: parsed.port,
-            spaceId: parsed.spaceId,
-            workspaceDirectory,
-          });
-        }
+      const workspaceValid = await this.#isTrustedPersistedWorkspace(
+        workspaceDirectory,
+      );
+      if (!workspaceValid) {
         await this.#removeWorkspaceAndMetadata(
           workspaceDirectory,
           metadataPath,
@@ -1506,16 +1534,16 @@ export class ProcessRestoreDeployment
             `,
           );
         }
+        const event = {
+          kernelInstanceId: endpoint.kernelInstanceId,
+          kind: "remove",
+          requestId,
+          spaceId: endpoint.spaceId,
+        } satisfies KernelDeploymentChangedEvent;
         await transaction.$executeRaw(
           Prisma.sql`SELECT pg_notify(
             ${KERNEL_DEPLOYMENT_CHANGED_CHANNEL},
-            ${JSON.stringify({
-              deploymentHandle: endpoint.handle,
-              kernelInstanceId: endpoint.kernelInstanceId,
-              kind: "remove",
-              requestId,
-              spaceId: endpoint.spaceId,
-            })}
+            ${JSON.stringify(event)}
           )`,
         );
         return { failedRestore };
@@ -1814,22 +1842,26 @@ export class ProcessRestoreDeployment
       readFile(`/proc/${pid}/environ`, "utf8"),
     ]);
     const arguments_ = commandLine.split("\u0000").filter(Boolean);
-    const environmentEntries = new Set(
-      environment.split("\u0000").filter(Boolean),
-    );
+    const environmentEntries = environment.split("\u0000").filter(Boolean);
     return (
       arguments_[0] === this.#configuration.kernelBinaryPath &&
       processArgument(arguments_, "--workspace") ===
         identity.workspaceDirectory &&
       (identity.port === undefined ||
         processArgument(arguments_, "--port") === String(identity.port)) &&
-      environmentEntries.has(
-        `SINGULARITY_KERNEL_INSTANCE_ID=${identity.kernelInstanceId}`,
-      ) &&
+      processEnvironmentValue(
+        environmentEntries,
+        "SINGULARITY_KERNEL_INSTANCE_ID",
+      ) === identity.kernelInstanceId &&
+      processEnvironmentValue(
+        environmentEntries,
+        "SINGULARITY_KERNEL_LISTEN_ADDRESS",
+      ) === RESTORE_KERNEL_HOSTNAME &&
       (identity.spaceId === undefined ||
-        environmentEntries.has(
-          `SINGULARITY_KERNEL_SPACE_ID=${identity.spaceId}`,
-        ))
+        processEnvironmentValue(
+          environmentEntries,
+          "SINGULARITY_KERNEL_SPACE_ID",
+        ) === identity.spaceId)
     );
   }
 
@@ -1944,6 +1976,19 @@ export class ProcessRestoreDeployment
     }
     if (!(await this.#waitForPidExit(pid))) {
       throw new RestoreDeploymentError("target-cleanup-failed");
+    }
+  }
+
+  async #terminatePersistedTargetProcesses(
+    persistedPid: number | null,
+    identity: PersistedProcessIdentity,
+  ): Promise<void> {
+    if (persistedPid !== null) {
+      await this.#terminatePersistedProcess(persistedPid, identity);
+      return;
+    }
+    for (const pid of await this.#findPersistedProcesses(identity)) {
+      await this.#terminatePersistedProcess(pid, identity);
     }
   }
 

@@ -730,7 +730,7 @@ export class MobileOutline extends Model {
     }
 
     private onTransaction(data: IWebSocketData) {
-        if (data.data.rootID !== this.blockId) {
+        if (data.data.notebookId !== this.notebookId || data.data.documentId !== this.blockId) {
             return;
         }
         let needReload = false;
@@ -764,7 +764,7 @@ export class MobileOutline extends Model {
             };
             this.reload(owner, () => {
                 // 文档切换后不再更新原有推送 https://github.com/siyuan-note/siyuan/issues/13409
-                if (data.data.rootID !== this.blockId) {
+                if (data.data.notebookId !== this.notebookId || data.data.documentId !== this.blockId) {
                     return;
                 }
                 // https://github.com/siyuan-note/siyuan/issues/8372

@@ -10,6 +10,11 @@ import { createSecureContext } from "node:tls";
 
 import { kernelRoutePolicies } from "@singularity/authorization";
 import {
+  parseAuditConfiguration,
+  type AuditConfiguration,
+  type AuditConfigurationEnvironment,
+} from "@singularity/database";
+import {
   createKernelDeployment,
   KernelCredentialService,
   kernelDeploymentProfileSchema,
@@ -26,6 +31,8 @@ import { MAXIMUM_AUDIT_ARCHIVE_EVENTS } from "./worker.js";
 
 const DEFAULT_ARCHIVE_AUDIT_INTERVAL_MILLISECONDS = 5 * 60_000;
 const DEFAULT_CLAIM_BATCH_SIZE = 16;
+const DEFAULT_CONTENT_AUDIT_BATCH_SIZE = 100;
+const DEFAULT_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MILLISECONDS = 5_000;
 const DEFAULT_LEASE_DURATION_MILLISECONDS = 30_000;
 const DEFAULT_LEASE_RENEWAL_MILLISECONDS = 10_000;
 const DEFAULT_MAXIMUM_AUDIT_ARCHIVE_BYTES = 256 * 1_024 * 1_024;
@@ -34,6 +41,7 @@ const DEFAULT_MAXIMUM_CONCURRENT_JOBS = 4;
 const DEFAULT_MAXIMUM_OBJECT_BYTES = DEFAULT_MAXIMUM_BACKUP_BYTES;
 const DEFAULT_POLL_INTERVAL_MILLISECONDS = 1_000;
 const DEFAULT_SAMPLE_KERNEL_INTERVAL_MILLISECONDS = 60_000;
+const MAXIMUM_CONTENT_AUDIT_BATCH_SIZE = 1_000;
 
 export class WorkerConfigurationError extends Error {
   constructor() {
@@ -44,7 +52,10 @@ export class WorkerConfigurationError extends Error {
 
 export interface WorkerConfiguration {
   readonly archiveAuditIntervalMilliseconds: number;
+  readonly audit: AuditConfiguration;
   readonly claimBatchSize: number;
+  readonly contentAuditBatchSize: number;
+  readonly contentAuditReconciliationIntervalMilliseconds: number;
   readonly credentials: KernelCredentialService;
   readonly deployments: RuntimeKernelDeploymentRegistry;
   readonly leaseDurationMilliseconds: number;
@@ -96,12 +107,14 @@ export interface RestoreDeploymentConfiguration {
   readonly tls: RestoreDeploymentTlsConfiguration;
 }
 
-export interface WorkerEnvironment {
+export interface WorkerEnvironment extends AuditConfigurationEnvironment {
   readonly SINGULARITY_KERNEL_DEPLOYMENTS_FILE?: string;
   readonly SINGULARITY_KERNEL_SERVICE_KEY_ID?: string;
   readonly SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE?: string;
   readonly SINGULARITY_WORKER_ARCHIVE_AUDIT_INTERVAL_MS?: string;
   readonly SINGULARITY_WORKER_CLAIM_BATCH_SIZE?: string;
+  readonly SINGULARITY_WORKER_CONTENT_AUDIT_BATCH_SIZE?: string;
+  readonly SINGULARITY_WORKER_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MS?: string;
   readonly SINGULARITY_WORKER_ID?: string;
   readonly SINGULARITY_WORKER_LEASE_DURATION_MS?: string;
   readonly SINGULARITY_WORKER_LEASE_RENEWAL_MS?: string;
@@ -273,7 +286,12 @@ export function loadWorkerConfiguration(
     environment.SINGULARITY_WORKER_MAXIMUM_AUDIT_ARCHIVE_EVENTS,
     MAXIMUM_AUDIT_ARCHIVE_EVENTS,
   );
+  const contentAuditBatchSize = integer(
+    environment.SINGULARITY_WORKER_CONTENT_AUDIT_BATCH_SIZE,
+    DEFAULT_CONTENT_AUDIT_BATCH_SIZE,
+  );
   if (
+    contentAuditBatchSize > MAXIMUM_CONTENT_AUDIT_BATCH_SIZE ||
     maximumObjectBytes < maximumAuditArchiveBytes ||
     maximumObjectBytes < maximumBackupBytes ||
     maximumAuditArchiveEvents > MAXIMUM_AUDIT_ARCHIVE_EVENTS
@@ -423,9 +441,15 @@ export function loadWorkerConfiguration(
         environment.SINGULARITY_WORKER_ARCHIVE_AUDIT_INTERVAL_MS,
         DEFAULT_ARCHIVE_AUDIT_INTERVAL_MILLISECONDS,
       ),
+      audit: parseAuditConfiguration(environment),
       claimBatchSize: integer(
         environment.SINGULARITY_WORKER_CLAIM_BATCH_SIZE,
         DEFAULT_CLAIM_BATCH_SIZE,
+      ),
+      contentAuditBatchSize,
+      contentAuditReconciliationIntervalMilliseconds: integer(
+        environment.SINGULARITY_WORKER_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MS,
+        DEFAULT_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MILLISECONDS,
       ),
       credentials,
       deployments,

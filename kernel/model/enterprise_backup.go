@@ -241,6 +241,7 @@ func ValidateEnterpriseRestoredWorkspace(
 		return err
 	}
 	blockIDs := make(map[string]string)
+	blockIDsByBox := make(map[string]struct{})
 	var references []enterpriseRestoredReference
 	luteEngine := util.NewLute()
 	err = filepath.WalkDir(dataRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
@@ -304,6 +305,7 @@ func ValidateEnterpriseRestoredWorkspace(
 					return ast.WalkStop
 				}
 				blockIDs[node.ID] = filePath
+				blockIDsByBox[boxID+"\x00"+node.ID] = struct{}{}
 			}
 			if treenode.IsBlockRef(node) {
 				defID, _, _ := treenode.GetBlockRef(node)
@@ -337,7 +339,7 @@ func ValidateEnterpriseRestoredWorkspace(
 		if encryptedBoxes[reference.boxID] {
 			continue
 		}
-		if _, exists := blockIDs[reference.blockID]; !exists {
+		if _, exists := blockIDsByBox[reference.boxID+"\x00"+reference.blockID]; !exists {
 			return fmt.Errorf("%w: restored reference target [%s] is missing", ErrEnterpriseBackupInvalid, reference.blockID)
 		}
 	}

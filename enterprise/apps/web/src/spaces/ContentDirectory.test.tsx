@@ -1,4 +1,8 @@
 import "@testing-library/jest-dom/vitest";
+import {
+  RUNTIME_ACCESS_LOST_HEADER_NAME,
+  RUNTIME_ACCESS_LOST_HEADER_VALUE,
+} from "@singularity/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +76,24 @@ function problem(status: number) {
   };
 }
 
+function notFoundResponse(runtimeAccessLost = false): Response {
+  return new Response(
+    JSON.stringify({ code: "not-found", requestId: REQUEST_ID, status: 404 }),
+    {
+      headers: {
+        "Content-Type": "application/problem+json",
+        ...(runtimeAccessLost
+          ? {
+              [RUNTIME_ACCESS_LOST_HEADER_NAME]:
+                RUNTIME_ACCESS_LOST_HEADER_VALUE,
+            }
+          : {}),
+      },
+      status: 404,
+    },
+  );
+}
+
 function notebook(notebookId: string, locked = false) {
   return { icon: "", locked, name: notebookId, notebookId };
 }
@@ -99,7 +121,7 @@ function renderDirectory(
 ) {
   const scope = activateContentSelectionScope(identity);
   activeTestScope = scope;
-  const onAccessLost = vi.fn<(category: ContentDirectoryAccessLoss) => void>();
+  const onAccessLost = vi.fn<(event: ContentDirectoryAccessLoss) => void>();
   const onStatusChange = vi.fn<(status: ContentDirectoryStatus) => void>();
   const result = render(
     <QueryClientProvider client={queryClient}>
@@ -220,6 +242,102 @@ describe("ContentDirectory", () => {
     expect(screen.queryByText("内容库已锁定")).not.toBeInTheDocument();
   });
 
+  it("reports forbidden only for a marked runtime access loss", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, DOCUMENT_A, "当前文档", true)],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      if (
+        path === childDocumentsPath(
+          ORGANIZATION_A,
+          SPACE_A,
+          NOTEBOOK_A,
+          DOCUMENT_A,
+        )
+      ) {
+        return Promise.resolve(notFoundResponse(true));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    const { onAccessLost } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    });
+    expect(await screen.findByRole("button", { name: "当前文档" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开子文档" }));
+
+    await waitFor(() => {
+      expect(onAccessLost).toHaveBeenCalledWith({
+        category: "forbidden",
+        triggeringRequestId: REQUEST_ID,
+        type: "runtime-error",
+      });
+    });
+    expect(onAccessLost).toHaveBeenCalledTimes(1);
+    expect(useContentSelectionStore.getState().selection).toEqual({
+      documentId: DOCUMENT_A,
+      notebookId: NOTEBOOK_A,
+      spaceId: SPACE_A,
+    });
+  });
+
+  it("keeps an ordinary document 404 local to the directory operation", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, DOCUMENT_A, "当前文档", true)],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      if (
+        path === childDocumentsPath(
+          ORGANIZATION_A,
+          SPACE_A,
+          NOTEBOOK_A,
+          DOCUMENT_A,
+        )
+      ) {
+        return Promise.resolve(notFoundResponse());
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    const { container, onAccessLost } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    });
+    expect(await screen.findByRole("button", { name: "当前文档" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开子文档" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "重新加载该层文档" })).toBeVisible();
+      expect(container.querySelector("[data-content-directory-status]")).toHaveAttribute(
+        "data-content-directory-status",
+        "ready",
+      );
+    });
+    expect(onAccessLost).not.toHaveBeenCalled();
+    expect(useContentSelectionStore.getState().selection).toEqual({
+      documentId: DOCUMENT_A,
+      notebookId: NOTEBOOK_A,
+      spaceId: SPACE_A,
+    });
+  });
+
   it("stops on the first root-page failure and only retries after an explicit command", async () => {
     let firstNotebookAttempts = 0;
     let secondNotebookAttempts = 0;
@@ -268,6 +386,48 @@ describe("ContentDirectory", () => {
     });
     expect(firstNotebookAttempts).toBe(2);
     expect(secondNotebookAttempts).toBe(0);
+  });
+
+  it("rejects a selection command from the directory generation replaced by refresh", async () => {
+    let rootRequests = 0;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        rootRequests += 1;
+        return Promise.resolve(jsonResponse({
+          documents: [
+            rootRequests === 1
+              ? document(NOTEBOOK_A, DOCUMENT_A, "旧代次文档")
+              : document(NOTEBOOK_A, DOCUMENT_B, "刷新后文档"),
+          ],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    renderDirectory({ organizationId: ORGANIZATION_A, spaceId: SPACE_A });
+    const staleDocumentButton = await screen.findByRole("button", {
+      name: "旧代次文档",
+    });
+
+    act(() => {
+      screen.getByRole("button", { name: "刷新文档目录" }).click();
+      staleDocumentButton.click();
+    });
+
+    expect(useContentSelectionStore.getState().selection).toBeNull();
+    await waitFor(() => {
+      expect(useContentSelectionStore.getState().selection).toEqual({
+        documentId: DOCUMENT_B,
+        notebookId: NOTEBOOK_A,
+        spaceId: SPACE_A,
+      });
+    });
   });
 
   it("rejects a late root page after switching to another space", async () => {

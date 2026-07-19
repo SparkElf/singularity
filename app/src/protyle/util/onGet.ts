@@ -23,6 +23,7 @@ import {
     requestProtyleContent,
     type ProtyleContentLoad,
 } from "./contentLoad";
+import {resolveProtyleContentAssetSources} from "./assetSource";
 
 const notify = (protyle: IProtyle, level: "info" | "warning" | "error", message: string) => {
     protyle.host.dispatch({type: "notify", level, message});
@@ -222,6 +223,7 @@ const setHTML = (options: {
             item.setAttribute("data-inline-memo-content", window.DOMPurify.sanitize(content));
         }
     });
+    resolveProtyleContentAssetSources(protyle, doc);
     options.content = doc.body.innerHTML;
     const REMOVED_OVER_HEIGHT = protyle.contentElement.clientHeight * 8;
     const updateReadonly = typeof options.updateReadonly === "undefined" ? protyle.wysiwyg.element.innerHTML === "" : options.updateReadonly;

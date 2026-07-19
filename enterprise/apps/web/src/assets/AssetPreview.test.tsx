@@ -87,6 +87,7 @@ describe("AssetPreview", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       PREVIEW_URL,
       expect.objectContaining({
+        cache: "no-store",
         credentials: "same-origin",
         method: "GET",
         mode: "same-origin",

@@ -3,7 +3,7 @@ title: "企业空间Session组合根与Kernel Gateway启动方案"
 description: "定义真实spaceId的权威来源、NestJS启动切片、浏览器Session装配和Protyle迁移前置门禁"
 author: "Codex"
 date: "2026-07-14"
-version: "1.9.5"
+version: "1.9.6"
 status: "approved"
 tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 ---
@@ -40,6 +40,7 @@ tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 | 1.9.3 | 2026-07-18 | Codex | 以响应级撤权标记区分隐藏式404与Kernel业务404 |
 | 1.9.4 | 2026-07-19 | Codex | 对齐服务目录到真实Vite Core的生产接线与尚未执行的P3/P5验证状态 |
 | 1.9.5 | 2026-07-19 | Codex | 固定目录选择与唯一SpaceSession的代次能力及render-prop组合合同 |
+| 1.9.6 | 2026-07-19 | Codex | 固定HTTP、WebSocket与浏览器生命周期的真实请求关联语义 |
 
 ## Table of Contents
 
@@ -306,7 +307,7 @@ interface ApiProblem {
 }
 ```
 
-不存在和调用者不可见的组织或空间统一返回`404 + not-found`，避免泄露资源存在性；未登录返回`401 + unauthenticated`，已能看到空间但动作不允许时返回`403 + forbidden`。启动接口与普通业务操作继续使用`ApiProblem`，四类Runtime错误只表达活动Session的认证、授权、内容服务可用性和浏览器网络状态，不吞掉Kernel业务错误。
+不存在和调用者不可见的组织或空间统一返回`404 + not-found`，避免泄露资源存在性；未登录返回`401 + unauthenticated`，已能看到空间但动作不允许时返回`403 + forbidden`。启动接口与普通业务操作继续使用`ApiProblem`，四类Runtime错误只表达活动Session的认证、授权、内容服务可用性和浏览器网络状态，不吞掉Kernel业务错误。Runtime事件固定为`{ category, documentId?, triggeringRequestId? }`：内容Gateway操作可携带显式`documentId`，`triggeringRequestId`只引用`ApiProblem`、响应头或服务端WebSocket边缘实际产生的请求；Discovery、目录、网络失败和本地协议错误没有请求源时省略，不从DOM、全局状态、Session generation、connection ID或浏览器随机UUID推断。
 
 确定性映射如下：
 
@@ -426,11 +427,11 @@ interface ProtyleResourcePort {
 ### 6.2 状态与失效
 
 - Gateway维护进程内`SpaceConnectionRegistry`，按`authSessionId`、`userId`、`organizationId`和`spaceId`四个索引登记浏览器WebSocket；连接状态只取`pending`、`active`或`closed`，Registry不保存正文或消息副本。本期部署合同明确限制单个API副本，L5横向扩展前必须以消息总线替换单监听者通知链并通过跨副本合同测试。
-- WebSocket升级先验证Cookie与Origin，再把连接登记为`pending`，随后重新读取AuthSession、User、Organization、OrganizationMembership、Space和SpaceMembership的最新授权事实。Registry只在复验通过且连接未被同期`AccessChanged`标记后原子激活；激活前不得连接上游Kernel或转发任何推送。该顺序关闭“授权后撤权、注册前漏事件”的窗口。
+- WebSocket升级在服务端边缘生成唯一`requestId`，验证Cookie与Origin后把连接登记为`pending`，随后重新读取AuthSession、User、Organization、OrganizationMembership、Space和SpaceMembership的最新授权事实。Registry只在复验通过且连接未被同期`AccessChanged`标记后原子激活，并在此时写入授权deployment的`kernelInstanceId`；pending、认证失败和授权失败阶段保持缺省。激活前不得连接上游Kernel或转发任何推送。该顺序关闭“授权后撤权、注册前漏事件”的窗口。
 - S1的运维写入口必须通过`IdentityService`与`SpaceAccessService`执行，会话撤销/到期、用户禁用、组织/空间停用及两级成员变化在业务事务内调用`pg_notify`，由PostgreSQL提交后投递。API专用`LISTEN`连接把事件交给首个生产消费者`SpaceConnectionRegistry`；后续HTTP查询仍只读取新事实，不保留进程内授权缓存。监听异常时关闭全部连接并拒绝新升级，不在可能漏事件的窗口内继续服务或静默重连。
 - S1每个认证HTTP请求按5.2节条件更新空闲期限；S2起，会话自然到期由Registry按绝对/空闲期限定时关闭，条件更新成功后AuthSessionService发布同一会话的到期更新时间，Registry只重排该计时器。
 - 连接注册表收到会话到期/撤销或用户失效时以`4401 + unauthenticated`关闭，收到组织/空间停用、组织成员或空间成员撤销及角色变化时以`4403 + forbidden`关闭。事件同时覆盖`pending`和`active`连接，关闭后上游订阅先终止，任何排队推送都不得再进入浏览器。
-- 浏览器Transport把4401/4403及活动Session中的401/403/隐藏式404转换为对应Runtime错误并通知空间路由。角色降级后只有新的授权响应可以创建`viewer` Session，成员撤销或不可见空间得到`404 not-found`且不创建后继Session。
+- 浏览器Transport把4401/4403及活动Session中的401/403/隐藏式404转换为对应Runtime错误并通知空间路由，只把真实响应的请求标识投影为可选`triggeringRequestId`。角色降级后只有新的授权响应可以创建`viewer` Session，成员撤销或不可见空间得到`404 not-found`且不创建后继Session。
 - Gateway收到任意浏览器WebSocket数据帧时以`4408 + client-messages-forbidden`关闭；只有Gateway生成固定上游订阅握手，Kernel的任意命令处理器不暴露给浏览器。
 - `kernelState`不是Session内部可写状态；只有启动响应为`ready`时创建Session。
 - 切空间先销毁旧Session，再请求并创建新空间Session，不同时持有两个活动空间Runtime。
@@ -490,10 +491,10 @@ Auth/Authorization mutation commit
 | `space.runtime` | NestJS `SpaceRuntimeService` / `Logger` | 成功`info`，不可用`warn` | 启动查询与状态变化 | `organizationId`、`spaceId`、状态、`requestId`、耗时 | 内部地址、正文 |
 | `content.directory` | NestJS `ContentDirectoryService`与Web目录owner / `Logger` | 成功`info`，拒绝/迟到`warn` | 笔记本读取、分层分页、选择与换代 | `organizationId`、`spaceId`、可选`notebookId`/`parentDocumentId`、`offset`、generation、结果、`requestId`、耗时 | 名称、标题、路径、正文、页内容、凭证 |
 | `authorization.decision` | `AuthorizationService` / `Logger` | 允许`debug`，拒绝`warn` | 空间与Kernel动作判断 | `userId`、`organizationId`、`spaceId`、动作、结果、`requestId` | 请求正文、凭证 |
-| `kernel.route` | NestJS `KernelGateway`与Go `logging` | 成功`info`，策略/上游失败`warn`，mTLS/JWT失败`error` | HTTP/WS转发与失败 | `spaceId`、`kernelInstanceId`、canonical路由、状态、耗时、`requestId` | payload、工作区路径、证书私钥 |
-| `protyle.lifecycle` | Web空间组合根诊断端口 | 创建/销毁`info`，迟到结果`warn` | Session创建、切换、销毁 | `spaceId`、`documentId`、阶段、结果、`requestId` | 正文、选区、插件私有数据 |
+| `kernel.route` | NestJS `KernelGateway`与Go `logging` | 成功`info`，策略/上游失败`warn`，mTLS/JWT失败`error` | HTTP/WS转发与失败 | `spaceId`、授权成功后可选`kernelInstanceId`、canonical路由、状态、耗时、`requestId` | payload、工作区路径、证书私钥 |
+| `protyle.lifecycle` | Web空间组合根诊断端口 | 创建/销毁`info`，迟到结果`warn` | Session创建、切换、销毁 | `spaceId`、generation、阶段、结果、事件可达的可选`documentId`/`triggeringRequestId` | 正文、选区、插件私有数据、伪造请求ID |
 
-NestJS边缘为每个HTTP请求或WebSocket升级生成不可由浏览器覆盖的`requestId`。Gateway用同一个值写入`ApiProblem.requestId`、响应`X-Request-Id`、服务JWT `jti`和受信上游`X-Singularity-Request-Id`；Kernel日志与响应继续透传该值。WebSocket另有内部`connectionId`，Registry同时保存`connectionId`与握手`requestId`，二者不得与`authSessionId`或`ProtyleSession`混用。
+NestJS边缘为每个HTTP请求或WebSocket升级生成不可由浏览器覆盖的`requestId`。Gateway用同一个值写入`ApiProblem.requestId`、响应`X-Request-Id`、服务JWT `jti`和受信上游`X-Singularity-Request-Id`；Kernel日志与响应继续透传该值。WebSocket另有内部`connectionId`，Registry同时保存`connectionId`与握手`requestId`，二者不得与`authSessionId`或`ProtyleSession`混用。浏览器只在后续事件确有该上游请求时称为`triggeringRequestId`；没有响应标识的网络、消息和关闭事件保持缺省，生命周期generation仍只表示代次。
 
 ## 8. 设计评估
 

@@ -24,13 +24,13 @@ import {
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const OTHER_SPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const NOTEBOOK_ID = "20260718000000-noteb01";
 const DOCUMENT_A_ID = "20260718000100-docum01";
 const DOCUMENT_B_ID = "20260718000101-docum02";
 const SHARE_ID = "22222222-2222-4222-8222-222222222222";
 const SHARE_TOKEN = "A".repeat(43);
 const CSRF_TOKEN = "B".repeat(43);
+const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const SHARES_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/shares`;
 const NOTEBOOKS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/content-directory/notebooks`;
 const DOCUMENTS_PATH = `${NOTEBOOKS_PATH}/${NOTEBOOK_ID}/documents?offset=0`;
@@ -58,9 +58,11 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderSharesPage(): void {
+function renderSharesPage(
+  queryClient = createTestQueryClient(),
+): QueryClient {
   render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter
           initialEntries={[
@@ -72,11 +74,13 @@ function renderSharesPage(): void {
               path="/organizations/:organizationId/settings/spaces/:spaceId/shares"
               element={<SharesPage />}
             />
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -97,8 +101,11 @@ describe("SharesPage document selection", () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
       const path = requestPath(input);
       if (path === SHARES_PATH && init?.method === "POST") {
+        if (typeof init.body !== "string") {
+          throw new Error("Expected a JSON string request body");
+        }
         createdRequests.push(
-          JSON.parse(String(init.body)) as Record<string, unknown>,
+          JSON.parse(init.body) as Record<string, unknown>,
         );
         return Promise.resolve(jsonResponse({
           createdAt: "2026-07-18T00:00:00.000Z",
@@ -172,7 +179,7 @@ describe("SharesPage document selection", () => {
     expect(await screen.findByText("分享已创建")).toBeVisible();
   });
 
-  it("does not treat another space's selection as the current share target", async () => {
+  it("uses only the selection owned by its current directory scope", async () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
       const path = requestPath(input);
       if (path === SHARES_PATH) {
@@ -190,7 +197,7 @@ describe("SharesPage document selection", () => {
     act(() => {
       const scope = activateContentSelectionScope({
         organizationId: ORGANIZATION_ID,
-        spaceId: OTHER_SPACE_ID,
+        spaceId: SPACE_ID,
       });
       externalSelectionScope = scope;
       selectContentDocument(scope, {
@@ -200,5 +207,62 @@ describe("SharesPage document selection", () => {
     });
     expect(screen.getByRole("button", { name: "创建分享" })).toBeDisabled();
     expect(screen.queryByText(DOCUMENT_A_ID)).not.toBeInTheDocument();
+  });
+
+  it("returns to login when the directory reports unauthenticated before selecting a document", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === SHARES_PATH) {
+        return Promise.resolve(jsonResponse({ shares: [] }));
+      }
+      if (path === NOTEBOOKS_PATH) {
+        return Promise.resolve(jsonResponse({
+          code: "unauthenticated",
+          requestId: REQUEST_ID,
+          status: 401,
+        }, 401));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderSharesPage(queryClient);
+
+    await waitFor(() => {
+      expect(useCsrfStore.getState().csrfToken).toBeNull();
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(useContentSelectionStore.getState().selection).toBeNull();
+    });
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
+  });
+
+  it("clears the client session and returns to login when the managed-share API reports unauthenticated", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === SHARES_PATH) {
+        return Promise.resolve(jsonResponse({
+          code: "unauthenticated",
+          requestId: REQUEST_ID,
+          status: 401,
+        }, 401));
+      }
+      if (path === NOTEBOOKS_PATH) {
+        return Promise.resolve(jsonResponse({ notebooks: [] }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderSharesPage(queryClient);
+
+    await waitFor(() => {
+      expect(useCsrfStore.getState().csrfToken).toBeNull();
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    });
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
   });
 });

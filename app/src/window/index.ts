@@ -13,8 +13,7 @@ import {
     progressBackgroundTask,
     progressLoading,
     progressStatus,
-    setDefRefCount,
-    setRefDynamicText,
+    setFileTreeRefCount,
     transactionError
 } from "../dialog/processSystem";
 import {initMessage} from "../dialog/message";
@@ -62,10 +61,7 @@ class App {
                                 renderSnippet();
                                 break;
                             case "setDefRefCount":
-                                setDefRefCount(data.data);
-                                break;
-                            case "setRefDynamicText":
-                                setRefDynamicText(data.data);
+                                setFileTreeRefCount(data.data);
                                 break;
                             case "reloadPlugin":
                                 reloadPlugin(this, data.data);
@@ -113,7 +109,9 @@ class App {
                                         const initTab = tab.headElement.getAttribute("data-initdata");
                                         if (initTab) {
                                             const initTabData = JSON.parse(initTab);
-                                            if (initTabData.instance === "Editor" && initTabData.rootId === data.data.id) {
+                                            if (initTabData.instance === "Editor" &&
+                                                initTabData.notebookId === data.data.notebookId &&
+                                                initTabData.rootId === data.data.documentId) {
                                                 tab.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
                                             }
                                         }

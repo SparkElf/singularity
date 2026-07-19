@@ -357,12 +357,13 @@ func PushReloadDoc(rootID string) {
 	BroadcastByType("main", "reloaddoc", 0, "", rootID)
 }
 
-func PushSaveDoc(rootID, typ string, sources any) {
+func PushSaveDoc(notebookID, documentID, typ string, sources any) {
 	evt := NewCmdResult("savedoc", 0, PushModeBroadcast)
 	evt.Data = map[string]any{
-		"rootID":  rootID,
-		"type":    typ,
-		"sources": sources,
+		"notebookId": notebookID,
+		"documentId": documentID,
+		"type":       typ,
+		"sources":    sources,
 	}
 	PushEvent(evt)
 }
@@ -386,15 +387,43 @@ func PushReloadProtyle(notebookID, documentID, contentStore string) {
 	})
 }
 
-func PushSetRefDynamicText(rootID, blockID, defBlockID, refText, boxID string) {
-	ExecuteContentStoreBroadcast(boxID, func() {
-		BroadcastByType("main", "setRefDynamicText", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "defBlockID": defBlockID, "refText": refText, "boxID": boxID})
+type ProtyleRefDynamicTextData struct {
+	ProtyleDocumentIdentity
+	BlockID    string `json:"blockID"`
+	DefBlockID string `json:"defBlockID"`
+	RefText    string `json:"refText"`
+}
+
+func PushSetRefDynamicText(notebookID, documentID, blockID, defBlockID, refText, contentStore string) {
+	ExecuteContentStoreBroadcast(contentStore, func() {
+		BroadcastByType("protyle", "setRefDynamicText", 0, "", ProtyleRefDynamicTextData{
+			ProtyleDocumentIdentity: ProtyleDocumentIdentity{NotebookID: notebookID, DocumentID: documentID},
+			BlockID:                 blockID,
+			DefBlockID:              defBlockID,
+			RefText:                 refText,
+		})
 	})
 }
 
-func PushSetDefRefCount(rootID, blockID string, defIDs []string, refCount, rootRefCount int, boxID string) {
-	ExecuteContentStoreBroadcast(boxID, func() {
-		BroadcastByType("main", "setDefRefCount", 0, "", map[string]any{"rootID": rootID, "blockID": blockID, "refCount": refCount, "rootRefCount": rootRefCount, "defIDs": defIDs, "boxID": boxID})
+type ProtyleDefRefCountData struct {
+	ProtyleDocumentIdentity
+	BlockID      string   `json:"blockID"`
+	RefCount     int      `json:"refCount"`
+	RootRefCount int      `json:"rootRefCount"`
+	DefIDs       []string `json:"defIDs"`
+}
+
+func PushSetDefRefCount(notebookID, documentID, blockID string, defIDs []string, refCount, rootRefCount int, contentStore string) {
+	ExecuteContentStoreBroadcast(contentStore, func() {
+		data := ProtyleDefRefCountData{
+			ProtyleDocumentIdentity: ProtyleDocumentIdentity{NotebookID: notebookID, DocumentID: documentID},
+			BlockID:                 blockID,
+			RefCount:                refCount,
+			RootRefCount:            rootRefCount,
+			DefIDs:                  defIDs,
+		}
+		BroadcastByType("protyle", "setDefRefCount", 0, "", data)
+		BroadcastByType("main", "setDefRefCount", 0, "", data)
 	})
 }
 
@@ -419,7 +448,7 @@ type ProtyleReloadData struct {
 // ProtyleMoveDocumentData identifies the source document before a move. The
 // source notebook and document are authoritative; paths only locate the file.
 type ProtyleMoveDocumentData struct {
-	ID           string `json:"id"`
+	DocumentID   string `json:"documentId"`
 	FromNotebook string `json:"fromNotebook"`
 	FromPath     string `json:"fromPath"`
 	ToNotebook   string `json:"toNotebook"`

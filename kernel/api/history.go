@@ -17,6 +17,7 @@
 package api
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -55,6 +56,11 @@ func searchHistory(c *gin.Context) {
 	if nil != arg["page"] {
 		pageVal, ok := util.ParseJsonArg[float64]("page", arg, ret, true, false)
 		if !ok {
+			return
+		}
+		if pageVal < 1 || pageVal >= float64(math.MaxInt) || pageVal != math.Trunc(pageVal) {
+			ret.Code = -1
+			ret.Msg = "Field [page] must be a positive integer"
 			return
 		}
 		page = int(pageVal)

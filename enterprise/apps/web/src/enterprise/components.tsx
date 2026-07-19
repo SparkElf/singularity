@@ -4,14 +4,15 @@ import {
   RefreshCwIcon,
   SearchXIcon,
 } from "lucide-react";
-import { Navigate, useLocation } from "react-router";
+import { useLocation } from "react-router";
 
 import {
   ApiProblemError,
   NetworkFailureError,
   isApiProblem,
 } from "@/api/http.ts";
-import { locationTarget, loginPath } from "@/auth/return-to.ts";
+import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
+import { locationTarget } from "@/auth/return-to.ts";
 import {
   Alert,
   AlertDescription,
@@ -121,7 +122,7 @@ export function PageFailure({
   const location = useLocation();
 
   if (isApiProblem(error, "unauthenticated")) {
-    return <Navigate replace to={loginPath(locationTarget(location))} />;
+    return <SessionRedirect returnTo={locationTarget(location)} />;
   }
 
   return (
@@ -153,7 +154,7 @@ export function MutationFailure({ error }: { error: unknown }) {
     return null;
   }
   if (isApiProblem(error, "unauthenticated")) {
-    return <Navigate replace to={loginPath(locationTarget(location))} />;
+    return <SessionRedirect returnTo={locationTarget(location)} />;
   }
   return (
     <Alert className="mx-3 mt-3" variant="destructive">

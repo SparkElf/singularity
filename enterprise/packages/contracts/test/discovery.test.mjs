@@ -5,6 +5,8 @@ import {
   documentDiscoveryBacklinksDataSchema,
   documentDiscoveryGraphDataSchema,
   documentDiscoveryHistoryDataSchema,
+  documentDiscoveryOutlineDataSchema,
+  spaceDiscoveryQuerySchema,
   spaceDiscoverySearchResponseSchema,
 } from "../dist/index.js";
 
@@ -37,6 +39,13 @@ describe("document discovery payload contracts", () => {
       documentDiscoveryGraphDataSchema.safeParse({
         ...graph,
         nodes: [{ ...graph.nodes[0], notebookId: null }],
+      }).success,
+      false,
+    );
+    assert.equal(
+      documentDiscoveryGraphDataSchema.safeParse({
+        ...graph,
+        links: [{ from: blockId, to: "missing/tag" }],
       }).success,
       false,
     );
@@ -78,6 +87,60 @@ describe("document discovery payload contracts", () => {
       documentDiscoveryHistoryDataSchema.safeParse({
         ...history,
         documentId,
+      }).success,
+      false,
+    );
+  });
+
+  test("keeps recursive outlines canonical and rejects legacy path aliases", () => {
+    const outline = [{
+      children: [{ children: [], id: blockId, name: "Nested heading" }],
+      id: documentId,
+      name: "Document heading",
+    }];
+
+    assert.deepEqual(documentDiscoveryOutlineDataSchema.parse(outline), outline);
+    assert.equal(
+      documentDiscoveryOutlineDataSchema.safeParse([{
+        ...outline[0],
+        hPath: "/Document heading",
+      }]).success,
+      false,
+    );
+    assert.equal(
+      documentDiscoveryOutlineDataSchema.safeParse([{
+        id: documentId,
+        name: "Document heading",
+      }]).success,
+      false,
+    );
+  });
+
+  test("counts discovery limits in Unicode code points", () => {
+    assert.equal(
+      spaceDiscoveryQuerySchema.safeParse("😀".repeat(512)).success,
+      true,
+    );
+    assert.equal(
+      spaceDiscoveryQuerySchema.safeParse("😀".repeat(513)).success,
+      false,
+    );
+
+    const response = {
+      blocks: [{
+        content: "😀".repeat(4096),
+        documentId,
+        id: blockId,
+        notebookId,
+      }],
+      matchedBlockCount: 1,
+      pageCount: 1,
+    };
+    assert.equal(spaceDiscoverySearchResponseSchema.safeParse(response).success, true);
+    assert.equal(
+      spaceDiscoverySearchResponseSchema.safeParse({
+        ...response,
+        blocks: [{ ...response.blocks[0], content: "😀".repeat(4097) }],
       }).success,
       false,
     );

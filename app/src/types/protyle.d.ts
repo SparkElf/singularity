@@ -580,6 +580,7 @@ type TProtyleBoundLifecycle = {
     hostReadOnly: boolean,
     signal?: AbortSignal,
     onBacklinkChange?: () => void,
+    onContentUnavailable?: () => void,
 };
 
 /** 旧构造点只用于迁移期类型检查；bound 实例没有 Session 时会在 Core 边界显式失败。 */

@@ -21,6 +21,7 @@ import {openAVMenu} from "./menu";
 import {resolveProtyleAssetSource} from "../../util/assetSource";
 import {downloadExportFile} from "../../util/download";
 import {openProtyleConfirm} from "../../wysiwyg/dialogOwner";
+import {parseProtyleAssetTarget} from "../../util/openLink";
 
 interface AVUploadResponse extends Omit<IWebSocketData, "data"> {
     data: {
@@ -430,7 +431,9 @@ export const editAssetItem = (options: {
             });
         }
     });
-    if (options.protyle.settings.features.assetRename && linkAddress?.startsWith("assets/")) {
+    const source = linkAddress?.trim() ?? "";
+    const {assetPath, page} = parseProtyleAssetTarget(source);
+    if (options.protyle.settings.features.assetRename && source.startsWith("assets/")) {
         menu.addItem({
             id: "rename",
             label: localization.text("rename"),
@@ -441,20 +444,18 @@ export const editAssetItem = (options: {
                     notebookId: identity.notebookId,
                     documentId: identity.documentId,
                     blockId: options.blockElement.getAttribute("data-node-id")!,
-                    assetPath: decodeURI(linkAddress),
+                    assetPath: decodeURI(assetPath),
                 });
                 closeAVOverlay(options.protyle, "panel");
             }
         });
     }
     const openSubMenu: IMenu[] = [];
-    if (linkAddress) {
-        const assetPath = linkAddress.trim();
+    if (source) {
         const isSupportedAsset = assetPath.startsWith("assets/") &&
-            Constants.SIYUAN_ASSETS_EXTS.includes(contentPathExtension(assetPath.split("?", 1)[0])) &&
+            Constants.SIYUAN_ASSETS_EXTS.includes(contentPathExtension(assetPath)) &&
             (!assetPath.endsWith(".pdf") || !assetPath.startsWith("file://"));
         if (isSupportedAsset) {
-            const page = Number.parseInt(new URLSearchParams(assetPath.split("?", 2)[1] ?? "").get("page") ?? "", 10);
             openSubMenu.push({
                 id: "insertRight",
                 icon: "iconLayoutRight",
@@ -481,7 +482,7 @@ export const editAssetItem = (options: {
                 }),
             });
         } else {
-            const url = assetPath.startsWith("/") || assetPath.includes(":") ? assetPath : `https://${assetPath}`;
+            const url = source.startsWith("/") || source.includes(":") ? source : `https://${source}`;
             openSubMenu.push({
                 id: "useBrowserView",
                 label: localization.text("useBrowserView"),
@@ -516,12 +517,12 @@ export const editAssetItem = (options: {
             submenu: openSubMenu
         });
     }
-    if (linkAddress?.startsWith("assets/")) {
+    if (source.startsWith("assets/")) {
         menu.addItem({
             id: "export",
             label: localization.text("export"),
             icon: "iconUpload",
-            click: () => downloadExportFile(resolveProtyleAssetSource(options.protyle, decodeURI(linkAddress))),
+            click: () => downloadExportFile(resolveProtyleAssetSource(options.protyle, decodeURI(assetPath))),
         });
     }
     const rect = options.rect;

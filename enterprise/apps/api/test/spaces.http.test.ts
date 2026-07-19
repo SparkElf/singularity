@@ -461,6 +461,22 @@ describe("space HTTP contracts with PostgreSQL", () => {
     });
     expect(response.status).toBe(204);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    const repeatedResponse = await fetch(`${testApi.baseUrl}${memberPath}`, {
+      body: JSON.stringify({ role: "editor" }),
+      headers: mutationHeaders(owner),
+      method: "PUT",
+    });
+    expect(repeatedResponse.status).toBe(204);
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId: installation.organizationId,
+          spaceId: installation.spaceId,
+          targetId: userId,
+          targetType: "membership",
+        },
+      }),
+    ).resolves.toBe(1);
 
     const member = await login(loginIdentifier);
     const authorizedResponse = await listSpaces(member.cookie);
@@ -520,6 +536,22 @@ describe("space HTTP contracts with PostgreSQL", () => {
     });
     expect(response.status).toBe(204);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    const repeatedResponse = await fetch(`${testApi.baseUrl}${groupPath}`, {
+      body: JSON.stringify({ role: "viewer" }),
+      headers: mutationHeaders(owner),
+      method: "PUT",
+    });
+    expect(repeatedResponse.status).toBe(204);
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId: installation.organizationId,
+          spaceId: installation.spaceId,
+          targetId: group.id,
+          targetType: "group",
+        },
+      }),
+    ).resolves.toBe(1);
 
     const member = await login(loginIdentifier);
     const authorizedResponse = await listSpaces(member.cookie);
@@ -539,7 +571,7 @@ describe("space HTTP contracts with PostgreSQL", () => {
     });
   });
 
-  test("lets a delegated space administrator read only active candidates for its exact space", async () => {
+  test("limits a delegated space administrator to access management for its exact space", async () => {
     const installation = await initialize();
     const delegatedLogin = `delegated-admin-${randomUUID()}@example.test`;
     const delegatedUserId = createdUserId(
@@ -654,6 +686,67 @@ describe("space HTTP contracts with PostgreSQL", () => {
         },
       ],
     });
+
+    const candidateMemberPath = buildPath(
+      ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE,
+      {
+        organizationId: installation.organizationId,
+        spaceId: delegatedSpaceId,
+        userId: candidateUserId,
+      },
+    );
+    const granted = await fetch(`${testApi.baseUrl}${candidateMemberPath}`, {
+      body: JSON.stringify({ role: "viewer" }),
+      headers: mutationHeaders(delegated),
+      method: "PUT",
+    });
+    expect(granted.status).toBe(204);
+    await expect(
+      database.spaceMembership.findUniqueOrThrow({
+        where: {
+          spaceId_userId: {
+            spaceId: delegatedSpaceId,
+            userId: candidateUserId,
+          },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "viewer", status: "active" });
+
+    const managedSpacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: delegatedSpaceId,
+    });
+    await expectProblem(
+      await fetch(`${testApi.baseUrl}${managedSpacePath}`, {
+        body: JSON.stringify({
+          name: "Renamed by delegated administrator",
+          status: "archived",
+        }),
+        headers: mutationHeaders(delegated),
+        method: "PATCH",
+      }),
+      403,
+      "forbidden",
+    );
+    const managedSpacesPath = buildPath(ORGANIZATION_SPACES_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+    });
+    await expectProblem(
+      await fetch(`${testApi.baseUrl}${managedSpacesPath}`, {
+        body: JSON.stringify({ name: "Unauthorized space" }),
+        headers: mutationHeaders(delegated),
+        method: "POST",
+      }),
+      403,
+      "forbidden",
+    );
+    await expect(
+      database.space.findUniqueOrThrow({
+        where: { id: delegatedSpaceId },
+        select: { name: true, status: true },
+      }),
+    ).resolves.toEqual({ name: "Delegated Space", status: "active" });
   });
 
   test("rejects a foreign space identifier under a managed organization path without mutating the foreign space", async () => {

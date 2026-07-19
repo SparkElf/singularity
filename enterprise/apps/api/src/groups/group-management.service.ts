@@ -4,9 +4,8 @@ import type {
   UserGroupMemberSummary,
   UserGroupSummary,
 } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
@@ -221,10 +220,23 @@ export class GroupManagementService {
       if (group === null || membership === null) {
         throw notFound();
       }
-      await transaction.userGroupMembership.upsert({
-        where: { groupId_userId: { groupId, userId } },
-        create: { groupId, organizationId, userId },
-        update: {},
+      const existingMemberships = await transaction.$queryRaw<
+        Array<{ id: string }>
+      >(
+        Prisma.sql`
+          SELECT "id"
+          FROM "user_group_memberships"
+          WHERE "organization_id" = ${organizationId}
+            AND "group_id" = ${groupId}
+            AND "user_id" = ${userId}
+          FOR UPDATE
+        `,
+      );
+      if (existingMemberships.length > 0) {
+        return;
+      }
+      await transaction.userGroupMembership.create({
+        data: { groupId, organizationId, userId },
       });
       await this.accessChanges.publish(transaction, {
         kind: "close",

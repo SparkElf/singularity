@@ -98,10 +98,10 @@ func TestDelayedRefCountReadsSelectedContentStore(t *testing.T) {
 
 	countA := loadRefCountSnapshot(fixture.defID, fixture.boxA)
 	countB := loadRefCountSnapshot(fixture.defID, fixture.boxB)
-	if countA == nil || countA.boxID != fixture.boxA || countA.refCount != 1 || countA.rootRefCount != 1 {
+	if countA == nil || countA.notebookID != fixture.boxA || countA.contentStore != fixture.boxA || countA.refCount != 1 || countA.rootRefCount != 1 {
 		t.Fatalf("box A ref count crossed content stores: %#v", countA)
 	}
-	if countB == nil || countB.boxID != fixture.boxB || countB.refCount != 2 || countB.rootRefCount != 2 {
+	if countB == nil || countB.notebookID != fixture.boxB || countB.contentStore != fixture.boxB || countB.refCount != 2 || countB.rootRefCount != 2 {
 		t.Fatalf("box B ref count crossed content stores: %#v", countB)
 	}
 }

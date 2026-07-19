@@ -18,10 +18,7 @@ import {
   notFound,
   serviceUnavailable,
 } from "../problem.js";
-import {
-  type AuthorizedKernelTarget,
-  KernelAccessService,
-} from "./kernel-access.service.js";
+import { KernelAccessService } from "./kernel-access.service.js";
 
 const DIRECTORY_NOTEBOOKS_PATH =
   "/internal/enterprise/directory/notebooks";
@@ -136,21 +133,13 @@ export class ContentDirectoryService {
     input: DirectoryRequestContext,
     path: string,
   ): Promise<unknown> {
-    let authorized: AuthorizedKernelTarget;
-    try {
-      authorized = await this.access.authorizeHttp({
-        action: "read",
-        organizationId: input.organizationId,
-        requestId: input.requestId,
-        spaceId: input.spaceId,
-        userId: input.actorUserId,
-      });
-    } catch (error) {
-      if (error instanceof ApiProblemError && error.code === "forbidden") {
-        throw notFound();
-      }
-      throw error;
-    }
+    const authorized = await this.access.authorizeHttp({
+      action: "read",
+      organizationId: input.organizationId,
+      requestId: input.requestId,
+      spaceId: input.spaceId,
+      userId: input.actorUserId,
+    });
 
     let response: KernelPrivateResponse;
     try {

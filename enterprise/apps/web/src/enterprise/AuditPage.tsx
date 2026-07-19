@@ -71,6 +71,7 @@ const targetTypeLabels: Record<AuditTargetType, string> = {
 const outcomeLabels: Record<AuditOutcome, string> = {
   denied: "已拒绝",
   failed: "失败",
+  indeterminate: "结果未确定",
   succeeded: "成功",
 };
 
@@ -86,6 +87,7 @@ function outcomeVariant(
 ): "destructive" | "outline" | "secondary" {
   switch (outcome) {
     case "denied":
+    case "indeterminate":
       return "outline";
     case "failed":
       return "destructive";

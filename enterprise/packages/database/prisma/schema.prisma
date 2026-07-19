@@ -77,6 +77,7 @@ enum KernelInstanceStatus {
 enum WorkerJobKind {
   archive_audit  @map("archive-audit")
   backup_space   @map("backup-space")
+  reconcile_content_audit @map("reconcile-content-audit")
   restore_space  @map("restore-space")
   sample_kernel  @map("sample-kernel")
 
@@ -130,6 +131,7 @@ enum AuditAction {
 enum AuditOutcome {
   denied
   failed
+  indeterminate
   succeeded
 
   @@map("audit_outcome")
@@ -154,6 +156,7 @@ model User {
   oidcIdentities          OidcIdentity[]
   organizationMemberships OrganizationMembership[]
   auditEvents              AuditEvent[]              @relation("AuditEventActorUser")
+  contentAuditIntents      ContentAuditIntent[]       @relation("ContentAuditIntentActorUser")
   createdDocumentShares    DocumentShare[]           @relation("DocumentShareCreatedByUser")
   createdSpaceBackups      SpaceBackup[]             @relation("SpaceBackupCreatedByUser")
   createdSpaceRestores     SpaceRestoreJob[]         @relation("SpaceRestoreCreatedByUser")
@@ -193,6 +196,7 @@ model Organization {
   userGroups    UserGroup[]
   auditArchives AuditArchive[]
   auditEvents   AuditEvent[]
+  contentAuditIntents ContentAuditIntent[]
   auditSequence OrganizationAuditSequence?
   documentShares DocumentShare[]
   spaceBackups  SpaceBackup[]
@@ -214,6 +218,7 @@ model OrganizationMembership {
   oidcIdentities    OidcIdentity[]
   spaceMemberships SpaceMembership[] @relation("SpaceMembershipOrganizationMembership")
   auditEvents       AuditEvent[]      @relation("AuditEventActorMembership")
+  contentAuditIntents ContentAuditIntent[] @relation("ContentAuditIntentActorMembership")
   createdDocumentShares DocumentShare[] @relation("DocumentShareCreatedByMembership")
   createdSpaceBackups SpaceBackup[]   @relation("SpaceBackupCreatedByMembership")
   createdSpaceRestores SpaceRestoreJob[] @relation("SpaceRestoreCreatedByMembership")
@@ -233,6 +238,7 @@ model Space {
   groupGrants    SpaceGroupGrant[] @relation("SpaceGroupGrantSpace")
   kernelInstance KernelInstance?
   auditEvents    AuditEvent[]              @relation("AuditEventSpace")
+  contentAuditIntents ContentAuditIntent[]  @relation("ContentAuditIntentSpace")
   capacityObservations SpaceCapacityObservation[]
   documentShares DocumentShare[]           @relation("DocumentShareSpace")
   sourceBackups SpaceBackup[]               @relation("SpaceBackupSourceSpace")
@@ -458,6 +464,25 @@ model OrganizationAuditSequence {
   @@map("organization_audit_sequences")
 }
 
+model ContentAuditIntent {
+  requestId       String                  @id @map("request_id") @db.Uuid
+  organizationId  String                  @map("organization_id") @db.Uuid
+  spaceId         String                  @map("space_id") @db.Uuid
+  actorUserId     String                  @map("actor_user_id") @db.Uuid
+  action          AuditAction
+  documentId      String                  @map("document_id")
+  occurredAt      DateTime                @map("occurred_at") @db.Timestamptz(3)
+  observedOutcome AuditOutcome?           @map("observed_outcome")
+  availableAt     DateTime                @map("available_at") @db.Timestamptz(3)
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "content_audit_intents_organization_id_fkey")
+  space           Space                   @relation("ContentAuditIntentSpace", fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "content_audit_intents_space_id_organization_id_fkey")
+  actor           User                    @relation("ContentAuditIntentActorUser", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "content_audit_intents_actor_user_id_fkey")
+  actorMembership OrganizationMembership  @relation("ContentAuditIntentActorMembership", fields: [organizationId, actorUserId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "content_audit_intents_organization_id_actor_user_id_fkey")
+
+  @@index([availableAt, organizationId, occurredAt, requestId], map: "content_audit_intents_delivery_idx")
+  @@map("content_audit_intents")
+}
+
 model AuditEvent {
   id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId  String                  @map("organization_id") @db.Uuid
@@ -528,6 +553,8 @@ model SpaceBackup {
   organizationId      String                 @map("organization_id") @db.Uuid
   sourceSpaceId       String                 @map("source_space_id") @db.Uuid
   status              SpaceBackupStatus
+  workerJobId         String?                @map("worker_job_id") @db.Uuid
+  workerAttempt       Int?                   @map("worker_attempt")
   objectKey           String?                @unique(map: "space_backups_object_key_key") @map("object_key")
   formatVersion       Int?                   @map("format_version")
   kernelVersion       String?                @map("kernel_version")
@@ -544,6 +571,7 @@ model SpaceBackup {
 
   @@unique([id, organizationId, sourceSpaceId], map: "space_backups_id_organization_id_source_space_id_key")
   @@index([organizationId, sourceSpaceId, createdAt], map: "space_backups_organization_id_source_space_id_created_at_idx")
+  @@index([workerJobId, workerAttempt], map: "space_backups_worker_claim_idx")
   @@map("space_backups")
 }
 

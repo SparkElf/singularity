@@ -42,6 +42,7 @@ export interface TestKernelResponse {
 }
 
 export interface TestKernelGatewayOptions {
+  deploymentHandle?: string;
   handler?: (request: TestKernelRequest) =>
     | Promise<TestKernelResponse>
     | TestKernelResponse;
@@ -53,6 +54,10 @@ export interface TestKernelGatewayOptions {
 }
 
 export interface TestKernelWebSocket {
+  readonly connections: readonly {
+    readonly headers: IncomingHttpHeaders;
+    readonly path: string;
+  }[];
   readonly connectionCount: number;
   readonly messages: readonly Buffer[];
   broadcast(data: Buffer | string): void;
@@ -137,6 +142,10 @@ export async function startTestKernelGateway(
     perMessageDeflate: false,
   });
   const websocketMessages: Buffer[] = [];
+  const websocketConnections: Array<{
+    readonly headers: IncomingHttpHeaders;
+    readonly path: string;
+  }> = [];
   const server = createServer(
     {
       ca: TEST_TLS_CERTIFICATE,
@@ -168,6 +177,10 @@ export async function startTestKernelGateway(
     },
   );
   webSocketServer.on("connection", (socket, request) => {
+    websocketConnections.push({
+      headers: request.headers,
+      path: request.url ?? "/",
+    });
     socket.on("message", (data) => {
       websocketMessages.push(websocketDataBuffer(data));
     });
@@ -192,7 +205,7 @@ export async function startTestKernelGateway(
     throw new Error("Test Kernel did not expose a TCP address");
   }
   const { privateKey: servicePrivateKey } = generateKeyPairSync("ed25519");
-  const handle = "test-kernel";
+  const handle = options.deploymentHandle ?? "test-kernel";
   let disposed = false;
   let connectionCount = 0;
   const connectionWaiters: Array<(socket: WebSocket) => void> = [];
@@ -207,6 +220,9 @@ export async function startTestKernelGateway(
     }
   });
   const websocket: TestKernelWebSocket = {
+    get connections() {
+      return [...websocketConnections];
+    },
     get connectionCount(): number {
       return connectionCount;
     },

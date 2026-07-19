@@ -132,7 +132,8 @@ describe("SpaceGatewayTransport runtime access loss", () => {
     ).rejects.toBeInstanceOf(GatewayResponseError);
     expect(onRuntimeError).toHaveBeenCalledWith({
       category: "forbidden",
-      requestId: REQUEST_ID,
+      documentId: DOCUMENT_ID,
+      triggeringRequestId: REQUEST_ID,
       type: "runtime-error",
     });
     await expect(
@@ -168,7 +169,8 @@ describe("SpaceGatewayTransport runtime access loss", () => {
     ).rejects.toBeInstanceOf(GatewayResponseError);
     expect(onRuntimeError).toHaveBeenCalledWith({
       category: "forbidden",
-      requestId: REQUEST_ID,
+      documentId: DOCUMENT_ID,
+      triggeringRequestId: REQUEST_ID,
       type: "runtime-error",
     });
     await expect(
@@ -188,5 +190,78 @@ describe("SpaceGatewayTransport runtime access loss", () => {
     await expect(
       transport.upload(new FormData(), { identity: requestOptions.identity }),
     ).resolves.toBeUndefined();
+  });
+
+  it("does not invent a request ID for a network failure", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
+    const { onRuntimeError, transport } = createTransport();
+
+    await expect(
+      transport.request("/api/filetree/getDoc", {}, requestOptions),
+    ).rejects.toThrowError("offline");
+    expect(onRuntimeError).toHaveBeenCalledWith({
+      category: "network-failure",
+      documentId: DOCUMENT_ID,
+      type: "runtime-error",
+    });
+  });
+
+  it("does not invent a request ID for WebSocket message or close failures", () => {
+    class TestWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 3;
+      static instances: TestWebSocket[] = [];
+
+      onclose: ((event: { readonly code: number }) => void) | null = null;
+      onmessage: ((event: { readonly data: unknown }) => void) | null = null;
+      readyState = TestWebSocket.OPEN;
+
+      constructor() {
+        TestWebSocket.instances.push(this);
+      }
+
+      close(): void {
+        this.readyState = TestWebSocket.CLOSED;
+      }
+
+      emitMessage(data: unknown): void {
+        this.onmessage?.({ data });
+      }
+
+      emitClose(code: number): void {
+        this.readyState = TestWebSocket.CLOSED;
+        this.onclose?.({ code });
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+
+    const first = createTransport();
+    first.transport.subscribe({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+      onMessage: vi.fn(),
+      type: "protyle",
+    });
+    TestWebSocket.instances[0]!.emitMessage("{");
+    expect(first.onRuntimeError).toHaveBeenCalledWith({
+      category: "kernel-unavailable",
+      documentId: DOCUMENT_ID,
+      type: "runtime-error",
+    });
+
+    const second = createTransport();
+    second.transport.subscribe({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+      onMessage: vi.fn(),
+      type: "protyle",
+    });
+    TestWebSocket.instances[1]!.emitClose(1006);
+    expect(second.onRuntimeError).toHaveBeenCalledWith({
+      category: "network-failure",
+      documentId: DOCUMENT_ID,
+      type: "runtime-error",
+    });
   });
 });

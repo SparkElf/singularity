@@ -37,32 +37,36 @@ interface CreateSpaceGatewayTransportOptions {
 
 export class GatewayResponseError extends Error {
   readonly problem: ApiProblem | null;
-  readonly requestId: string;
   readonly status: number;
+  readonly triggeringRequestId: string | undefined;
 
-  constructor(status: number, requestId: string, problem: ApiProblem | null) {
+  constructor(
+    status: number,
+    triggeringRequestId: string | undefined,
+    problem: ApiProblem | null,
+  ) {
     super(problem?.code ?? `Gateway returned HTTP ${status}`);
     this.name = "GatewayResponseError";
     this.problem = problem;
-    this.requestId = requestId;
     this.status = status;
+    this.triggeringRequestId = triggeringRequestId;
   }
 }
 
 export class GatewayProtocolError extends Error {
-  readonly requestId: string;
   readonly status: number;
+  readonly triggeringRequestId: string | undefined;
 
-  constructor(status: number, requestId: string, cause: unknown) {
+  constructor(
+    status: number,
+    triggeringRequestId: string | undefined,
+    cause: unknown,
+  ) {
     super("Gateway response did not match the Protyle transport contract", { cause });
     this.name = "GatewayProtocolError";
-    this.requestId = requestId;
     this.status = status;
+    this.triggeringRequestId = triggeringRequestId;
   }
-}
-
-function createRequestId(): string {
-  return crypto.randomUUID();
 }
 
 function rangeHeader(options: ProtyleRequestOptions): string | null {
@@ -137,7 +141,8 @@ export function createSpaceGatewayTransport<TMessage>(
 
   const reportRuntimeError = (
     category: ProtyleRuntimeErrorEvent["category"],
-    requestId: string,
+    documentId: string,
+    triggeringRequestId?: string,
   ) => {
     const terminal = category === "unauthenticated" || category === "forbidden";
     if (terminal) {
@@ -151,11 +156,17 @@ export function createSpaceGatewayTransport<TMessage>(
     }
     console.warn("[protyle.lifecycle]", {
       category,
+      documentId,
       phase: "transport",
-      requestId,
       spaceId: options.space.spaceId,
+      ...(triggeringRequestId ? { triggeringRequestId } : {}),
     });
-    options.onRuntimeError({ category, requestId, type: "runtime-error" });
+    options.onRuntimeError({
+      category,
+      documentId,
+      type: "runtime-error",
+      ...(triggeringRequestId ? { triggeringRequestId } : {}),
+    });
   };
 
   const request = async <TResponse>(
@@ -164,7 +175,6 @@ export function createSpaceGatewayTransport<TMessage>(
     requestOptions: ProtyleRequestOptions,
   ): Promise<TResponse> => {
     assertAvailable(requestOptions.intent);
-    const requestId = createRequestId();
     const signal = requestOptions.signal
       ? AbortSignal.any([lifecycle.signal, requestOptions.signal])
       : lifecycle.signal;
@@ -175,9 +185,13 @@ export function createSpaceGatewayTransport<TMessage>(
     } catch (error) {
       if (!signal.aborted) {
         if (isApiProblem(error, "unauthenticated")) {
-          reportRuntimeError("unauthenticated", error.problem.requestId);
+          reportRuntimeError(
+            "unauthenticated",
+            requestOptions.identity.documentId,
+            error.problem.requestId,
+          );
         } else if (error instanceof NetworkFailureError) {
-          reportRuntimeError("network-failure", requestId);
+          reportRuntimeError("network-failure", requestOptions.identity.documentId);
         }
       }
       throw error;
@@ -214,7 +228,7 @@ export function createSpaceGatewayTransport<TMessage>(
       });
     } catch (error) {
       if (!signal.aborted) {
-        reportRuntimeError("network-failure", requestId);
+        reportRuntimeError("network-failure", requestOptions.identity.documentId);
       }
       throw error;
     }
@@ -222,19 +236,31 @@ export function createSpaceGatewayTransport<TMessage>(
     const problem = response.ok ? null : await parseProblem(response);
     const responseRequestId = problem?.requestId
       ?? response.headers.get("X-Request-Id")
-      ?? requestId;
+      ?? undefined;
     if (!response.ok) {
       if (response.status === 401) {
-        reportRuntimeError("unauthenticated", responseRequestId);
+        reportRuntimeError(
+          "unauthenticated",
+          requestOptions.identity.documentId,
+          responseRequestId,
+        );
       } else if (
         response.status === 403 ||
         isRuntimeAccessLost(
           response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME),
         )
       ) {
-        reportRuntimeError("forbidden", responseRequestId);
+        reportRuntimeError(
+          "forbidden",
+          requestOptions.identity.documentId,
+          responseRequestId,
+        );
       } else if ([502, 503, 504].includes(response.status)) {
-        reportRuntimeError("kernel-unavailable", responseRequestId);
+        reportRuntimeError(
+          "kernel-unavailable",
+          requestOptions.identity.documentId,
+          responseRequestId,
+        );
       }
       throw new GatewayResponseError(response.status, responseRequestId, problem);
     }
@@ -248,7 +274,11 @@ export function createSpaceGatewayTransport<TMessage>(
     try {
       return await response.json() as TResponse;
     } catch (error) {
-      reportRuntimeError("kernel-unavailable", responseRequestId);
+      reportRuntimeError(
+        "kernel-unavailable",
+        requestOptions.identity.documentId,
+        responseRequestId,
+      );
       throw new GatewayProtocolError(response.status, responseRequestId, error);
     }
   };
@@ -258,7 +288,6 @@ export function createSpaceGatewayTransport<TMessage>(
     uploadOptions: ProtyleUploadOptions,
   ): Promise<TResponse> => {
     assertAvailable("write");
-    const requestId = createRequestId();
     const signal = uploadOptions.signal
       ? AbortSignal.any([lifecycle.signal, uploadOptions.signal])
       : lifecycle.signal;
@@ -269,9 +298,13 @@ export function createSpaceGatewayTransport<TMessage>(
     } catch (error) {
       if (!signal.aborted) {
         if (isApiProblem(error, "unauthenticated")) {
-          reportRuntimeError("unauthenticated", error.problem.requestId);
+          reportRuntimeError(
+            "unauthenticated",
+            uploadOptions.identity.documentId,
+            error.problem.requestId,
+          );
         } else if (error instanceof NetworkFailureError) {
-          reportRuntimeError("network-failure", requestId);
+          reportRuntimeError("network-failure", uploadOptions.identity.documentId);
         }
       }
       throw error;
@@ -323,7 +356,7 @@ export function createSpaceGatewayTransport<TMessage>(
       };
       request.onerror = () => {
         if (!signal.aborted) {
-          reportRuntimeError("network-failure", requestId);
+          reportRuntimeError("network-failure", uploadOptions.identity.documentId);
         }
         finish(() => reject(new NetworkFailureError(
           new Error("Gateway upload request failed"),
@@ -339,8 +372,12 @@ export function createSpaceGatewayTransport<TMessage>(
             ? undefined
             : JSON.parse(request.responseText);
         } catch (error) {
-          const responseRequestId = request.getResponseHeader("X-Request-Id") ?? requestId;
-          reportRuntimeError("kernel-unavailable", responseRequestId);
+          const responseRequestId = request.getResponseHeader("X-Request-Id") ?? undefined;
+          reportRuntimeError(
+            "kernel-unavailable",
+            uploadOptions.identity.documentId,
+            responseRequestId,
+          );
           finish(() => reject(new GatewayProtocolError(
             request.status,
             responseRequestId,
@@ -354,7 +391,7 @@ export function createSpaceGatewayTransport<TMessage>(
           : parseProblemValue(responseBody);
         const responseRequestId = problem?.requestId
           ?? request.getResponseHeader("X-Request-Id")
-          ?? requestId;
+          ?? undefined;
         if (request.status < 200 || request.status >= 300) {
           finish(() => reject(new GatewayResponseError(
             request.status,
@@ -362,21 +399,37 @@ export function createSpaceGatewayTransport<TMessage>(
             problem,
           )));
           if (request.status === 401) {
-            reportRuntimeError("unauthenticated", responseRequestId);
+            reportRuntimeError(
+              "unauthenticated",
+              uploadOptions.identity.documentId,
+              responseRequestId,
+            );
           } else if (
             request.status === 403 ||
             isRuntimeAccessLost(
               request.getResponseHeader(RUNTIME_ACCESS_LOST_HEADER_NAME),
             )
           ) {
-            reportRuntimeError("forbidden", responseRequestId);
+            reportRuntimeError(
+              "forbidden",
+              uploadOptions.identity.documentId,
+              responseRequestId,
+            );
           } else if ([502, 503, 504].includes(request.status)) {
-            reportRuntimeError("kernel-unavailable", responseRequestId);
+            reportRuntimeError(
+              "kernel-unavailable",
+              uploadOptions.identity.documentId,
+              responseRequestId,
+            );
           }
           return;
         }
         if (request.status !== 204 && responseBody === undefined) {
-          reportRuntimeError("kernel-unavailable", responseRequestId);
+          reportRuntimeError(
+            "kernel-unavailable",
+            uploadOptions.identity.documentId,
+            responseRequestId,
+          );
           finish(() => reject(new GatewayProtocolError(
             request.status,
             responseRequestId,
@@ -424,14 +477,20 @@ export function createSpaceGatewayTransport<TMessage>(
       }
       if (typeof event.data !== "string") {
         disconnect();
-        reportRuntimeError("kernel-unavailable", createRequestId());
+        reportRuntimeError(
+          "kernel-unavailable",
+          subscriptionOptions.documentId,
+        );
         return;
       }
       let message: TMessage;
       try {
         message = JSON.parse(event.data) as TMessage;
       } catch {
-        reportRuntimeError("kernel-unavailable", createRequestId());
+        reportRuntimeError(
+          "kernel-unavailable",
+          subscriptionOptions.documentId,
+        );
         return;
       }
       subscriptionOptions.onMessage(message);
@@ -446,13 +505,13 @@ export function createSpaceGatewayTransport<TMessage>(
         return;
       }
       if (event.code === 4401) {
-        reportRuntimeError("unauthenticated", createRequestId());
+        reportRuntimeError("unauthenticated", subscriptionOptions.documentId);
       } else if (event.code === 4403 || event.code === 4408) {
-        reportRuntimeError("forbidden", createRequestId());
+        reportRuntimeError("forbidden", subscriptionOptions.documentId);
       } else if (event.code === 1006) {
-        reportRuntimeError("network-failure", createRequestId());
+        reportRuntimeError("network-failure", subscriptionOptions.documentId);
       } else {
-        reportRuntimeError("kernel-unavailable", createRequestId());
+        reportRuntimeError("kernel-unavailable", subscriptionOptions.documentId);
       }
     };
 

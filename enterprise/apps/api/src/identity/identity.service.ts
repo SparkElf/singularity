@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { forbidden, unauthenticated } from "../problem.js";
 import type { Clock } from "./clock.js";
@@ -36,6 +35,7 @@ export type IdentityTransactionResult =
   | "conflict"
   | "not-found"
   | "revoked"
+  | "unchanged"
   | "updated";
 
 @Injectable()
@@ -424,6 +424,9 @@ export class IdentityService {
     if (user === null) {
       return "not-found";
     }
+    if (user.status === "disabled") {
+      return "unchanged";
+    }
     if (user.organizationMemberships.length > 0) {
       return "conflict";
     }
@@ -463,10 +466,13 @@ export class IdentityService {
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "auth_sessions" WHERE "user_id" = ${userId} ORDER BY "id" FOR UPDATE`,
     );
-    await transaction.authSession.updateMany({
+    const revoked = await transaction.authSession.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: now },
     });
+    if (revoked.count === 0) {
+      return "unchanged";
+    }
     await this.accessChanges.publish(transaction, {
       kind: "close",
       reason: "unauthenticated",

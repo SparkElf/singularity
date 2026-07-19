@@ -1810,7 +1810,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 
 			evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
 			evt.Data = util.ProtyleMoveDocumentData{
-				ID:           strings.TrimSuffix(path.Base(syFile), ".sy"),
+				DocumentID:   strings.TrimSuffix(path.Base(syFile), ".sy"),
 				FromNotebook: fromBox.ID,
 				FromPath:     subFromPath,
 				ToNotebook:   toBox.ID,
@@ -1824,7 +1824,7 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 
 	evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
 	evt.Data = util.ProtyleMoveDocumentData{
-		ID:           tree.ID,
+		DocumentID:   tree.ID,
 		FromNotebook: fromBox.ID,
 		FromPath:     fromPath,
 		ToNotebook:   toBox.ID,
@@ -1988,8 +1988,29 @@ func removeDoc0(tree *parse.Tree, childrenDir string) {
 }
 
 type RenameDocResult struct {
-	Title string `json:"title"`
-	Empty bool   `json:"empty"`
+	NotebookID string `json:"notebookId"`
+	DocumentID string `json:"documentId"`
+	Title      string `json:"title"`
+	Empty      bool   `json:"empty"`
+	RefText    string `json:"refText"`
+}
+
+func canonicalRenameDocResult(tree *parse.Tree) RenameDocResult {
+	return RenameDocResult{
+		NotebookID: tree.Box,
+		DocumentID: tree.Root.ID,
+		Title:      tree.Root.IALAttr("title"),
+		Empty:      tree.Root.IALAttr(NodeAttrTitleEmpty) == "true",
+		RefText:    getNodeRefText(tree.Root),
+	}
+}
+
+func pushRenameDoc(result RenameDocResult) {
+	util.ExecuteContentStoreBroadcast(result.NotebookID, func() {
+		evt := util.NewCmdResult("rename", 0, util.PushModeBroadcast)
+		evt.Data = result
+		util.PushEvent(evt)
+	})
 }
 
 func RenameDoc(boxID, p, title string) (result RenameDocResult, err error) {
@@ -2006,30 +2027,31 @@ func RenameDoc(boxID, p, title string) (result RenameDocResult, err error) {
 		return
 	}
 
-	result.Title = normalizeDocTitle(title)
-	if 512 < utf8.RuneCountInString(result.Title) {
+	canonicalTitle := normalizeDocTitle(title)
+	if 512 < utf8.RuneCountInString(canonicalTitle) {
 		// 限制笔记本名和文档名最大长度为 `512` https://github.com/siyuan-note/siyuan/issues/6299
 		err = errors.New(Conf.Language(106))
 		return
 	}
 
-	if "" == result.Title {
-		result.Title = Conf.language(16)
-		result.Empty = true
+	titleEmpty := false
+	if "" == canonicalTitle {
+		canonicalTitle = Conf.language(16)
+		titleEmpty = true
 	}
 	// 先规范化输入得到实际会存储的标题，再与旧标题比较
-	titleChanged := tree.Root.IALAttr("title") != result.Title
+	titleChanged := tree.Root.IALAttr("title") != canonicalTitle
 
 	var emptyAttrUpdated bool
 	if titleChanged {
-		tree.HPath = path.Join(path.Dir(tree.HPath), result.Title)
-		tree.Root.SetIALAttr("title", result.Title)
+		tree.HPath = path.Join(path.Dir(tree.HPath), canonicalTitle)
+		tree.Root.SetIALAttr("title", canonicalTitle)
 	}
 
 	// 按需同步“无标题”标记（仅更新 IAL，不触发子树重命名等）
 	isTitleEmpty := tree.Root.IALAttr(NodeAttrTitleEmpty) == "true"
-	if isTitleEmpty != result.Empty {
-		if result.Empty {
+	if isTitleEmpty != titleEmpty {
+		if titleEmpty {
 			tree.Root.SetIALAttr(NodeAttrTitleEmpty, "true")
 		} else {
 			tree.Root.RemoveIALAttr(NodeAttrTitleEmpty)
@@ -2063,17 +2085,8 @@ func RenameDoc(boxID, p, title string) (result RenameDocResult, err error) {
 			}
 		}
 
-		refText := getNodeRefText(tree.Root)
-		evt := util.NewCmdResult("rename", 0, util.PushModeBroadcast)
-		evt.Data = map[string]any{
-			"box":     boxID,
-			"id":      tree.Root.ID,
-			"path":    p,
-			"title":   result.Title,
-			"empty":   result.Empty,
-			"refText": refText,
-		}
-		util.PushEvent(evt)
+		result = canonicalRenameDocResult(tree)
+		pushRenameDoc(result)
 	}
 	if titleChanged {
 		updateRefTextRenameDoc(tree)
@@ -2081,6 +2094,7 @@ func RenameDoc(boxID, p, title string) (result RenameDocResult, err error) {
 	if titleChanged || emptyAttrUpdated {
 		IncSync()
 	}
+	result = canonicalRenameDocResult(tree)
 	return
 }
 

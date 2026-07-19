@@ -681,6 +681,92 @@ describe("organization membership, invitation, and group HTTP contracts with Pos
     ]);
   });
 
+  test("keeps the current owner when they consume an invitation created before ownership transfer", async () => {
+    const graph = await createOrganizationGraph();
+    const loginIdentifier = `stale-owner-invitation-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "member",
+        status: "inactive",
+        userId,
+      },
+    });
+    const invitationsPath = buildPath(ORGANIZATION_INVITATIONS_PATH_TEMPLATE, {
+      organizationId: graph.organizationId,
+    });
+    const createdResponse = await fetch(`${testApi.baseUrl}${invitationsPath}`, {
+      body: JSON.stringify({
+        expiresInHours: 24,
+        loginIdentifier,
+        role: "member",
+      }),
+      headers: mutationHeaders(graph.owner),
+      method: "POST",
+    });
+    expect(createdResponse.status).toBe(201);
+    const invitation = createdOrganizationInvitationSchema.parse(
+      await createdResponse.json(),
+    );
+
+    const activated = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_MEMBER_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+        userId,
+      })}`,
+      {
+        body: JSON.stringify({ status: "active" }),
+        headers: mutationHeaders(graph.owner),
+        method: "PATCH",
+      },
+    );
+    expect(activated.status).toBe(200);
+    const newOwner = await login(userId, loginIdentifier);
+    const transferred = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_OWNERSHIP_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+      })}`,
+      {
+        body: JSON.stringify({ newOwnerUserId: userId }),
+        headers: mutationHeaders(graph.owner),
+        method: "POST",
+      },
+    );
+    expect(transferred.status).toBe(204);
+
+    const rejectedAcceptance = await fetch(
+      `${testApi.baseUrl}${AUTH_INVITATION_ACCEPT_PATH}`,
+      {
+        body: JSON.stringify({ invitationToken: invitation.invitationToken }),
+        headers: mutationHeaders(newOwner),
+        method: "POST",
+      },
+    );
+    expect(rejectedAcceptance.status).toBe(409);
+    expect(apiProblemSchema.parse(await rejectedAcceptance.json()).code).toBe(
+      "conflict",
+    );
+    await expect(
+      database.organizationMembership.findMany({
+        orderBy: { userId: "asc" },
+        select: { role: true, userId: true },
+        where: { organizationId: graph.organizationId },
+      }),
+    ).resolves.toEqual(
+      [
+        { role: "admin", userId: graph.owner.userId },
+        { role: "owner", userId },
+      ].sort((left, right) => left.userId.localeCompare(right.userId)),
+    );
+    await expect(
+      database.organizationInvitation.findUniqueOrThrow({
+        where: { id: invitation.invitationId },
+        select: { acceptedAt: true, acceptedByUserId: true },
+      }),
+    ).resolves.toEqual({ acceptedAt: null, acceptedByUserId: null });
+  });
+
   test("rejects organization members before they can create a group", async () => {
     const graph = await createOrganizationGraph();
     const loginIdentifier = `member-${randomUUID()}@example.test`;
@@ -743,6 +829,11 @@ describe("organization membership, invitation, and group HTTP contracts with Pos
       method: "PUT",
     });
     expect(added.status).toBe(204);
+    const repeatedAdd = await fetch(`${testApi.baseUrl}${memberPath}`, {
+      headers: mutationHeaders(graph.owner),
+      method: "PUT",
+    });
+    expect(repeatedAdd.status).toBe(204);
     const membersPath = buildPath(ORGANIZATION_GROUP_MEMBERS_PATH_TEMPLATE, {
       groupId: group.groupId,
       organizationId: graph.organizationId,

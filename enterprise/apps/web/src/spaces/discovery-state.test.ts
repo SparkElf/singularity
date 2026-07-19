@@ -36,6 +36,34 @@ describe("discovery host-event state", () => {
     expect(useDiscoveryStore.getState().panel).not.toHaveProperty("documentId");
   });
 
+  it("toggles a multi-word tag as one search term", () => {
+    useDiscoveryStore.getState().openSpaceSearch({
+      method: "keyword",
+      query: "#design system#",
+      queryMode: "replace",
+      spaceId: SPACE_A,
+    });
+    useDiscoveryStore.getState().openSpaceSearch({
+      method: "keyword",
+      query: "#release notes#",
+      queryMode: "toggle-term",
+      spaceId: SPACE_A,
+    });
+    expect(useDiscoveryStore.getState().panel).toMatchObject({
+      query: "#design system# #release notes#",
+    });
+
+    useDiscoveryStore.getState().openSpaceSearch({
+      method: "keyword",
+      query: "#design system#",
+      queryMode: "toggle-term",
+      spaceId: SPACE_A,
+    });
+    expect(useDiscoveryStore.getState().panel).toMatchObject({
+      query: "#release notes#",
+    });
+  });
+
   it("refreshes only the exact document panel identity", () => {
     useDiscoveryStore.getState().open({
       documentId: DOCUMENT_A,

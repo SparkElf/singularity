@@ -86,7 +86,6 @@ describe("public document shares", () => {
               mediaType: "image/png",
             },
           ],
-          documentId: "20260718000000-abcdefg",
           html:
             '<p>实时正文</p><img alt="架构图" onerror="window.compromised=true" src="/api/v1/shares/' +
             SHARE_TOKEN +
@@ -94,7 +93,10 @@ describe("public document shares", () => {
             ASSET_ID +
             '"><script>window.compromised=true</script><a href="javascript:alert(1)">危险链接</a>' +
             '<a data-document-id="20260718000001-private" href="/organizations/private/spaces/private">内部链接</a>' +
-            '<a href="https://docs.example.test/guide">外部链接</a><svg><script>window.compromised=true</script></svg>',
+            '<a href="https://docs.example.test/guide">外部链接</a><svg><script>window.compromised=true</script></svg>' +
+            '<img alt="未投影资源" src="singularity-share-asset:' +
+            ASSET_ID +
+            '"><singularity-active>未知活动元素</singularity-active>',
           title: "深空工程手册",
         });
       }
@@ -129,6 +131,8 @@ describe("public document shares", () => {
     );
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("svg")).toBeNull();
+    expect(container.querySelector("singularity-active")).toBeNull();
+    expect(screen.getByAltText("未投影资源")).not.toHaveAttribute("src");
     expect(screen.getByText("危险链接")).not.toHaveAttribute("href");
     expect(screen.getByText("内部链接")).not.toHaveAttribute("href");
     expect(screen.getByText("内部链接")).not.toHaveAttribute(
@@ -154,7 +158,6 @@ describe("public document shares", () => {
         if (documentReads === 1) {
           return jsonResponse({
             assets: [],
-            documentId: "20260718000000-abcdefg",
             html: "<p>即将撤销的正文</p>",
             title: "短期分享",
           });
@@ -177,6 +180,42 @@ describe("public document shares", () => {
     ).toBeVisible();
     expect(screen.queryByText("即将撤销的正文")).not.toBeInTheDocument();
     expect(documentReads).toBe(2);
+  });
+
+  it("leaves the password form when the share expires during its challenge", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/shares/" + SHARE_TOKEN) {
+          return jsonResponse(
+            { code: "unauthenticated", requestId: REQUEST_ID, status: 401 },
+            401,
+          );
+        }
+        if (path === "/api/v1/shares/" + SHARE_TOKEN + "/challenge") {
+          return jsonResponse(
+            { code: "not-found", requestId: REQUEST_ID, status: 404 },
+            404,
+          );
+        }
+        throw new Error("Unexpected request: " + path);
+      }),
+    );
+
+    renderShare("/shares/" + SHARE_TOKEN);
+
+    expect(
+      await screen.findByRole("heading", { name: "此分享需要密码" }),
+    ).toBeVisible();
+    fireEvent.change(screen.getByLabelText("分享密码"), {
+      target: { value: "correct share password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "验证并打开" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "分享不存在或已失效" }),
+    ).toBeVisible();
   });
 
   it("shows a terminal unavailable state for an expired or revoked share", async () => {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 import {
   AUTH_LOGIN_PATH,
@@ -10,13 +10,18 @@ import {
   loginResponseSchema,
   spaceObservabilitySchema,
   type AuditAction,
+  type AuditEventView,
 } from "@singularity/contracts";
-import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
+import {
+  AuditWriter,
+  DatabaseRuntime,
+  type DatabaseClient,
+} from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import type { Clock } from "../src/identity/clock.js";
-import { AuditWriter } from "../src/audit/audit-writer.service.js";
 import { PasswordHasher } from "../src/identity/password-hasher.js";
+import { testAuditConfiguration } from "./support/audit-configuration.js";
 import { truncateTestDatabase } from "./support/database.js";
 import {
   startTestApiApplication,
@@ -81,6 +86,30 @@ function cookiePair(response: Response): string {
     throw new Error("Login response cookie is unavailable");
   }
   return pair;
+}
+
+function expectedAuditMac(event: AuditEventView): string {
+  return createHmac("sha256", testAuditConfiguration().hmacKey)
+    .update(
+      JSON.stringify([
+        "singularity.audit-event.v1",
+        event.auditEventId,
+        event.organizationId,
+        event.sequence,
+        event.previousMac,
+        event.spaceId,
+        event.actorUserId,
+        event.action,
+        event.targetType,
+        event.targetId,
+        event.outcome,
+        event.occurredAt,
+        event.requestId,
+        event.keyVersion,
+      ]),
+      "utf8",
+    )
+    .digest("hex");
 }
 
 describe("audit and observability HTTP contracts with PostgreSQL", () => {
@@ -327,6 +356,9 @@ describe("audit and observability HTTP contracts with PostgreSQL", () => {
       true,
     );
     expect(second.events.some((event) => event.spaceId === graph.spaceBId)).toBe(false);
+    for (const event of [...first.events, ...second.events]) {
+      expect(event.mac).toBe(expectedAuditMac(event));
+    }
   });
 
   test("limits space audit access to the managed space and rejects broader members", async () => {
@@ -389,7 +421,7 @@ describe("audit and observability HTTP contracts with PostgreSQL", () => {
     expect(crossOrganization.status).toBe(404);
   });
 
-  test("reads only persisted observations after space authorization", async () => {
+  test("projects persisted observations with the current authorized Kernel state", async () => {
     const graph = await createGraph();
     const kernel = await database.kernelInstance.findUniqueOrThrow({
       where: { spaceId: graph.spaceA1Id },
@@ -438,6 +470,68 @@ describe("audit and observability HTTP contracts with PostgreSQL", () => {
         sampledAt: sampledAt.toISOString(),
         status: "ready",
       },
+      organizationId: graph.organizationAId,
+      spaceId: graph.spaceA1Id,
+    });
+
+    await database.kernelInstance.update({
+      data: {
+        deploymentHandle: null,
+        status: "starting",
+        version: null,
+      },
+      where: { id: kernel.id },
+    });
+    const startingResponse = await fetch(`${testApi.baseUrl}${path}`, {
+      headers: { Cookie: graph.spaceAdminA.cookie },
+    });
+    expect(startingResponse.status).toBe(200);
+    expect(
+      spaceObservabilitySchema.parse(await startingResponse.json()),
+    ).toEqual({
+      capacity: {
+        assetBytes: "20",
+        dataBytes: "100",
+        fileCount: "4",
+        sampleDurationMilliseconds: 12,
+        sampledAt: sampledAt.toISOString(),
+        status: "fresh",
+      },
+      health: {
+        reason: "kernel-unavailable",
+        sampledAt: sampledAt.toISOString(),
+        status: "unavailable",
+      },
+      organizationId: graph.organizationAId,
+      spaceId: graph.spaceA1Id,
+    });
+
+    await database.kernelInstance.update({
+      data: {
+        deploymentHandle: `audit-${randomUUID()}`,
+        status: "unavailable",
+        version: "3.7.2",
+      },
+      where: { id: kernel.id },
+    });
+    await database.kernelHealthObservation.deleteMany({
+      where: { kernelInstanceId: kernel.id },
+    });
+    await database.spaceCapacityObservation.deleteMany({
+      where: { kernelInstanceId: kernel.id },
+    });
+    const unavailableWithoutSampleResponse = await fetch(
+      `${testApi.baseUrl}${path}`,
+      { headers: { Cookie: graph.spaceAdminA.cookie } },
+    );
+    expect(unavailableWithoutSampleResponse.status).toBe(200);
+    expect(
+      spaceObservabilitySchema.parse(
+        await unavailableWithoutSampleResponse.json(),
+      ),
+    ).toEqual({
+      capacity: { reason: "no-sample", status: "unavailable" },
+      health: { reason: "kernel-unavailable", status: "unavailable" },
       organizationId: graph.organizationAId,
       spaceId: graph.spaceA1Id,
     });

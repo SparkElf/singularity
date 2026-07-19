@@ -9,7 +9,10 @@ import type { OnModuleInit } from "@nestjs/common";
 import { Injectable, Module } from "@nestjs/common";
 import { DiscoveryModule, NestFactory } from "@nestjs/core";
 import { kernelRoutePolicies } from "@singularity/authorization";
-import { DatabaseRuntime } from "@singularity/database";
+import {
+  DatabaseRuntime,
+  parseAuditConfiguration,
+} from "@singularity/database";
 import {
   KernelCredentialService,
   KernelRoutePolicyRegistry,
@@ -49,7 +52,13 @@ function configuration(rootDirectory: string): WorkerConfiguration {
   });
   return {
     archiveAuditIntervalMilliseconds: 300_000,
+    audit: parseAuditConfiguration({
+      SINGULARITY_AUDIT_HMAC_KEY: Buffer.alloc(32, 7).toString("base64url"),
+      SINGULARITY_AUDIT_KEY_VERSION: "worker-test-v1",
+    }),
     claimBatchSize: 4,
+    contentAuditBatchSize: 100,
+    contentAuditReconciliationIntervalMilliseconds: 5_000,
     credentials,
     deployments: new RuntimeKernelDeploymentRegistry([]),
     leaseDurationMilliseconds: 30_000,

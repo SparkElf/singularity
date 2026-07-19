@@ -20,6 +20,8 @@ import (
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/serviceauth"
+	nethtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 const (
@@ -90,6 +92,99 @@ type enterpriseDiscoveryLocalGraphNode struct {
 	NotebookID *string `json:"notebookId"`
 }
 
+type enterpriseDiscoveryOutlineItem struct {
+	Children []enterpriseDiscoveryOutlineItem `json:"children"`
+	ID       string                           `json:"id"`
+	Name     string                           `json:"name"`
+}
+
+// enterpriseDiscoveryHTMLText 将旧 Kernel 返回的 HTML 片段收敛为 React 使用的纯文本。
+func enterpriseDiscoveryHTMLText(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	nodes, err := nethtml.ParseFragment(strings.NewReader(value), &nethtml.Node{
+		Data:     "div",
+		DataAtom: atom.Div,
+		Type:     nethtml.ElementNode,
+	})
+	if err != nil {
+		return ""
+	}
+	var text strings.Builder
+	var walk func(*nethtml.Node)
+	walk = func(node *nethtml.Node) {
+		if node.Type == nethtml.TextNode {
+			text.WriteString(node.Data)
+			return
+		}
+		if node.Type == nethtml.ElementNode && node.Data == "img" {
+			for _, attr := range node.Attr {
+				if attr.Key == "alt" {
+					text.WriteString(attr.Val)
+					break
+				}
+			}
+			return
+		}
+		if node.Type == nethtml.ElementNode && node.Data == "br" {
+			text.WriteByte('\n')
+			return
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	for _, node := range nodes {
+		walk(node)
+	}
+	return strings.TrimSpace(text.String())
+}
+
+// GraphNode 对文档、标题和标签使用 Label，对其他内容块使用 Title。
+func enterpriseDiscoveryGraphDisplayText(node *model.GraphNode) string {
+	if label := strings.TrimSpace(node.Label); label != "" {
+		return label
+	}
+	return strings.TrimSpace(node.Title)
+}
+
+func enterpriseDiscoveryOutlineProjections(paths []*model.Path) []enterpriseDiscoveryOutlineItem {
+	ret := make([]enterpriseDiscoveryOutlineItem, 0, len(paths))
+	for _, path := range paths {
+		if path == nil || path.ID == "" {
+			continue
+		}
+		ret = append(ret, enterpriseDiscoveryOutlineItem{
+			Children: enterpriseDiscoveryOutlineBlockProjections(path.Blocks),
+			ID:       path.ID,
+			Name: truncateEnterpriseDiscoveryText(
+				enterpriseDiscoveryHTMLText(path.Name),
+				enterpriseDiscoveryGraphLabelMaxRunes,
+			),
+		})
+	}
+	return ret
+}
+
+func enterpriseDiscoveryOutlineBlockProjections(blocks []*model.Block) []enterpriseDiscoveryOutlineItem {
+	ret := make([]enterpriseDiscoveryOutlineItem, 0, len(blocks))
+	for _, block := range blocks {
+		if block == nil || block.ID == "" {
+			continue
+		}
+		ret = append(ret, enterpriseDiscoveryOutlineItem{
+			Children: enterpriseDiscoveryOutlineBlockProjections(block.Children),
+			ID:       block.ID,
+			Name: truncateEnterpriseDiscoveryText(
+				enterpriseDiscoveryHTMLText(block.Content),
+				enterpriseDiscoveryGraphLabelMaxRunes,
+			),
+		})
+	}
+	return ret
+}
+
 func enterpriseDiscoveryBlockProjections(blocks []*model.Block) []enterpriseDiscoveryBlock {
 	ret := make([]enterpriseDiscoveryBlock, 0, len(blocks))
 	for _, block := range blocks {
@@ -100,6 +195,7 @@ func enterpriseDiscoveryBlockProjections(blocks []*model.Block) []enterpriseDisc
 		if content == "" {
 			content = block.FContent
 		}
+		content = enterpriseDiscoveryHTMLText(content)
 		ret = append(ret, enterpriseDiscoveryBlock{
 			Content:    truncateEnterpriseDiscoveryText(content, enterpriseDiscoveryContentMaxRunes),
 			DocumentID: block.RootID,
@@ -116,12 +212,9 @@ func enterpriseDiscoveryBacklinkProjections(paths []*model.Path) []enterpriseDis
 		if path == nil || path.ID == "" || path.Box == "" {
 			continue
 		}
-		title := strings.TrimSpace(path.Name)
+		title := enterpriseDiscoveryHTMLText(path.Name)
 		if title == "" {
-			title = strings.TrimSpace(path.HPath)
-		}
-		if title == "" {
-			title = path.ID
+			continue
 		}
 		ret = append(ret, enterpriseDiscoveryBacklink{
 			DocumentID: path.ID,
@@ -144,12 +237,9 @@ func enterpriseDiscoveryLocalGraphProjections(nodes []*model.GraphNode) []enterp
 		if len(ret) == enterpriseDiscoveryGraphMaxNodes {
 			break
 		}
-		label := strings.TrimSpace(node.Label)
+		label := enterpriseDiscoveryHTMLText(enterpriseDiscoveryGraphDisplayText(node))
 		if label == "" {
-			label = strings.TrimSpace(node.Title)
-		}
-		if label == "" {
-			label = node.ID
+			continue
 		}
 		projected := enterpriseDiscoveryLocalGraphNode{
 			ID:    node.ID,
@@ -166,13 +256,23 @@ func enterpriseDiscoveryLocalGraphProjections(nodes []*model.GraphNode) []enterp
 	return ret
 }
 
-func enterpriseDiscoveryGraphLinkProjections(links []*model.GraphLink) []enterpriseDiscoveryGraphLink {
+func enterpriseDiscoveryGraphLinkProjections(links []*model.GraphLink, nodes []enterpriseDiscoveryLocalGraphNode) []enterpriseDiscoveryGraphLink {
 	ret := make([]enterpriseDiscoveryGraphLink, 0, min(len(links), enterpriseDiscoveryGraphMaxLinks))
+	projectedNodeIDs := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		projectedNodeIDs[node.ID] = struct{}{}
+	}
 	for _, link := range links {
 		if link == nil || link.From == "" || link.To == "" {
 			continue
 		}
 		if utf8.RuneCountInString(link.From) > enterpriseDiscoveryGraphLabelMaxRunes || utf8.RuneCountInString(link.To) > enterpriseDiscoveryGraphLabelMaxRunes {
+			continue
+		}
+		if _, ok := projectedNodeIDs[link.From]; !ok {
+			continue
+		}
+		if _, ok := projectedNodeIDs[link.To]; !ok {
 			continue
 		}
 		if len(ret) == enterpriseDiscoveryGraphMaxLinks {
@@ -268,9 +368,9 @@ func EnterpriseReadSpaceGraph(c *gin.Context) {
 		if len(projectionNodes) == enterpriseDiscoveryGraphMaxNodes {
 			break
 		}
-		label := strings.TrimSpace(node.Label)
+		label := enterpriseDiscoveryHTMLText(enterpriseDiscoveryGraphDisplayText(node))
 		if label == "" {
-			label = node.ID
+			continue
 		}
 		projectionNodes = append(projectionNodes, enterpriseDiscoveryGraphNode{
 			DocumentID: node.DocumentID,

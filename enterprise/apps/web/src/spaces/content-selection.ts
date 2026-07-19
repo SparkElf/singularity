@@ -24,6 +24,7 @@ interface ContentSelectionState {
 }
 
 let activeScope: ContentSelectionScope | null = null;
+let frozenScope: ContentSelectionScope | null = null;
 let nextGeneration = 0;
 
 export const useContentSelectionStore = create<ContentSelectionState>(() => ({
@@ -43,6 +44,7 @@ export function activateContentSelectionScope(
     spaceId: identity.spaceId,
   });
   activeScope = scope;
+  frozenScope = null;
   useContentSelectionStore.setState({ selection: null });
   return scope;
 }
@@ -54,7 +56,19 @@ export function releaseContentSelectionScope(
     return false;
   }
   activeScope = null;
+  frozenScope = null;
   useContentSelectionStore.setState({ selection: null });
+  return true;
+}
+
+/** 冻结当前代次的写命令，但保留选择供正在销毁的编辑器读取。 */
+export function freezeContentSelectionScope(
+  scope: ContentSelectionScope,
+): boolean {
+  if (!ownsScope(scope)) {
+    return false;
+  }
+  frozenScope = scope;
   return true;
 }
 
@@ -77,7 +91,7 @@ export function getContentSelectionForScope(
 export function clearContentSelection(
   scope: ContentSelectionScope,
 ): boolean {
-  if (!ownsScope(scope)) {
+  if (!ownsScope(scope) || frozenScope === scope) {
     return false;
   }
   if (useContentSelectionStore.getState().selection !== null) {
@@ -90,13 +104,15 @@ export function selectContentDocument(
   scope: ContentSelectionScope,
   target: ContentSelectionTarget,
 ): boolean {
-  if (!ownsScope(scope)) {
+  if (!ownsScope(scope) || frozenScope === scope) {
     console.warn("[content.directory]", {
       documentId: target.documentId,
       generation: scope.generation,
       notebookId: target.notebookId,
       phase: "selection",
-      result: "stale-generation-rejected",
+      result: ownsScope(scope)
+        ? "frozen-generation-rejected"
+        : "stale-generation-rejected",
       spaceId: scope.spaceId,
     });
     return false;

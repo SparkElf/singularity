@@ -25,6 +25,7 @@ const BLOCK_A = "20260719000200-block01";
 const BLOCK_B = "20260719000201-block02";
 const BLOCK_C = "20260719000202-block03";
 const EMBEDDED_BLOCK = "20260719000203-block04";
+const SAME_DOCUMENT_BLOCK = "20260719000204-block05";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
 
@@ -92,7 +93,7 @@ function documentResponse(
   const embedded = requestedId !== fixture.documentId;
   const blockId = embedded ? requestedId : fixture.blockId;
   const embeddedTrigger = fixture.documentId === DOCUMENT_A && !embedded
-    ? `<span data-action="openFloat" data-id="${EMBEDDED_BLOCK}" data-notebook-id="${NOTEBOOK_A}" data-document-id="${DOCUMENT_B}">打开嵌入式文档</span>`
+    ? `<span data-action="openFloat" data-id="${EMBEDDED_BLOCK}" data-notebook-id="${NOTEBOOK_A}" data-document-id="${DOCUMENT_B}">打开嵌入式文档</span><span data-action="openFloat" data-id="${SAME_DOCUMENT_BLOCK}" data-notebook-id="${NOTEBOOK_A}" data-document-id="${DOCUMENT_A}">打开同文档实例</span>`
     : "";
   return {
     code: 0,
@@ -437,6 +438,61 @@ test.describe("real Protyle browser integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
+  test("uses the transaction source editor when the same document has multiple instances", async ({
+    page,
+  }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openFirstDocument(page);
+
+    await editor.getByText("打开同文档实例").click();
+    const panel = page.locator('[data-protyle-block-panel="true"]');
+    await expect(panel).toHaveClass(/block__popover--open/);
+    await expect(panel.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText("嵌入式文档内容");
+    await expect.poll(() => boundary.sockets.filter(
+      (socket) => socket.spaceId === SPACE_A && socket.documentId === DOCUMENT_A,
+    ).length).toBe(2);
+    const embeddedSocket = boundary.sockets.filter(
+      (socket) => socket.spaceId === SPACE_A && socket.documentId === DOCUMENT_A,
+    ).at(-1)!;
+
+    const sourceEditable = editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`);
+    await sourceEditable.fill("来源实例唯一内容");
+    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(0);
+    const sourceTransaction = boundary.transactionRequests.at(-1)!;
+    const sourceEditorId = (sourceTransaction.body as { session?: unknown }).session;
+    expect(typeof sourceEditorId).toBe("string");
+    expect(sourceEditorId).not.toBe("");
+    const fallbackRequests = boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/block/getBlockDOM",
+    ).length;
+
+    embeddedSocket.route.send(JSON.stringify({
+      cmd: "transactions",
+      code: 0,
+      context: { rootIDs: [DOCUMENT_A] },
+      data: [{
+        contentTargets: [{ documentId: DOCUMENT_A, notebookId: NOTEBOOK_A }],
+        doOperations: [{
+          action: "move",
+          id: BLOCK_A,
+          previousID: SAME_DOCUMENT_BLOCK,
+        }],
+        notebook: "",
+      }],
+      msg: "",
+      sid: sourceEditorId,
+    }));
+    await expect(panel.locator(`[data-node-id="${BLOCK_A}"]`)).toContainText("来源实例唯一内容");
+    expect(boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/block/getBlockDOM",
+    )).toHaveLength(fallbackRequests);
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
   test("viewer mounts the same real DOM as read-only and cannot submit", async ({
     page,
   }, testInfo) => {
@@ -501,6 +557,43 @@ test.describe("real Protyle browser integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
+  test("removeDoc closes only the embedded owner with the matching identity", async ({
+    page,
+  }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openFirstDocument(page);
+
+    await editor.getByText("打开嵌入式文档").click();
+    const panel = page.locator('[data-protyle-block-panel="true"]');
+    await expect(panel.getByText("嵌入式文档内容")).toBeVisible();
+    await expect.poll(() => socketFor(boundary, SPACE_A, DOCUMENT_B)).toBeDefined();
+    const embeddedSocket = socketFor(boundary, SPACE_A, DOCUMENT_B)!;
+
+    embeddedSocket.route.send(JSON.stringify({
+      cmd: "removeDoc",
+      code: 0,
+      data: { documentId: DOCUMENT_B, notebookId: NOTEBOOK_B },
+      msg: "",
+    }));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(panel).toHaveCount(1);
+
+    embeddedSocket.route.send(JSON.stringify({
+      cmd: "removeDoc",
+      code: 0,
+      data: { documentId: DOCUMENT_B, notebookId: NOTEBOOK_A },
+      msg: "",
+    }));
+    await expect(panel).toHaveCount(0);
+    await expect.poll(() => embeddedSocket.closed).toBe(true);
+    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
   test("switching documents closes the old editor before the successor becomes current", async ({
     page,
   }, testInfo) => {
@@ -539,9 +632,12 @@ test.describe("real Protyle browser integration", () => {
       cmd: "moveDoc",
       code: 0,
       data: {
+        fromNotebook: NOTEBOOK_A,
         fromPath: `/${DOCUMENT_A}.sy`,
+        documentId: DOCUMENT_A,
         newPath: `/moved/${DOCUMENT_A}.sy`,
         toNotebook: NOTEBOOK_B,
+        toPath: `/moved/${DOCUMENT_A}.sy`,
       },
       msg: "",
     }));
@@ -591,9 +687,12 @@ test.describe("real Protyle browser integration", () => {
       cmd: "moveDoc",
       code: 0,
       data: {
+        fromNotebook: NOTEBOOK_A,
         fromPath: `/${DOCUMENT_A}.sy`,
+        documentId: DOCUMENT_A,
         newPath: `/moved/${DOCUMENT_A}.sy`,
         toNotebook: NOTEBOOK_A,
+        toPath: `/moved/${DOCUMENT_A}.sy`,
       },
       msg: "",
     }));

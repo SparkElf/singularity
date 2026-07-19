@@ -370,6 +370,7 @@ class BlockPanelOwner implements BlockPanelHandle {
                 session: this.sourceProtyle.session!,
                 hostReadOnly: this.sourceProtyle.readonlyState.host,
                 signal: this.ownerController.signal,
+                onContentUnavailable: this.close,
             });
         } catch (error) {
             this.reportLoadFailure(error, reference);

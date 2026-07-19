@@ -98,16 +98,23 @@ function toggleTerm(currentQuery: string, term: string): string {
   if (normalizedTerm === "") {
     return currentQuery;
   }
-  const terms = currentQuery.trim() === ""
-    ? []
-    : currentQuery.trim().split(/\s+/u);
-  const index = terms.indexOf(normalizedTerm);
-  if (index === -1) {
-    terms.push(normalizedTerm);
-  } else {
-    terms.splice(index, 1);
+  const normalizedQuery = currentQuery.trim().replace(/\s+/gu, " ");
+  const escapedTerm = normalizedTerm.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const termPattern = new RegExp(
+    `(^|\\s)${escapedTerm}(?=\\s|$)`,
+    "u",
+  );
+  const match = termPattern.exec(normalizedQuery);
+  if (match) {
+    return normalizedQuery
+      .slice(0, match.index)
+      .concat(normalizedQuery.slice(match.index + match[0].length))
+      .trim()
+      .replace(/\s+/gu, " ");
   }
-  return terms.join(" ");
+  return normalizedQuery === ""
+    ? normalizedTerm
+    : `${normalizedQuery} ${normalizedTerm}`;
 }
 
 function panelSupportsQuery(

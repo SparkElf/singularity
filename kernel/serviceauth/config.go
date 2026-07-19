@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"regexp"
 	"strings"
@@ -18,6 +19,7 @@ const (
 	kernelInstanceIDEnv     = "SINGULARITY_KERNEL_INSTANCE_ID"
 	spaceIDEnv              = "SINGULARITY_KERNEL_SPACE_ID"
 	publicKeyRingFileEnv    = "SINGULARITY_KERNEL_SERVICE_KEYS_FILE"
+	listenAddressEnv        = "SINGULARITY_KERNEL_LISTEN_ADDRESS"
 	serverCertificateEnv    = "SINGULARITY_KERNEL_TLS_CERT_FILE"
 	serverPrivateKeyEnv     = "SINGULARITY_KERNEL_TLS_KEY_FILE"
 	trustedClientCAFileEnv  = "SINGULARITY_KERNEL_CLIENT_CA_FILE"
@@ -36,11 +38,12 @@ type keyRingEntry struct {
 }
 
 type Configuration struct {
-	instanceID           string
-	routeIdentities      map[routeKey]RouteIdentityRequirement
-	spaceID              string
-	tlsConfig            *tls.Config
-	verifier             *Verifier
+	instanceID      string
+	listenAddress   string
+	routeIdentities map[routeKey]RouteIdentityRequirement
+	spaceID         string
+	tlsConfig       *tls.Config
+	verifier        *Verifier
 }
 
 type EnvironmentLookup func(string) (string, bool)
@@ -65,12 +68,17 @@ func Load(lookup EnvironmentLookup) (*Configuration, error) {
 	instanceID, instanceConfigured := nonEmptyEnvironmentValue(lookup, kernelInstanceIDEnv)
 	spaceID, spaceConfigured := nonEmptyEnvironmentValue(lookup, spaceIDEnv)
 	keyRingPath, keyRingConfigured := nonEmptyEnvironmentValue(lookup, publicKeyRingFileEnv)
+	listenAddressValue, listenAddressConfigured := nonEmptyEnvironmentValue(lookup, listenAddressEnv)
 	certificatePath, certificateConfigured := nonEmptyEnvironmentValue(lookup, serverCertificateEnv)
 	privateKeyPath, privateKeyConfigured := nonEmptyEnvironmentValue(lookup, serverPrivateKeyEnv)
 	clientCAPath, clientCAConfigured := nonEmptyEnvironmentValue(lookup, trustedClientCAFileEnv)
 	gatewayClientDNSName, gatewayClientDNSNameConfigured := nonEmptyEnvironmentValue(lookup, gatewayClientDNSNameEnv)
-	if !instanceConfigured || !spaceConfigured || !canonicalUUIDPattern.MatchString(instanceID) || !canonicalUUIDPattern.MatchString(spaceID) || !keyRingConfigured || !certificateConfigured || !privateKeyConfigured || !clientCAConfigured || !gatewayClientDNSNameConfigured {
+	if !instanceConfigured || !spaceConfigured || !canonicalUUIDPattern.MatchString(instanceID) || !canonicalUUIDPattern.MatchString(spaceID) || !keyRingConfigured || !listenAddressConfigured || !certificateConfigured || !privateKeyConfigured || !clientCAConfigured || !gatewayClientDNSNameConfigured {
 		return nil, errors.New("enterprise kernel credentials are incomplete")
+	}
+	listenAddress, err := parseListenAddress(listenAddressValue)
+	if err != nil {
+		return nil, err
 	}
 
 	publicKeys, err := loadPublicKeyRing(keyRingPath)
@@ -84,11 +92,24 @@ func Load(lookup EnvironmentLookup) (*Configuration, error) {
 
 	return &Configuration{
 		instanceID:      instanceID,
+		listenAddress:   listenAddress,
 		routeIdentities: make(map[routeKey]RouteIdentityRequirement),
 		spaceID:         spaceID,
 		tlsConfig:       tlsConfig,
 		verifier:        NewVerifier(instanceID, spaceID, publicKeys),
 	}, nil
+}
+
+func parseListenAddress(value string) (string, error) {
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return "", errors.New("enterprise kernel listen address is invalid")
+	}
+	address = address.Unmap()
+	if !address.IsLoopback() && !address.IsPrivate() {
+		return "", errors.New("enterprise kernel listen address is not private")
+	}
+	return address.String(), nil
 }
 
 func nonEmptyEnvironmentValue(lookup EnvironmentLookup, name string) (string, bool) {
@@ -166,6 +187,10 @@ func loadServerTLSConfiguration(certificatePath, privateKeyPath, clientCAPath, g
 
 func (configuration *Configuration) InstanceID() string {
 	return configuration.instanceID
+}
+
+func (configuration *Configuration) ListenAddress() string {
+	return configuration.listenAddress
 }
 
 func (configuration *Configuration) SpaceID() string {
