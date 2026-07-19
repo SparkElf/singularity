@@ -13,6 +13,11 @@ import {
 } from "@singularity/protyle-browser";
 
 import { createReactProtylePluginContributions } from "@/editor/protyle-plugins.ts";
+import type {
+  ContentSelection,
+  ContentSelectionScope,
+  ContentSelectionTarget,
+} from "@/spaces/content-selection.ts";
 import { createSpaceGatewayResourcePort } from "@/spaces/gateway-paths.ts";
 import {
   createSpaceGatewayTransport,
@@ -45,6 +50,15 @@ export type SpaceProtyleRuntime = Omit<
 > & {
   readonly transport: SpaceGatewayTransport<unknown>;
 };
+
+export interface SpaceSessionComposition {
+  readonly bootstrap: ReadySpaceRuntimeBootstrap;
+  readonly clearSelection: () => boolean;
+  readonly scope: ContentSelectionScope;
+  readonly selection: ContentSelection | null;
+  readonly selectDocument: (target: ContentSelectionTarget) => boolean;
+  readonly session: ProtyleSession<SpaceProtyleRuntime> | null;
+}
 
 export interface CreateSpaceProtyleSessionOptions {
   readonly bootstrap: ReadySpaceRuntimeBootstrap;

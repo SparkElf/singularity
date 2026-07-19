@@ -61,7 +61,10 @@ import {
   ContentDirectory,
   type ContentDirectoryStatus,
 } from "@/spaces/ContentDirectory.tsx";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
+import {
+  useContentSelectionScope,
+  useContentSelectionStore,
+} from "@/spaces/content-selection.ts";
 
 const createDocumentShareOptionsSchema = createDocumentShareRequestSchema.pick({
   expiresAt: true,
@@ -178,9 +181,11 @@ function SharesPageContent({
   const [copyError, setCopyError] = useState(false);
   const [directoryStatus, setDirectoryStatus] =
     useState<ContentDirectoryStatus>("loading");
-  const selection = useContentSelectionStore((state) =>
-    state.selection?.spaceId === spaceId ? state.selection : null,
-  );
+  const selectionScope = useContentSelectionScope({ organizationId, spaceId });
+  const storeSelection = useContentSelectionStore((state) => state.selection);
+  const selection = selectionScope && storeSelection?.spaceId === spaceId
+    ? storeSelection
+    : null;
   const sharesQuery = useQuery({
     queryKey: spaceSharesQueryKey(organizationId, spaceId),
     queryFn: ({ signal }) => getSpaceShares(organizationId, spaceId, signal),
@@ -270,11 +275,13 @@ function SharesPageContent({
 
       <div className="grid min-h-80 grid-cols-[16rem_minmax(0,1fr)] border-b max-md:grid-cols-1">
         <div className="flex h-80 min-h-0 max-md:h-72">
-          <ContentDirectory
-            identity={{ organizationId, spaceId }}
-            onAccessLost={handleDirectoryAccessLost}
-            onStatusChange={setDirectoryStatus}
-          />
+          {selectionScope ? (
+            <ContentDirectory
+              onAccessLost={handleDirectoryAccessLost}
+              onStatusChange={setDirectoryStatus}
+              scope={selectionScope}
+            />
+          ) : null}
         </div>
         <form
           className="grid content-start grid-cols-[minmax(220px,1fr)_140px_minmax(180px,1fr)_auto] items-end gap-3 bg-muted/25 p-3 max-xl:grid-cols-2 max-sm:grid-cols-1"

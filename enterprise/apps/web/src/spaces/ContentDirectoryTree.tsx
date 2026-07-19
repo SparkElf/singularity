@@ -25,10 +25,11 @@ import {
 import type { ContentSelection } from "@/spaces/content-selection.ts";
 
 interface ContentDirectoryTreeProps {
+  readonly generation: number;
   readonly identity: SpaceRuntimePathParameters;
   readonly notebooks: readonly ContentDirectoryNotebook[];
-  readonly onNotebookLocked: (notebookId: string) => void;
-  readonly onPageError: (error: unknown) => void;
+  readonly onNotebookLocked: (notebookId: string, generation: number) => void;
+  readonly onPageError: (error: unknown, generation: number) => void;
   readonly onSelect: (document: ContentDirectoryDocument) => void;
   readonly selection: ContentSelection | null;
 }
@@ -36,9 +37,10 @@ interface ContentDirectoryTreeProps {
 interface DocumentLevelProps {
   readonly depth: number;
   readonly expandedDocuments: ReadonlySet<string>;
+  readonly generation: number;
   readonly identity: ContentDirectoryPageIdentity;
-  readonly onNotebookLocked: (notebookId: string) => void;
-  readonly onPageError: (error: unknown) => void;
+  readonly onNotebookLocked: (notebookId: string, generation: number) => void;
+  readonly onPageError: (error: unknown, generation: number) => void;
   readonly onSelect: (document: ContentDirectoryDocument) => void;
   readonly onToggleDocument: (document: ContentDirectoryDocument) => void;
   readonly selection: ContentSelection | null;
@@ -62,6 +64,7 @@ function DirectoryIcon({ icon }: { readonly icon: string }) {
 function DocumentPage({
   depth,
   expandedDocuments,
+  generation,
   identity,
   offset,
   onNextOffset,
@@ -82,15 +85,15 @@ function DocumentPage({
 
   useEffect(() => {
     if (pageQuery.error) {
-      onPageError(pageQuery.error);
+      onPageError(pageQuery.error, generation);
     }
-  }, [onPageError, pageQuery.error]);
+  }, [generation, onPageError, pageQuery.error]);
 
   useEffect(() => {
     if (pageQuery.data?.locked) {
-      onNotebookLocked(identity.notebookId);
+      onNotebookLocked(identity.notebookId, generation);
     }
-  }, [identity.notebookId, onNotebookLocked, pageQuery.data?.locked]);
+  }, [generation, identity.notebookId, onNotebookLocked, pageQuery.data?.locked]);
 
   if (pageQuery.isPending) {
     return (
@@ -188,6 +191,7 @@ function DocumentPage({
               <DocumentLevel
                 depth={depth + 1}
                 expandedDocuments={expandedDocuments}
+                generation={generation}
                 identity={{
                   level: {
                     kind: "children",
@@ -248,6 +252,7 @@ function DocumentLevel(props: DocumentLevelProps) {
 }
 
 export function ContentDirectoryTree({
+  generation,
   identity,
   notebooks,
   onNotebookLocked,
@@ -331,6 +336,7 @@ export function ContentDirectoryTree({
                 <DocumentLevel
                   depth={1}
                   expandedDocuments={expandedDocuments}
+                  generation={generation}
                   identity={{
                     level: { kind: "root" },
                     notebookId: notebook.notebookId,

@@ -1,6 +1,6 @@
 import type {
   ContentDirectoryDocument,
-  SpaceRuntimePathParameters,
+  ContentDirectoryDocumentsResponse,
 } from "@singularity/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,6 +19,14 @@ import { isApiProblem } from "@/api/http.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import {
+  clearContentSelection,
+  getContentSelectionForScope,
+  isContentSelectionScopeActive,
+  selectContentDocument,
+  useContentSelectionStore,
+  type ContentSelectionScope,
+} from "@/spaces/content-selection.ts";
+import {
   contentDirectoryDocumentsQueryKey,
   contentDirectoryNotebooksQueryKey,
   contentDirectorySpaceQueryKey,
@@ -26,45 +34,42 @@ import {
   getContentDirectoryNotebooks,
 } from "@/spaces/content-directory-api.ts";
 import { ContentDirectoryTree } from "@/spaces/ContentDirectoryTree.tsx";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 
 export type ContentDirectoryStatus = "empty" | "error" | "loading" | "ready";
 export type ContentDirectoryAccessLoss = "forbidden" | "unauthenticated";
 
 interface ContentDirectoryProps {
-  readonly identity: SpaceRuntimePathParameters;
   readonly onAccessLost: (category: ContentDirectoryAccessLoss) => void;
   readonly onStatusChange: (status: ContentDirectoryStatus) => void;
-}
-
-function currentSelectionForSpace(spaceId: string) {
-  const selection = useContentSelectionStore.getState().selection;
-  return selection?.spaceId === spaceId ? selection : null;
+  readonly scope: ContentSelectionScope;
 }
 
 export function ContentDirectory({
-  identity,
   onAccessLost,
   onStatusChange,
+  scope,
 }: ContentDirectoryProps) {
   const queryClient = useQueryClient();
-  const clearSelection = useContentSelectionStore((state) => state.clearSelection);
-  const selectDocument = useContentSelectionStore((state) => state.selectDocument);
-  const selection = useContentSelectionStore((state) =>
-    state.selection?.spaceId === identity.spaceId ? state.selection : null,
-  );
-  const generationRef = useRef(0);
-  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
-  const [generation, setGeneration] = useState(0);
+  const storeSelection = useContentSelectionStore((state) => state.selection);
+  const selection = isContentSelectionScopeActive(scope) &&
+    storeSelection?.spaceId === scope.spaceId
+    ? storeSelection
+    : null;
+  const requestGenerationRef = useRef(0);
+  const accessLossGenerationRef = useRef<number | null>(null);
+  const [requestGeneration, setRequestGeneration] = useState(0);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState<ContentDirectoryStatus>("loading");
   const notebooksQuery = useQuery({
-    queryKey: contentDirectoryNotebooksQueryKey(identity),
-    queryFn: ({ signal }) => getContentDirectoryNotebooks(identity, signal),
+    queryKey: contentDirectoryNotebooksQueryKey(scope),
+    queryFn: ({ signal }) => getContentDirectoryNotebooks(scope, signal),
     refetchOnMount: "always",
     retry: false,
     staleTime: 0,
   });
   const hasCurrentNotebooks =
+    !refreshing &&
     notebooksQuery.isSuccess &&
     notebooksQuery.isFetchedAfterMount &&
     !notebooksQuery.isFetching &&
@@ -76,73 +81,83 @@ export function ContentDirectory({
   }, [onStatusChange, status]);
 
   useEffect(() => {
-    const routeGeneration = ++generationRef.current;
-    setGeneration(routeGeneration);
+    const routeGeneration = ++requestGenerationRef.current;
+    accessLossGenerationRef.current = null;
+    setRequestGeneration(routeGeneration);
     setStatus("loading");
-    clearSelection();
+    clearContentSelection(scope);
     console.info("[content.directory]", {
-      generation: routeGeneration,
+      generation: scope.generation,
       phase: "route",
       result: "activated",
-      spaceId: identity.spaceId,
+      spaceId: scope.spaceId,
     });
 
     return () => {
-      ++generationRef.current;
-      const current = currentSelectionForSpace(identity.spaceId);
-      if (current !== null) {
-        useContentSelectionStore.getState().clearSelection();
-      }
+      ++requestGenerationRef.current;
+      clearContentSelection(scope);
       void queryClient.cancelQueries({
-        queryKey: contentDirectorySpaceQueryKey(identity),
+        queryKey: contentDirectorySpaceQueryKey(scope),
       });
       console.info("[content.directory]", {
-        generation: routeGeneration,
+        generation: scope.generation,
         phase: "route",
         result: "released",
-        spaceId: identity.spaceId,
+        spaceId: scope.spaceId,
       });
     };
-  }, [clearSelection, identity.organizationId, identity.spaceId, queryClient]);
+  }, [queryClient, scope]);
 
-  const handleAccessError = useCallback((error: unknown) => {
+  const handleAccessError = useCallback((
+    error: unknown,
+    expectedGeneration = requestGenerationRef.current,
+  ) => {
+    const currentGeneration = requestGenerationRef.current;
+    if (expectedGeneration !== currentGeneration) {
+      return true;
+    }
+    if (accessLossGenerationRef.current === currentGeneration) {
+      return true;
+    }
     if (isApiProblem(error, "unauthenticated")) {
-      clearSelection();
+      accessLossGenerationRef.current = currentGeneration;
+      clearContentSelection(scope);
       setStatus("loading");
       onAccessLost("unauthenticated");
       return true;
     }
     if (isApiProblem(error, "not-found")) {
-      clearSelection();
+      accessLossGenerationRef.current = currentGeneration;
+      clearContentSelection(scope);
       setStatus("loading");
       onAccessLost("forbidden");
       return true;
     }
     return false;
-  }, [clearSelection, onAccessLost]);
+  }, [onAccessLost, scope]);
 
   useEffect(() => {
-    if (!notebooksQuery.error || handleAccessError(notebooksQuery.error)) {
+    if (!notebooksQuery.error || refreshing || handleAccessError(notebooksQuery.error)) {
       return;
     }
     setStatus("error");
     console.warn("[content.directory]", {
-      generation: generationRef.current,
+      generation: scope.generation,
       phase: "notebooks",
       result: "failed",
-      spaceId: identity.spaceId,
+      spaceId: scope.spaceId,
     });
-  }, [handleAccessError, identity.spaceId, notebooksQuery.error]);
+  }, [handleAccessError, notebooksQuery.error, refreshing, scope]);
 
   useEffect(() => {
-    if (!hasCurrentNotebooks || generation === 0) {
+    if (!hasCurrentNotebooks || requestGeneration === 0) {
       return;
     }
-    const currentGeneration = generation;
+    const currentGeneration = requestGeneration;
     let cancelled = false;
 
     const selectFirstDocument = async () => {
-      const current = currentSelectionForSpace(identity.spaceId);
+      const current = getContentSelectionForScope(scope);
       if (current !== null) {
         const notebook = notebooks.find(
           (candidate) => candidate.notebookId === current.notebookId,
@@ -151,7 +166,7 @@ export function ContentDirectory({
           setStatus("ready");
           return;
         }
-        clearSelection();
+        clearContentSelection(scope);
       }
 
       for (const notebook of notebooks) {
@@ -161,10 +176,10 @@ export function ContentDirectory({
         const pageIdentity = {
           level: { kind: "root" as const },
           notebookId: notebook.notebookId,
-          organizationId: identity.organizationId,
-          spaceId: identity.spaceId,
+          organizationId: scope.organizationId,
+          spaceId: scope.spaceId,
         };
-        let page;
+        let page: ContentDirectoryDocumentsResponse;
         try {
           page = await queryClient.fetchQuery({
             queryKey: contentDirectoryDocumentsQueryKey(pageIdentity, 0),
@@ -174,40 +189,41 @@ export function ContentDirectory({
             staleTime: 0,
           });
         } catch (error) {
-          if (cancelled || currentGeneration !== generationRef.current) {
+          if (cancelled || currentGeneration !== requestGenerationRef.current) {
             console.warn("[content.directory]", {
-              generation: currentGeneration,
+              generation: scope.generation,
               notebookId: notebook.notebookId,
               phase: "bootstrap",
               result: "stale-result-rejected",
-              spaceId: identity.spaceId,
+              spaceId: scope.spaceId,
             });
             return;
           }
           if (!handleAccessError(error)) {
             setStatus("error");
             console.warn("[content.directory]", {
-              generation: currentGeneration,
+              generation: scope.generation,
               notebookId: notebook.notebookId,
               phase: "bootstrap",
               result: "failed",
-              spaceId: identity.spaceId,
+              spaceId: scope.spaceId,
             });
           }
           return;
         }
 
-        if (cancelled || currentGeneration !== generationRef.current) {
+        if (cancelled || currentGeneration !== requestGenerationRef.current ||
+          !isContentSelectionScopeActive(scope)) {
           console.warn("[content.directory]", {
-            generation: currentGeneration,
+            generation: scope.generation,
             notebookId: notebook.notebookId,
             phase: "bootstrap",
             result: "stale-result-rejected",
-            spaceId: identity.spaceId,
+            spaceId: scope.spaceId,
           });
           return;
         }
-        const selectedByUser = currentSelectionForSpace(identity.spaceId);
+        const selectedByUser = getContentSelectionForScope(scope);
         if (selectedByUser !== null) {
           setStatus("ready");
           return;
@@ -217,31 +233,30 @@ export function ContentDirectory({
         }
         const firstDocument = page.documents[0];
         if (firstDocument) {
-          selectDocument({
-            documentId: firstDocument.documentId,
-            notebookId: firstDocument.notebookId,
-            spaceId: identity.spaceId,
-          });
+          selectContentDocument(scope, firstDocument);
           setStatus("ready");
           console.info("[content.directory]", {
             documentId: firstDocument.documentId,
-            generation: currentGeneration,
+            generation: scope.generation,
             notebookId: firstDocument.notebookId,
             phase: "bootstrap",
             result: "selected",
-            spaceId: identity.spaceId,
+            spaceId: scope.spaceId,
           });
           return;
         }
       }
 
-      setStatus("empty");
-      console.info("[content.directory]", {
-        generation: currentGeneration,
-        phase: "bootstrap",
-        result: "empty",
-        spaceId: identity.spaceId,
-      });
+      if (!cancelled && currentGeneration === requestGenerationRef.current &&
+        isContentSelectionScopeActive(scope)) {
+        setStatus("empty");
+        console.info("[content.directory]", {
+          generation: scope.generation,
+          phase: "bootstrap",
+          result: "empty",
+          spaceId: scope.spaceId,
+        });
+      }
     };
 
     void selectFirstDocument();
@@ -249,69 +264,91 @@ export function ContentDirectory({
       cancelled = true;
     };
   }, [
-    bootstrapAttempt,
-    clearSelection,
-    generation,
     handleAccessError,
     hasCurrentNotebooks,
-    identity.organizationId,
-    identity.spaceId,
     notebooks,
     queryClient,
-    selectDocument,
+    refreshAttempt,
+    requestGeneration,
+    scope,
   ]);
 
   const restart = useCallback(() => {
-    const nextGeneration = ++generationRef.current;
-    setGeneration(nextGeneration);
+    const nextGeneration = ++requestGenerationRef.current;
+    accessLossGenerationRef.current = null;
+    setRequestGeneration(nextGeneration);
     setStatus("loading");
-    clearSelection();
+    setRefreshing(true);
+    clearContentSelection(scope);
     void queryClient.cancelQueries({
-      queryKey: contentDirectorySpaceQueryKey(identity),
-    }).then(() => queryClient.invalidateQueries({
-      queryKey: contentDirectorySpaceQueryKey(identity),
-    })).finally(() => {
-      if (generationRef.current === nextGeneration) {
-        setBootstrapAttempt((current) => current + 1);
+      queryKey: contentDirectorySpaceQueryKey(scope),
+    }).then(async () => {
+      if (requestGenerationRef.current !== nextGeneration) {
+        return;
+      }
+      await queryClient.resetQueries({
+        queryKey: contentDirectorySpaceQueryKey(scope),
+      });
+    }).catch((error: unknown) => {
+      if (
+        requestGenerationRef.current === nextGeneration &&
+        !handleAccessError(error, nextGeneration)
+      ) {
+        setStatus("error");
+        console.warn("[content.directory]", {
+          generation: scope.generation,
+          phase: "refresh",
+          result: "failed",
+          spaceId: scope.spaceId,
+        });
+      }
+    }).finally(() => {
+      if (requestGenerationRef.current === nextGeneration) {
+        setRefreshing(false);
+        setRefreshAttempt((current) => current + 1);
       }
     });
-  }, [clearSelection, identity, queryClient]);
+  }, [handleAccessError, queryClient, scope]);
 
   const commitSelection = useCallback((document: ContentDirectoryDocument) => {
-    selectDocument({
-      documentId: document.documentId,
-      notebookId: document.notebookId,
-      spaceId: identity.spaceId,
-    });
+    if (!selectContentDocument(scope, document)) {
+      return;
+    }
     setStatus("ready");
     console.info("[content.directory]", {
       documentId: document.documentId,
-      generation: generationRef.current,
+      generation: scope.generation,
       notebookId: document.notebookId,
       phase: "selection",
       result: "selected",
-      spaceId: identity.spaceId,
+      spaceId: scope.spaceId,
     });
-  }, [identity.spaceId, selectDocument]);
+  }, [scope]);
 
-  const handleNotebookLocked = useCallback((notebookId: string) => {
-    const current = currentSelectionForSpace(identity.spaceId);
+  const handleNotebookLocked = useCallback((
+    notebookId: string,
+    expectedGeneration: number,
+  ) => {
+    if (expectedGeneration !== requestGenerationRef.current) {
+      return;
+    }
+    const current = getContentSelectionForScope(scope);
     if (current?.notebookId !== notebookId) {
       return;
     }
-    clearSelection();
+    clearContentSelection(scope);
     setStatus("empty");
     console.warn("[content.directory]", {
-      generation: generationRef.current,
+      generation: scope.generation,
       notebookId,
       phase: "selection",
       result: "locked-selection-cleared",
-      spaceId: identity.spaceId,
+      spaceId: scope.spaceId,
     });
-  }, [clearSelection, identity.spaceId]);
+  }, [scope]);
 
-  const handlePageError = useCallback((error: unknown) => {
-    handleAccessError(error);
+  const handlePageError = useCallback((error: unknown, expectedGeneration: number) => {
+    handleAccessError(error, expectedGeneration);
   }, [handleAccessError]);
 
   return (
@@ -325,7 +362,7 @@ export function ContentDirectory({
         <h2 className="min-w-0 flex-1 truncate text-xs font-medium">文档</h2>
         <Button
           aria-label="刷新文档目录"
-          disabled={status === "loading"}
+          disabled={status === "loading" || refreshing}
           onClick={restart}
           size="icon-xs"
           variant="ghost"
@@ -362,8 +399,9 @@ export function ContentDirectory({
 
       {hasCurrentNotebooks && status !== "loading" && notebooks.length > 0 ? (
         <ContentDirectoryTree
-          key={generation}
-          identity={identity}
+          key={`${scope.generation}:${requestGeneration}`}
+          generation={requestGeneration}
+          identity={scope}
           notebooks={notebooks}
           onNotebookLocked={handleNotebookLocked}
           onPageError={handlePageError}

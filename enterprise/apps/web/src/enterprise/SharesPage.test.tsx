@@ -14,7 +14,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 import { SharesPage } from "@/enterprise/SharesPage.tsx";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
+import {
+  activateContentSelectionScope,
+  releaseContentSelectionScope,
+  selectContentDocument,
+  useContentSelectionStore,
+  type ContentSelectionScope,
+} from "@/spaces/content-selection.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -28,6 +34,7 @@ const CSRF_TOKEN = "B".repeat(43);
 const SHARES_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/shares`;
 const NOTEBOOKS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/content-directory/notebooks`;
 const DOCUMENTS_PATH = `${NOTEBOOKS_PATH}/${NOTEBOOK_ID}/documents?offset=0`;
+let externalSelectionScope: ContentSelectionScope | null = null;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -74,7 +81,11 @@ function renderSharesPage(): void {
 
 afterEach(() => {
   cleanup();
-  useContentSelectionStore.getState().clearSelection();
+  if (externalSelectionScope) {
+    releaseContentSelectionScope(externalSelectionScope);
+    externalSelectionScope = null;
+  }
+  useContentSelectionStore.setState({ selection: null });
   useCsrfStore.getState().clearCsrfToken();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -177,10 +188,14 @@ describe("SharesPage document selection", () => {
 
     expect(await screen.findByText("暂无笔记本")).toBeVisible();
     act(() => {
-      useContentSelectionStore.getState().selectDocument({
+      const scope = activateContentSelectionScope({
+        organizationId: ORGANIZATION_ID,
+        spaceId: OTHER_SPACE_ID,
+      });
+      externalSelectionScope = scope;
+      selectContentDocument(scope, {
         documentId: DOCUMENT_A_ID,
         notebookId: NOTEBOOK_ID,
-        spaceId: OTHER_SPACE_ID,
       });
     });
     expect(screen.getByRole("button", { name: "创建分享" })).toBeDisabled();

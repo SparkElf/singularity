@@ -8,7 +8,12 @@ import {
   ContentDirectory,
   type ContentDirectoryStatus,
 } from "@/spaces/ContentDirectory.tsx";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
+import {
+  activateContentSelectionScope,
+  releaseContentSelectionScope,
+  useContentSelectionStore,
+  type ContentSelectionScope,
+} from "@/spaces/content-selection.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -22,6 +27,7 @@ const DOCUMENT_A = "20260718000100-docum01";
 const DOCUMENT_B = "20260718000101-docum02";
 const CHILD_DOCUMENT = "20260718000102-child01";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+let activeTestScope: ContentSelectionScope | null = null;
 
 function notebooksPath(organizationId: string, spaceId: string): string {
   return `/api/v1/organizations/${organizationId}/spaces/${spaceId}/content-directory/notebooks`;
@@ -91,18 +97,20 @@ function renderDirectory(
   identity: { readonly organizationId: string; readonly spaceId: string },
   queryClient = createQueryClient(),
 ) {
+  const scope = activateContentSelectionScope(identity);
+  activeTestScope = scope;
   const onAccessLost = vi.fn<(category: ContentDirectoryAccessLoss) => void>();
   const onStatusChange = vi.fn<(status: ContentDirectoryStatus) => void>();
   const result = render(
     <QueryClientProvider client={queryClient}>
       <ContentDirectory
-        identity={identity}
         onAccessLost={onAccessLost}
         onStatusChange={onStatusChange}
+        scope={scope}
       />
     </QueryClientProvider>,
   );
-  return { ...result, onAccessLost, onStatusChange, queryClient };
+  return { ...result, onAccessLost, onStatusChange, queryClient, scope };
 }
 
 function deferred<T>() {
@@ -115,6 +123,10 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup();
+  if (activeTestScope) {
+    releaseContentSelectionScope(activeTestScope);
+    activeTestScope = null;
+  }
   useContentSelectionStore.setState({ selection: null });
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -172,6 +184,40 @@ describe("ContentDirectory", () => {
       rootDocumentsPath(ORGANIZATION_A, SPACE_A, LOCKED_NOTEBOOK),
     );
     expect(onStatusChange).toHaveBeenLastCalledWith("ready");
+  });
+
+  it("does not select or expose a document when every notebook is locked or empty", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({
+          notebooks: [
+            notebook(LOCKED_NOTEBOOK, true),
+            notebook(EMPTY_NOTEBOOK),
+          ],
+        }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, EMPTY_NOTEBOOK)) {
+        return Promise.resolve(jsonResponse({
+          documents: [],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    const { onStatusChange } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    });
+
+    await waitFor(() => {
+      expect(useContentSelectionStore.getState().selection).toBeNull();
+      expect(onStatusChange).toHaveBeenLastCalledWith("empty");
+    });
+    expect(screen.queryByRole("button", { name: "无标题" })).not.toBeInTheDocument();
+    expect(screen.queryByText("内容库已锁定")).not.toBeInTheDocument();
   });
 
   it("stops on the first root-page failure and only retries after an explicit command", async () => {
@@ -256,12 +302,17 @@ describe("ContentDirectory", () => {
     );
     await waitFor(() => expect(firstRootSignal).toBeDefined());
 
+    const secondScope = activateContentSelectionScope({
+      organizationId: ORGANIZATION_B,
+      spaceId: SPACE_B,
+    });
+    activeTestScope = secondScope;
     first.rerender(
       <QueryClientProvider client={queryClient}>
         <ContentDirectory
-          identity={{ organizationId: ORGANIZATION_B, spaceId: SPACE_B }}
           onAccessLost={first.onAccessLost}
           onStatusChange={first.onStatusChange}
+          scope={secondScope}
         />
       </QueryClientProvider>,
     );
