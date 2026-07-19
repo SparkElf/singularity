@@ -31,6 +31,7 @@ const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const CSRF_TOKEN = "A".repeat(43);
+const MANAGEMENT_ACCESS_PATH = "/api/v1/enterprise-management-access";
 
 const createRouteTestProtyleFactory = vi.fn<SpaceProtyleFactoryProvider>(() => ({
   create: async () => {
@@ -93,16 +94,22 @@ function requestBodyText(body: BodyInit | null | undefined): string {
 
 function mockFetch(
   handler: (...arguments_: Parameters<typeof fetch>) => Response | Promise<Response>,
+  managementAccess: unknown = { organizations: [] },
 ) {
-  return vi.fn<typeof fetch>((...arguments_) => Promise.resolve().then(() => {
-    const path = requestPath(arguments_[0]);
-    if (path.includes("/content-directory/notebooks")) {
-      return path.endsWith("/content-directory/notebooks")
-        ? jsonResponse({ notebooks: [] })
-        : jsonResponse({ documents: [], locked: false, nextOffset: null });
-    }
-    return handler(...arguments_);
-  }));
+  return vi.fn<typeof fetch>((...arguments_) =>
+    Promise.resolve().then(() => {
+      const path = requestPath(arguments_[0]);
+      if (path.includes("/content-directory/notebooks")) {
+        return path.endsWith("/content-directory/notebooks")
+          ? jsonResponse({ notebooks: [] })
+          : jsonResponse({ documents: [], locked: false, nextOffset: null });
+      }
+      if (path === MANAGEMENT_ACCESS_PATH) {
+        return jsonResponse(managementAccess);
+      }
+      return handler(...arguments_);
+    }),
+  );
 }
 
 function createTestQueryClient() {
@@ -118,7 +125,6 @@ function renderApp(
   initialEntry: string,
   queryClient = createTestQueryClient(),
 ) {
-
   const result = render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -568,6 +574,84 @@ describe("S1 identity and space routes", () => {
       target: { value: "不存在" },
     });
     expect(screen.getByRole("heading", { name: "没有匹配的空间" })).toBeVisible();
+  });
+
+  it("keeps authorized spaces usable while management access fails and retries independently", async () => {
+    let managementRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return Promise.resolve(jsonResponse({ spaces: [SPACE_A_SUMMARY] }));
+        }
+        if (path === MANAGEMENT_ACCESS_PATH) {
+          managementRequests += 1;
+          if (managementRequests === 1) {
+            return Promise.reject(new TypeError("management service unavailable"));
+          }
+          return Promise.resolve(
+            jsonResponse({
+              organizations: [
+                {
+                  organizationCapabilities: ["audit"],
+                  organizationId: ORGANIZATION_A,
+                  organizationName: "银河研究院",
+                  spaces: [],
+                },
+              ],
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/spaces");
+
+    expect(await screen.findByRole("link", { name: /深空知识空间/ })).toBeVisible();
+    expect(screen.getByText("无法加载管理权限")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重新加载管理权限" }));
+
+    expect(await screen.findByText("组织与空间管理")).toBeVisible();
+    expect(managementRequests).toBe(2);
+    expect(screen.getByRole("link", { name: /深空知识空间/ })).toBeVisible();
+  });
+
+  it("keeps management access usable while authorized spaces fail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return Promise.reject(new TypeError("space service unavailable"));
+        }
+        if (path === MANAGEMENT_ACCESS_PATH) {
+          return Promise.resolve(
+            jsonResponse({
+              organizations: [
+                {
+                  organizationCapabilities: ["audit"],
+                  organizationId: ORGANIZATION_A,
+                  organizationName: "银河研究院",
+                  spaces: [],
+                },
+              ],
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/spaces");
+
+    expect(
+      await screen.findByRole("heading", { name: "无法加载空间" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("link", { name: /银河研究院/ }),
+    ).toBeVisible();
   });
 
   it("does not auto-enter a cached single space while authorization is revalidating", async () => {

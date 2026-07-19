@@ -21,6 +21,8 @@ import {
 import {
   CREATED_ORGANIZATION_INVITATION_OPENAPI_SCHEMA,
   CREATE_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
+  ENTERPRISE_MANAGEMENT_ACCESS_PATH,
+  ENTERPRISE_MANAGEMENT_ACCESS_RESPONSE_OPENAPI_SCHEMA,
   ORGANIZATION_INVITATION_CONTROLLER_PATH,
   ORGANIZATION_INVITATIONS_CONTROLLER_PATH,
   ORGANIZATION_INVITATIONS_RESPONSE_OPENAPI_SCHEMA,
@@ -33,6 +35,7 @@ import {
   TRANSFER_ORGANIZATION_OWNERSHIP_REQUEST_OPENAPI_SCHEMA,
   UPDATE_ORGANIZATION_MEMBER_REQUEST_OPENAPI_SCHEMA,
   type CreatedOrganizationInvitation,
+  type EnterpriseManagementAccessResponse,
   type OrganizationInvitationsResponse,
   type OrganizationMemberSummary,
   type OrganizationMembersResponse,
@@ -73,6 +76,18 @@ export class OrganizationsController {
   constructor(
     private readonly organizations: OrganizationManagementService,
   ) {}
+
+  @Get(ENTERPRISE_MANAGEMENT_ACCESS_PATH)
+  @Header("Cache-Control", "no-store")
+  @Authenticated()
+  @ApiProblemResponses(401, 503)
+  @ApiOperation({ summary: "List current enterprise management capabilities" })
+  @ApiOkResponse({ schema: ENTERPRISE_MANAGEMENT_ACCESS_RESPONSE_OPENAPI_SCHEMA })
+  async getManagementAccess(
+    @CurrentSession() session: AuthenticatedSession,
+  ): Promise<EnterpriseManagementAccessResponse> {
+    return this.organizations.getManagementAccess(session.userId);
+  }
 
   @Get(ORGANIZATION_MEMBERS_CONTROLLER_PATH)
   @Header("Cache-Control", "no-store")

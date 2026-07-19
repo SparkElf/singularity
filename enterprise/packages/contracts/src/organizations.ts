@@ -7,7 +7,7 @@ import {
   UUID_OPENAPI_SCHEMA,
   type OpenApiSchema,
 } from "./openapi.js";
-import { uuidSchema } from "./spaces.js";
+import { ORGANIZATION_NAME_MAX_LENGTH, uuidSchema } from "./spaces.js";
 
 export const organizationMembershipStatuses = ["active", "inactive"] as const;
 export const organizationMembershipStatusSchema = z.enum(
@@ -18,6 +18,63 @@ export const assignableOrganizationRoles = ["admin", "member"] as const;
 export const assignableOrganizationRoleSchema = z.enum(
   assignableOrganizationRoles,
 );
+
+export const organizationManagementCapabilities = [
+  "members",
+  "groups",
+  "spaces",
+  "oidc",
+  "audit",
+  "ownership",
+] as const;
+export const organizationManagementCapabilitySchema = z.enum(
+  organizationManagementCapabilities,
+);
+export type OrganizationManagementCapability = z.infer<
+  typeof organizationManagementCapabilitySchema
+>;
+
+export const spaceManagementCapabilities = [
+  "access",
+  "shares",
+  "audit",
+  "backups",
+  "observability",
+] as const;
+export const spaceManagementCapabilitySchema = z.enum(
+  spaceManagementCapabilities,
+);
+export type SpaceManagementCapability = z.infer<
+  typeof spaceManagementCapabilitySchema
+>;
+
+export const managedSpaceAccessSchema = z
+  .object({
+    capabilities: z.array(spaceManagementCapabilitySchema),
+    spaceId: uuidSchema,
+    spaceName: z.string().min(1).max(120),
+  })
+  .strict();
+export type ManagedSpaceAccess = z.infer<typeof managedSpaceAccessSchema>;
+
+export const organizationManagementAccessSchema = z
+  .object({
+    organizationCapabilities: z.array(organizationManagementCapabilitySchema),
+    organizationId: uuidSchema,
+    organizationName: z.string().min(1).max(ORGANIZATION_NAME_MAX_LENGTH),
+    spaces: z.array(managedSpaceAccessSchema),
+  })
+  .strict();
+export type OrganizationManagementAccess = z.infer<
+  typeof organizationManagementAccessSchema
+>;
+
+export const enterpriseManagementAccessResponseSchema = z
+  .object({ organizations: z.array(organizationManagementAccessSchema) })
+  .strict();
+export type EnterpriseManagementAccessResponse = z.infer<
+  typeof enterpriseManagementAccessResponseSchema
+>;
 
 const dateTimeSchema = z.string().datetime({ offset: true });
 const invitationTokenPattern = /^[A-Za-z0-9_-]{43}$/;
@@ -137,6 +194,14 @@ const MEMBERSHIP_STATUS_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   enum: [...organizationMembershipStatuses],
 };
+const ORGANIZATION_MANAGEMENT_CAPABILITY_OPENAPI_SCHEMA: OpenApiSchema = {
+  type: "string",
+  enum: [...organizationManagementCapabilities],
+};
+const SPACE_MANAGEMENT_CAPABILITY_OPENAPI_SCHEMA: OpenApiSchema = {
+  type: "string",
+  enum: [...spaceManagementCapabilities],
+};
 const DATE_TIME_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   format: "date-time",
@@ -152,6 +217,35 @@ export const ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA =
     role: ORGANIZATION_ROLE_OPENAPI_SCHEMA,
     status: MEMBERSHIP_STATUS_OPENAPI_SCHEMA,
     userId: UUID_OPENAPI_SCHEMA,
+  });
+export const MANAGED_SPACE_ACCESS_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  capabilities: {
+    type: "array",
+    items: SPACE_MANAGEMENT_CAPABILITY_OPENAPI_SCHEMA,
+  },
+  spaceId: UUID_OPENAPI_SCHEMA,
+  spaceName: { type: "string", minLength: 1, maxLength: 120 },
+});
+export const ORGANIZATION_MANAGEMENT_ACCESS_OPENAPI_SCHEMA =
+  strictObjectOpenApiSchema({
+    organizationCapabilities: {
+      type: "array",
+      items: ORGANIZATION_MANAGEMENT_CAPABILITY_OPENAPI_SCHEMA,
+    },
+    organizationId: UUID_OPENAPI_SCHEMA,
+    organizationName: {
+      type: "string",
+      minLength: 1,
+      maxLength: ORGANIZATION_NAME_MAX_LENGTH,
+    },
+    spaces: { type: "array", items: MANAGED_SPACE_ACCESS_OPENAPI_SCHEMA },
+  });
+export const ENTERPRISE_MANAGEMENT_ACCESS_RESPONSE_OPENAPI_SCHEMA =
+  strictObjectOpenApiSchema({
+    organizations: {
+      type: "array",
+      items: ORGANIZATION_MANAGEMENT_ACCESS_OPENAPI_SCHEMA,
+    },
   });
 export const ORGANIZATION_MEMBERS_RESPONSE_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({

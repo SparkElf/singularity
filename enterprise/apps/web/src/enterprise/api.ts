@@ -1,5 +1,6 @@
 import {
   CSRF_HEADER_NAME,
+  ENTERPRISE_MANAGEMENT_ACCESS_PATH,
   ORGANIZATION_AUDIT_EVENTS_PATH_TEMPLATE,
   ORGANIZATION_GROUP_MEMBER_PATH_TEMPLATE,
   ORGANIZATION_GROUP_MEMBERS_PATH_TEMPLATE,
@@ -24,6 +25,7 @@ import {
   ORGANIZATION_SPACE_OBSERVABILITY_PATH_TEMPLATE,
   ORGANIZATION_SPACE_RESTORE_ACTIVATION_PATH_TEMPLATE,
   ORGANIZATION_SPACE_RESTORE_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_SHARE_PASSWORD_PATH_TEMPLATE,
   ORGANIZATION_SPACE_SHARE_PATH_TEMPLATE,
   ORGANIZATION_SPACE_SHARES_PATH_TEMPLATE,
@@ -31,6 +33,7 @@ import {
   auditEventsResponseSchema,
   createdDocumentShareSchema,
   createdOrganizationInvitationSchema,
+  enterpriseManagementAccessResponseSchema,
   managedOidcProviderSchema,
   managedOidcProvidersResponseSchema,
   managedDocumentSharesResponseSchema,
@@ -45,6 +48,7 @@ import {
   spaceMembersResponseSchema,
   spaceObservabilitySchema,
   spaceRestoreSchema,
+  spaceRestoresResponseSchema,
   userGroupMembersResponseSchema,
   userGroupSummarySchema,
   userGroupsResponseSchema,
@@ -124,6 +128,11 @@ function auditEventsPath(
 export const organizationMembersQueryKey = (organizationId: string) =>
   ["enterprise", organizationId, "members"] as const;
 
+export const enterpriseManagementAccessQueryKey = [
+  "enterprise",
+  "management-access",
+] as const;
+
 export const organizationInvitationsQueryKey = (organizationId: string) =>
   ["enterprise", organizationId, "invitations"] as const;
 
@@ -199,11 +208,31 @@ export const spaceRestoreQueryKey = (
     restoreId,
   ] as const;
 
+export const spaceRestoresQueryKey = (
+  organizationId: string,
+  sourceSpaceId: string,
+) =>
+  [
+    "enterprise",
+    organizationId,
+    "spaces",
+    sourceSpaceId,
+    "restores",
+  ] as const;
+
 export const spaceObservabilityQueryKey = (
   organizationId: string,
   spaceId: string,
 ) =>
   ["enterprise", organizationId, "spaces", spaceId, "observability"] as const;
+
+export function getEnterpriseManagementAccess(signal?: AbortSignal) {
+  return requestJson(
+    enterpriseManagementAccessResponseSchema,
+    ENTERPRISE_MANAGEMENT_ACCESS_PATH,
+    { signal: signal ?? null },
+  );
+}
 
 export function getOrganizationMembers(
   organizationId: string,
@@ -786,6 +815,22 @@ export function getSpaceRestore(
       restoreId,
       spaceId: sourceSpaceId,
     }),
+    { signal: signal ?? null },
+  );
+}
+
+export function getSpaceRestores(
+  organizationId: string,
+  sourceSpaceId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson(
+    spaceRestoresResponseSchema,
+    spacePath(
+      ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE,
+      organizationId,
+      sourceSpaceId,
+    ),
     { signal: signal ?? null },
   );
 }

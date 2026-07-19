@@ -3,22 +3,44 @@ import { createHash, randomBytes } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   CreatedOrganizationInvitation,
+  EnterpriseManagementAccessResponse,
+  OrganizationManagementCapability,
   OrganizationInvitationSummary,
   OrganizationMemberSummary,
+  SpaceManagementCapability,
   UpdateOrganizationMemberRequest,
 } from "@singularity/contracts";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
 
 import { AuditWriter } from "../audit/audit-writer.service.js";
+import { unactivatedSpaceRestorePersistenceStatuses } from "../backups/restore-status.persistence.js";
 import type { Clock } from "../identity/clock.js";
-import { CLOCK } from "../tokens.js";
 import { IdentityService } from "../identity/identity.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { conflict, forbidden, notFound } from "../problem.js";
+import { CLOCK } from "../tokens.js";
 
 type Transaction = Prisma.TransactionClient;
 type OrganizationManagerRole = "owner" | "admin";
 
+const ORGANIZATION_ADMIN_CAPABILITIES = [
+  "members",
+  "groups",
+  "spaces",
+  "oidc",
+  "audit",
+] as const satisfies readonly OrganizationManagementCapability[];
+const ORGANIZATION_OWNER_CAPABILITIES = [
+  ...ORGANIZATION_ADMIN_CAPABILITIES,
+  "ownership",
+] as const satisfies readonly OrganizationManagementCapability[];
+const SPACE_ADMIN_CAPABILITIES = [
+  "access",
+  "shares",
+  "audit",
+  "backups",
+  "observability",
+] as const satisfies readonly SpaceManagementCapability[];
 const INVITATION_DIGEST_DOMAIN = Buffer.from(
   "singularity.organization-invitation.v1",
   "utf8",
@@ -70,6 +92,132 @@ export class OrganizationManagementService {
     private readonly accessChanges: AccessChangedPublisher,
     private readonly audit: AuditWriter,
   ) {}
+
+  async getManagementAccess(
+    actorUserId: string,
+  ): Promise<EnterpriseManagementAccessResponse> {
+    const memberships = await this.database.client.organizationMembership.findMany({
+      where: {
+        status: "active",
+        userId: actorUserId,
+        user: { status: "active" },
+        organization: { status: "active" },
+      },
+      select: {
+        role: true,
+        organization: { select: { id: true, name: true } },
+      },
+      orderBy: [
+        { organization: { name: "asc" } },
+        { organizationId: "asc" },
+      ],
+    });
+    const managerOrganizationIds = memberships
+      .filter((membership) => membership.role !== "member")
+      .map((membership) => membership.organization.id);
+    const memberOrganizationIds = memberships
+      .filter((membership) => membership.role === "member")
+      .map((membership) => membership.organization.id);
+    const administeredSpaces =
+      memberships.length === 0
+        ? []
+        : await this.database.client.space.findMany({
+            where: {
+              status: { in: ["active", "archived"] },
+              targetRestores: {
+                none: {
+                  status: {
+                    in: [...unactivatedSpaceRestorePersistenceStatuses],
+                  },
+                },
+              },
+              OR: [
+                {
+                  organizationId: { in: managerOrganizationIds },
+                },
+                {
+                  organizationId: { in: memberOrganizationIds },
+                  OR: [
+                    {
+                      memberships: {
+                        some: {
+                          role: "admin",
+                          status: "active",
+                          userId: actorUserId,
+                          organizationMembership: {
+                            status: "active",
+                            user: { status: "active" },
+                          },
+                        },
+                      },
+                    },
+                    {
+                      groupGrants: {
+                        some: {
+                          role: "admin",
+                          group: {
+                            status: "active",
+                            memberships: {
+                              some: {
+                                userId: actorUserId,
+                                organizationMembership: {
+                                  status: "active",
+                                  user: { status: "active" },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+            select: { id: true, name: true, organizationId: true },
+            orderBy: [{ name: "asc" }, { id: "asc" }],
+          });
+    const spacesByOrganization = new Map<
+      string,
+      Array<(typeof administeredSpaces)[number]>
+    >();
+    for (const space of administeredSpaces) {
+      const current = spacesByOrganization.get(space.organizationId);
+      if (current === undefined) {
+        spacesByOrganization.set(space.organizationId, [space]);
+      } else {
+        current.push(space);
+      }
+    }
+
+    return {
+      organizations: memberships.flatMap((membership) => {
+        const organizationManager = membership.role !== "member";
+        const spaces = spacesByOrganization.get(membership.organization.id) ?? [];
+        if (!organizationManager && spaces.length === 0) {
+          return [];
+        }
+        return [
+          {
+            organizationCapabilities: organizationManager
+              ? [
+                  ...(membership.role === "owner"
+                    ? ORGANIZATION_OWNER_CAPABILITIES
+                    : ORGANIZATION_ADMIN_CAPABILITIES),
+                ]
+              : [],
+            organizationId: membership.organization.id,
+            organizationName: membership.organization.name,
+            spaces: spaces.map((space) => ({
+              capabilities: [...SPACE_ADMIN_CAPABILITIES],
+              spaceId: space.id,
+              spaceName: space.name,
+            })),
+          },
+        ];
+      }),
+    };
+  }
 
   async listMembers(
     actorUserId: string,

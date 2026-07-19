@@ -12,6 +12,7 @@ const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
+const MANAGEMENT_ACCESS_PATH = "/api/v1/enterprise-management-access";
 
 const LONG_ORGANIZATION_NAME =
   "银河系企业知识与工程协作研究中心超长组织名称用于验证最窄布局";
@@ -38,6 +39,7 @@ const spaces = [
 async function installIdentityRoutes(
   page: Page,
   authorizedSpaces: readonly (typeof spaces)[number][] = spaces,
+  managementAccess: unknown = { organizations: [] },
 ) {
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -55,6 +57,11 @@ async function installIdentityRoutes(
 
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, { spaces: authorizedSpaces });
+      return;
+    }
+
+    if (path === MANAGEMENT_ACCESS_PATH) {
+      await fulfillJson(route, managementAccess);
       return;
     }
 
@@ -176,7 +183,7 @@ test("keyboard login reaches only the authorized responsive space list", async (
   );
   for (const actualText of [
     page.getByText("选择知识空间"),
-    page.getByText("这里只显示你当前有权访问的空间。"),
+    page.getByText("这里只显示你当前有权访问的空间与管理范围。"),
     longSpaceText,
   ]) {
     const foreground = await actualText.evaluate(
@@ -211,12 +218,12 @@ test("keyboard login reaches only the authorized responsive space list", async (
   const apiRequests = diagnostics.requests.filter((request) =>
     new URL(request.url()).pathname.startsWith("/api/v1/"),
   );
-  expect(
-    apiRequests.map((request) => ({
-      method: request.method(),
-      path: new URL(request.url()).pathname,
-    })),
-  ).toEqual([
+  const observedApiRequests = apiRequests.map((request) => ({
+    method: request.method(),
+    path: new URL(request.url()).pathname,
+  }));
+  expect(observedApiRequests).toHaveLength(3);
+  expect(observedApiRequests).toEqual(expect.arrayContaining([
     {
       method: "POST",
       path: "/api/v1/auth/login",
@@ -225,20 +232,25 @@ test("keyboard login reaches only the authorized responsive space list", async (
       method: "GET",
       path: "/api/v1/spaces",
     },
-  ]);
-  expect(
-    diagnostics.responses
-      .filter((response) =>
-        new URL(response.url()).pathname.startsWith("/api/v1/"),
-      )
-      .map((response) => ({
-        path: new URL(response.url()).pathname,
-        status: response.status(),
-      })),
-  ).toEqual([
+    {
+      method: "GET",
+      path: MANAGEMENT_ACCESS_PATH,
+    },
+  ]));
+  const observedApiResponses = diagnostics.responses
+    .filter((response) =>
+      new URL(response.url()).pathname.startsWith("/api/v1/"),
+    )
+    .map((response) => ({
+      path: new URL(response.url()).pathname,
+      status: response.status(),
+    }));
+  expect(observedApiResponses).toHaveLength(3);
+  expect(observedApiResponses).toEqual(expect.arrayContaining([
     { path: "/api/v1/auth/login", status: 200 },
     { path: "/api/v1/spaces", status: 200 },
-  ]);
+    { path: MANAGEMENT_ACCESS_PATH, status: 200 },
+  ]));
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });
 
@@ -268,6 +280,56 @@ test("an account without space access sees an explicit empty state", async ({ pa
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
 });
 
+test("a delegated space administrator enters only the declared enterprise sections", async ({
+  page,
+}, testInfo) => {
+  const diagnostics = collectBrowserDiagnostics(page);
+  await installIdentityRoutes(page, [spaces[0]], {
+    organizations: [
+      {
+        organizationCapabilities: [],
+        organizationId: ORGANIZATION_A,
+        organizationName: LONG_ORGANIZATION_NAME,
+        spaces: [
+          {
+            capabilities: ["backups"],
+            spaceId: SPACE_A,
+            spaceName: LONG_SPACE_NAME,
+          },
+        ],
+      },
+    ],
+  });
+  await page.route(
+    `**/api/v1/organizations/${ORGANIZATION_A}/spaces/${SPACE_A}/backups`,
+    (route) => fulfillJson(route, { backups: [] }),
+  );
+  await page.route(
+    `**/api/v1/organizations/${ORGANIZATION_A}/spaces/${SPACE_A}/restores`,
+    (route) => fulfillJson(route, { restores: [] }),
+  );
+  await page.goto("/spaces");
+
+  const managementSection = page.locator(
+    'section[aria-labelledby="enterprise-management-heading"]',
+  );
+  await managementSection.getByRole("link").click();
+  await expect(page).toHaveURL(
+    `/organizations/${ORGANIZATION_A}/settings/spaces/${SPACE_A}/backups`,
+  );
+  await expect(page.getByRole("heading", { name: "备份恢复" })).toBeVisible();
+
+  if (testInfo.project.name !== "desktop") {
+    await page.getByRole("button", { name: "切换侧栏" }).click();
+  }
+  await expect(page.getByText("空间管理", { exact: true })).toBeVisible();
+  await expect(page.getByText("组织管理", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "备份恢复" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "访问权限" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "组织审计" })).toHaveCount(0);
+  expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+});
+
 test("dark design tokens keep the authorized space list readable", async ({
   page,
 }) => {
@@ -279,7 +341,9 @@ test("dark design tokens keep the authorized space list readable", async ({
   });
 
   const heading = page.getByRole("heading", { name: "选择知识空间" });
-  const description = page.getByText("这里只显示你当前有权访问的空间。");
+  const description = page.getByText(
+    "这里只显示你当前有权访问的空间与管理范围。",
+  );
   await expect(heading).toBeVisible();
   const colors = await page.evaluate(() => ({
     background: getComputedStyle(document.body).backgroundColor,

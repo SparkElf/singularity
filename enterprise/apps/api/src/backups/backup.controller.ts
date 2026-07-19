@@ -19,11 +19,13 @@ import {
   CREATE_SPACE_RESTORE_REQUEST_OPENAPI_SCHEMA,
   ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_BACKUP_RESTORES_CONTROLLER_PATH,
+  ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH,
   ORGANIZATION_SPACE_RESTORE_ACTIVATION_CONTROLLER_PATH,
   ORGANIZATION_SPACE_RESTORE_CONTROLLER_PATH,
   SPACE_BACKUP_OPENAPI_SCHEMA,
   SPACE_BACKUPS_RESPONSE_OPENAPI_SCHEMA,
   SPACE_RESTORE_OPENAPI_SCHEMA,
+  SPACE_RESTORES_RESPONSE_OPENAPI_SCHEMA,
   createSpaceRestoreRequestSchema,
   spaceBackupPathParametersSchema,
   spaceBackupRestorePathParametersSchema,
@@ -34,6 +36,7 @@ import {
   type SpaceBackupsResponse,
   type SpaceBackupView,
   type SpaceRestorePathParameters,
+  type SpaceRestoresResponse,
   type SpaceRestoreView,
 } from "@singularity/contracts";
 
@@ -66,6 +69,26 @@ export class BackupController {
   ): Promise<SpaceBackupsResponse> {
     return {
       backups: await this.backups.listBackups({
+        actorUserId: session.userId,
+        organizationId: parameters.organizationId,
+        sourceSpaceId: parameters.spaceId,
+      }),
+    };
+  }
+
+  @Get(ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH)
+  @Authenticated()
+  @Header("Cache-Control", "no-store")
+  @ApiProblemResponses(400, 401, 403, 404, 503)
+  @ApiOperation({ summary: "List restore jobs created from a source space" })
+  @ApiOkResponse({ schema: SPACE_RESTORES_RESPONSE_OPENAPI_SCHEMA })
+  async listRestores(
+    @Param(new ZodValidationPipe(spaceBackupPathParametersSchema))
+    parameters: SpaceBackupPathParameters,
+    @CurrentSession() session: AuthenticatedSession,
+  ): Promise<SpaceRestoresResponse> {
+    return {
+      restores: await this.backups.listRestores({
         actorUserId: session.userId,
         organizationId: parameters.organizationId,
         sourceSpaceId: parameters.spaceId,
@@ -160,5 +183,4 @@ export class BackupController {
       targetSpaceId: parameters.spaceId,
     });
   }
-
 }

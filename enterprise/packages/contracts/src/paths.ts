@@ -18,6 +18,8 @@ export const AUTH_OIDC_PROVIDERS_PATH = "/api/v1/auth/oidc/providers";
 export const AUTH_OIDC_START_PATH = "/api/v1/auth/oidc/start";
 export const AUTH_OIDC_CALLBACK_PATH = "/api/v1/auth/oidc/callback";
 export const AUTHORIZED_SPACES_PATH = "/api/v1/spaces";
+export const ENTERPRISE_MANAGEMENT_ACCESS_PATH =
+  "/api/v1/enterprise-management-access";
 
 export const ORGANIZATION_MEMBERS_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/members";
@@ -73,6 +75,8 @@ export const ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/backups";
 export const ORGANIZATION_SPACE_BACKUP_RESTORES_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/backups/{backupId}/restores";
+export const ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/restores";
 export const ORGANIZATION_SPACE_RESTORE_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/restores/{restoreId}";
 export const ORGANIZATION_SPACE_RESTORE_ACTIVATION_PATH_TEMPLATE =
@@ -184,6 +188,9 @@ export const ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH = toControllerPath(
 );
 export const ORGANIZATION_SPACE_BACKUP_RESTORES_CONTROLLER_PATH =
   toControllerPath(ORGANIZATION_SPACE_BACKUP_RESTORES_PATH_TEMPLATE);
+export const ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE,
+);
 export const ORGANIZATION_SPACE_RESTORE_CONTROLLER_PATH = toControllerPath(
   ORGANIZATION_SPACE_RESTORE_PATH_TEMPLATE,
 );

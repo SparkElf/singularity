@@ -13,7 +13,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import { useParams, useSearchParams } from "react-router";
+import { useParams } from "react-router";
 
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -40,11 +40,12 @@ import {
   activateSpaceRestore,
   createSpaceBackup,
   createSpaceRestore,
+  enterpriseManagementAccessQueryKey,
   getSpaceBackups,
-  getSpaceRestore,
+  getSpaceRestores,
   managedSpacesQueryKey,
   spaceBackupsQueryKey,
-  spaceRestoreQueryKey,
+  spaceRestoresQueryKey,
 } from "@/enterprise/api.ts";
 import { authorizedSpacesQueryKey } from "@/spaces/api.ts";
 
@@ -102,11 +103,9 @@ function formatBytes(value: string): string {
   return `${tenths / 10n}.${tenths % 10n} ${units[unitIndex]}`;
 }
 
-function restoreIsRunning(restore: SpaceRestoreView | null): boolean {
-  return (
-    restore !== null &&
-    restore.status !== "activated" &&
-    restore.status !== "failed"
+function restoreIsRunning(restores: readonly SpaceRestoreView[]): boolean {
+  return restores.some(
+    (restore) => restore.status !== "activated" && restore.status !== "failed",
   );
 }
 
@@ -120,8 +119,6 @@ function BackupsPageContent({
   sourceSpaceId,
 }: BackupsPageContentProps) {
   const queryClient = useQueryClient();
-  const [searchParameters, setSearchParameters] = useSearchParams();
-  const restoreId = searchParameters.get("restoreId");
   const [restoreFormError, setRestoreFormError] = useState<string | null>(null);
   const backupsQuery = useQuery({
     queryKey: spaceBackupsQueryKey(organizationId, sourceSpaceId),
@@ -134,23 +131,14 @@ function BackupsPageContent({
         ? 4_000
         : false,
   });
-  const restoreQuery = useQuery({
-    enabled: restoreId !== null,
-    queryKey: spaceRestoreQueryKey(
-      organizationId,
-      sourceSpaceId,
-      restoreId ?? "",
-    ),
+  const restoresQuery = useQuery({
+    queryKey: spaceRestoresQueryKey(organizationId, sourceSpaceId),
     queryFn: ({ signal }) =>
-      getSpaceRestore(
-        organizationId,
-        sourceSpaceId,
-        restoreId ?? "",
-        signal,
-      ),
+      getSpaceRestores(organizationId, sourceSpaceId, signal),
     refetchInterval: (query) =>
-      query.state.data?.status === "queued" ||
-      query.state.data?.status === "restoring"
+      query.state.data?.restores.some(
+        (restore) => restore.status === "queued" || restore.status === "restoring",
+      )
         ? 3_000
         : false,
   });
@@ -173,19 +161,15 @@ function BackupsPageContent({
         input.backupId,
         input.request,
       ),
-    onSuccess: async (restore) => {
-      queryClient.setQueryData(
-        spaceRestoreQueryKey(
-          organizationId,
-          sourceSpaceId,
-          restore.restoreId,
-        ),
-        restore,
-      );
-      setSearchParameters({ restoreId: restore.restoreId }, { replace: true });
-      await queryClient.invalidateQueries({
-        queryKey: managedSpacesQueryKey(organizationId),
-      });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: spaceRestoresQueryKey(organizationId, sourceSpaceId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: managedSpacesQueryKey(organizationId),
+        }),
+      ]);
     },
   });
   const activateRestoreMutation = useMutation({
@@ -195,40 +179,45 @@ function BackupsPageContent({
         input.targetSpaceId,
         input.restoreId,
       ),
-    onSuccess: async (restore) => {
-      queryClient.setQueryData(
-        spaceRestoreQueryKey(
-          organizationId,
-          sourceSpaceId,
-          restore.restoreId,
-        ),
-        restore,
-      );
+    onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: spaceRestoresQueryKey(organizationId, sourceSpaceId),
+        }),
         queryClient.invalidateQueries({
           queryKey: managedSpacesQueryKey(organizationId),
         }),
         queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
+        queryClient.invalidateQueries({
+          queryKey: enterpriseManagementAccessQueryKey,
+        }),
       ]);
     },
   });
 
-  if (backupsQuery.error) {
+  const queryError = backupsQuery.error ?? restoresQuery.error;
+  if (queryError) {
     return (
       <PageFailure
-        error={backupsQuery.error}
-        onRetry={() => void backupsQuery.refetch()}
+        error={queryError}
+        onRetry={() => {
+          void backupsQuery.refetch();
+          void restoresQuery.refetch();
+        }}
       />
     );
   }
 
   const backups = backupsQuery.data?.backups ?? [];
-  const currentRestore = restoreQuery.data ?? null;
+  const restores = restoresQuery.data?.restores ?? [];
+  const hasCurrentRestores =
+    restoresQuery.isSuccess &&
+    !restoresQuery.isFetching &&
+    !restoresQuery.isPaused;
   const mutationError =
     createBackupMutation.error ??
     createRestoreMutation.error ??
-    activateRestoreMutation.error ??
-    restoreQuery.error;
+    activateRestoreMutation.error;
 
   return (
     <div className="flex flex-col">
@@ -236,9 +225,12 @@ function BackupsPageContent({
         actions={
           <div className="flex items-center gap-2">
             <Button
-              aria-label="刷新备份列表"
-              disabled={backupsQuery.isFetching}
-              onClick={() => void backupsQuery.refetch()}
+              aria-label="刷新备份和恢复任务"
+              disabled={backupsQuery.isFetching || restoresQuery.isFetching}
+              onClick={() => {
+                void backupsQuery.refetch();
+                void restoresQuery.refetch();
+              }}
               size="icon-sm"
               variant="outline"
             >
@@ -262,72 +254,91 @@ function BackupsPageContent({
       />
       <MutationFailure error={mutationError} />
 
-      {currentRestore ? (
-        <section className="border-b">
-          <SectionHeading title="当前恢复" />
-          <div className="grid grid-cols-[repeat(4,minmax(0,1fr))_auto] items-center gap-4 p-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">恢复任务</p>
-              <code className="block truncate text-xs">{currentRestore.restoreId}</code>
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">目标空间</p>
-              <code className="block truncate text-xs">
-                {currentRestore.targetSpaceId ?? "正在创建"}
-              </code>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">创建时间</p>
-              <p className="text-sm">{formatDate(currentRestore.createdAt)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">状态</p>
-              <Badge variant={statusVariant(currentRestore.status)}>
-                {restoreStatusLabels[currentRestore.status]}
-              </Badge>
-            </div>
-            <div className="flex items-center justify-end gap-2 max-sm:justify-start">
-              <Button
-                aria-label="刷新恢复状态"
-                disabled={restoreQuery.isFetching}
-                onClick={() => void restoreQuery.refetch()}
-                size="icon-sm"
-                variant="outline"
-              >
-                {restoreQuery.isFetching ? (
-                  <Spinner aria-label="正在刷新恢复状态" />
-                ) : (
-                  <RefreshCwIcon aria-hidden="true" />
-                )}
-              </Button>
-              {currentRestore.status === "ready-for-activation" &&
-              currentRestore.targetSpaceId !== null ? (
-                <ConfirmAction
-                  confirmLabel="激活空间"
-                  description="激活后恢复出的独立空间将对其授权成员开放。"
-                  disabled={activateRestoreMutation.isPending}
-                  onConfirm={() =>
-                    activateRestoreMutation.mutate({
-                      restoreId: currentRestore.restoreId,
-                      targetSpaceId: currentRestore.targetSpaceId!,
-                    })
-                  }
-                  title="激活恢复空间？"
-                >
-                  <Button disabled={activateRestoreMutation.isPending} size="sm">
-                    {activateRestoreMutation.isPending ? (
-                      <Spinner data-icon="inline-start" aria-label="正在激活恢复空间" />
-                    ) : (
-                      <PlayIcon data-icon="inline-start" />
-                    )}
-                    激活空间
-                  </Button>
-                </ConfirmAction>
-              ) : null}
-            </div>
-          </div>
-        </section>
-      ) : null}
+      <section className="border-b">
+        <SectionHeading count={restores.length} title="恢复任务" />
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>创建时间</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>目标空间</TableHead>
+              <TableHead>来源备份</TableHead>
+              <TableHead className="w-32 text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {restoresQuery.isPending ? (
+              <LoadingTableRows columns={5} rows={3} />
+            ) : restores.length === 0 ? (
+              <EmptyTableRow columns={5} label="暂无恢复任务" />
+            ) : (
+              restores.map((restore) => {
+                const activating =
+                  activateRestoreMutation.isPending &&
+                  activateRestoreMutation.variables?.restoreId === restore.restoreId;
+                return (
+                  <TableRow key={restore.restoreId}>
+                    <TableCell>
+                      <div className="flex min-w-40 flex-col">
+                        <span>{formatDate(restore.createdAt)}</span>
+                        <code className="text-xs text-muted-foreground">
+                          {restore.restoreId}
+                        </code>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(restore.status)}>
+                        {restoreStatusLabels[restore.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <code className="block max-w-64 truncate text-xs">
+                        {restore.targetSpaceId ?? "正在创建"}
+                      </code>
+                    </TableCell>
+                    <TableCell>
+                      <code className="block max-w-64 truncate text-xs">
+                        {restore.backupId}
+                      </code>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {restore.status === "ready-for-activation" &&
+                      restore.targetSpaceId !== null ? (
+                        <ConfirmAction
+                          confirmLabel="激活空间"
+                          description="激活后恢复出的独立空间将对其授权成员开放。"
+                          disabled={activating}
+                          onConfirm={() =>
+                            activateRestoreMutation.mutate({
+                              restoreId: restore.restoreId,
+                              targetSpaceId: restore.targetSpaceId!,
+                            })
+                          }
+                          title="激活恢复空间？"
+                        >
+                          <Button disabled={activating} size="sm">
+                            {activating ? (
+                              <Spinner
+                                data-icon="inline-start"
+                                aria-label="正在激活恢复空间"
+                              />
+                            ) : (
+                              <PlayIcon data-icon="inline-start" />
+                            )}
+                            激活空间
+                          </Button>
+                        </ConfirmAction>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </section>
 
       <section>
         <SectionHeading count={backups.length} title="空间备份" />
@@ -393,7 +404,8 @@ function BackupsPageContent({
                     </TableCell>
                     <TableCell>
                       {backup.status === "succeeded" &&
-                      !restoreIsRunning(currentRestore) ? (
+                      hasCurrentRestores &&
+                      !restoreIsRunning(restores) ? (
                         <form
                           className="flex min-w-[360px] items-center justify-end gap-2"
                           onInput={() => setRestoreFormError(null)}
@@ -438,7 +450,9 @@ function BackupsPageContent({
                       ) : (
                         <span className="block text-right text-xs text-muted-foreground">
                           {backup.status === "succeeded"
-                            ? "请先完成当前恢复任务"
+                            ? hasCurrentRestores
+                              ? "请先完成当前恢复任务"
+                              : "正在确认恢复任务"
                             : "备份完成后可恢复"}
                         </span>
                       )}

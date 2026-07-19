@@ -4,7 +4,6 @@ import {
   ActivityIcon,
   ArrowLeftIcon,
   BookOpenIcon,
-  BookXIcon,
   BoxesIcon,
   DatabaseBackupIcon,
   FileClockIcon,
@@ -24,7 +23,12 @@ import {
   useNavigate,
   useParams,
 } from "react-router";
-import { uuidSchema } from "@singularity/contracts";
+import {
+  uuidSchema,
+  type OrganizationManagementAccess,
+  type OrganizationManagementCapability,
+  type SpaceManagementCapability,
+} from "@singularity/contracts";
 
 import { isApiProblem } from "@/api/http.ts";
 import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
@@ -36,13 +40,6 @@ import {
   AlertTitle,
 } from "@/components/ui/alert.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
 import {
@@ -64,13 +61,15 @@ import {
 import { Spinner } from "@/components/ui/spinner.tsx";
 import { PageFailure } from "@/enterprise/components.tsx";
 import {
-  getManagedSpace,
-  getManagedSpaces,
-  managedSpaceQueryKey,
-  managedSpacesQueryKey,
+  enterpriseManagementAccessQueryKey,
+  getEnterpriseManagementAccess,
 } from "@/enterprise/api.ts";
 import {
+  enterpriseManagementPath,
+  organizationManagementSectionIsAccessible,
   organizationSettingsPath,
+  spaceManagementPath,
+  spaceManagementSectionIsAccessible,
   spaceSettingsPath,
 } from "@/enterprise/routes.ts";
 
@@ -79,6 +78,37 @@ interface AdminNavigationItemProps {
   label: string;
   to: string;
 }
+
+interface OrganizationNavigationItem {
+  capability: OrganizationManagementCapability;
+  icon: ComponentType<{ "aria-hidden"?: boolean }>;
+  label: string;
+  section: "audit" | "groups" | "members" | "oidc" | "spaces";
+}
+
+interface SpaceNavigationItem {
+  capability: SpaceManagementCapability;
+  icon: ComponentType<{ "aria-hidden"?: boolean }>;
+  label: string;
+}
+
+const organizationNavigationItems = [
+  { capability: "members", icon: UsersIcon, label: "成员与邀请", section: "members" },
+  { capability: "groups", icon: BoxesIcon, label: "用户组", section: "groups" },
+  { capability: "spaces", icon: BookOpenIcon, label: "空间", section: "spaces" },
+  { capability: "oidc", icon: KeyRoundIcon, label: "单点登录", section: "oidc" },
+  { capability: "audit", icon: FileClockIcon, label: "组织审计", section: "audit" },
+] as const satisfies readonly OrganizationNavigationItem[];
+
+const spaceNavigationItems = [
+  { capability: "access", icon: ShieldCheckIcon, label: "访问权限" },
+  { capability: "shares", icon: LinkIcon, label: "分享" },
+  { capability: "audit", icon: FileClockIcon, label: "空间审计" },
+  { capability: "backups", icon: DatabaseBackupIcon, label: "备份恢复" },
+  { capability: "observability", icon: ActivityIcon, label: "健康容量" },
+] as const satisfies readonly SpaceNavigationItem[];
+
+export type EnterpriseAdminOutletContext = OrganizationManagementAccess;
 
 function AdminNavigationItem({ icon: Icon, label, to }: AdminNavigationItemProps) {
   const { isMobile, setOpenMobile } = useSidebar();
@@ -112,24 +142,6 @@ function LayoutLoading() {
   );
 }
 
-function MissingSpace() {
-  return (
-    <Empty className="m-4 min-h-64 rounded-md border">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <BookXIcon aria-hidden="true" />
-        </EmptyMedia>
-        <EmptyTitle>
-          <h2>空间不存在</h2>
-        </EmptyTitle>
-        <EmptyDescription>
-          当前组织的空间列表中没有这个空间。
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
 export function EnterpriseAdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -139,77 +151,70 @@ export function EnterpriseAdminLayout() {
   const validOrganizationId = uuidSchema.safeParse(organizationId).success;
   const validSpaceId =
     routeSpaceId === null || uuidSchema.safeParse(routeSpaceId).success;
-  const managedSpacesQuery = useQuery({
-    enabled: validOrganizationId && routeSpaceId === null,
-    queryKey: managedSpacesQueryKey(organizationId),
-    queryFn: ({ signal }) => getManagedSpaces(organizationId, signal),
-    refetchOnMount: "always",
-    staleTime: 0,
-  });
-  const managedSpaceQuery = useQuery({
-    enabled: validOrganizationId && routeSpaceId !== null,
-    queryKey: managedSpaceQueryKey(organizationId, routeSpaceId ?? ""),
-    queryFn: ({ signal }) =>
-      getManagedSpace(organizationId, routeSpaceId as string, signal),
+  const managementAccessQuery = useQuery({
+    enabled: validOrganizationId,
+    queryKey: enterpriseManagementAccessQueryKey,
+    queryFn: ({ signal }) => getEnterpriseManagementAccess(signal),
     refetchOnMount: "always",
     staleTime: 0,
   });
   const logoutMutation = useLogout();
-  const organizationRoute = routeSpaceId === null;
-  const hasCurrentManagedSpaces =
-    managedSpacesQuery.isSuccess &&
-    managedSpacesQuery.isFetchedAfterMount &&
-    !managedSpacesQuery.isFetching &&
-    !managedSpacesQuery.isPaused;
-  const hasCurrentManagedSpace =
-    managedSpaceQuery.isSuccess &&
-    managedSpaceQuery.isFetchedAfterMount &&
-    !managedSpaceQuery.isFetching &&
-    !managedSpaceQuery.isPaused;
-  const hasCurrentSpaces = organizationRoute
-    ? hasCurrentManagedSpaces
-    : hasCurrentManagedSpace;
-  const spaces = organizationRoute
-    ? hasCurrentManagedSpaces
-      ? managedSpacesQuery.data.spaces
-      : []
-    : hasCurrentManagedSpace
-      ? [managedSpaceQuery.data]
-      : [];
+  const hasCurrentManagementAccess =
+    managementAccessQuery.isSuccess &&
+    managementAccessQuery.isFetchedAfterMount &&
+    !managementAccessQuery.isFetching &&
+    !managementAccessQuery.isPaused;
+  const organizationAccess = hasCurrentManagementAccess
+    ? managementAccessQuery.data.organizations.find(
+        (access) => access.organizationId === organizationId,
+      ) ?? null
+    : null;
+  const spaces = organizationAccess?.spaces ?? [];
   const currentSpace =
     routeSpaceId === null
       ? null
       : spaces.find((space) => space.spaceId === routeSpaceId) ?? null;
+  const routeSection = location.pathname.split("/").at(-1) ?? "";
+  const routeHasCapability =
+    organizationAccess !== null &&
+    (routeSpaceId === null
+      ? organizationManagementSectionIsAccessible(
+          organizationAccess.organizationCapabilities,
+          routeSection,
+        )
+      : currentSpace !== null &&
+        spaceManagementSectionIsAccessible(currentSpace.capabilities, routeSection));
+  const fallbackManagementPath =
+    organizationAccess === null ? null : enterpriseManagementPath(organizationAccess);
+  const organizationItems = organizationAccess
+    ? organizationNavigationItems.filter((item) =>
+        organizationAccess.organizationCapabilities.includes(item.capability),
+      )
+    : [];
+  const currentSpaceItems = currentSpace
+    ? spaceNavigationItems.filter((item) =>
+        currentSpace.capabilities.includes(item.capability),
+      )
+    : [];
 
   if (!validOrganizationId || !validSpaceId) {
     return <Navigate replace to={SPACES_PATH} />;
   }
-  const spacesError = organizationRoute
-    ? managedSpacesQuery.error
-    : managedSpaceQuery.error;
-  const spacesPaused = organizationRoute
-    ? managedSpacesQuery.isPaused
-    : managedSpaceQuery.isPaused;
-  if (isApiProblem(spacesError, "unauthenticated")) {
+  if (isApiProblem(managementAccessQuery.error, "unauthenticated")) {
     return <SessionRedirect returnTo={locationTarget(location)} />;
   }
+  if (hasCurrentManagementAccess && (!routeHasCapability || organizationAccess === null)) {
+    return <Navigate replace to={fallbackManagementPath ?? SPACES_PATH} />;
+  }
 
-  const content = spacesPaused || spacesError ? (
+  const content = managementAccessQuery.isPaused || managementAccessQuery.error ? (
     <PageFailure
-      error={spacesError}
-      onRetry={() => {
-        if (organizationRoute) {
-          void managedSpacesQuery.refetch();
-        } else {
-          void managedSpaceQuery.refetch();
-        }
-      }}
+      error={managementAccessQuery.error}
+      onRetry={() => void managementAccessQuery.refetch()}
       title="无法打开企业管理"
     />
-  ) : hasCurrentSpaces && routeSpaceId !== null && currentSpace === null ? (
-    <MissingSpace />
-  ) : hasCurrentSpaces ? (
-    <Outlet />
+  ) : hasCurrentManagementAccess && organizationAccess !== null ? (
+    <Outlet context={organizationAccess} />
   ) : (
     <LayoutLoading />
   );
@@ -226,101 +231,74 @@ export function EnterpriseAdminLayout() {
           </SidebarHeader>
 
           <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>组织管理</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <AdminNavigationItem
-                    icon={UsersIcon}
-                    label="成员与邀请"
-                    to={organizationSettingsPath(organizationId, "members")}
-                  />
-                  <AdminNavigationItem
-                    icon={BoxesIcon}
-                    label="用户组"
-                    to={organizationSettingsPath(organizationId, "groups")}
-                  />
-                  <AdminNavigationItem
-                    icon={BookOpenIcon}
-                    label="空间"
-                    to={organizationSettingsPath(organizationId, "spaces")}
-                  />
-                  <AdminNavigationItem
-                    icon={KeyRoundIcon}
-                    label="单点登录"
-                    to={organizationSettingsPath(organizationId, "oidc")}
-                  />
-                  <AdminNavigationItem
-                    icon={FileClockIcon}
-                    label="组织审计"
-                    to={organizationSettingsPath(organizationId, "audit")}
-                  />
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel>空间管理</SidebarGroupLabel>
-              <SidebarGroupContent className="flex flex-col gap-2">
-                <div className="px-2 group-data-[collapsible=icon]:hidden">
-                  <label className="sr-only" htmlFor="managed-space-selector">
-                    选择管理空间
-                  </label>
-                  <Select
-                    className="w-full"
-                    disabled={spaces.length === 0}
-                    id="managed-space-selector"
-                    onChange={(event) => {
-                      const spaceId = event.currentTarget.value;
-                      if (spaceId !== "") {
-                        void navigate(spaceSettingsPath(organizationId, spaceId));
-                      }
-                    }}
-                    value={routeSpaceId ?? ""}
-                  >
-                    <option value="">选择空间</option>
-                    {spaces.map((space) => (
-                      <option key={space.spaceId} value={space.spaceId}>
-                        {space.spaceName}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                {currentSpace ? (
+            {organizationItems.length > 0 ? (
+              <SidebarGroup>
+                <SidebarGroupLabel>组织管理</SidebarGroupLabel>
+                <SidebarGroupContent>
                   <SidebarMenu>
-                    <AdminNavigationItem
-                      icon={ShieldCheckIcon}
-                      label="访问权限"
-                      to={spaceSettingsPath(organizationId, currentSpace.spaceId, "access")}
-                    />
-                    <AdminNavigationItem
-                      icon={LinkIcon}
-                      label="分享"
-                      to={spaceSettingsPath(organizationId, currentSpace.spaceId, "shares")}
-                    />
-                    <AdminNavigationItem
-                      icon={FileClockIcon}
-                      label="空间审计"
-                      to={spaceSettingsPath(organizationId, currentSpace.spaceId, "audit")}
-                    />
-                    <AdminNavigationItem
-                      icon={DatabaseBackupIcon}
-                      label="备份恢复"
-                      to={spaceSettingsPath(organizationId, currentSpace.spaceId, "backups")}
-                    />
-                    <AdminNavigationItem
-                      icon={ActivityIcon}
-                      label="健康容量"
-                      to={spaceSettingsPath(
-                        organizationId,
-                        currentSpace.spaceId,
-                        "observability",
-                      )}
-                    />
+                    {organizationItems.map((item) => (
+                      <AdminNavigationItem
+                        icon={item.icon}
+                        key={item.capability}
+                        label={item.label}
+                        to={organizationSettingsPath(organizationId, item.section)}
+                      />
+                    ))}
                   </SidebarMenu>
-                ) : null}
-              </SidebarGroupContent>
-            </SidebarGroup>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ) : null}
+
+            {spaces.length > 0 ? (
+              <SidebarGroup>
+                <SidebarGroupLabel>空间管理</SidebarGroupLabel>
+                <SidebarGroupContent className="flex flex-col gap-2">
+                  <div className="px-2 group-data-[collapsible=icon]:hidden">
+                    <label className="sr-only" htmlFor="managed-space-selector">
+                      选择管理空间
+                    </label>
+                    <Select
+                      className="w-full"
+                      id="managed-space-selector"
+                      onChange={(event) => {
+                        const spaceId = event.currentTarget.value;
+                        const space = spaces.find((candidate) => candidate.spaceId === spaceId);
+                        if (space !== undefined) {
+                          const path = spaceManagementPath(organizationId, space);
+                          if (path !== null) {
+                            void navigate(path);
+                          }
+                        }
+                      }}
+                      value={routeSpaceId ?? ""}
+                    >
+                      <option value="">选择空间</option>
+                      {spaces.map((space) => (
+                        <option key={space.spaceId} value={space.spaceId}>
+                          {space.spaceName}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {currentSpaceItems.length > 0 && currentSpace ? (
+                    <SidebarMenu>
+                      {currentSpaceItems.map((item) => (
+                        <AdminNavigationItem
+                          icon={item.icon}
+                          key={item.capability}
+                          label={item.label}
+                          to={spaceSettingsPath(
+                            organizationId,
+                            currentSpace.spaceId,
+                            item.capability,
+                          )}
+                        />
+                      ))}
+                    </SidebarMenu>
+                  ) : null}
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ) : null}
           </SidebarContent>
 
           <SidebarFooter className="border-t border-sidebar-border p-2">
