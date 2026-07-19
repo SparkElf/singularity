@@ -14,13 +14,14 @@ import {
 } from "@singularity/contracts";
 import {
   DatabaseRuntime,
+  Prisma,
   type DatabaseClient,
 } from "@singularity/database";
 import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import {
-  afterAll,
   afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   test,
@@ -32,6 +33,7 @@ import { runAccessOperationsApplication } from "../src/operations/application.js
 import { PasswordHasher } from "../src/identity/password-hasher.js";
 import { truncateTestDatabase } from "./support/database.js";
 import { testAuditConfiguration } from "./support/audit-configuration.js";
+import { CapturingLogger } from "./support/capturing-logger.js";
 import {
   startTestApiApplication,
   TEST_PUBLIC_ORIGIN,
@@ -47,6 +49,8 @@ const PASSWORD = "correct horse battery staple";
 const NOTEBOOK_ID = "20260718010101-abcdefg";
 const DOCUMENT_ID = "20260718010102-hijklmn";
 const NOTIFICATION_TIMEOUT_MS = 5_000;
+const LOCK_OBSERVATION_TIMEOUT_MS = 5_000;
+const PENDING_LOCK_TRANSACTION_TIMEOUT_MS = 12_000;
 
 interface Graph {
   readonly cookie: string;
@@ -183,7 +187,7 @@ async function runOperation(
   const result = accessOperationResultSchemaByOperation[command.operation].parse(
     JSON.parse(output),
   );
-  expect(exitCode).not.toBe(1);
+  expect(exitCode).toBe(0);
   return result;
 }
 
@@ -196,6 +200,23 @@ function signal<T>(): {
     resolveSignal = resolve;
   });
   return { promise, resolve: (value) => resolveSignal(value) };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), NOTIFICATION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function createGraph(
@@ -257,42 +278,89 @@ async function createGraph(
   };
 }
 
-async function holdSpaceRow(
+async function holdSpaceGroupGrantTable(
   database: DatabaseClient,
-  spaceId: string,
-): Promise<{ release(): void; completed: Promise<void> }> {
-  let resolveLocked!: () => void;
-  const locked = new Promise<void>((resolve) => {
+): Promise<{ lockerPid: number; release(): void; completed: Promise<void> }> {
+  let resolveLocked!: (pid: number) => void;
+  let rejectLocked!: (reason?: unknown) => void;
+  const locked = new Promise<number>((resolve, reject) => {
     resolveLocked = resolve;
+    rejectLocked = reject;
   });
   let releaseLock!: () => void;
   const released = new Promise<void>((resolve) => {
     releaseLock = resolve;
   });
-  const completed = database.$transaction(async (transaction) => {
-    await transaction.$queryRaw`
-      SELECT "id" FROM "spaces" WHERE "id" = ${spaceId}::uuid FOR UPDATE
-    `;
-    resolveLocked();
-    await released;
-  });
-  await locked;
-  return { completed, release: releaseLock };
+  const completed = database.$transaction(
+    async (transaction) => {
+      await transaction.$executeRaw(
+        Prisma.sql`LOCK TABLE "space_group_grants" IN ACCESS EXCLUSIVE MODE`,
+      );
+      const rows = await transaction.$queryRaw<Array<{ pid: number }>>(
+        Prisma.sql`SELECT pg_backend_pid() AS pid`,
+      );
+      const pid = rows[0]?.pid;
+      if (pid === undefined) {
+        throw new Error("The table-lock transaction did not expose a backend");
+      }
+      resolveLocked(pid);
+      await released;
+    },
+    { maxWait: 2_000, timeout: PENDING_LOCK_TRANSACTION_TIMEOUT_MS },
+  );
+  void completed.catch(rejectLocked);
+  try {
+    return { completed, release: releaseLock, lockerPid: await locked };
+  } catch (error) {
+    releaseLock();
+    await Promise.allSettled([completed]);
+    throw error;
+  }
+}
+
+async function waitForBlockedBackend(
+  database: DatabaseClient,
+  lockerPid: number,
+): Promise<void> {
+  const deadline = Date.now() + LOCK_OBSERVATION_TIMEOUT_MS;
+  for (;;) {
+    const rows = await database.$queryRaw<Array<{ pid: number }>>(
+      Prisma.sql`
+        SELECT activity.pid AS pid
+        FROM pg_stat_activity AS activity
+        WHERE ${lockerPid} = ANY(pg_blocking_pids(activity.pid))
+          AND activity.wait_event_type = 'Lock'
+      `,
+    );
+    if (rows.length > 0) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("The connection revalidation did not wait on the table lock");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 describe("ADR-018 PostgreSQL access-change integration", () => {
   let database: DatabaseClient;
+  let logger: CapturingLogger;
   let passwordDigest: string;
   let testApi: TestApiApplication;
   let kernel: TestKernelGateway;
 
   beforeAll(async () => {
     passwordDigest = await new PasswordHasher().hashPassword(PASSWORD);
+  });
+
+  beforeEach(async () => {
+    logger = new CapturingLogger();
     kernel = await startTestKernelGateway();
     try {
       testApi = await startTestApiApplication({
         https: true,
         kernelGateway: kernel.configuration,
+        logger,
       });
       database = testApi.app.get(DatabaseRuntime).client;
     } catch (error) {
@@ -302,14 +370,14 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
   });
 
   afterEach(async () => {
-    await truncateTestDatabase(database);
-  });
-
-  afterAll(async () => {
     try {
-      await testApi.dispose();
+      await truncateTestDatabase(database);
     } finally {
-      await kernel.dispose();
+      try {
+        await testApi.dispose();
+      } finally {
+        await kernel.dispose();
+      }
     }
   });
 
@@ -317,11 +385,15 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     const received: string[] = [];
     const committed = signal<void>();
     let committedSessionId: string | undefined;
+    const committedExpiresAt = new Date("2030-01-01T00:00:00.000Z");
+    const committedRequestId = randomUUID();
+    const rolledBackSessionId = randomUUID();
     const subscription = await testApi.app.get(DatabaseRuntime).listen(
       ACCESS_CHANGE_CHANNEL,
       (payload) => {
         received.push(payload);
-        if (committedSessionId !== undefined && payload.includes(committedSessionId)) {
+        const decoded = JSON.parse(payload) as { authSessionId?: string };
+        if (decoded.authSessionId === committedSessionId) {
           committed.resolve();
         }
       },
@@ -330,12 +402,13 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
       },
     );
     const publisher = testApi.app.get(AccessChangedPublisher);
+    logger.clear();
     try {
       await expect(
         database.$transaction(async (transaction) => {
           await publisher.refreshSessionExpiry(transaction, {
-            authSessionId: randomUUID(),
-            expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+            authSessionId: rolledBackSessionId,
+            expiresAt: committedExpiresAt,
             requestId: randomUUID(),
           });
           throw new Error("rollback-notification");
@@ -345,128 +418,218 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
       await database.$transaction(async (transaction) => {
         await publisher.refreshSessionExpiry(transaction, {
           authSessionId: committedSessionId,
-          expiresAt: new Date("2030-01-01T00:00:00.000Z"),
-          requestId: randomUUID(),
+          expiresAt: committedExpiresAt,
+          requestId: committedRequestId,
         });
       });
-      await Promise.race([
+      await withTimeout(
         committed.promise,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("committed notification was not delivered")),
-            NOTIFICATION_TIMEOUT_MS,
-          ),
-        ),
-      ]);
+        "committed notification was not delivered",
+      );
       expect(received).toHaveLength(1);
-      expect(received[0]).toContain(committedSessionId);
+      expect(JSON.parse(received[0] ?? "")).toMatchObject({
+        authSessionId: committedSessionId,
+        kind: "session-expiry",
+      });
+      await expect
+        .poll(() => logger.output, { timeout: NOTIFICATION_TIMEOUT_MS })
+        .toContain("authorization.change");
+      expect(logger.output).toContain("kind: 'session-expiry'");
+      expect(logger.output).toContain(`authSessionId: '${committedSessionId}'`);
+      expect(logger.output).toContain(`requestId: '${committedRequestId}'`);
+      expect(logger.output).not.toContain(committedExpiresAt.toISOString());
+      expect(logger.output).not.toContain(rolledBackSessionId);
     } finally {
       await subscription.close();
     }
   });
 
-  test("closes a pending or active connection on an independent committed revocation and drops late pushes", async () => {
+  test("closes an active connection by user selector and drops late pushes", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
     const socket = await openBrowserSocket(testApi.baseUrl, graph);
     socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const upstreamClosePromise = closed(upstream);
     const closePromise = closed(socket);
-    const marker = Buffer.from(`before-close-${randomUUID()}`);
-    kernel.websocket.broadcast(marker);
+    const received: string[] = [];
+    const delivered = signal<void>();
+    const beforeClose = `before-close-${randomUUID()}`;
+    socket.on("message", (data) => {
+      const payload = data.toString();
+      received.push(payload);
+      if (payload === beforeClose) {
+        delivered.resolve();
+      }
+    });
+    kernel.websocket.broadcast(Buffer.from(beforeClose));
+    await withTimeout(delivered.promise, "active Kernel push was not delivered");
+    logger.clear();
     const revokePromise = runOperation(isolatedDatabaseUrl(), {
       operation: "revoke-user-sessions",
       userId: graph.userId,
     });
     const revoked = await revokePromise;
     expect(revoked.outcome).toBe("revoked");
-    const result = await Promise.race([
+    const result = await withTimeout(
       closePromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("revoked connection stayed open")), NOTIFICATION_TIMEOUT_MS),
-      ),
-    ]);
-    expect(result.code).toBe(4401);
+      "revoked connection stayed open",
+    );
+    expect(result).toEqual({ code: 4401, reason: "unauthenticated" });
+    await upstreamClosePromise;
     kernel.websocket.broadcast(Buffer.from(`after-close-${randomUUID()}`));
     await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(received).toEqual([beforeClose]);
     expect(socket.readyState).toBe(WebSocket.CLOSED);
+    expect(logger.output).toContain("authorization.change");
+    expect(logger.output).toContain("selectorKinds: [ 'user' ]");
+    expect(logger.output).toContain(`user: [ '${graph.userId}' ]`);
   });
 
   test("does not activate a pending connection after a committed revocation wins the revalidation lock", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
-    const lock = await holdSpaceRow(database, graph.spaceId);
-    const socketPromise = openBrowserSocket(testApi.baseUrl, graph);
-    const kernelConnection = kernel.websocket.nextConnection();
-    const revokePromise = runOperation(isolatedDatabaseUrl(), {
-      operation: "revoke-space-member",
-      spaceId: graph.spaceId,
-      userId: graph.userId,
+    const group = await database.userGroup.create({
+      data: {
+        name: `Pending revalidation ${randomUUID()}`,
+        organizationId: graph.organizationId,
+        status: "active",
+      },
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    lock.release();
-    await lock.completed;
-    expect((await revokePromise).outcome).toBe("revoked");
-    await expect(socketPromise).rejects.toMatchObject(
-      new WebSocketUpgradeError(503),
-    );
-    await expect(
-      Promise.race([
-        kernelConnection.then(() => "connected" as const),
-        new Promise<"none">((resolve) =>
-          setTimeout(() => resolve("none"), 250),
-        ),
-      ]),
-    ).resolves.toBe("none");
+    await database.userGroupMembership.create({
+      data: {
+        groupId: group.id,
+        organizationId: graph.organizationId,
+        userId: graph.userId,
+      },
+    });
+    await database.spaceGroupGrant.create({
+      data: {
+        groupId: group.id,
+        organizationId: graph.organizationId,
+        role: "viewer",
+        spaceId: graph.spaceId,
+      },
+    });
+    const lock = await holdSpaceGroupGrantTable(database);
+    let socket: WebSocket | undefined;
+    try {
+      socket = await openBrowserSocket(testApi.baseUrl, graph);
+      socket.on("error", () => undefined);
+      await waitForBlockedBackend(database, lock.lockerPid);
+      const closePromise = closed(socket);
+      const revoked = await runOperation(isolatedDatabaseUrl(), {
+        operation: "revoke-space-member",
+        spaceId: graph.spaceId,
+        userId: graph.userId,
+      });
+      expect(revoked.outcome).toBe("revoked");
+      await expect(closePromise).resolves.toMatchObject({
+        code: 4403,
+        reason: "forbidden",
+      });
+      const connectionCount = kernel.websocket.connectionCount;
+      expect(connectionCount).toBe(0);
+      lock.release();
+      await lock.completed;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(kernel.websocket.connectionCount).toBe(connectionCount);
+    } finally {
+      lock.release();
+      await Promise.allSettled([lock.completed]);
+      socket?.terminate();
+    }
   });
 
   test.each([
-    { operation: "disable-user", reason: "user", expectedCode: 4401 },
-    { operation: "disable-organization", reason: "organization", expectedCode: 4403 },
-    { operation: "disable-space", reason: "space", expectedCode: 4403 },
+    {
+      operation: "disable-organization",
+      reason: "organization",
+      expectedCode: 4403,
+      expectedReason: "forbidden",
+    },
+    {
+      operation: "disable-space",
+      reason: "space",
+      expectedCode: 4403,
+      expectedReason: "forbidden",
+    },
   ] as const)(
     "closes active connections by $reason selector after the operation transaction commits",
-    async ({ operation, expectedCode }) => {
+    async ({ operation, expectedCode, expectedReason }) => {
       const graph = await createGraph(database, passwordDigest, testApi, kernel);
       const socket = await openBrowserSocket(testApi.baseUrl, graph);
       socket.on("error", () => undefined);
+      await kernel.websocket.nextConnection();
       const closePromise = closed(socket);
       const command =
-        operation === "disable-user"
-          ? { operation, userId: graph.userId }
-          : operation === "disable-organization"
-            ? { operation, organizationId: graph.organizationId }
-            : { operation, spaceId: graph.spaceId };
+        operation === "disable-organization"
+          ? { operation, organizationId: graph.organizationId }
+          : { operation, spaceId: graph.spaceId };
       const result = await runOperation(isolatedDatabaseUrl(), command);
       expect(result.outcome).toBe("updated");
-      await expect(closePromise).resolves.toMatchObject({ code: expectedCode });
+      await expect(closePromise).resolves.toEqual({
+        code: expectedCode,
+        reason: expectedReason,
+      });
     },
   );
 
-  test("closes a session-selected connection through the real HTTPS logout transaction", async () => {
+  test("ignores nonmatching selectors and closes by auth-session through HTTPS logout", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
     const socket = await openBrowserSocket(testApi.baseUrl, graph);
     socket.on("error", () => undefined);
+    await kernel.websocket.nextConnection();
     const closePromise = closed(socket);
+    const publisher = testApi.app.get(AccessChangedPublisher);
+    const selectors = [
+      { kind: "auth-session", value: randomUUID() },
+      { kind: "user", value: randomUUID() },
+      { kind: "organization", value: randomUUID() },
+      { kind: "space", value: randomUUID() },
+    ] as const;
+    await database.$transaction(async (transaction) => {
+      for (const selector of selectors) {
+        await publisher.publish(transaction, {
+          kind: "close",
+          reason: "forbidden",
+          requestId: randomUUID(),
+          selectors: [selector],
+        });
+      }
+    });
     const logout = await requestHttps(testApi.baseUrl, AUTH_LOGOUT_PATH, {
       cookie: graph.cookie,
       csrfToken: graph.csrfToken,
       method: "POST",
     });
     expect(logout.statusCode).toBe(204);
-    await expect(closePromise).resolves.toMatchObject({ code: 4401 });
+    await expect(closePromise).resolves.toEqual({
+      code: 4401,
+      reason: "unauthenticated",
+    });
   });
 
   test("rejects client data frames with 4408 and never forwards them to Kernel", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
     const socket = await openBrowserSocket(testApi.baseUrl, graph);
     socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const upstreamClosePromise = closed(upstream);
     const closePromise = closed(socket);
     socket.send(Buffer.from("client-data-is-forbidden"));
-    await expect(closePromise).resolves.toMatchObject({ code: 4408 });
+    await expect(closePromise).resolves.toEqual({
+      code: 4408,
+      reason: "client-messages-forbidden",
+    });
+    await upstreamClosePromise;
+    expect(kernel.websocket.messages).toEqual([]);
   });
 
   test("fails closed on LISTEN connection error and rejects a new upgrade", async () => {
     const graph = await createGraph(database, passwordDigest, testApi, kernel);
     const socket = await openBrowserSocket(testApi.baseUrl, graph);
     socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const upstreamClosePromise = closed(upstream);
     const closePromise = closed(socket);
     await database.$executeRaw`
       SELECT pg_terminate_backend("pid")
@@ -479,8 +642,39 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
       code: 1011,
       reason: "service-unavailable",
     });
+    await upstreamClosePromise;
     await expect(openBrowserSocket(testApi.baseUrl, graph)).rejects.toMatchObject(
       new WebSocketUpgradeError(503),
     );
+  });
+
+  test("fails closed on an invalid notification without logging its payload", async () => {
+    const graph = await createGraph(database, passwordDigest, testApi, kernel);
+    const socket = await openBrowserSocket(testApi.baseUrl, graph);
+    socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const upstreamClosePromise = closed(upstream);
+    const closePromise = closed(socket);
+    const sensitiveSentinel = `invalid-notification-${randomUUID()}`;
+    const invalidPayload = JSON.stringify({
+      kind: "close",
+      reason: "forbidden",
+      requestId: randomUUID(),
+      selectors: [{ kind: "user", value: graph.userId }],
+      unexpected: sensitiveSentinel,
+    });
+    logger.clear();
+
+    await database.$queryRaw(
+      Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${invalidPayload})`,
+    );
+
+    await expect(closePromise).resolves.toEqual({
+      code: 1011,
+      reason: "service-unavailable",
+    });
+    await upstreamClosePromise;
+    expect(logger.output).toContain("invalid-event");
+    expect(logger.output).not.toContain(sensitiveSentinel);
   });
 });
