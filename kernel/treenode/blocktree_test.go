@@ -439,6 +439,63 @@ func TestSetBlockTreePathIsAtomicAndStoreScoped(t *testing.T) {
 	})
 }
 
+func TestMoveBlockTreePathRemovesSourceRowsAndReplacesTarget(t *testing.T) {
+	const (
+		rootID      = "20260717011000-pathmove"
+		sourceBoxID = "box-a"
+		targetBoxID = "box-b"
+		sourceChild = "20260717011001-sourcec"
+		targetChild = "20260717011002-targetc"
+		movedChild  = "20260717011003-movedc1"
+	)
+	database := newBlockTreeTestDB(t, "path-move.db")
+	installBlockTreeTestDBs(t, database, "", nil)
+	insertBlockTreePathForTest(t, database, rootID, sourceBoxID, "/source/"+rootID+".sy")
+	insertBlockTreePathForTest(t, database, rootID, targetBoxID, "/stale/"+rootID+".sy")
+	insertMovedBlockTreeChild := func(id, boxID, path string) {
+		t.Helper()
+		if _, err := database.Exec(
+			"INSERT INTO blocktrees (id, root_id, parent_id, box_id, path, hpath, updated, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			id, rootID, "", boxID, path, "/Test", "20260716000000", "p",
+		); err != nil {
+			t.Fatalf("insert moved blocktree child: %v", err)
+		}
+	}
+	insertMovedBlockTreeChild(sourceChild, sourceBoxID, "/source/"+rootID+".sy")
+	insertMovedBlockTreeChild(targetChild, targetBoxID, "/stale/"+rootID+".sy")
+
+	tree := NewTree(targetBoxID, "/moved/"+rootID+".sy", "/Moved", "Moved")
+	tree.Root.FirstChild.ID = movedChild
+	tree.Root.FirstChild.SetIALAttr("id", movedChild)
+	tree.Root.FirstChild.SetIALAttr("updated", movedChild[:14])
+	if err := MoveBlockTreePath(tree, sourceBoxID); err != nil {
+		t.Fatalf("move blocktree path: %v", err)
+	}
+
+	assertBlockTreeRootAbsentForTest(t, sourceBoxID, rootID)
+	assertBlockTreeRootForTest(t, targetBoxID, rootID, "/moved/"+rootID+".sy", rootID, movedChild)
+	countRows := func(id, boxID string) int {
+		t.Helper()
+		var count int
+		if err := database.QueryRow("SELECT COUNT(*) FROM blocktrees WHERE id = ? AND box_id = ?", id, boxID).Scan(&count); err != nil {
+			t.Fatalf("count blocktree rows for %s/%s: %v", boxID, id, err)
+		}
+		return count
+	}
+	if count := countRows(sourceChild, sourceBoxID); count != 0 {
+		t.Fatalf("source child row count = %d, want 0", count)
+	}
+	if count := countRows(targetChild, targetBoxID); count != 0 {
+		t.Fatalf("stale target child row count = %d, want 0", count)
+	}
+	if count := countRows(rootID, sourceBoxID); count != 0 {
+		t.Fatalf("source root row count = %d, want 0", count)
+	}
+	if count := countRows(rootID, targetBoxID); count != 1 {
+		t.Fatalf("moved root row count = %d, want 1", count)
+	}
+}
+
 func TestReplaceBlockTreesSnapshotRestoresAllSelectedRoots(t *testing.T) {
 	const (
 		boxID        = "box-a"

@@ -457,6 +457,16 @@ func CheckListItemNestingInBox(parentID, childID, boxID string) error {
 }
 
 func SetBlockTreePath(tree *parse.Tree) error {
+	return replaceBlockTreePath(tree, tree.Box)
+}
+
+// MoveBlockTreePath 原子地把文档根从 sourceBoxID 迁移到 tree.Box。
+// 调用方负责保证两个笔记本属于同一内容存储边界。
+func MoveBlockTreePath(tree *parse.Tree, sourceBoxID string) error {
+	return replaceBlockTreePath(tree, sourceBoxID)
+}
+
+func replaceBlockTreePath(tree *parse.Tree, sourceBoxID string) error {
 	changedNodes := collectIndexBlockTreeNodes(tree)
 	if len(changedNodes) == 0 {
 		return errors.New("replace blocktree path: tree contains no indexable blocks")
@@ -469,7 +479,7 @@ func SetBlockTreePath(tree *parse.Tree) error {
 	if err != nil {
 		return fmt.Errorf("begin blocktree path transaction: %w", err)
 	}
-	if _, err = tx.Exec("DELETE FROM blocktrees WHERE root_id = ? AND box_id = ?", tree.ID, tree.Box); err != nil {
+	if _, err = tx.Exec("DELETE FROM blocktrees WHERE root_id = ? AND box_id IN (?, ?)", tree.ID, sourceBoxID, tree.Box); err != nil {
 		return rollbackBlockTreeTransaction(tx, "delete previous blocktree path", err)
 	}
 	if err = execInsertBlocktrees(tx, tree, changedNodes); err != nil {

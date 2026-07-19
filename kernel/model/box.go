@@ -542,8 +542,8 @@ func isSkipFile(filename string) bool {
 	return strings.HasPrefix(filename, ".") || "node_modules" == filename || "dist" == filename || "target" == filename
 }
 
-func moveTree(tree *parse.Tree) error {
-	if err := treenode.SetBlockTreePath(tree); err != nil {
+func moveTree(tree *parse.Tree, sourceBoxID string) error {
+	if err := treenode.MoveBlockTreePath(tree, sourceBoxID); err != nil {
 		return fmt.Errorf("persist moved blocktree path for tree [%s/%s]: %w", tree.Box, tree.Path, err)
 	}
 	if err := sql.MoveTreeQueue(tree); err != nil {
@@ -563,7 +563,7 @@ func moveTree(tree *parse.Tree) error {
 			continue
 		}
 
-		if err = treenode.SetBlockTreePath(subTree); err != nil {
+		if err = treenode.MoveBlockTreePath(subTree, sourceBoxID); err != nil {
 			return fmt.Errorf("persist moved blocktree path for tree [%s/%s]: %w", subTree.Box, subTree.Path, err)
 		}
 		if err = sql.MoveTreeQueue(subTree); err != nil {
