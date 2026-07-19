@@ -115,7 +115,7 @@ export class OidcController {
   @Get(AUTH_OIDC_CALLBACK_PATH)
   @Header("Cache-Control", "no-store")
   @Redirect(undefined, 303)
-  @ApiProblemResponses(400, 401, 503)
+  @ApiProblemResponses(400, 401, 409, 503)
   @ApiOperation({ summary: "Complete an OIDC authorization-code flow" })
   @ApiResponse({ status: 303, description: "Authenticated same-origin redirect" })
   async callback(
@@ -187,7 +187,7 @@ export class OidcController {
   @Patch(ORGANIZATION_OIDC_PROVIDER_CONTROLLER_PATH)
   @Header("Cache-Control", "no-store")
   @SessionMutation()
-  @ApiProblemResponses(400, 401, 403, 404, 503)
+  @ApiProblemResponses(400, 401, 403, 404, 409, 503)
   @ApiOperation({ summary: "Update an organization OIDC provider" })
   @ApiBody({ schema: UPDATE_OIDC_PROVIDER_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: MANAGED_OIDC_PROVIDER_OPENAPI_SCHEMA })

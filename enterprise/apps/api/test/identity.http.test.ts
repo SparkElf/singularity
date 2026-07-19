@@ -41,6 +41,7 @@ import type { Clock } from "../src/identity/clock.js";
 import { PasswordHasher } from "../src/identity/password-hasher.js";
 import { sessionTokenFromValue } from "../src/identity/session-crypto.js";
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
+import { OrganizationManagementService } from "../src/organizations/organization-management.service.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
 import { truncateTestDatabase } from "./support/database.js";
 import {
@@ -58,6 +59,7 @@ const trustedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const forgedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
 type OidcIdTokenMode = "valid" | "forged-signature" | "wrong-nonce";
+type OidcJwksMode = "available" | "malformed" | "unavailable";
 
 interface OidcTokenExchange {
   authorization: string | null;
@@ -105,10 +107,13 @@ class OidcProviderBoundary {
   readonly tokenExchanges: OidcTokenExchange[] = [];
   jwksRequests = 0;
 
+  #discoveryMalformed = false;
   #idToken:
     | { mode: OidcIdTokenMode; nonce: string; subject: string }
     | undefined;
-  #jwksAvailable = true;
+  #jwksMode: OidcJwksMode = "available";
+
+  constructor(private readonly now: () => Date) {}
 
   configureIdToken(input: {
     mode?: OidcIdTokenMode;
@@ -123,7 +128,15 @@ class OidcProviderBoundary {
   }
 
   makeJwksUnavailable(): void {
-    this.#jwksAvailable = false;
+    this.#jwksMode = "unavailable";
+  }
+
+  makeJwksMalformed(): void {
+    this.#jwksMode = "malformed";
+  }
+
+  makeDiscoveryMalformed(): void {
+    this.#discoveryMalformed = true;
   }
 
   install(): void {
@@ -134,6 +147,11 @@ class OidcProviderBoundary {
         return nativeFetch(input, init);
       }
       if (url === `${this.issuer}/.well-known/openid-configuration`) {
+        if (this.#discoveryMalformed) {
+          return new Response("{", {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         return jsonResponse({
           authorization_endpoint: this.authorizationEndpoint,
           issuer: this.issuer,
@@ -151,7 +169,7 @@ class OidcProviderBoundary {
           authorization: request.headers.get("authorization"),
           body: new URLSearchParams(await request.text()),
         });
-        const nowSeconds = Math.floor(Date.now() / 1_000);
+        const nowSeconds = Math.floor(this.now().getTime() / 1_000);
         const nonce =
           idToken.mode === "wrong-nonce"
             ? Buffer.alloc(32, 0xa5).toString("base64url")
@@ -175,8 +193,13 @@ class OidcProviderBoundary {
       }
       if (url === this.jwksUri) {
         this.jwksRequests += 1;
-        if (!this.#jwksAvailable) {
+        if (this.#jwksMode === "unavailable") {
           return jsonResponse({ code: "jwks-unavailable" }, 503);
+        }
+        if (this.#jwksMode === "malformed") {
+          return new Response("{", {
+            headers: { "Content-Type": "application/json" },
+          });
         }
         return jsonResponse({
           keys: [
@@ -313,7 +336,7 @@ function csrfRequest(baseUrl: string, cookie: string): Promise<Response> {
 
 function oidcStartRequest(
   baseUrl: string,
-  input: { providerId: string; returnTo?: string },
+  input: { invitationToken?: string; providerId: string; returnTo?: string },
 ): Promise<Response> {
   return fetch(`${baseUrl}${AUTH_OIDC_START_PATH}`, {
     body: JSON.stringify(input),
@@ -327,11 +350,17 @@ function oidcStartRequest(
 
 function oidcCallbackRequest(
   baseUrl: string,
-  input: { code: string; cookie: string; state: string },
+  input: {
+    code: string;
+    cookie: string;
+    extra?: Record<string, string>;
+    state: string;
+  },
 ): Promise<Response> {
   const callback = new URL(AUTH_OIDC_CALLBACK_PATH, baseUrl);
   callback.search = new URLSearchParams({
     code: input.code,
+    ...input.extra,
     state: input.state,
   }).toString();
   return fetch(callback, {
@@ -991,6 +1020,30 @@ describe("identity HTTP contract with PostgreSQL", () => {
       providers: [{ name: "Corporate SSO", providerId: created.providerId }],
     });
 
+    const secondProvider = await database.oidcProvider.create({
+      data: {
+        clientId: "other-client",
+        issuer: "https://identity.example.test/other",
+        name: "Other SSO",
+        organizationId,
+        status: "disabled",
+      },
+      select: { id: true },
+    });
+    const duplicateNameResponse = await fetch(
+      `${testApi.baseUrl}${
+        ORGANIZATION_OIDC_PROVIDER_PATH_TEMPLATE
+          .replace("{organizationId}", organizationId)
+          .replace("{providerId}", secondProvider.id)
+      }`,
+      {
+        body: JSON.stringify({ name: "Corporate SSO" }),
+        headers: mutationHeaders,
+        method: "PATCH",
+      },
+    );
+    await expectProblem(duplicateNameResponse, 409, "conflict");
+
     const providerPath = ORGANIZATION_OIDC_PROVIDER_PATH_TEMPLATE.replace(
       "{organizationId}",
       organizationId,
@@ -1034,7 +1087,7 @@ describe("identity HTTP contract with PostgreSQL", () => {
   });
 
   test("completes a signed OIDC HTTP flow with state, nonce, PKCE, JWKS, and a usable session", async () => {
-    const providerBoundary = new OidcProviderBoundary();
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
     const graph = await createOidcIdentityGraph(providerBoundary);
     providerBoundary.install();
     const returnTo = "/spaces?source=oidc";
@@ -1074,10 +1127,19 @@ describe("identity HTTP contract with PostgreSQL", () => {
       requireSearchParameter(authorization, "state"),
     );
     providerBoundary.configureIdToken({ nonce, subject: graph.subject });
+    vi.spyOn(Date, "now").mockReturnValue(
+      initialTime.getTime() + 30 * 24 * 60 * 60 * 1_000,
+    );
 
     const callback = await oidcCallbackRequest(testApi.baseUrl, {
       code: "accepted-authorization-code",
       cookie: flowCookie,
+      extra: {
+        authuser: "0",
+        iss: providerBoundary.issuer,
+        prompt: "login",
+        scope: "openid email",
+      },
       state,
     });
     expect(callback.status).toBe(303);
@@ -1138,8 +1200,105 @@ describe("identity HTTP contract with PostgreSQL", () => {
     ).resolves.toEqual({ consumedAt: initialTime });
   });
 
+  test("accepts an organization invitation through OIDC and creates one active identity session", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const organizationId = randomUUID();
+    const ownerId = await createUser(`oidc-inviter-${randomUUID()}@example.test`);
+    await database.organization.create({
+      data: { id: organizationId, name: "OIDC invitation", status: "active" },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "owner",
+        status: "active",
+        userId: ownerId,
+      },
+    });
+    const provider = await database.oidcProvider.create({
+      data: {
+        clientId: oidcClientId,
+        issuer: providerBoundary.issuer,
+        name: "Invited identity",
+        organizationId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    const subject = randomUUID();
+    const loginIdentifier = `oidc-${subject}@example.test`;
+    const invitation = await testApi.app
+      .get(OrganizationManagementService)
+      .createInvitation({
+        actorUserId: ownerId,
+        expiresInHours: 24,
+        loginIdentifier,
+        organizationId,
+        requestId: randomUUID(),
+        role: "member",
+      });
+    providerBoundary.install();
+
+    const start = await oidcStartRequest(testApi.baseUrl, {
+      invitationToken: invitation.invitationToken,
+      providerId: provider.id,
+    });
+    expect(start.status).toBe(200);
+    const flowCookie = cookiePair(
+      requireNamedSetCookie(start, oidcFlowCookieName),
+    );
+    const authorization = new URL(
+      oidcStartResponseSchema.parse(await start.json()).authorizationUrl,
+    );
+    const nonce = requireSearchParameter(authorization, "nonce");
+    const state = requireSearchParameter(authorization, "state");
+    providerBoundary.configureIdToken({ nonce, subject });
+
+    const callback = await oidcCallbackRequest(testApi.baseUrl, {
+      code: "invitation-code",
+      cookie: flowCookie,
+      state,
+    });
+    expect(callback.status).toBe(303);
+    const user = await database.user.findUniqueOrThrow({
+      where: { loginIdentifier },
+      select: { id: true, passwordDigest: true, status: true },
+    });
+    expect(user).toEqual({
+      id: expect.any(String),
+      passwordDigest: null,
+      status: "active",
+    });
+    await expect(
+      database.organizationMembership.findUniqueOrThrow({
+        where: {
+          organizationId_userId: { organizationId, userId: user.id },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "member", status: "active" });
+    await expect(
+      database.organizationInvitation.findUniqueOrThrow({
+        where: { id: invitation.invitationId },
+        select: { acceptedAt: true, acceptedByUserId: true },
+      }),
+    ).resolves.toEqual({
+      acceptedAt: initialTime,
+      acceptedByUserId: user.id,
+    });
+    await expect(
+      database.oidcIdentity.findUniqueOrThrow({
+        where: { providerId_subject: { providerId: provider.id, subject } },
+        select: { organizationId: true, userId: true },
+      }),
+    ).resolves.toEqual({ organizationId, userId: user.id });
+    await expect(
+      database.authSession.count({ where: { revokedAt: null, userId: user.id } }),
+    ).resolves.toBe(1);
+  });
+
   test("keeps an unknown OIDC state unused and rejects replay before a second token exchange", async () => {
-    const providerBoundary = new OidcProviderBoundary();
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
     const graph = await createOidcIdentityGraph(providerBoundary);
     providerBoundary.install();
     const start = await oidcStartRequest(testApi.baseUrl, {
@@ -1205,7 +1364,7 @@ describe("identity HTTP contract with PostgreSQL", () => {
       mode: "forged-signature" as const,
     },
   ])("rejects $label and consumes the one-time state", async ({ mode }) => {
-    const providerBoundary = new OidcProviderBoundary();
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
     const graph = await createOidcIdentityGraph(providerBoundary);
     providerBoundary.install();
     const start = await oidcStartRequest(testApi.baseUrl, {
@@ -1261,8 +1420,40 @@ describe("identity HTTP contract with PostgreSQL", () => {
     expect(providerBoundary.jwksRequests).toBe(1);
   });
 
-  test("maps an unavailable OIDC JWKS to 503 and does not retry a consumed state", async () => {
-    const providerBoundary = new OidcProviderBoundary();
+  test("maps malformed OIDC discovery bytes to 503 without creating an authorization attempt", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.makeDiscoveryMalformed();
+    providerBoundary.install();
+
+    await expectProblem(
+      await oidcStartRequest(testApi.baseUrl, {
+        providerId: graph.providerId,
+      }),
+      503,
+      "service-unavailable",
+    );
+    await expect(
+      database.oidcAuthorizationAttempt.count({
+        where: { providerId: graph.providerId },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  test.each([
+    {
+      configure: (boundary: OidcProviderBoundary) =>
+        boundary.makeJwksUnavailable(),
+      label: "unavailable",
+    },
+    {
+      configure: (boundary: OidcProviderBoundary) => boundary.makeJwksMalformed(),
+      label: "malformed",
+    },
+  ])("maps $label OIDC JWKS to 503 and does not retry a consumed state", async ({
+    configure,
+  }) => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
     const graph = await createOidcIdentityGraph(providerBoundary);
     providerBoundary.install();
     const start = await oidcStartRequest(testApi.baseUrl, {
@@ -1279,7 +1470,7 @@ describe("identity HTTP contract with PostgreSQL", () => {
     const nonce = requireSearchParameter(authorization, "nonce");
     const state = requireSearchParameter(authorization, "state");
     providerBoundary.configureIdToken({ nonce, subject: graph.subject });
-    providerBoundary.makeJwksUnavailable();
+    configure(providerBoundary);
 
     await expectProblem(
       await oidcCallbackRequest(testApi.baseUrl, {

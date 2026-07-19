@@ -365,12 +365,30 @@ export class OrganizationManagementService {
     requestId: string,
   ): Promise<void> {
     const now = this.clock.now();
+    const invitationReference = await this.findInvitationReference(
+      invitationToken,
+    );
+    if (invitationReference === null) {
+      throw notFound();
+    }
     await this.database.client.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
+      );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${invitationReference.organizationId} FOR UPDATE`,
+      );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${invitationReference.organizationId} AND "user_id" = ${userId} FOR UPDATE`,
+      );
       const invitation = await this.lockValidInvitation(
         transaction,
         invitationToken,
         now,
       );
+      if (invitation.organizationId !== invitationReference.organizationId) {
+        throw conflict();
+      }
       const user = await transaction.user.findUnique({
         where: { id: userId },
         select: { loginIdentifier: true, status: true },
@@ -725,13 +743,42 @@ export class OrganizationManagementService {
     });
   }
 
+  private async findInvitationReference(
+    invitationToken: string,
+  ): Promise<{ organizationId: string } | null> {
+    return this.database.client.organizationInvitation.findUnique({
+      where: { tokenDigest: organizationInvitationTokenDigest(invitationToken) },
+      select: { organizationId: true },
+    });
+  }
+
   async acceptOidcInvitationInTransaction(
     transaction: Transaction,
     invitationId: string,
+    organizationId: string,
     userId: string,
     now: Date,
     requestId: string,
   ): Promise<void> {
+    const invitationReference = await transaction.organizationInvitation.findUnique({
+      where: { id: invitationId },
+      select: { organizationId: true },
+    });
+    if (
+      invitationReference === null ||
+      invitationReference.organizationId !== organizationId
+    ) {
+      throw conflict();
+    }
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
+    );
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
+    );
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" = ${userId} FOR UPDATE`,
+    );
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_invitations" WHERE "id" = ${invitationId} FOR UPDATE`,
     );
@@ -799,6 +846,18 @@ export class OrganizationManagementService {
     if (invitation.role === "owner") {
       throw conflict();
     }
+    const existingMembershipRows = await transaction.$queryRaw<
+      Array<{ role: "owner" | "admin" | "member"; status: string }>
+    >(
+      Prisma.sql`
+        SELECT "role", "status"
+        FROM "organization_memberships"
+        WHERE "organization_id" = ${invitation.organizationId}
+          AND "user_id" = ${userId}
+        FOR UPDATE
+      `,
+    );
+    const existingMembership = existingMembershipRows[0];
     await transaction.organizationMembership.upsert({
       where: {
         organizationId_userId: {
@@ -814,6 +873,20 @@ export class OrganizationManagementService {
       },
       update: { role: invitation.role, status: "active" },
     });
+    if (
+      existingMembership?.status === "active" &&
+      existingMembership.role !== invitation.role
+    ) {
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId,
+        selectors: [
+          { kind: "organization", value: invitation.organizationId },
+          { kind: "user", value: userId },
+        ],
+      });
+    }
     await transaction.organizationInvitation.update({
       where: { id: invitation.id },
       data: { acceptedAt: now, acceptedByUserId: userId },

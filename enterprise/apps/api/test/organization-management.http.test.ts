@@ -32,6 +32,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import type { Clock } from "../src/identity/clock.js";
 import { PasswordHasher } from "../src/identity/password-hasher.js";
+import { ACCESS_CHANGE_CHANNEL } from "../src/kernel/access-changed.js";
 import { truncateTestDatabase } from "./support/database.js";
 import {
   startTestApiApplication,
@@ -41,6 +42,7 @@ import {
 
 const USER_PASSWORD = "correct horse battery staple";
 const INITIAL_TIME = new Date("2026-07-19T00:00:00.000Z");
+const NOTIFICATION_TIMEOUT_MS = 5_000;
 
 class MutableClock implements Clock {
   #milliseconds: number;
@@ -335,6 +337,112 @@ describe("organization membership, invitation, and group HTTP contracts with Pos
     ).toEqual([
       expect.objectContaining({ action: "permission.change" }),
     ]);
+  });
+
+  test("publishes one organization-and-user close event when acceptance updates an active membership", async () => {
+    const graph = await createOrganizationGraph();
+    const loginIdentifier = `active-invitee-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "member",
+        status: "inactive",
+        userId,
+      },
+    });
+    const invitationsPath = buildPath(ORGANIZATION_INVITATIONS_PATH_TEMPLATE, {
+      organizationId: graph.organizationId,
+    });
+    const createdResponse = await fetch(`${testApi.baseUrl}${invitationsPath}`, {
+      body: JSON.stringify({ expiresInHours: 24, loginIdentifier, role: "admin" }),
+      headers: mutationHeaders(graph.owner),
+      method: "POST",
+    });
+    expect(createdResponse.status).toBe(201);
+    const invitation = createdOrganizationInvitationSchema.parse(
+      await createdResponse.json(),
+    );
+
+    await database.organizationMembership.update({
+      where: {
+        organizationId_userId: { organizationId: graph.organizationId, userId },
+      },
+      data: { status: "active" },
+    });
+    const invitee = await login(userId, loginIdentifier);
+
+    const closeEvents: unknown[] = [];
+    let resolveClose!: (event: unknown) => void;
+    let rejectClose!: (error: unknown) => void;
+    const closeEvent = new Promise<unknown>((resolve, reject) => {
+      resolveClose = resolve;
+      rejectClose = reject;
+    });
+    const subscription = await testApi.app.get(DatabaseRuntime).listen(
+      ACCESS_CHANGE_CHANNEL,
+      (payload) => {
+        let decoded: unknown;
+        try {
+          decoded = JSON.parse(payload) as unknown;
+        } catch (error) {
+          rejectClose(error);
+          return;
+        }
+        if (
+          typeof decoded === "object" &&
+          decoded !== null &&
+          "kind" in decoded &&
+          (decoded as { kind?: unknown }).kind === "close"
+        ) {
+          closeEvents.push(decoded);
+          resolveClose(decoded);
+        }
+      },
+      rejectClose,
+    );
+    let notificationTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const accepted = await fetch(`${testApi.baseUrl}${AUTH_INVITATION_ACCEPT_PATH}`, {
+        body: JSON.stringify({ invitationToken: invitation.invitationToken }),
+        headers: mutationHeaders(invitee),
+        method: "POST",
+      });
+      expect(accepted.status).toBe(204);
+      const event = await Promise.race([
+        closeEvent,
+        new Promise<never>((_, reject) => {
+          notificationTimeout = setTimeout(
+            () => reject(new Error("active-membership close event was not delivered")),
+            NOTIFICATION_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      expect(event).toEqual({
+        kind: "close",
+        reason: "forbidden",
+        requestId: expect.any(String),
+        selectors: [
+          { kind: "organization", value: graph.organizationId },
+          { kind: "user", value: userId },
+        ],
+      });
+      expect(closeEvents).toHaveLength(1);
+      await expect(
+        database.organizationMembership.findUniqueOrThrow({
+          where: {
+            organizationId_userId: { organizationId: graph.organizationId, userId },
+          },
+          select: { role: true, status: true },
+        }),
+      ).resolves.toEqual({ role: "admin", status: "active" });
+    } finally {
+      if (notificationTimeout !== undefined) {
+        clearTimeout(notificationTimeout);
+      }
+      await subscription.close();
+    }
   });
 
   test("updates a member role and status with durable access removal and audit", async () => {

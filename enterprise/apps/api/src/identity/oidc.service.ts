@@ -95,6 +95,7 @@ export interface OidcProviderClient {
       code: string;
       codeVerifier: string;
       redirectUri: string;
+      now: Date;
     },
   ): Promise<VerifiedOidcIdentity>;
 }
@@ -113,7 +114,12 @@ export class FileOidcClientSecretResolver
     if (path === undefined) {
       throw serviceUnavailable();
     }
-    const value = await readFile(path, { encoding: "utf8" });
+    let value: string;
+    try {
+      value = await readFile(path, { encoding: "utf8" });
+    } catch {
+      throw serviceUnavailable();
+    }
     const secret = value.endsWith("\n")
       ? value.slice(0, value.endsWith("\r\n") ? -2 : -1)
       : value;
@@ -152,7 +158,12 @@ function trustedEndpoint(issuer: URL, value: unknown): string {
   if (typeof value !== "string") {
     throw serviceUnavailable();
   }
-  const endpoint = new URL(value);
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw serviceUnavailable();
+  }
   if (
     endpoint.protocol !== "https:" ||
     endpoint.origin !== issuer.origin ||
@@ -163,6 +174,17 @@ function trustedEndpoint(issuer: URL, value: unknown): string {
     throw serviceUnavailable();
   }
   return endpoint.toString();
+}
+
+async function fetchOidcResponse(
+  input: string | URL,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch {
+    throw serviceUnavailable();
+  }
 }
 
 @Injectable()
@@ -198,7 +220,12 @@ export class FetchOidcProviderClient implements OidcProviderClient {
 
   async exchangeAuthorizationCode(
     provider: OidcProviderConfiguration,
-    input: { code: string; codeVerifier: string; redirectUri: string },
+    input: {
+      code: string;
+      codeVerifier: string;
+      redirectUri: string;
+      now: Date;
+    },
   ): Promise<VerifiedOidcIdentity> {
     const discovery = await this.discover(provider.issuer);
     const body = new URLSearchParams({
@@ -216,7 +243,7 @@ export class FetchOidcProviderClient implements OidcProviderClient {
       const secret = await this.secrets.resolve(provider.clientSecretReference);
       headers.Authorization = `Basic ${Buffer.from(`${provider.clientId}:${secret}`, "utf8").toString("base64")}`;
     }
-    const response = await fetch(discovery.tokenEndpoint, {
+    const response = await fetchOidcResponse(discovery.tokenEndpoint, {
       body,
       headers,
       method: "POST",
@@ -226,7 +253,12 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     if (!response.ok) {
       throw unauthenticated();
     }
-    const tokenPayload: unknown = await response.json();
+    let tokenPayload: unknown;
+    try {
+      tokenPayload = await response.json();
+    } catch {
+      throw unauthenticated();
+    }
     if (
       typeof tokenPayload !== "object" ||
       tokenPayload === null ||
@@ -239,14 +271,20 @@ export class FetchOidcProviderClient implements OidcProviderClient {
       tokenPayload.id_token,
       provider,
       discovery,
+      input.now,
     );
   }
 
   async discover(issuerValue: string): Promise<OidcDiscoveryDocument> {
-    const issuer = new URL(issuerValue);
+    let issuer: URL;
+    try {
+      issuer = new URL(issuerValue);
+    } catch {
+      throw serviceUnavailable();
+    }
     const discoveryUrl = new URL(issuer.toString());
     discoveryUrl.pathname = `${discoveryUrl.pathname.replace(/\/$/, "")}/.well-known/openid-configuration`;
-    const response = await fetch(discoveryUrl, {
+    const response = await fetchOidcResponse(discoveryUrl, {
       headers: { Accept: "application/json" },
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
@@ -254,7 +292,12 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     if (!response.ok) {
       throw serviceUnavailable();
     }
-    const document: unknown = await response.json();
+    let document: unknown;
+    try {
+      document = await response.json();
+    } catch {
+      throw serviceUnavailable();
+    }
     if (typeof document !== "object" || document === null) {
       throw serviceUnavailable();
     }
@@ -274,6 +317,7 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     idToken: string,
     provider: OidcProviderConfiguration,
     discovery: OidcDiscoveryDocument,
+    now: Date,
   ): Promise<VerifiedOidcIdentity> {
     const segments = idToken.split(".");
     if (segments.length !== 3) {
@@ -304,7 +348,7 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     if ((algorithm !== "RS256" && algorithm !== "ES256") || keyId === null) {
       throw unauthenticated();
     }
-    const jwksResponse = await fetch(discovery.jwksUri, {
+    const jwksResponse = await fetchOidcResponse(discovery.jwksUri, {
       headers: { Accept: "application/json" },
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
@@ -312,7 +356,12 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     if (!jwksResponse.ok) {
       throw serviceUnavailable();
     }
-    const jwksValue: unknown = await jwksResponse.json();
+    let jwksValue: unknown;
+    try {
+      jwksValue = await jwksResponse.json();
+    } catch {
+      throw serviceUnavailable();
+    }
     if (
       typeof jwksValue !== "object" ||
       jwksValue === null ||
@@ -332,18 +381,28 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     if (jwk === undefined) {
       throw unauthenticated();
     }
-    const publicKey = createPublicKey({ key: jwk as JsonWebKey, format: "jwk" });
+    let publicKey: ReturnType<typeof createPublicKey>;
+    try {
+      publicKey = createPublicKey({ key: jwk as JsonWebKey, format: "jwk" });
+    } catch {
+      throw serviceUnavailable();
+    }
     const signingInput = Buffer.from(`${headerSegment}.${payloadSegment}`, "ascii");
-    const signature = Buffer.from(signatureSegment, "base64url");
-    const validSignature =
-      algorithm === "ES256"
-        ? verify(
-            "sha256",
-            signingInput,
-            { dsaEncoding: "ieee-p1363", key: publicKey },
-            signature,
-          )
-        : verify("sha256", signingInput, publicKey, signature);
+    let validSignature: boolean;
+    try {
+      const signature = Buffer.from(signatureSegment, "base64url");
+      validSignature =
+        algorithm === "ES256"
+          ? verify(
+              "sha256",
+              signingInput,
+              { dsaEncoding: "ieee-p1363", key: publicKey },
+              signature,
+            )
+          : verify("sha256", signingInput, publicKey, signature);
+    } catch {
+      throw unauthenticated();
+    }
     if (!validSignature) {
       throw unauthenticated();
     }
@@ -354,7 +413,7 @@ export class FetchOidcProviderClient implements OidcProviderClient {
     const authorizedParty = stringProperty(claims, "azp");
     const expiration = claims.exp;
     const issuedAt = claims.iat;
-    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const nowSeconds = Math.floor(now.getTime() / 1_000);
     const audiences =
       typeof audience === "string"
         ? [audience]
@@ -522,6 +581,7 @@ export class OidcService {
         code: input.code,
         codeVerifier: attempt.codeVerifier,
         redirectUri: `${this.configuration.publicOrigin}${AUTH_OIDC_CALLBACK_PATH}`,
+        now,
       },
     );
     const actualNonceDigest = domainDigest(NONCE_DIGEST_DOMAIN, verified.nonce);
@@ -534,11 +594,90 @@ export class OidcService {
       throw unauthenticated();
     }
     const userId = await this.database.client.$transaction(async (transaction) => {
+      const identityReference = await transaction.oidcIdentity.findUnique({
+        where: {
+          providerId_subject: {
+            providerId: attempt.providerId,
+            subject: verified.subject,
+          },
+        },
+        select: { organizationId: true, userId: true },
+      });
+      let currentUserId: string;
+      let createIdentity = false;
+      if (identityReference !== null) {
+        if (identityReference.organizationId !== attempt.organizationId) {
+          throw unauthenticated();
+        }
+        currentUserId = identityReference.userId;
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${currentUserId} FOR SHARE`,
+        );
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
+        );
+        await transaction.$queryRaw(
+          Prisma.sql`
+            SELECT "id"
+            FROM "organization_memberships"
+            WHERE "organization_id" = ${attempt.organizationId}
+              AND "user_id" = ${currentUserId}
+            FOR SHARE
+          `,
+        );
+      } else {
+        if (
+          attempt.invitationId === null ||
+          !verified.emailVerified ||
+          verified.email === null
+        ) {
+          throw unauthenticated();
+        }
+        const normalizedEmail = verified.email
+          .trim()
+          .normalize("NFKC")
+          .toLowerCase();
+        const invitation = await transaction.organizationInvitation.findUnique({
+          where: { id: attempt.invitationId },
+          select: { loginIdentifier: true },
+        });
+        if (invitation?.loginIdentifier !== normalizedEmail) {
+          throw unauthenticated();
+        }
+        let user = await transaction.user.findUnique({
+          where: { loginIdentifier: normalizedEmail },
+          select: { id: true },
+        });
+        if (user === null) {
+          user = await transaction.user.create({
+            data: {
+              loginIdentifier: normalizedEmail,
+              passwordDigest: null,
+              status: "active",
+            },
+            select: { id: true },
+          });
+        }
+        currentUserId = user.id;
+        await this.organizations.acceptOidcInvitationInTransaction(
+          transaction,
+          attempt.invitationId,
+          attempt.organizationId,
+          currentUserId,
+          now,
+          input.requestId,
+        );
+        createIdentity = true;
+      }
+
       await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
-      );
-      await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "oidc_providers" WHERE "id" = ${attempt.providerId} AND "organization_id" = ${attempt.organizationId} FOR SHARE`,
+        Prisma.sql`
+          SELECT "id"
+          FROM "oidc_providers"
+          WHERE "id" = ${attempt.providerId}
+            AND "organization_id" = ${attempt.organizationId}
+          FOR SHARE
+        `,
       );
       const currentProvider = await transaction.oidcProvider.findFirst({
         where: {
@@ -553,87 +692,55 @@ export class OidcService {
           issuer: true,
         },
       });
+      const currentUser = await transaction.user.findUnique({
+        where: { id: currentUserId },
+        select: { status: true },
+      });
+      const currentMembership = await transaction.organizationMembership.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId: attempt.organizationId,
+            userId: currentUserId,
+          },
+        },
+        select: { status: true },
+      });
+      const currentIdentity = createIdentity
+        ? null
+        : await transaction.oidcIdentity.findUnique({
+            where: {
+              providerId_subject: {
+                providerId: attempt.providerId,
+                subject: verified.subject,
+              },
+            },
+            select: { organizationId: true, userId: true },
+          });
       if (
         currentProvider === null ||
         currentProvider.clientId !== attempt.provider.clientId ||
         currentProvider.clientSecretReference !==
           attempt.provider.clientSecretReference ||
-        currentProvider.issuer !== attempt.provider.issuer
+        currentProvider.issuer !== attempt.provider.issuer ||
+        currentUser?.status !== "active" ||
+        currentMembership?.status !== "active" ||
+        (!createIdentity &&
+          (currentIdentity?.organizationId !== attempt.organizationId ||
+            currentIdentity.userId !== currentUserId))
       ) {
         throw unauthenticated();
       }
-      const existingIdentity = await transaction.oidcIdentity.findUnique({
-        where: {
-          providerId_subject: {
-            providerId: attempt.providerId,
-            subject: verified.subject,
-          },
-        },
-        select: {
-          organizationId: true,
-          organizationMembership: { select: { status: true } },
-          userId: true,
-          user: { select: { status: true } },
-        },
-      });
-      if (existingIdentity !== null) {
-        if (
-          existingIdentity.organizationId !== attempt.organizationId ||
-          existingIdentity.organizationMembership.status !== "active" ||
-          existingIdentity.user.status !== "active"
-        ) {
-          throw unauthenticated();
-        }
-        return existingIdentity.userId;
-      }
-      if (
-        attempt.invitationId === null ||
-        !verified.emailVerified ||
-        verified.email === null
-      ) {
-        throw unauthenticated();
-      }
-      const normalizedEmail = verified.email.trim().normalize("NFKC").toLowerCase();
-      const invitation = await transaction.organizationInvitation.findUnique({
-        where: { id: attempt.invitationId },
-        select: { loginIdentifier: true },
-      });
-      if (invitation?.loginIdentifier !== normalizedEmail) {
-        throw unauthenticated();
-      }
-      let user = await transaction.user.findUnique({
-        where: { loginIdentifier: normalizedEmail },
-        select: { id: true, status: true },
-      });
-      if (user === null) {
-        user = await transaction.user.create({
+      if (createIdentity) {
+        await transaction.oidcIdentity.create({
           data: {
-            loginIdentifier: normalizedEmail,
-            passwordDigest: null,
-            status: "active",
+            providerId: attempt.providerId,
+            organizationId: attempt.organizationId,
+            subject: verified.subject,
+            userId: currentUserId,
           },
-          select: { id: true, status: true },
         });
       }
-      if (user.status !== "active") {
-        throw unauthenticated();
-      }
-      await this.organizations.acceptOidcInvitationInTransaction(
-        transaction,
-        attempt.invitationId,
-        user.id,
-        now,
-        input.requestId,
-      );
-      await transaction.oidcIdentity.create({
-        data: {
-          providerId: attempt.providerId,
-          organizationId: attempt.organizationId,
-          subject: verified.subject,
-          userId: user.id,
-        },
-      });
-      return user.id;
+      return currentUserId;
     });
     const session = await this.identity.issueSessionForUser({
       currentTokenValue: input.currentTokenValue,
@@ -730,52 +837,62 @@ export class OidcService {
     input: UpdateOidcProviderRequest,
     requestId: string,
   ): Promise<ManagedOidcProvider> {
-    return this.database.client.$transaction(async (transaction) => {
-      await this.organizations.requireManagerInTransaction(
-        transaction,
-        actorUserId,
-        organizationId,
-        true,
-      );
-      const existing = await transaction.oidcProvider.findFirst({
-        where: { id: providerId, organizationId },
-        select: { id: true },
-      });
-      if (existing === null) {
-        throw notFound();
-      }
-      const provider = await transaction.oidcProvider.update({
-        where: { id: providerId },
-        data: {
-          ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
-          ...(input.clientSecretReference === undefined
+    try {
+      return await this.database.client.$transaction(async (transaction) => {
+        await this.organizations.requireManagerInTransaction(
+          transaction,
+          actorUserId,
+          organizationId,
+          true,
+        );
+        const existing = await transaction.oidcProvider.findFirst({
+          where: { id: providerId, organizationId },
+          select: { id: true },
+        });
+        if (existing === null) {
+          throw notFound();
+        }
+        const provider = await transaction.oidcProvider.update({
+          where: { id: providerId },
+          data: {
+            ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
+            ...(input.clientSecretReference === undefined
+              ? {}
+              : { clientSecretReference: input.clientSecretReference }),
+            ...(input.issuer === undefined ? {} : { issuer: input.issuer }),
+            ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.status === undefined ? {} : { status: input.status }),
+          },
+        });
+        await this.audit.appendPermissionChange(transaction, {
+          actorUserId,
+          occurredAt: this.clock.now(),
+          organizationId,
+          requestId,
+          spaceId: null,
+          targetId: providerId,
+          targetType: "oidc-provider",
+        });
+        return {
+          clientId: provider.clientId,
+          ...(provider.clientSecretReference === null
             ? {}
-            : { clientSecretReference: input.clientSecretReference }),
-          ...(input.issuer === undefined ? {} : { issuer: input.issuer }),
-          ...(input.name === undefined ? {} : { name: input.name }),
-          ...(input.status === undefined ? {} : { status: input.status }),
-        },
+            : { clientSecretReference: provider.clientSecretReference }),
+          issuer: provider.issuer,
+          name: provider.name,
+          organizationId: provider.organizationId,
+          providerId: provider.id,
+          status: provider.status,
+        };
       });
-      await this.audit.appendPermissionChange(transaction, {
-        actorUserId,
-        occurredAt: this.clock.now(),
-        organizationId,
-        requestId,
-        spaceId: null,
-        targetId: providerId,
-        targetType: "oidc-provider",
-      });
-      return {
-        clientId: provider.clientId,
-        ...(provider.clientSecretReference === null
-          ? {}
-          : { clientSecretReference: provider.clientSecretReference }),
-        issuer: provider.issuer,
-        name: provider.name,
-        organizationId: provider.organizationId,
-        providerId: provider.id,
-        status: provider.status,
-      };
-    });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw conflict();
+      }
+      throw error;
+    }
   }
 }
