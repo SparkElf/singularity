@@ -185,10 +185,11 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
 
     const adminAccess = (await readManagementAccess(admin)).organizations[0];
     expect(adminAccess?.organizationId).toBe(organizationId);
-    expect(adminAccess?.organizationCapabilities).toHaveLength(5);
+    expect(adminAccess?.organizationCapabilities).toHaveLength(4);
     expect(adminAccess?.organizationCapabilities).toEqual(
-      expect.arrayContaining(["members", "groups", "spaces", "oidc", "audit"]),
+      expect.arrayContaining(["members", "groups", "spaces", "audit"]),
     );
+    expect(adminAccess?.organizationCapabilities).not.toContain("oidc");
     expect(adminAccess?.organizationCapabilities).not.toContain("ownership");
     expect(adminAccess?.spaces.map((space) => space.spaceId)).toEqual([
       alphaSpaceId,
