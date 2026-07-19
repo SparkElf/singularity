@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   SpaceProtyleMenuSurfaceFactory,
   SpaceProtyleRuntime,
+  SpaceSessionComposition,
 } from "@/spaces/space-session.ts";
 import { SpaceSessionRoot } from "@/spaces/SpaceSessionRoot.tsx";
 
@@ -54,9 +55,9 @@ describe("SpaceSessionRoot", () => {
         onHostEvent={vi.fn()}
         retryRuntime={retryRuntime}
       >
-        {(session) => {
-          activeSession = session;
-          return <div>{session?.spaceId ?? "none"}</div>;
+        {(composition) => {
+          activeSession = composition?.session ?? null;
+          return <div>{composition?.session?.spaceId ?? "none"}</div>;
         }}
       </SpaceSessionRoot>,
     );
@@ -73,9 +74,9 @@ describe("SpaceSessionRoot", () => {
         onHostEvent={vi.fn()}
         retryRuntime={retryRuntime}
       >
-        {(session) => {
-          activeSession = session;
-          return <div>{session?.spaceId ?? "none"}</div>;
+        {(composition) => {
+          activeSession = composition?.session ?? null;
+          return <div>{composition?.session?.spaceId ?? "none"}</div>;
         }}
       </SpaceSessionRoot>,
     );
@@ -88,6 +89,57 @@ describe("SpaceSessionRoot", () => {
       /after disposal/,
     );
     expect(onAccessLost).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prior selection capability when the same authorized space starts a new generation", async () => {
+    let currentComposition: SpaceSessionComposition | null = null;
+    const renderOwner = (composition: SpaceSessionComposition | null) => {
+      currentComposition = composition;
+      return <div>{composition?.session?.spaceId ?? "none"}</div>;
+    };
+    const rootProps = {
+      createProtyleMenuSurface: createTestProtyleMenuSurface,
+      onAccessLost: vi.fn(),
+      onHostEvent: vi.fn(),
+      retryRuntime: vi.fn<() => Promise<SpaceRuntimeBootstrap>>(),
+    };
+    const { rerender } = render(
+      <SpaceSessionRoot bootstrap={readyBootstrap(SPACE_A)} {...rootProps}>
+        {renderOwner}
+      </SpaceSessionRoot>,
+    );
+
+    expect(await screen.findByText(SPACE_A)).toBeVisible();
+    const firstComposition = currentComposition as SpaceSessionComposition;
+    act(() => {
+      expect(firstComposition.selectDocument({
+        documentId: "20260718000100-docum01",
+        notebookId: "20260718000000-noteb01",
+      })).toBe(true);
+    });
+
+    rerender(
+      <SpaceSessionRoot bootstrap={null} {...rootProps}>
+        {renderOwner}
+      </SpaceSessionRoot>,
+    );
+    await waitFor(() => expect(currentComposition).toBeNull());
+    rerender(
+      <SpaceSessionRoot bootstrap={readyBootstrap(SPACE_A)} {...rootProps}>
+        {renderOwner}
+      </SpaceSessionRoot>,
+    );
+
+    expect(await screen.findByText(SPACE_A)).toBeVisible();
+    const nextComposition = currentComposition as SpaceSessionComposition;
+    expect(nextComposition.scope).not.toBe(firstComposition.scope);
+    act(() => {
+      expect(firstComposition.selectDocument({
+        documentId: "20260718000101-stale01",
+        notebookId: "20260718000000-noteb01",
+      })).toBe(false);
+    });
+    expect(nextComposition.selection).toBeNull();
   });
 
   it("disposes a terminal runtime before clearing the owner and notifying access loss", async () => {
@@ -109,10 +161,10 @@ describe("SpaceSessionRoot", () => {
         onHostEvent={vi.fn()}
         retryRuntime={vi.fn()}
       >
-        {(session) => {
-          activeSession = session;
-          firstSession ??= session;
-          return <div>{session?.spaceId ?? "none"}</div>;
+        {(composition) => {
+          activeSession = composition?.session ?? null;
+          firstSession ??= composition?.session ?? null;
+          return <div>{composition?.session?.spaceId ?? "none"}</div>;
         }}
       </SpaceSessionRoot>,
     );
@@ -144,9 +196,9 @@ describe("SpaceSessionRoot", () => {
         onHostEvent={vi.fn()}
         retryRuntime={vi.fn()}
       >
-        {(session) => {
-          activeSession = session;
-          return <div>{session?.spaceId ?? "none"}</div>;
+        {(composition) => {
+          activeSession = composition?.session ?? null;
+          return <div>{composition?.session?.spaceId ?? "none"}</div>;
         }}
       </SpaceSessionRoot>,
     );
@@ -177,9 +229,9 @@ describe("SpaceSessionRoot", () => {
         onHostEvent={onHostEvent}
         retryRuntime={vi.fn()}
       >
-        {(session) => {
-          activeSession = session;
-          return <div>{session?.spaceId ?? "none"}</div>;
+        {(composition) => {
+          activeSession = composition?.session ?? null;
+          return <div>{composition?.session?.spaceId ?? "none"}</div>;
         }}
       </SpaceSessionRoot>,
     );

@@ -3,7 +3,7 @@ title: "企业空间Session组合根与Kernel Gateway启动方案"
 description: "定义真实spaceId的权威来源、NestJS启动切片、浏览器Session装配和Protyle迁移前置门禁"
 author: "Codex"
 date: "2026-07-14"
-version: "1.9.4"
+version: "1.9.5"
 status: "approved"
 tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 ---
@@ -39,6 +39,7 @@ tags: ["architecture", "space", "session", "nestjs", "prisma", "kernel-gateway"]
 | 1.9.2 | 2026-07-18 | Codex | 按ADR-021固定跨链路校验owner，删除浏览器Transport对已收敛内容身份的重复拦截 |
 | 1.9.3 | 2026-07-18 | Codex | 以响应级撤权标记区分隐藏式404与Kernel业务404 |
 | 1.9.4 | 2026-07-19 | Codex | 对齐服务目录到真实Vite Core的生产接线与尚未执行的P3/P5验证状态 |
+| 1.9.5 | 2026-07-19 | Codex | 固定目录选择与唯一SpaceSession的代次能力及render-prop组合合同 |
 
 ## Table of Contents
 
@@ -156,7 +157,7 @@ React空间路由是浏览器唯一组合根，职责限定为：
 - B4才在同一组合根中把Session、目录选择的唯一`notebookId + documentId`和由角色派生的宿主`readOnly`交给`ProtyleHost`与公共Factory。
 - 在路由空间身份变化或组件卸载时按Session合同有序销毁。
 
-Session是带资源生命周期的非序列化对象，由空间路由组件直接拥有并以直接render-prop交给唯一工作台owner，不进入Zustand或全局Context。Zustand只保存跨页面且不持久化的CSRF token，以及跨文档树与编辑器共享的当前`spaceId + notebookId + documentId`选择；TanStack Query保存服务端返回的组织、空间、角色、启动状态和目录分页，目录数组不复制进store。
+Session是带资源生命周期的非序列化对象，由空间路由组件直接拥有并以一个带`ContentSelectionScope`的直接render-prop交给唯一工作台owner，不进入Zustand或全局Context。Scope只属于当前授权空间路由代次，提供`selectDocument`和`clearSelection`能力；旧代次的迟到回调在写入点拒绝。Zustand只保存跨页面且不持久化的当前`spaceId + notebookId + documentId`选择与CSRF token，TanStack Query保存服务端返回的组织、空间、角色、启动状态和目录分页，目录数组、Session和Scope不复制进store。
 
 S1 React路由固定为`/login`、`/spaces`和`/organizations/:organizationId/spaces/:spaceId`。URL是当前空间唯一事实源；S1阶段TanStack Query拥有授权空间摘要与启动响应，Zustand只保存不持久化的CSRF token，S3再按4.2节增加当前三ID选择；退出或401同时清空两者，组织、空间、角色和Kernel状态不复制进store。登录深链以`returnTo`保存同源站内路径，解析后只接受以`/`开头且不以`//`开头的pathname、search与hash组合，拒绝凭据、外部origin和协议相对地址；主动退出不保留`returnTo`。授权空间与启动查询覆盖全局30秒`staleTime`，固定`staleTime: 0`及`refetchOnMount: "always"`，退出或401清空整个QueryClient；独立空间查询按路由键隔离，工作台名称从当前授权空间摘要就近派生，启动响应继续只承载ID、角色与状态。
 
@@ -337,7 +338,7 @@ interface ApiProblem {
 
 Kernel只复用现有笔记本排序与一层文档排序，在模型边界把路径记录投影为最小项。父文档必须在声明的内容库中解析为root且属于同一笔记本；普通库使用全局内容store，加密库使用该笔记本store，禁止全局扫描猜所属库。加密目录响应持有对应响应读门直到JSON写完；锁定竞态不输出旧标题。Nest对Kernel JSON设置1 MiB上限并用contracts Zod schema解析，浏览器再解析公共响应；校验位于低频网络边界且每页有界，不进入编辑热路径。
 
-目录Query key完整包含组织、空间、笔记本、根/父文档和offset，AbortSignal贯穿请求。首次没有有效选择时按笔记本和文档权威顺序选择首个完整目录项；切空间、认证/授权失效、锁态变化或generation变化立即使旧页和选择失去提交资格。初次失败不创建Protyle，展开失败保留既有节点并显示未完成，不把错误当空数组或切换备用文档。
+目录Query key完整包含组织、空间、笔记本、根/父文档和offset，AbortSignal贯穿请求。首次没有有效选择时按笔记本和文档权威顺序选择首个完整目录项；选择必须经当前`ContentSelectionScope`提交。切空间、认证/授权失效、锁态变化或generation变化立即使旧页和选择失去提交资格，迟到的同空间旧代也不能写入当前选择。初次失败不创建Protyle，展开失败保留既有节点并显示未完成，不把错误当空数组或切换备用文档。
 
 ### 5.5 Kernel Gateway合同
 
@@ -420,7 +421,7 @@ interface ProtyleResourcePort {
   -> Protyle Core
 ```
 
-每个事实只有一个所有者。SystemInstallation只表达初始化是否完成，PostgreSQL拥有账号、会话、空间和角色，路由参数只定位查询，TanStack Query拥有浏览器服务端目录视图，Zustand只拥有内存CSRF和当前三ID选择，Kernel实例注册表拥有内部路由，Session拥有浏览器运行时资源，Kernel拥有内容。
+每个事实只有一个所有者。SystemInstallation只表达初始化是否完成，PostgreSQL拥有账号、会话、空间和角色，路由参数只定位查询，TanStack Query拥有浏览器服务端目录视图，Zustand只拥有内存CSRF和当前三ID选择，ContentSelectionScope拥有该选择的可提交代次，Kernel实例注册表拥有内部路由，Session拥有浏览器运行时资源，Kernel拥有内容。
 
 ### 6.2 状态与失效
 
@@ -434,7 +435,7 @@ interface ProtyleResourcePort {
 - `kernelState`不是Session内部可写状态；只有启动响应为`ready`时创建Session。
 - 切空间先销毁旧Session，再请求并创建新空间Session，不同时持有两个活动空间Runtime。
 - Kernel不可用只阻断提交并允许用户显式重新查询启动状态，不切换备用地址、不自动重复写入。
-- 目录请求按空间generation和完整Query key隔离；切空间、401、隐藏式404或锁态变化清除当前选择并取消旧页，迟到结果不能恢复旧树或创建Core。503和网络失败不伪装为空目录，已打开内容按既有Kernel故障规则保留。
+- 目录请求按空间Scope generation、目录请求generation和完整Query key隔离；切空间、401、隐藏式404或锁态变化清除当前选择并取消旧页，迟到结果不能恢复旧树或创建Core。503和网络失败不伪装为空目录，已打开内容按既有Kernel故障规则保留。
 
 撤权或认证失效后的浏览器状态机固定为：递增路由代次并停止新命令；立即收紧宿主只读与提交状态；等待当前`Session.dispose()`完成；卸载并清除编辑器DOM且不复制正文快照；再失效认证或Bootstrap查询。只有与当前路由代次一致的新授权响应才能创建后继Session。已渲染内容只保留到有序销毁完成，认证或权限失效后不留下惰性内容副本；Kernel不可用和网络失败不销毁Session，继续保留当前内容并等待用户显式重试。
 
@@ -473,7 +474,7 @@ Auth/Authorization mutation commit
 | 数据流 | 唯一校验owner | 下游只消费 |
 | --- | --- | --- |
 | 目录HTTP路径、查询和响应 | `ZodValidationPipe`、`ContentDirectoryService`与Web `requestJson`，分别对应各自网络边界 | 规范化路径参数、Kernel目录合同和公开目录项 |
-| 目录项到ProtyleTransport | 目录选择Store与Factory绑定完整三ID | Transport只序列化请求，不重新拦截内容身份 |
+| 目录项到ProtyleTransport | 当前`ContentSelectionScope`与Factory绑定完整三ID | Transport只序列化请求，不重新拦截内容身份；旧Scope提交在组合根拒绝 |
 | 浏览器Gateway到Kernel | `KernelGatewayAdmission`、`KernelPrivateClient`和Go `serviceauth.Middleware`，分别对应三段传输 | 结构化身份、受策略重建的请求头和请求上下文 |
 | 内容库所有权与生命周期 | Kernel model及加密响应读门 | 已解析的库、root和父文档归属，不重新解析HTTP格式 |
 
@@ -681,7 +682,7 @@ Browser integration允许拦截外部身份/空间HTTP，配置只启动Vite Web
 1. 在contracts声明三个目录路径、Zod/OpenAPI schema、128项分页与最小字段；在authorization的唯一策略表声明两个`identity: service` Kernel内部目录路由，重复键启动失败。
 2. 在Kernel实现开放笔记本与一层文档目录模型、真实父文档内容库校验、加密响应门、锁态和最小JSON投影；同一声明同时注册内部路由与身份要求，目录使用服务身份，分享继续强制内容身份，WebSocket使用查询身份。
 3. 在现有Kernel Gateway模块用原生`@Controller/@Get`、认证metadata、Pipe、singleton Service与构造器DI实现公共目录；先复验空间读取权限，再以mTLS/JWT调用私网目录并有界解析响应，不增加自定义registry。
-4. 在Web实现TanStack Query目录分页、最小Zustand三ID选择、树owner与自动首文档选择；Session由空间路由直接拥有，目录数组、Session和Core不进store。
+4. 在Web实现TanStack Query目录分页、最小Zustand三ID选择、树owner与自动首文档选择；`SpaceSessionRoot`激活唯一`ContentSelectionScope`并通过render-prop交付Session、选择和有代次的选择命令，目录数组、Scope、Session和Core不进store。
 5. 实现生产HostPort、正式零插件PluginPort、Registry、绑定空间Gateway的Transport、ResourcePort、Menu、Overlay、完整Runtime和Session组合，不接入编辑器Core。
 6. 仅在授权启动状态为`ready`时创建Session，切空间和撤权按“冻结命令、等待dispose、清DOM、失效目录与选择、代次校验”顺序销毁。
 7. 以非编辑器就绪状态证明完整Runtime和真实Session可由路由持有，并证明目录能产出完整身份；不使用占位能力、测试Session、测试Factory、硬编码空间ID、空文档ID或旧路径。
