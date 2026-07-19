@@ -27,6 +27,9 @@ Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidat
 | 空间生命周期 | `/api/v1/organizations/{organizationId}/spaces` | 组织 owner/admin，或该空间的有效 `admin` |
 | 空间成员/组授权 | `/.../spaces/{spaceId}/members`、`/groups` | 组织 manager 或空间 `admin`；目标用户/组必须属于同一组织 |
 | 委派候选读取 | `/.../spaces/{spaceId}/member-candidates`、`/group-candidates` | 与空间管理相同；只返回活跃组织用户/用户组 |
+| OIDC Provider | `/api/v1/organizations/{organizationId}/oidc-providers` | 仅活跃组织 owner；Provider 状态变化不向普通 admin 暴露管理入口 |
+
+管理摘要只投影调用方实际可达的组织能力：普通组织 admin 不包含 `oidc` 或 `ownership`；这两个能力分别要求 owner 权限。这样 React 菜单、深链重定向与服务端授权保持同一事实，不会显示必然返回 `403` 的 OIDC 页面。
 
 管理页面的 TanStack Query 键包含完整组织与空间身份。委派空间管理员使用候选读取入口，不访问需要组织管理能力的全量组织目录，因此新增授权不会因缺少组织级能力而退化为不可用状态。
 

@@ -27,11 +27,11 @@ const ORGANIZATION_ADMIN_CAPABILITIES = [
   "members",
   "groups",
   "spaces",
-  "oidc",
   "audit",
 ] as const satisfies readonly OrganizationManagementCapability[];
 const ORGANIZATION_OWNER_CAPABILITIES = [
   ...ORGANIZATION_ADMIN_CAPABILITIES,
+  "oidc",
   "ownership",
 ] as const satisfies readonly OrganizationManagementCapability[];
 const SPACE_ADMIN_CAPABILITIES = [
