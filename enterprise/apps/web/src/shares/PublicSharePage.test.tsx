@@ -34,9 +34,9 @@ function createTestQueryClient() {
   });
 }
 
-function renderShare(path: string) {
+function renderShare(path: string, queryClient = createTestQueryClient()) {
   return render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/shares/:shareToken" element={<PublicSharePage />} />
@@ -92,7 +92,9 @@ describe("public document shares", () => {
             SHARE_TOKEN +
             "/assets/" +
             ASSET_ID +
-            '"><script>window.compromised=true</script><a href="javascript:alert(1)">危险链接</a>',
+            '"><script>window.compromised=true</script><a href="javascript:alert(1)">危险链接</a>' +
+            '<a data-document-id="20260718000001-private" href="/organizations/private/spaces/private">内部链接</a>' +
+            '<a href="https://docs.example.test/guide">外部链接</a><svg><script>window.compromised=true</script></svg>',
           title: "深空工程手册",
         });
       }
@@ -126,7 +128,54 @@ describe("public document shares", () => {
       "/api/v1/shares/" + SHARE_TOKEN + "/assets/" + ASSET_ID,
     );
     expect(container.querySelector("script")).toBeNull();
+    expect(container.querySelector("svg")).toBeNull();
     expect(screen.getByText("危险链接")).not.toHaveAttribute("href");
+    expect(screen.getByText("内部链接")).not.toHaveAttribute("href");
+    expect(screen.getByText("内部链接")).not.toHaveAttribute(
+      "data-document-id",
+    );
+    expect(screen.getByText("外部链接")).toHaveAttribute(
+      "href",
+      "https://docs.example.test/guide",
+    );
+    expect(screen.getByText("外部链接")).toHaveAttribute(
+      "rel",
+      "noreferrer noopener",
+    );
+    expect(documentReads).toBe(2);
+  });
+
+  it("does not render a cached document while the current share state is revalidated", async () => {
+    let documentReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => {
+        documentReads += 1;
+        if (documentReads === 1) {
+          return jsonResponse({
+            assets: [],
+            documentId: "20260718000000-abcdefg",
+            html: "<p>即将撤销的正文</p>",
+            title: "短期分享",
+          });
+        }
+        return jsonResponse(
+          { code: "not-found", requestId: REQUEST_ID, status: 404 },
+          404,
+        );
+      }),
+    );
+
+    const queryClient = createTestQueryClient();
+    const first = renderShare("/shares/" + SHARE_TOKEN, queryClient);
+    expect(await screen.findByText("即将撤销的正文")).toBeVisible();
+    first.unmount();
+
+    renderShare("/shares/" + SHARE_TOKEN, queryClient);
+    expect(
+      await screen.findByRole("heading", { name: "分享不存在或已失效" }),
+    ).toBeVisible();
+    expect(screen.queryByText("即将撤销的正文")).not.toBeInTheDocument();
     expect(documentReads).toBe(2);
   });
 

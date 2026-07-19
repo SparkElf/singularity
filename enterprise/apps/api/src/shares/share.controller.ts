@@ -70,7 +70,10 @@ import { ShareService } from "./share.service.js";
 function setPublicHeaders(reply: HttpReplyBoundary): void {
   reply
     .header("Cache-Control", "no-store")
-    .header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+    .header(
+      "Content-Security-Policy",
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+    )
     .header("Referrer-Policy", "no-referrer")
     .header("X-Content-Type-Options", "nosniff")
     .header("X-Robots-Tag", "noindex, nofollow, noarchive");

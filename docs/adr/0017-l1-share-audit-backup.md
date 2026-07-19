@@ -3,7 +3,7 @@ title: "ADR-017: L1分享、审计、备份恢复与运行观测"
 description: "确定L1只读分享、可验证审计链、隔离恢复和后台采样的长期边界"
 author: "Codex"
 date: "2026-07-19"
-version: "1.7.0"
+version: "1.8.0"
 status: "accepted"
 tags: ["adr", "share", "audit", "backup", "observability"]
 ---
@@ -44,6 +44,8 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 5. Kernel按明确的`notebookId`和`documentId`解析当前文档闭包。只允许渲染该文档、该文档内实际引用且仍在同一笔记本中的块，以及该闭包实际使用的本地附件；不提供搜索、图谱、任意块、任意文件或跨文档浏览接口。
 6. 分享响应使用`noindex`、`no-store`、`nosniff`和严格CSP。HTML、JavaScript、SVG、XML、PDF、未知类型及导出HTML一律作为附件下载；允许内联的图片、音频和视频也只能从当前闭包内的资源标识读取，不能用原始路径探测工作空间。
 7. 分享访问记录稳定标签`share.access`，只记录`shareId`、结果、来源摘要和`requestId`，不记录分享令牌、密码、挑战Cookie、正文、附件路径或Kernel地址。
+8. 公开Web壳对`/shares/<token>`使用`no-store`、`noindex`和不允许表单提交的CSP；Web边缘访问日志将分享令牌路径归一化为占位符并省略Referer。公开React页面挂载时总是重新读取当前分享，缓存不会在撤销后继续提供正文；同源内部链接和内容身份`data-*`属性在公开投影中删除。
+9. Kernel跨进程响应由`ShareKernelClient`在字节解析边界核对返回`documentId`与请求中的显式身份，不匹配按服务不可用处理；控制面不从响应或首个实例推断笔记本、文档或空间。
 
 ### 追加审计与归档
 
@@ -96,7 +98,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 
 共享集成必须补齐`DocumentShare`、`ShareChallenge`、`AuditEvent`、组织审计序列、`SpaceBackup`、`SpaceRestoreJob`、`KernelHealthObservation`和`SpaceCapacityObservation`，并保持上文唯一语义字段。企业管理能力响应和恢复任务集合只投影这些权威授权与任务事实，不保存第二份角色、菜单或当前恢复状态。API领域以明确Repository和Kernel端口表达所需字段，不引入同形DTO映射或内存fallback。Worker的备份和观测消费者必须解析同一个进程内registry，不能退回启动时静态句柄或另建恢复句柄表；观测端口返回样本及本次请求使用的唯一部署句柄，持久化处理器不从响应、首个实例或当前registry反推该身份。
 
-Kernel路由注册必须位于服务认证中间件之后，只接受私网mTLS与短期服务JWT。分享闭包读取、备份创建、恢复校验和观测读取使用不同策略项；浏览器不能直接调用这些Kernel路径。
+Kernel路由注册必须位于服务认证中间件之后，只接受私网mTLS与短期服务JWT。分享闭包读取、备份创建、恢复校验和观测读取使用不同策略项；浏览器不能直接调用这些Kernel路径。分享HTTP、Go投影、React组件和浏览器集成合同必须进入各自标准runner，且不以静态字符串扫描替代运行时证据。
 
 ## Consequences
 

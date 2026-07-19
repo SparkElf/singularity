@@ -16,6 +16,9 @@ import {
   ORGANIZATION_SPACE_OBSERVABILITY_CONTROLLER_PATH,
   ORGANIZATION_SPACE_SHARES_CONTROLLER_PATH,
   PUBLIC_SHARE_CONTROLLER_PATH,
+  CHANGE_DOCUMENT_SHARE_PASSWORD_REQUEST_OPENAPI_SCHEMA,
+  CREATE_DOCUMENT_SHARE_REQUEST_OPENAPI_SCHEMA,
+  CREATE_SHARE_CHALLENGE_REQUEST_OPENAPI_SCHEMA,
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
   SPACE_RUNTIME_CONTROLLER_PATH,
   SPACE_RUNTIME_PATH_TEMPLATE,
@@ -287,6 +290,18 @@ describe("HTTP contracts", () => {
       "/api/v1/organizations/:organizationId/spaces/:spaceId/shares",
     );
     assert.equal(PUBLIC_SHARE_CONTROLLER_PATH, "/api/v1/shares/:shareToken");
+    assert.equal(
+      CREATE_DOCUMENT_SHARE_REQUEST_OPENAPI_SCHEMA.properties.password.minLength,
+      12,
+    );
+    assert.equal(
+      CHANGE_DOCUMENT_SHARE_PASSWORD_REQUEST_OPENAPI_SCHEMA.properties.password.maxLength,
+      128,
+    );
+    assert.equal(
+      CREATE_SHARE_CHALLENGE_REQUEST_OPENAPI_SCHEMA.properties.password.minLength,
+      12,
+    );
   });
 
   test("normalizes audit pagination and exposes every control-plane target", () => {

@@ -39,6 +39,7 @@ const SHARE_PASSWORD = "protected share password";
 const ROTATED_SHARE_PASSWORD = "rotated share password";
 const NOTEBOOK_ID = "20260718010101-abcdefg";
 const DOCUMENT_ID = "20260718010102-hijklmn";
+const OTHER_DOCUMENT_ID = "20260718010103-opqrstu";
 const ASSET_ID = "a".repeat(64);
 const ASSET_BODY = Buffer.from("share asset", "utf8");
 
@@ -231,6 +232,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
   async function createShare(
     graph: AuthenticatedGraph,
     password: string | null,
+    documentId = DOCUMENT_ID,
   ) {
     const path = buildPath(ORGANIZATION_SPACE_SHARES_PATH_TEMPLATE, {
       organizationId: graph.organizationId,
@@ -238,7 +240,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     });
     const response = await fetch(`${testApi.baseUrl}${path}`, {
       body: JSON.stringify({
-        documentId: DOCUMENT_ID,
+        documentId,
         expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         notebookId: NOTEBOOK_ID,
         password,
@@ -314,6 +316,55 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     );
   });
 
+  test("rejects a Kernel projection whose document identity differs from the share", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, null, OTHER_DOCUMENT_ID);
+    const response = await fetch(
+      `${testApi.baseUrl}${buildPath(PUBLIC_SHARE_PATH_TEMPLATE, {
+        shareToken: share.shareToken,
+      })}`,
+    );
+
+    expect(response.status).toBe(503);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "service-unavailable",
+    );
+    const request = kernel.requests.at(-1);
+    expect(request?.path).toBe("/internal/enterprise/share/document");
+    expect(request?.headers["x-singularity-notebook-id"]).toBe(NOTEBOOK_ID);
+    expect(request?.headers["x-singularity-document-id"]).toBe(
+      OTHER_DOCUMENT_ID,
+    );
+  });
+
+  test("rechecks expiry before each public document read", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, null);
+    const publicPath = buildPath(PUBLIC_SHARE_PATH_TEMPLATE, {
+      shareToken: share.shareToken,
+    });
+    const initialRead = await fetch(`${testApi.baseUrl}${publicPath}`);
+    expect(initialRead.status).toBe(200);
+    await initialRead.arrayBuffer();
+
+    const now = Date.now();
+    await database.documentShare.update({
+      where: { id: share.shareId },
+      data: {
+        createdAt: new Date(now - 2 * 60 * 60_000),
+        expiresAt: new Date(now - 60 * 60_000),
+      },
+    });
+    const requestCount = kernel.requests.length;
+    const expiredRead = await fetch(`${testApi.baseUrl}${publicPath}`);
+
+    expect(expiredRead.status).toBe(404);
+    expect(apiProblemSchema.parse(await expiredRead.json()).code).toBe(
+      "not-found",
+    );
+    expect(kernel.requests).toHaveLength(requestCount);
+  });
+
   test("invalidates password challenges on rotation and revocation", async () => {
     const graph = await createAuthenticatedGraph();
     const share = await createShare(graph, SHARE_PASSWORD);
@@ -350,9 +401,10 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     });
     expect(document.status).toBe(200);
     expect(document.headers.get("cache-control")).toBe("no-store");
-    expect(document.headers.get("content-security-policy")).toContain(
-      "default-src 'none'",
+    expect(document.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
     );
+    expect(document.headers.get("referrer-policy")).toBe("no-referrer");
     expect(document.headers.get("x-content-type-options")).toBe("nosniff");
     expect(document.headers.get("x-robots-tag")).toContain("noindex");
     const payload = sharedDocumentPayloadSchema.parse(await document.json());
@@ -370,6 +422,14 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     expect(asset.status).toBe(200);
     expect(asset.headers.get("content-type")).toBe("image/png");
     expect(asset.headers.get("content-disposition")).toContain("inline");
+    expect(asset.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+    );
+    expect(asset.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(asset.headers.get("x-robots-tag")).toBe(
+      "noindex, nofollow, noarchive",
+    );
     expect(Buffer.from(await asset.arrayBuffer())).toEqual(ASSET_BODY);
 
     const passwordPath = buildPath(
@@ -417,5 +477,6 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
       headers: { Cookie: secondChallengeCookie },
     });
     expect(afterRevocation.status).toBe(404);
+    expect(afterRevocation.headers.get("cache-control")).toBe("no-store");
   });
 });

@@ -62,7 +62,7 @@ func EnterpriseReadSharedDocument(c *gin.Context) {
 	}
 	document, err := model.ReadEnterpriseSharedDocument(identity.NotebookID, identity.DocumentID)
 	if err != nil {
-		enterpriseModelError(c, err, model.ErrEnterpriseShareDocumentNotFound)
+		enterpriseModelError(c, err, model.ErrEnterpriseShareDocumentNotFound, "share.document")
 		return
 	}
 	c.Header("Cache-Control", "no-store")
@@ -82,7 +82,7 @@ func EnterpriseReadSharedAsset(c *gin.Context) {
 	}
 	asset, err := model.ReadEnterpriseSharedAsset(identity.NotebookID, identity.DocumentID, assetID)
 	if err != nil {
-		enterpriseModelError(c, err, model.ErrEnterpriseShareAssetNotFound)
+		enterpriseModelError(c, err, model.ErrEnterpriseShareAssetNotFound, "share.asset")
 		return
 	}
 	disposition := mime.FormatMediaType(asset.Disposition, map[string]string{"filename": asset.FileName})
@@ -149,12 +149,13 @@ func enterpriseContentIdentity(c *gin.Context) (serviceauth.ContentIdentity, boo
 	return identity, true
 }
 
-func enterpriseModelError(c *gin.Context, err error, notFoundError error) {
+func enterpriseModelError(c *gin.Context, err error, notFoundError error, operation string) {
 	if errors.Is(err, notFoundError) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 	requestID := c.GetHeader(serviceauth.RequestIDHeader)
-	logging.LogErrorf("kernel.route enterprise handler failed [requestId=%s]: %s", requestID, err)
+	// 避免把文件系统和解析细节写入 Kernel 日志；请求 ID 仍可关联控制面的访问记录。
+	logging.LogErrorf("kernel.route enterprise handler failed [requestId=%s, operation=%s]", requestID, operation)
 	c.AbortWithStatus(http.StatusServiceUnavailable)
 }
