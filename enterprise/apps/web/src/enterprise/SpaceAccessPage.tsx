@@ -38,17 +38,17 @@ import {
 } from "@/enterprise/components.tsx";
 import {
   enterpriseManagementAccessQueryKey,
-  getOrganizationGroups,
-  getOrganizationMembers,
+  getSpaceGroupCandidates,
   getSpaceGroupGrants,
+  getSpaceMemberCandidates,
   getSpaceMembers,
-  organizationGroupsQueryKey,
-  organizationMembersQueryKey,
   revokeSpaceGroupGrant,
   revokeSpaceMember,
   setSpaceGroupGrant,
   setSpaceMember,
+  spaceGroupCandidatesQueryKey,
   spaceGroupGrantsQueryKey,
+  spaceMemberCandidatesQueryKey,
   spaceMembersQueryKey,
 } from "@/enterprise/api.ts";
 import { authorizedSpacesQueryKey } from "@/spaces/api.ts";
@@ -76,13 +76,15 @@ export function SpaceAccessPage() {
     queryKey: spaceGroupGrantsQueryKey(organizationId, spaceId),
     queryFn: ({ signal }) => getSpaceGroupGrants(organizationId, spaceId, signal),
   });
-  const organizationMembersQuery = useQuery({
-    queryKey: organizationMembersQueryKey(organizationId),
-    queryFn: ({ signal }) => getOrganizationMembers(organizationId, signal),
+  const memberCandidatesQuery = useQuery({
+    queryKey: spaceMemberCandidatesQueryKey(organizationId, spaceId),
+    queryFn: ({ signal }) =>
+      getSpaceMemberCandidates(organizationId, spaceId, signal),
   });
-  const groupsQuery = useQuery({
-    queryKey: organizationGroupsQueryKey(organizationId),
-    queryFn: ({ signal }) => getOrganizationGroups(organizationId, signal),
+  const groupCandidatesQuery = useQuery({
+    queryKey: spaceGroupCandidatesQueryKey(organizationId, spaceId),
+    queryFn: ({ signal }) =>
+      getSpaceGroupCandidates(organizationId, spaceId, signal),
   });
   const invalidateAuthorization = async () => {
     await Promise.all([
@@ -147,7 +149,7 @@ export function SpaceAccessPage() {
 
   const queryError = membersQuery.error ?? grantsQuery.error;
   const directoryError =
-    organizationMembersQuery.error ?? groupsQuery.error;
+    memberCandidatesQuery.error ?? groupCandidatesQuery.error;
   if (queryError) {
     return (
       <PageFailure
@@ -155,8 +157,8 @@ export function SpaceAccessPage() {
         onRetry={() => {
           void membersQuery.refetch();
           void grantsQuery.refetch();
-          void organizationMembersQuery.refetch();
-          void groupsQuery.refetch();
+          void memberCandidatesQuery.refetch();
+          void groupCandidatesQuery.refetch();
         }}
       />
     );
@@ -165,12 +167,12 @@ export function SpaceAccessPage() {
   const members = membersQuery.data?.members ?? [];
   const grants = grantsQuery.data?.grants ?? [];
   const memberIds = new Set(members.map((member) => member.userId));
-  const memberCandidates = (organizationMembersQuery.data?.members ?? []).filter(
-    (member) => member.status === "active" && !memberIds.has(member.userId),
+  const memberCandidates = (memberCandidatesQuery.data?.members ?? []).filter(
+    (member) => !memberIds.has(member.userId),
   );
   const grantedGroupIds = new Set(grants.map((grant) => grant.groupId));
-  const groupCandidates = (groupsQuery.data?.groups ?? []).filter(
-    (group) => group.status === "active" && !grantedGroupIds.has(group.groupId),
+  const groupCandidates = (groupCandidatesQuery.data?.groups ?? []).filter(
+    (group) => !grantedGroupIds.has(group.groupId),
   );
   const mutationError =
     setMemberMutation.error ??
@@ -380,7 +382,7 @@ export function SpaceAccessPage() {
               <option value="">选择用户组</option>
               {groupCandidates.map((group) => (
                 <option key={group.groupId} value={group.groupId}>
-                  {group.name}
+                  {group.groupName}
                 </option>
               ))}
             </Select>
