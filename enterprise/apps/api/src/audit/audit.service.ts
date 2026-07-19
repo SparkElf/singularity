@@ -23,11 +23,20 @@ export class AuditService {
     limit: number;
     organizationId: string;
   }): Promise<AuditEventView[]> {
-    await this.organizations.requireManager(
-      input.actorUserId,
-      input.organizationId,
-    );
-    return this.#query(input.organizationId, null, input.beforeSequence, input.limit);
+    return this.database.client.$transaction(async (transaction) => {
+      await this.organizations.requireManagerInTransaction(
+        transaction,
+        input.actorUserId,
+        input.organizationId,
+      );
+      return this.#query(
+        transaction,
+        input.organizationId,
+        null,
+        input.beforeSequence,
+        input.limit,
+      );
+    });
   }
 
   async listSpaceEvents(input: {
@@ -37,26 +46,31 @@ export class AuditService {
     organizationId: string;
     spaceId: string;
   }): Promise<AuditEventView[]> {
-    await this.spaces.requireSpaceManager(
-      input.actorUserId,
-      input.organizationId,
-      input.spaceId,
-    );
-    return this.#query(
-      input.organizationId,
-      input.spaceId,
-      input.beforeSequence,
-      input.limit,
-    );
+    return this.database.client.$transaction(async (transaction) => {
+      await this.spaces.requireSpaceManagerInTransaction(
+        transaction,
+        input.actorUserId,
+        input.organizationId,
+        input.spaceId,
+      );
+      return this.#query(
+        transaction,
+        input.organizationId,
+        input.spaceId,
+        input.beforeSequence,
+        input.limit,
+      );
+    });
   }
 
   async #query(
+    transaction: Prisma.TransactionClient,
     organizationId: string,
     spaceId: string | null,
     beforeSequence: bigint | null,
     limit: number,
   ): Promise<AuditEventView[]> {
-    const rows = await this.database.client.$queryRaw<AuditEventRow[]>(
+    const rows = await transaction.$queryRaw<AuditEventRow[]>(
       Prisma.sql`
         SELECT
           "id" AS "auditEventId",

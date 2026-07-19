@@ -495,7 +495,11 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
     });
     expect(response.status).toBe(200);
     expect(spaceObservabilitySchema.parse(await response.json())).toEqual({
-      capacity: { reason: "sample-failed", status: "unavailable" },
+      capacity: {
+        reason: "sample-failed",
+        sampledAt: sampledAt.toISOString(),
+        status: "unavailable",
+      },
       health: {
         reason: "sample-failed",
         sampledAt: sampledAt.toISOString(),

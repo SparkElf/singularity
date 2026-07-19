@@ -443,6 +443,28 @@ describe("HTTP contracts", () => {
       false,
     );
     assert.equal(
+      spaceObservabilitySchema.safeParse({
+        capacity: { reason: "sample-failed", status: "unavailable" },
+        health: { reason: "no-sample", status: "unavailable" },
+        organizationId,
+        spaceId,
+      }).success,
+      false,
+    );
+    assert.equal(
+      spaceObservabilitySchema.safeParse({
+        capacity: {
+          reason: "sample-failed",
+          sampledAt,
+          status: "unavailable",
+        },
+        health: { reason: "no-sample", status: "unavailable" },
+        organizationId,
+        spaceId,
+      }).success,
+      true,
+    );
+    assert.equal(
       ORGANIZATION_SPACE_OBSERVABILITY_CONTROLLER_PATH,
       "/api/v1/organizations/:organizationId/spaces/:spaceId/observability",
     );

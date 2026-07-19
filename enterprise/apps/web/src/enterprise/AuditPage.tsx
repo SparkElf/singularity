@@ -181,7 +181,7 @@ function AuditPageContent({
               <TableHead>目标</TableHead>
               <TableHead>范围</TableHead>
               <TableHead>结果</TableHead>
-              <TableHead>链校验</TableHead>
+              <TableHead>链信息</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

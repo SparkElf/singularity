@@ -446,6 +446,24 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
       method: "PATCH",
     });
     expect(rotated.status).toBe(204);
+    const auditPath = buildPath(ORGANIZATION_AUDIT_EVENTS_PATH_TEMPLATE, {
+      organizationId: graph.organizationId,
+    });
+    const audit = await fetch(`${testApi.baseUrl}${auditPath}`, {
+      headers: { Cookie: graph.cookie },
+    });
+    expect(audit.status).toBe(200);
+    expect(
+      auditEventsResponseSchema
+        .parse(await audit.json())
+        .events.filter((event) => event.action === "share.password-change"),
+    ).toEqual([
+      expect.objectContaining({
+        spaceId: graph.spaceId,
+        targetId: share.shareId,
+        targetType: "share",
+      }),
+    ]);
     const oldChallenge = await fetch(`${testApi.baseUrl}${publicPath}`, {
       headers: { Cookie: firstChallengeCookie },
     });

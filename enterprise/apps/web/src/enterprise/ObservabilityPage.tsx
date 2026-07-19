@@ -142,7 +142,14 @@ function CapacitySection({
     <section className="min-w-0">
       <SectionHeading title="空间容量" />
       {capacity.status === "unavailable" ? (
-        <UnavailableObservation reason={capacity.reason} />
+        <>
+          <UnavailableObservation reason={capacity.reason} />
+          {"sampledAt" in capacity ? (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              最近采样：{formatDate(capacity.sampledAt)}
+            </p>
+          ) : null}
+        </>
       ) : (
         <div>
           <Metric icon={DatabaseIcon} label="数据文件" value={formatBytes(capacity.dataBytes)} />
