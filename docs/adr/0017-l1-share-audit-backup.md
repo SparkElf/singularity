@@ -3,7 +3,7 @@ title: "ADR-017: L1分享、审计、备份恢复与运行观测"
 description: "确定L1只读分享、可验证审计链、隔离恢复和后台采样的长期边界"
 author: "Codex"
 date: "2026-07-19"
-version: "1.6.0"
+version: "1.7.0"
 status: "accepted"
 tags: ["adr", "share", "audit", "backup", "observability"]
 ---
@@ -28,6 +28,12 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 2. Go Kernel只通过服务认证的私有接口提供当前文档闭包、受控备份暂存、隔离恢复校验以及后台采样结果。Kernel接口不接收组织角色、不查询企业数据库，也不决定公网分享是否有效。
 3. 私有对象存储保存备份包和审计归档。对象键由控制面生成且保持不透明，公共API不返回对象键、工作空间路径、Kernel地址或存储根目录。
 4. Worker拥有有界任务领取、租约、重试状态和归档调度。API只创建任务和读取状态，不在请求生命周期内压缩工作空间、上传大对象、恢复空间或遍历容量。
+
+### 企业管理能力发现
+
+1. 已认证浏览器通过唯一只读接口取得当前账号的企业管理能力。响应按组织返回组织能力及逐空间能力，不返回角色、全组织空间能力副本或供前端猜测权限的替代字段；菜单、深链和操作入口只消费该显式能力合同。
+2. 组织`owner`和`admin`的组织能力、组织`owner`独有的所有权转移能力，以及组织普通成员通过直接成员关系或活动用户组获得的空间`admin`能力，都由PostgreSQL活动用户、组织、组织成员、空间、空间成员和用户组授权事实一次派生。没有任一管理能力的组织不进入响应，未激活的恢复目标也不作为可管理空间暴露。
+3. 授权空间列表与企业管理能力是两个独立只读事实。管理能力查询失败、暂停或重试不能隐藏已经成功重验的普通授权空间；单空间自动进入只在管理能力查询本轮成功且明确返回零管理入口后发生。前端用固定界面优先级在能力集合中选择首个可见页面，不把服务端数组顺序当作路由事实。
 
 ### 文档只读分享
 
@@ -56,7 +62,8 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 4. 恢复只能创建新的非活动隔离空间和新的Kernel实例，禁止覆盖或合并到现有在线空间。恢复前依次验证对象摘要、清单格式、Kernel版本兼容、归档路径、条目类型、单项大小、展开总大小和文件摘要；解包过程拒绝符号链接、硬链接、设备文件和路径逃逸。
 5. 解包后Kernel在隔离目录完成结构、SQLite可打开性、`.sy`可解析性、引用索引和清单一致性检查。所有检查通过后任务进入`ready-for-activation`，仍需显式激活；任一步失败都关闭实例并删除整个恢复目标，不保留部分空间或回退到源空间。
 6. 备份不是在线读取事实源，恢复期间不向浏览器提供内容，也不以旧版本兼容、跳过文件或部分成功作为降级路径。
-7. 任务日志稳定标签`backup.job`由`BackupSpaceHandler`和`RestoreSpaceHandler`在领域状态提交后记录；Worker启动对账发现已进入`ready-for-activation`的恢复实例丢失时，`ProcessRestoreDeployment`是该失败转移和目标删除的生产owner，并在同一事务提交后记录一次失败标签。固定字段为`taskKind`、`taskId`、`spaceId`、可选`targetSpaceId`、`status`、`objectKey`、`validationResult`、`reason`、`elapsedMs`和`requestId`。成功路径的`reason`来自显式任务`kind`，失败路径来自显式失败码；`validationResult`只使用`pending`、`passed`、`failed`或`not-completed`。恢复处理器的执行期失败和清理重放都通过恢复任务到备份的作用域关系读取权威不透明对象键；只有启动对账未重新验证对象键，因此该路径的`objectKey`记录`null`。通用Worker租约日志不重复生成该标签，日志不记录正文、对象内容、凭证、错误原文或宿主绝对路径。
+7. 控制面按源空间提供恢复任务集合，使用`createdAt DESC, id ASC`稳定排序并返回每个任务的公开状态、源备份和目标空间身份。备份恢复页面进入时总是读取该集合，因此离开创建响应、刷新或换浏览器后仍可发现运行中及`ready-for-activation`任务；任务身份不依赖URL参数、DOM、前端全局状态或最近一次创建响应。集合存在尚未终止的恢复时不创建第二个恢复，待激活任务直接从集合发起显式激活。
+8. 任务日志稳定标签`backup.job`由`BackupSpaceHandler`和`RestoreSpaceHandler`在领域状态提交后记录；Worker启动对账发现已进入`ready-for-activation`的恢复实例丢失时，`ProcessRestoreDeployment`是该失败转移和目标删除的生产owner，并在同一事务提交后记录一次失败标签。固定字段为`taskKind`、`taskId`、`spaceId`、可选`targetSpaceId`、`status`、`objectKey`、`validationResult`、`reason`、`elapsedMs`和`requestId`。成功路径的`reason`来自显式任务`kind`，失败路径来自显式失败码；`validationResult`只使用`pending`、`passed`、`failed`或`not-completed`。恢复处理器的执行期失败和清理重放都通过恢复任务到备份的作用域关系读取权威不透明对象键；只有启动对账未重新验证对象键，因此该路径的`objectKey`记录`null`。通用Worker租约日志不重复生成该标签，日志不记录正文、对象内容、凭证、错误原文或宿主绝对路径。
 
 ### 健康与容量
 
@@ -87,7 +94,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 
 ## Integration Contracts
 
-共享集成必须补齐`DocumentShare`、`ShareChallenge`、`AuditEvent`、组织审计序列、`SpaceBackup`、`SpaceRestoreJob`、`KernelHealthObservation`和`SpaceCapacityObservation`，并保持上文唯一语义字段。API领域以明确Repository和Kernel端口表达所需字段，不引入同形DTO映射或内存fallback。Worker的备份和观测消费者必须解析同一个进程内registry，不能退回启动时静态句柄或另建恢复句柄表；观测端口返回样本及本次请求使用的唯一部署句柄，持久化处理器不从响应、首个实例或当前registry反推该身份。
+共享集成必须补齐`DocumentShare`、`ShareChallenge`、`AuditEvent`、组织审计序列、`SpaceBackup`、`SpaceRestoreJob`、`KernelHealthObservation`和`SpaceCapacityObservation`，并保持上文唯一语义字段。企业管理能力响应和恢复任务集合只投影这些权威授权与任务事实，不保存第二份角色、菜单或当前恢复状态。API领域以明确Repository和Kernel端口表达所需字段，不引入同形DTO映射或内存fallback。Worker的备份和观测消费者必须解析同一个进程内registry，不能退回启动时静态句柄或另建恢复句柄表；观测端口返回样本及本次请求使用的唯一部署句柄，持久化处理器不从响应、首个实例或当前registry反推该身份。
 
 Kernel路由注册必须位于服务认证中间件之后，只接受私网mTLS与短期服务JWT。分享闭包读取、备份创建、恢复校验和观测读取使用不同策略项；浏览器不能直接调用这些Kernel路径。
 

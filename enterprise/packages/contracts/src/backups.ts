@@ -23,6 +23,13 @@ export const spaceRestoreStatuses = [
   "restoring",
   "ready-for-activation",
 ] as const;
+export const unactivatedSpaceRestoreStatuses = [
+  "queued",
+  "restoring",
+  "ready-for-activation",
+] as const satisfies readonly (typeof spaceRestoreStatuses)[number][];
+export type UnactivatedSpaceRestoreStatus =
+  (typeof unactivatedSpaceRestoreStatuses)[number];
 export const spaceRestoreStatusSchema = z.enum(spaceRestoreStatuses);
 export type SpaceRestoreStatus = z.infer<typeof spaceRestoreStatusSchema>;
 
@@ -101,6 +108,11 @@ export const spaceRestoreSchema = z
   .strict();
 export type SpaceRestoreView = z.infer<typeof spaceRestoreSchema>;
 
+export const spaceRestoresResponseSchema = z
+  .object({ restores: z.array(spaceRestoreSchema) })
+  .strict();
+export type SpaceRestoresResponse = z.infer<typeof spaceRestoresResponseSchema>;
+
 const DATE_TIME_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   format: "date-time",
@@ -159,4 +171,7 @@ export const SPACE_RESTORE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   sourceSpaceId: UUID_OPENAPI_SCHEMA,
   status: { type: "string", enum: [...spaceRestoreStatuses] },
   targetSpaceId: NULLABLE_UUID_OPENAPI_SCHEMA,
+});
+export const SPACE_RESTORES_RESPONSE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  restores: { type: "array", items: SPACE_RESTORE_OPENAPI_SCHEMA },
 });

@@ -6,6 +6,7 @@ import {
   ORGANIZATION_SPACE_BACKUP_RESTORES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_OBSERVABILITY_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE,
   ORGANIZATION_SPACE_RESTORE_ACTIVATION_PATH_TEMPLATE,
   apiProblemSchema,
   loginResponseSchema,
@@ -13,6 +14,7 @@ import {
   spaceBackupsResponseSchema,
   spaceObservabilitySchema,
   spaceRestoreSchema,
+  spaceRestoresResponseSchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, Prisma, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
@@ -324,6 +326,18 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
       restoreId: restore.restoreId,
       sourceSpaceId: graph.spaceId,
       targetSpaceId: restore.targetSpaceId,
+    });
+
+    const listed = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+        spaceId: graph.spaceId,
+      })}`,
+      { headers: { Cookie: graph.cookie } },
+    );
+    expect(listed.status).toBe(200);
+    expect(spaceRestoresResponseSchema.parse(await listed.json())).toEqual({
+      restores: [restore],
     });
   });
 

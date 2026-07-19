@@ -1,10 +1,16 @@
 import { useMemo, useState } from "react";
-import type { AuthorizedSpacesResponse } from "@singularity/contracts";
+import type {
+  AuthorizedSpacesResponse,
+  EnterpriseManagementAccessResponse,
+} from "@singularity/contracts";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRightIcon,
   BookOpenIcon,
+  Building2Icon,
   LogOutIcon,
   OrbitIcon,
+  RefreshCwIcon,
   SearchIcon,
   SearchXIcon,
 } from "lucide-react";
@@ -40,6 +46,12 @@ import {
 } from "@/components/ui/input-group.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
+import {
+  enterpriseManagementAccessQueryKey,
+  getEnterpriseManagementAccess,
+} from "@/enterprise/api.ts";
+import { errorMessage } from "@/enterprise/components.tsx";
+import { enterpriseManagementPath } from "@/enterprise/routes.ts";
 import { roleBadgeVariant, roleLabel } from "@/spaces/space-labels.ts";
 import {
   EXPLICIT_SPACE_LIST_STATE,
@@ -48,6 +60,8 @@ import {
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 
 const EMPTY_SPACES: AuthorizedSpacesResponse["spaces"] = [];
+const EMPTY_MANAGEMENT_ACCESS: EnterpriseManagementAccessResponse["organizations"] =
+  [];
 
 function SpaceListLoading() {
   return (
@@ -62,6 +76,12 @@ function SpaceListLoading() {
 export function SpacesPage() {
   const location = useLocation();
   const spacesQuery = useAuthorizedSpaces();
+  const managementAccessQuery = useQuery({
+    queryKey: enterpriseManagementAccessQueryKey,
+    queryFn: ({ signal }) => getEnterpriseManagementAccess(signal),
+    refetchOnMount: "always",
+    staleTime: 0,
+  });
   const logoutMutation = useLogout();
   const [search, setSearch] = useState("");
   const explicitSpaceList = location.state === EXPLICIT_SPACE_LIST_STATE;
@@ -71,9 +91,25 @@ export function SpacesPage() {
     spacesQuery.isFetchedAfterMount &&
     !spacesQuery.isFetching &&
     !spacesQuery.isPaused;
+  const hasCurrentManagementAccess =
+    managementAccessQuery.isSuccess &&
+    managementAccessQuery.isFetchedAfterMount &&
+    !managementAccessQuery.isFetching &&
+    !managementAccessQuery.isPaused;
   const spaces = hasCurrentAuthorization
     ? spacesQuery.data.spaces
     : EMPTY_SPACES;
+  const managementAccess = hasCurrentManagementAccess
+    ? managementAccessQuery.data.organizations
+    : EMPTY_MANAGEMENT_ACCESS;
+  const managementEntries = useMemo(
+    () =>
+      managementAccess.flatMap((access) => {
+        const path = enterpriseManagementPath(access);
+        return path === null ? [] : [{ access, path }];
+      }),
+    [managementAccess],
+  );
   const normalizedSearch = search.trim().normalize("NFKC").toLocaleLowerCase();
   const filteredSpaces = useMemo(() => {
     if (!normalizedSearch) {
@@ -88,14 +124,19 @@ export function SpacesPage() {
     );
   }, [normalizedSearch, spaces]);
 
-  if (isApiProblem(spacesQuery.error, "unauthenticated")) {
+  if (
+    isApiProblem(spacesQuery.error, "unauthenticated") ||
+    isApiProblem(managementAccessQuery.error, "unauthenticated")
+  ) {
     return <SessionRedirect returnTo={locationTarget(location)} />;
   }
 
   if (
     hasCurrentAuthorization &&
+    hasCurrentManagementAccess &&
     spaces.length === 1 &&
     spaces[0] &&
+    managementEntries.length === 0 &&
     !explicitSpaceList
   ) {
     return <Navigate replace to={spacePagePath(spaces[0])} />;
@@ -127,7 +168,7 @@ export function SpacesPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">选择知识空间</h1>
           <p className="text-sm text-muted-foreground">
-            这里只显示你当前有权访问的空间。
+            这里只显示你当前有权访问的空间与管理范围。
           </p>
         </div>
 
@@ -161,11 +202,104 @@ export function SpacesPage() {
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button onClick={() => void spacesQuery.refetch()} variant="outline">
+              <Button
+                onClick={() => void spacesQuery.refetch()}
+                variant="outline"
+              >
                 重新加载
               </Button>
             </EmptyContent>
           </Empty>
+        ) : null}
+
+        {!managementAccessQuery.isPaused &&
+        (managementAccessQuery.isPending || managementAccessQuery.isFetching) ? (
+          <section
+            aria-labelledby="enterprise-management-heading"
+            className="flex flex-col gap-2"
+          >
+            <div className="flex flex-col gap-0.5">
+              <h2 id="enterprise-management-heading" className="text-sm font-semibold">
+                企业管理
+              </h2>
+              <p className="text-xs text-muted-foreground">当前账号的管理范围</p>
+            </div>
+            <div
+              aria-label="正在加载企业管理权限"
+              className="flex min-h-14 items-center gap-2 rounded-md border px-3 text-sm text-muted-foreground"
+            >
+              <Spinner />
+              正在加载管理权限
+            </div>
+          </section>
+        ) : null}
+
+        {managementAccessQuery.isPaused || managementAccessQuery.isError ? (
+          <section
+            aria-labelledby="enterprise-management-heading"
+            className="flex flex-col gap-2"
+          >
+            <div className="flex flex-col gap-0.5">
+              <h2 id="enterprise-management-heading" className="text-sm font-semibold">
+                企业管理
+              </h2>
+              <p className="text-xs text-muted-foreground">当前账号的管理范围</p>
+            </div>
+            <Alert variant="destructive">
+              <AlertTitle>无法加载管理权限</AlertTitle>
+              <AlertDescription>
+                {managementAccessQuery.isPaused
+                  ? "无法连接到服务，请检查网络后重试。"
+                  : errorMessage(managementAccessQuery.error)}
+              </AlertDescription>
+              <Button
+                className="mt-3"
+                onClick={() => void managementAccessQuery.refetch()}
+                size="sm"
+                variant="outline"
+              >
+                <RefreshCwIcon data-icon="inline-start" />
+                重新加载管理权限
+              </Button>
+            </Alert>
+          </section>
+        ) : null}
+
+        {hasCurrentManagementAccess && managementEntries.length > 0 ? (
+          <section className="flex flex-col gap-2" aria-labelledby="enterprise-management-heading">
+            <div className="flex flex-col gap-0.5">
+              <h2 id="enterprise-management-heading" className="text-sm font-semibold">
+                企业管理
+              </h2>
+              <p className="text-xs text-muted-foreground">当前账号的管理范围</p>
+            </div>
+            <ul className="overflow-hidden rounded-md border">
+              {managementEntries.map(({ access, path }) => (
+                <li key={access.organizationId} className="border-b last:border-b-0">
+                  <Link
+                    className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 max-sm:min-h-16"
+                    to={path}
+                  >
+                    <Building2Icon aria-hidden="true" className="size-4" />
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span
+                        className="truncate text-sm font-medium"
+                        title={access.organizationName}
+                      >
+                        {access.organizationName}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {access.organizationCapabilities.length > 0
+                          ? "组织与空间管理"
+                          : `${access.spaces.length} 个可管理空间`}
+                      </span>
+                    </span>
+                    <ArrowRightIcon aria-hidden="true" className="size-4" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
 
         {hasCurrentAuthorization && spaces.length === 0 ? (
@@ -185,7 +319,11 @@ export function SpacesPage() {
         ) : null}
 
         {hasCurrentAuthorization &&
-        (spaces.length > 1 || (explicitSpaceList && spaces.length === 1)) ? (
+        (spaces.length > 1 ||
+          managementEntries.length > 0 ||
+          !hasCurrentManagementAccess ||
+          (explicitSpaceList && spaces.length === 1)) &&
+        spaces.length > 0 ? (
           <>
             {spaces.length > 1 ? (
               <Field>

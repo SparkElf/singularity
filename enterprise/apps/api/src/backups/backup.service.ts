@@ -110,6 +110,36 @@ export class BackupService {
     return rows.map(backupView);
   }
 
+  async listRestores(input: {
+    actorUserId: string;
+    organizationId: string;
+    sourceSpaceId: string;
+  }): Promise<SpaceRestoreView[]> {
+    await this.spaces.requireSpaceManager(
+      input.actorUserId,
+      input.organizationId,
+      input.sourceSpaceId,
+    );
+    const rows = await this.database.client.$queryRaw<RestoreRow[]>(
+      Prisma.sql`
+        SELECT
+          "id" AS "restoreId",
+          "organization_id" AS "organizationId",
+          "backup_id" AS "backupId",
+          "source_space_id" AS "sourceSpaceId",
+          "target_space_id" AS "targetSpaceId",
+          "status",
+          "created_at" AS "createdAt",
+          "activated_at" AS "activatedAt"
+        FROM "space_restore_jobs"
+        WHERE "organization_id" = ${input.organizationId}::uuid
+          AND "source_space_id" = ${input.sourceSpaceId}::uuid
+        ORDER BY "created_at" DESC, "id" ASC
+      `,
+    );
+    return rows.map(restoreView);
+  }
+
   async createBackup(input: {
     actorUserId: string;
     organizationId: string;

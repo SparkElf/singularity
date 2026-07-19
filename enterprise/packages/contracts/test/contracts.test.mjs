@@ -9,8 +9,10 @@ import {
   API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
+  ENTERPRISE_MANAGEMENT_ACCESS_PATH,
   ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
+  ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH,
   ORGANIZATION_SPACE_OBSERVABILITY_CONTROLLER_PATH,
   ORGANIZATION_SPACE_SHARES_CONTROLLER_PATH,
   PUBLIC_SHARE_CONTROLLER_PATH,
@@ -29,13 +31,18 @@ import {
   authorizedSpacesResponseSchema,
   buildSpaceRuntimePath,
   createDocumentShareRequestSchema,
+  enterpriseManagementAccessResponseSchema,
   kernelInstanceStates,
   loginRequestSchema,
   managedDocumentSharesResponseSchema,
+  organizationManagementCapabilities,
   spaceBackupSchema,
+  spaceManagementCapabilities,
   spaceObservabilitySchema,
   spaceRestoreSchema,
+  spaceRestoresResponseSchema,
   spaceRuntimeBootstrapSchema,
+  unactivatedSpaceRestoreStatuses,
 } from "../dist/index.js";
 
 const organizationId = "11111111-1111-4111-8111-111111111111";
@@ -169,6 +176,41 @@ describe("HTTP contracts", () => {
         deploymentHandle: "kernel.internal",
       }).success,
       false,
+    );
+  });
+
+  test("publishes explicit enterprise management capabilities without role inference fields", () => {
+    const access = {
+      organizations: [
+        {
+          organizationCapabilities: [...organizationManagementCapabilities],
+          organizationId,
+          organizationName: "Singularity",
+          spaces: [
+            {
+              capabilities: [...spaceManagementCapabilities],
+              spaceId,
+              spaceName: "Primary space",
+            },
+          ],
+        },
+      ],
+    };
+    assert.deepEqual(enterpriseManagementAccessResponseSchema.parse(access), access);
+    assert.equal(
+      enterpriseManagementAccessResponseSchema.safeParse({
+        organizations: [
+          {
+            ...access.organizations[0],
+            organizationRole: "owner",
+          },
+        ],
+      }).success,
+      false,
+    );
+    assert.equal(
+      ENTERPRISE_MANAGEMENT_ACCESS_PATH,
+      "/api/v1/enterprise-management-access",
     );
   });
 
@@ -325,6 +367,32 @@ describe("HTTP contracts", () => {
     assert.equal(
       ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
       "/api/v1/organizations/:organizationId/spaces/:spaceId/backups",
+    );
+    assert.deepEqual(unactivatedSpaceRestoreStatuses, [
+      "queued",
+      "restoring",
+      "ready-for-activation",
+    ]);
+    assert.equal(
+      spaceRestoresResponseSchema.safeParse({
+        restores: [
+          {
+            activatedAt: null,
+            backupId: operationId,
+            createdAt: "2026-07-18T00:00:00.000Z",
+            organizationId,
+            restoreId: requestId,
+            sourceSpaceId: spaceId,
+            status: "ready-for-activation",
+            targetSpaceId: userId,
+          },
+        ],
+      }).success,
+      true,
+    );
+    assert.equal(
+      ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH,
+      "/api/v1/organizations/:organizationId/spaces/:spaceId/restores",
     );
   });
 

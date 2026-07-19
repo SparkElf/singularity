@@ -15,7 +15,7 @@ import {
   ShieldOffIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useParams } from "react-router";
+import { useOutletContext, useParams } from "react-router";
 
 import {
   Alert,
@@ -51,6 +51,7 @@ import {
 } from "@/enterprise/components.tsx";
 import {
   createOrganizationInvitation,
+  enterpriseManagementAccessQueryKey,
   getOrganizationInvitations,
   getOrganizationMembers,
   organizationInvitationsQueryKey,
@@ -60,6 +61,7 @@ import {
   transferOrganizationOwnership,
   updateOrganizationMember,
 } from "@/enterprise/api.ts";
+import type { EnterpriseAdminOutletContext } from "@/enterprise/EnterpriseAdminLayout.tsx";
 
 function organizationRoleLabel(role: OrganizationMemberSummary["role"]): string {
   switch (role) {
@@ -94,6 +96,9 @@ function formatDate(value: string): string {
 
 export function MembersPage() {
   const organizationId = useParams().organizationId ?? "";
+  const managementAccess = useOutletContext<EnterpriseAdminOutletContext>();
+  const canTransferOwnership =
+    managementAccess.organizationCapabilities.includes("ownership");
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -112,9 +117,14 @@ export function MembersPage() {
       userId: string;
     }) => updateOrganizationMember(organizationId, input.userId, input.request),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: organizationMembersQueryKey(organizationId),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: organizationMembersQueryKey(organizationId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: enterpriseManagementAccessQueryKey,
+        }),
+      ]);
     },
   });
   const revokeSessionsMutation = useMutation({
@@ -125,9 +135,14 @@ export function MembersPage() {
     mutationFn: (newOwnerUserId: string) =>
       transferOrganizationOwnership(organizationId, { newOwnerUserId }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: organizationMembersQueryKey(organizationId),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: organizationMembersQueryKey(organizationId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: enterpriseManagementAccessQueryKey,
+        }),
+      ]);
     },
   });
   const createInvitationMutation = useMutation({
@@ -351,26 +366,30 @@ export function MembersPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex min-w-[250px] justify-end gap-2">
-                              <ConfirmAction
-                                confirmLabel="转移所有权"
-                                description={`组织所有权将转移给 ${member.loginIdentifier}，当前所有者将变为管理员。`}
-                                disabled={transferringToMember}
-                                onConfirm={() => transferOwnershipMutation.mutate(member.userId)}
-                                title="转移组织所有权？"
-                              >
-                                <Button
+                              {canTransferOwnership ? (
+                                <ConfirmAction
+                                  confirmLabel="转移所有权"
+                                  description={`组织所有权将转移给 ${member.loginIdentifier}，当前所有者将变为管理员。`}
                                   disabled={transferringToMember}
-                                  size="sm"
-                                  variant="outline"
+                                  onConfirm={() =>
+                                    transferOwnershipMutation.mutate(member.userId)
+                                  }
+                                  title="转移组织所有权？"
                                 >
-                                  {transferringToMember ? (
-                                    <Spinner data-icon="inline-start" aria-label="正在转移" />
-                                  ) : (
-                                    <ArrowRightLeftIcon data-icon="inline-start" />
-                                  )}
-                                  转移所有权
-                                </Button>
-                              </ConfirmAction>
+                                  <Button
+                                    disabled={transferringToMember}
+                                    size="sm"
+                                    variant="outline"
+                                  >
+                                    {transferringToMember ? (
+                                      <Spinner data-icon="inline-start" aria-label="正在转移" />
+                                    ) : (
+                                      <ArrowRightLeftIcon data-icon="inline-start" />
+                                    )}
+                                    转移所有权
+                                  </Button>
+                                </ConfirmAction>
+                              ) : null}
                               <ConfirmAction
                                 confirmLabel="撤销全部会话"
                                 description={`将立即撤销 ${member.loginIdentifier} 的全部登录会话。`}

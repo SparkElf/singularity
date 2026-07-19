@@ -80,6 +80,10 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
       await fulfillJson(route, { spaces });
       return;
     }
+    if (path === "/api/v1/enterprise-management-access") {
+      await fulfillJson(route, { organizations: [] });
+      return;
+    }
     if (path === runtimePath()) {
       await fulfillJson(route, {
         organizationId: ORGANIZATION_A,

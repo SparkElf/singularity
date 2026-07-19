@@ -11,6 +11,7 @@ import type {
 import { DatabaseRuntime, Prisma } from "@singularity/database";
 
 import { AuditWriter } from "../audit/audit-writer.service.js";
+import { unactivatedSpaceRestorePersistenceStatuses } from "../backups/restore-status.persistence.js";
 import type { Clock } from "../identity/clock.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
@@ -19,10 +20,6 @@ import { CLOCK } from "../tokens.js";
 import { SpaceAccessService } from "./space-access.service.js";
 
 type Transaction = Prisma.TransactionClient;
-
-const RESTORE_TARGET_STATUSES = Array.from(
-  ["queued", "restoring", "ready_for_activation"] as const,
-);
 
 interface SpaceManagerOptions {
   readonly allowRestoreTarget?: boolean;
@@ -147,7 +144,7 @@ export class SpaceManagementService {
       const restoreTarget = await transaction.spaceRestoreJob.findFirst({
         where: {
           targetSpaceId: spaceId,
-          status: { in: RESTORE_TARGET_STATUSES },
+          status: { in: [...unactivatedSpaceRestorePersistenceStatuses] },
         },
         select: { id: true },
       });
@@ -470,7 +467,11 @@ export class SpaceManagementService {
             ? {}
             : {
                 targetRestores: {
-                  none: { status: { in: RESTORE_TARGET_STATUSES } },
+                  none: {
+                    status: {
+                      in: [...unactivatedSpaceRestorePersistenceStatuses],
+                    },
+                  },
                 },
               }),
         },
@@ -536,7 +537,11 @@ export class SpaceManagementService {
           ? {}
           : {
               targetRestores: {
-                none: { status: { in: RESTORE_TARGET_STATUSES } },
+                none: {
+                  status: {
+                    in: [...unactivatedSpaceRestorePersistenceStatuses],
+                  },
+                },
               },
             }),
       },

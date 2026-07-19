@@ -34,6 +34,7 @@ import {
 } from "@/enterprise/components.tsx";
 import {
   createManagedSpace,
+  enterpriseManagementAccessQueryKey,
   getManagedSpaces,
   managedSpacesQueryKey,
   updateManagedSpace,
@@ -66,6 +67,9 @@ export function SpacesManagementPage() {
         queryKey: managedSpacesQueryKey(organizationId),
       }),
       queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
+      queryClient.invalidateQueries({
+        queryKey: enterpriseManagementAccessQueryKey,
+      }),
     ]);
   };
   const createSpaceMutation = useMutation({

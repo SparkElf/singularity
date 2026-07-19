@@ -37,6 +37,7 @@ import {
   SectionHeading,
 } from "@/enterprise/components.tsx";
 import {
+  enterpriseManagementAccessQueryKey,
   getOrganizationGroups,
   getOrganizationMembers,
   getSpaceGroupGrants,
@@ -84,7 +85,12 @@ export function SpaceAccessPage() {
     queryFn: ({ signal }) => getOrganizationGroups(organizationId, signal),
   });
   const invalidateAuthorization = async () => {
-    await queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }),
+      queryClient.invalidateQueries({
+        queryKey: enterpriseManagementAccessQueryKey,
+      }),
+    ]);
   };
   const setMemberMutation = useMutation({
     mutationFn: (input: {
