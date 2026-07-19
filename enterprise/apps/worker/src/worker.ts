@@ -326,7 +326,7 @@ export class BoundedJobWorker {
       return;
     }
 
-    if (failure !== undefined && runSignal.aborted) {
+    if (runSignal.aborted) {
       this.#logger.warn({
         event: "worker.job",
         jobId: record.id,

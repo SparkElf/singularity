@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { unactivatedSpaceRestoreStatuses } from "@singularity/contracts";
 
 import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
@@ -225,6 +226,21 @@ export class BackupService {
         input.organizationId,
         input.sourceSpaceId,
       );
+      const activeRestores = await transaction.$queryRaw<
+        Array<{ restoreId: string }>
+      >(
+        Prisma.sql`
+          SELECT "id" AS "restoreId"
+          FROM "space_restore_jobs"
+          WHERE "organization_id" = ${input.organizationId}::uuid
+            AND "source_space_id" = ${input.sourceSpaceId}::uuid
+            AND "status"::text IN (${Prisma.join(unactivatedSpaceRestoreStatuses)})
+          LIMIT 1
+        `,
+      );
+      if (activeRestores[0] !== undefined) {
+        throw conflict();
+      }
       const backups = await transaction.$queryRaw<Array<{ backupId: string }>>(
         Prisma.sql`
           SELECT "id" AS "backupId"

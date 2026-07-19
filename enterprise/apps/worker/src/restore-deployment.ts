@@ -167,6 +167,13 @@ interface TargetRuntime {
   readonly workspaceDirectoryName: string;
 }
 
+interface PersistedProcessIdentity {
+  readonly kernelInstanceId: string;
+  readonly port?: number;
+  readonly spaceId?: string;
+  readonly workspaceDirectory: string;
+}
+
 function diagnosticText(value: string): string | undefined {
   const normalized = value
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
@@ -205,8 +212,26 @@ function isProcessMissing(error: unknown): boolean {
   );
 }
 
+function isProcessInspectionUnavailable(error: unknown): boolean {
+  return (
+    isMissing(error) ||
+    (typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error.code === "EACCES" || error.code === "EPERM"))
+  );
+}
+
 function errorCause(error: unknown): ErrorOptions | undefined {
   return error === undefined ? undefined : { cause: error };
+}
+
+function processArgument(
+  arguments_: readonly string[],
+  name: string,
+): string | undefined {
+  const index = arguments_.indexOf(name);
+  return index < 0 ? undefined : arguments_[index + 1];
 }
 
 function childPath(root: string, name: string): string {
@@ -378,11 +403,24 @@ export class ProcessRestoreDeployment
     }
 
     const metadataPath = this.#metadataPath(job.targetKernelInstanceId);
+    const workspaceDirectory = childPath(
+      this.#configuration.runtimeRootDirectory,
+      this.#workspaceDirectoryName(job),
+    );
     let metadata: z.infer<typeof runtimeMetadataSchema>;
     try {
       metadata = await this.#readRuntimeMetadata(metadataPath);
     } catch (error) {
       if (isMissing(error)) {
+        const identity: PersistedProcessIdentity = {
+          kernelInstanceId: job.targetKernelInstanceId,
+          spaceId: job.targetSpaceId,
+          workspaceDirectory,
+        };
+        for (const pid of await this.#findPersistedProcesses(identity)) {
+          await this.#terminatePersistedProcess(pid, identity);
+        }
+        await this.#removeWorkspaceAndMetadata(workspaceDirectory, metadataPath);
         return;
       }
       if (error instanceof RestoreDeploymentError) {
@@ -412,16 +450,13 @@ export class ProcessRestoreDeployment
       kernelInstanceId: metadata.kernelInstanceId,
       spaceId: metadata.spaceId,
     });
-    const workspaceDirectory = childPath(
-      this.#configuration.runtimeRootDirectory,
-      metadata.workspaceDirectoryName,
-    );
     if (metadata.pid !== null) {
-      await this.#terminatePersistedProcess(
-        metadata.pid,
+      await this.#terminatePersistedProcess(metadata.pid, {
+        kernelInstanceId: metadata.kernelInstanceId,
+        port: metadata.port,
+        spaceId: metadata.spaceId,
         workspaceDirectory,
-        job.targetKernelInstanceId,
-      );
+      });
     }
     await this.#removeWorkspaceAndMetadata(workspaceDirectory, metadataPath);
     this.#allocatedPorts.delete(metadata.port);
@@ -1151,11 +1186,12 @@ export class ProcessRestoreDeployment
       if (target.process !== undefined) {
         await this.#terminateProcess(target.process);
       } else if (target.persistedPid !== undefined) {
-        await this.#terminatePersistedProcess(
-          target.persistedPid,
-          target.workspaceDirectory,
-          target.kernelInstanceId,
-        );
+        await this.#terminatePersistedProcess(target.persistedPid, {
+          kernelInstanceId: target.kernelInstanceId,
+          port: target.port,
+          spaceId: target.spaceId,
+          workspaceDirectory: target.workspaceDirectory,
+        });
       }
       await this.#removeWorkspaceAndMetadata(
         target.workspaceDirectory,
@@ -1200,14 +1236,6 @@ export class ProcessRestoreDeployment
         this.#configuration.runtimeRootDirectory,
         entry.name,
       );
-      const metadataStat = await lstat(metadataPath);
-      if (
-        metadataStat.isSymbolicLink() ||
-        !metadataStat.isFile() ||
-        (metadataStat.mode & 0o077) !== 0
-      ) {
-        throw new RestoreDeploymentError("target-runtime-invalid");
-      }
       let parsed: z.infer<typeof runtimeMetadataSchema>;
       try {
         parsed = await this.#readRuntimeMetadata(metadataPath);
@@ -1234,7 +1262,8 @@ export class ProcessRestoreDeployment
         parsed.port < this.#configuration.portRange.first ||
         parsed.port > this.#configuration.portRange.last ||
         (parsed.state === "ready" && parsed.pid === null) ||
-        this.#targets.has(parsed.kernelInstanceId)
+        this.#targets.has(parsed.kernelInstanceId) ||
+        this.#allocatedPorts.has(parsed.port)
       ) {
         throw new RestoreDeploymentError("target-runtime-invalid");
       }
@@ -1257,11 +1286,12 @@ export class ProcessRestoreDeployment
           continue;
         }
         if (parsed.pid !== null) {
-          await this.#terminatePersistedProcess(
-            parsed.pid,
+          await this.#terminatePersistedProcess(parsed.pid, {
+            kernelInstanceId: parsed.kernelInstanceId,
+            port: parsed.port,
+            spaceId: parsed.spaceId,
             workspaceDirectory,
-            parsed.kernelInstanceId,
-          );
+          });
         }
         await this.#removeWorkspaceAndMetadata(
           workspaceDirectory,
@@ -1272,11 +1302,12 @@ export class ProcessRestoreDeployment
       if (parsed.pid === null) {
         throw new RestoreDeploymentError("target-runtime-invalid");
       }
-      const processValid = await this.#assertPersistedProcessIdentity(
-        parsed.pid,
+      const processValid = await this.#assertPersistedProcessIdentity(parsed.pid, {
+        kernelInstanceId: parsed.kernelInstanceId,
+        port: parsed.port,
+        spaceId: parsed.spaceId,
         workspaceDirectory,
-        parsed.kernelInstanceId,
-      );
+      });
       if (!processValid) {
         await this.#removeWorkspaceAndMetadata(
           workspaceDirectory,
@@ -1550,13 +1581,18 @@ export class ProcessRestoreDeployment
     const metadataPrefix = `.${this.#configuration.handlePrefix}-`;
     const workspacePrefix = `${this.#configuration.handlePrefix}-`;
     for await (const entry of directory) {
-      if (!entry.isDirectory()) {
+      const isMetadata =
+        entry.name.startsWith(metadataPrefix) && entry.name.endsWith(".json");
+      if (isMetadata) {
         continue;
       }
       const isStaging = entry.name.startsWith(metadataPrefix);
       const isWorkspace = entry.name.startsWith(workspacePrefix);
       if (!isStaging && !isWorkspace) {
         continue;
+      }
+      if (!entry.isDirectory() || entry.isSymbolicLink()) {
+        throw new RestoreDeploymentError("target-runtime-invalid");
       }
       const remainder = entry.name.slice(
         (isStaging ? metadataPrefix : workspacePrefix).length,
@@ -1578,9 +1614,22 @@ export class ProcessRestoreDeployment
       if (metadataExists || (await this.#hasActiveRestoreClaim(candidate))) {
         continue;
       }
-      await this.#removeTrustedDirectory(
-        childPath(this.#configuration.runtimeRootDirectory, entry.name),
+      const artifactPath = childPath(
+        this.#configuration.runtimeRootDirectory,
+        entry.name,
       );
+      if (isWorkspace) {
+        for (const pid of await this.#findPersistedProcesses({
+          kernelInstanceId: candidate,
+          workspaceDirectory: artifactPath,
+        })) {
+          await this.#terminatePersistedProcess(pid, {
+            kernelInstanceId: candidate,
+            workspaceDirectory: artifactPath,
+          });
+        }
+      }
+      await this.#removeTrustedDirectory(artifactPath);
     }
   }
 
@@ -1619,8 +1668,8 @@ export class ProcessRestoreDeployment
       const workspace = await lstat(workspaceDirectory);
       if (
         workspace.isSymbolicLink() ||
-        (workspace.isDirectory() &&
-          (await realpath(workspaceDirectory)) !== workspaceDirectory)
+        !workspace.isDirectory() ||
+        (await realpath(workspaceDirectory)) !== workspaceDirectory
       ) {
         throw new RestoreDeploymentError("target-runtime-invalid");
       }
@@ -1631,7 +1680,13 @@ export class ProcessRestoreDeployment
     }
     try {
       const metadata = await lstat(metadataPath);
-      if (metadata.isSymbolicLink()) {
+      if (
+        metadata.isSymbolicLink() ||
+        !metadata.isFile() ||
+        (metadata.mode & 0o777) !== 0o600 ||
+        metadata.nlink !== 1 ||
+        (await realpath(metadataPath)) !== metadataPath
+      ) {
         throw new RestoreDeploymentError("target-runtime-invalid");
       }
     } catch (error) {
@@ -1648,6 +1703,28 @@ export class ProcessRestoreDeployment
   async #readRuntimeMetadata(
     metadataPath: string,
   ): Promise<z.infer<typeof runtimeMetadataSchema>> {
+    let metadata: Awaited<ReturnType<typeof lstat>>;
+    try {
+      metadata = await lstat(metadataPath);
+    } catch (error) {
+      if (isMissing(error)) {
+        throw error;
+      }
+      throw new RestoreDeploymentError(
+        "target-runtime-invalid",
+        undefined,
+        errorCause(error),
+      );
+    }
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      (metadata.mode & 0o777) !== 0o600 ||
+      metadata.nlink !== 1 ||
+      (await realpath(metadataPath)) !== metadataPath
+    ) {
+      throw new RestoreDeploymentError("target-runtime-invalid");
+    }
     let value: unknown;
     try {
       value = JSON.parse(await readFile(metadataPath, "utf8")) as unknown;
@@ -1707,43 +1784,90 @@ export class ProcessRestoreDeployment
 
   async #assertPersistedProcessIdentity(
     pid: number,
-    workspaceDirectory: string,
-    kernelInstanceId: string,
+    identity: PersistedProcessIdentity,
   ): Promise<boolean> {
     if (!this.#processExists(pid)) {
       return false;
     }
-    let commandLine: string;
-    let environment: string;
+    let matches: boolean;
     try {
-      [commandLine, environment] = await Promise.all([
-        readFile(`/proc/${pid}/cmdline`, "utf8"),
-        readFile(`/proc/${pid}/environ`, "utf8"),
-      ]);
+      matches = await this.#persistedProcessMatchesIdentity(pid, identity);
     } catch (error) {
-      if (isMissing(error)) {
-        return false;
-      }
       throw new RestoreDeploymentError(
-        "target-runtime-invalid",
+        "target-cleanup-failed",
         undefined,
         errorCause(error),
       );
     }
+    if (!matches) {
+      throw new RestoreDeploymentError("target-runtime-invalid");
+    }
+    return true;
+  }
+
+  async #persistedProcessMatchesIdentity(
+    pid: number,
+    identity: PersistedProcessIdentity,
+  ): Promise<boolean> {
+    const [commandLine, environment] = await Promise.all([
+      readFile(`/proc/${pid}/cmdline`, "utf8"),
+      readFile(`/proc/${pid}/environ`, "utf8"),
+    ]);
     const arguments_ = commandLine.split("\u0000").filter(Boolean);
     const environmentEntries = new Set(
       environment.split("\u0000").filter(Boolean),
     );
-    if (
-      arguments_[0] !== this.#configuration.kernelBinaryPath ||
-      !arguments_.includes(workspaceDirectory) ||
-      !environmentEntries.has(
-        `SINGULARITY_KERNEL_INSTANCE_ID=${kernelInstanceId}`,
-      )
-    ) {
-      throw new RestoreDeploymentError("target-runtime-invalid");
+    return (
+      arguments_[0] === this.#configuration.kernelBinaryPath &&
+      processArgument(arguments_, "--workspace") ===
+        identity.workspaceDirectory &&
+      (identity.port === undefined ||
+        processArgument(arguments_, "--port") === String(identity.port)) &&
+      environmentEntries.has(
+        `SINGULARITY_KERNEL_INSTANCE_ID=${identity.kernelInstanceId}`,
+      ) &&
+      (identity.spaceId === undefined ||
+        environmentEntries.has(
+          `SINGULARITY_KERNEL_SPACE_ID=${identity.spaceId}`,
+        ))
+    );
+  }
+
+  async #findPersistedProcesses(
+    identity: PersistedProcessIdentity,
+  ): Promise<readonly number[]> {
+    let directory: Awaited<ReturnType<typeof opendir>>;
+    try {
+      directory = await opendir("/proc");
+    } catch (error) {
+      // Worker 仅在 Linux 运行；无法打开 /proc 时不能证明目标进程已退出。
+      throw new RestoreDeploymentError(
+        "target-cleanup-failed",
+        undefined,
+        errorCause(error),
+      );
     }
-    return true;
+    const processes: number[] = [];
+    for await (const entry of directory) {
+      if (!entry.isDirectory() || !/^[0-9]+$/.test(entry.name)) {
+        continue;
+      }
+      const pid = Number(entry.name);
+      try {
+        if (await this.#persistedProcessMatchesIdentity(pid, identity)) {
+          processes.push(pid);
+        }
+      } catch (error) {
+        if (!isProcessInspectionUnavailable(error)) {
+          throw new RestoreDeploymentError(
+            "target-runtime-invalid",
+            undefined,
+            errorCause(error),
+          );
+        }
+      }
+    }
+    return processes;
   }
 
   async #terminateProcess(child: ChildProcess): Promise<void> {
@@ -1786,16 +1910,9 @@ export class ProcessRestoreDeployment
 
   async #terminatePersistedProcess(
     pid: number,
-    workspaceDirectory: string,
-    kernelInstanceId: string,
+    identity: PersistedProcessIdentity,
   ): Promise<void> {
-    if (
-      !(await this.#assertPersistedProcessIdentity(
-        pid,
-        workspaceDirectory,
-        kernelInstanceId,
-      ))
-    ) {
+    if (!(await this.#assertPersistedProcessIdentity(pid, identity))) {
       return;
     }
     try {
