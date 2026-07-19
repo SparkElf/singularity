@@ -1809,13 +1809,13 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 			subToPath := path.Join(toFolder, relPath)
 
 			evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
-			evt.Data = map[string]any{
-				"id":           strings.TrimSuffix(path.Base(syFile), ".sy"),
-				"fromNotebook": fromBox.ID,
-				"fromPath":     subFromPath,
-				"toNotebook":   toBox.ID,
-				"toPath":       path.Dir(subToPath) + ".sy",
-				"newPath":      subToPath,
+			evt.Data = util.ProtyleMoveDocumentData{
+				ID:           strings.TrimSuffix(path.Base(syFile), ".sy"),
+				FromNotebook: fromBox.ID,
+				FromPath:     subFromPath,
+				ToNotebook:   toBox.ID,
+				ToPath:       path.Dir(subToPath) + ".sy",
+				NewPath:      subToPath,
 			}
 			evt.Callback = callback
 			util.PushEvent(evt)
@@ -1823,13 +1823,13 @@ func moveDoc(fromBox *Box, fromPath string, toBox *Box, toPath string, luteEngin
 	}
 
 	evt := util.NewCmdResult("moveDoc", 0, util.PushModeBroadcast)
-	evt.Data = map[string]any{
-		"id":           tree.ID,
-		"fromNotebook": fromBox.ID,
-		"fromPath":     fromPath,
-		"toNotebook":   toBox.ID,
-		"toPath":       toPath,
-		"newPath":      newPath,
+	evt.Data = util.ProtyleMoveDocumentData{
+		ID:           tree.ID,
+		FromNotebook: fromBox.ID,
+		FromPath:     fromPath,
+		ToNotebook:   toBox.ID,
+		ToPath:       toPath,
+		NewPath:      newPath,
 	}
 	evt.Callback = callback
 	util.PushEvent(evt)
@@ -1967,11 +1967,9 @@ func removeDoc(box *Box, p string, luteEngine *lute.Lute) (ret *parse.Tree) {
 	cache.RemoveDocIAL(ret.Path)
 	cache.RemoveTreeData(ret.ID)
 
-	evt := util.NewCmdResult("removeDoc", 0, util.PushModeBroadcast)
-	evt.Data = map[string]any{
-		"ids": removeIDs,
+	for _, documentID := range removeIDs {
+		util.PushProtyleRemoveDoc(box.ID, documentID)
 	}
-	util.PushEvent(evt)
 	task.AppendTask(task.DatabaseIndex, removeDoc0, ret, childrenDir)
 	return
 }

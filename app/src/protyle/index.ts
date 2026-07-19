@@ -45,9 +45,67 @@ import {createProtyleReadOnlyState, isProtyleReadOnly, setHostReadOnly} from "./
 
 type ProtyleTransactionsMessage = IWebSocketData & {
     cmd: "transactions";
-    data: Array<{ doOperations: IOperation[] }>;
+    data: Array<{
+        contentTargets: ProtyleDocumentIdentity[];
+        notebook: string;
+        doOperations: IOperation[];
+    }>;
     sid: string;
 };
+
+type ProtyleDocumentIdentity = {
+    notebookId: string;
+    documentId: string;
+};
+
+type ProtyleDocumentMessage = IWebSocketData & {
+    data: ProtyleDocumentIdentity;
+};
+
+type ProtyleUnfoldHeadingMessage = IWebSocketData & {
+    cmd: "unfoldHeading";
+    data: ProtyleDocumentIdentity & {
+        id: string;
+        currentNodeID: string;
+    };
+};
+
+type ProtyleRefreshAttributeViewMessage = IWebSocketData & {
+    cmd: "refreshAttributeView";
+    data: { id: string; boxID: string };
+};
+
+type ProtyleReloadMessage = IWebSocketData & {
+    cmd: "reload";
+    data: ProtyleDocumentIdentity & { notebook: string };
+};
+
+type ProtyleMoveDocumentMessage = IWebSocketData & {
+    cmd: "moveDoc";
+    data: {
+        fromNotebook: string;
+        fromPath: string;
+        id: string;
+        newPath: string;
+        toNotebook: string;
+        toPath: string;
+    };
+};
+
+type ProtyleRenameMessage = IWebSocketData & {
+    cmd: "rename";
+    data: {
+        box: string;
+        empty: boolean;
+        id: string;
+        path: string;
+        refText: string;
+        title: string;
+    };
+};
+
+const isCurrentDocumentTarget = (protyle: IProtyle, target: ProtyleDocumentIdentity) =>
+    target.notebookId === protyle.notebookId && target.documentId === protyle.block.rootID;
 
 const dispatchWorkspaceOutlineRefresh = (protyle: IProtyle) => {
     if (protyle.surface !== "workspace") {
@@ -289,29 +347,42 @@ export class Protyle {
                         return;
                     }
                     switch (data.cmd) {
-                        case "reload":
-                            if (data.data.rootID === this.protyle.block.rootID) {
+                        case "reload": {
+                            const reload = data as ProtyleReloadMessage;
+                            if (isCurrentDocumentTarget(this.protyle, reload.data)) {
                                 reloadProtyle(this.protyle, false);
                                 dispatchWorkspaceOutlineRefresh(this.protyle);
                             }
                             break;
-                        case "refreshAttributeView":
+                        }
+                        case "refreshAttributeView": {
+                            const refresh = data as ProtyleRefreshAttributeViewMessage;
                             if (this.protyle.content.mode !== "bound") {
                                 break;
                             }
-                            Array.from(this.protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${data.data.id}"]`)).forEach((item: HTMLElement) => {
+                            if (refresh.data.boxID !== this.protyle.content.notebookId) {
+                                break;
+                            }
+                            Array.from(this.protyle.wysiwyg.element.querySelectorAll(`.av[data-av-id="${refresh.data.id}"]`)).forEach((item: HTMLElement) => {
                                 item.removeAttribute("data-render");
                                 avRender(item, this.protyle);
                             });
                             break;
-                        case "addLoading":
-                            if (data.data === this.protyle.block.rootID) {
-                                addLoading(this.protyle, data.msg);
+                        }
+                        case "addLoading": {
+                            const loading = data as ProtyleDocumentMessage;
+                            if (isCurrentDocumentTarget(this.protyle, loading.data)) {
+                                addLoading(this.protyle, loading.msg);
                             }
                             break;
-                        case "unfoldHeading":
-                            setFoldById(data.data, this.protyle);
+                        }
+                        case "unfoldHeading": {
+                            const unfold = data as ProtyleUnfoldHeadingMessage;
+                            if (isCurrentDocumentTarget(this.protyle, unfold.data)) {
+                                setFoldById(unfold.data, this.protyle);
+                            }
                             break;
+                        }
                         case "transactions":
                             this.onTransaction(data as ProtyleTransactionsMessage);
                             break;
@@ -344,60 +415,69 @@ export class Protyle {
                                 }
                             }
                             break;
-                        case "rename":
-                            if (this.protyle.path === data.data.path) {
+                        case "rename": {
+                            const rename = data as ProtyleRenameMessage;
+                            const isCurrentNotebook = rename.data.box === this.protyle.notebookId;
+                            if (isCurrentNotebook && this.protyle.path === rename.data.path) {
                                 if (this.protyle.model) {
                                     this.protyle.model.parent.updateTitle(
-                                        getProtyleDocumentDisplayName(data.data.title, data.data.empty),
+                                        getProtyleDocumentDisplayName(rename.data.title, rename.data.empty),
                                     );
                                 }
                                 if (this.protyle.background) {
-                                    this.protyle.background.ial.title = data.data.title;
+                                    this.protyle.background.ial.title = rename.data.title;
                                 }
                                 if (this.settings.export.addTitle &&
                                     !this.protyle.preview.element.classList.contains("fn__none")) {
                                     this.protyle.preview.render(this.protyle);
                                 }
                             }
-                            if (this.protyle.options.render.title && this.protyle.block.parentID === data.data.id) {
+                            if (isCurrentNotebook && this.protyle.options.render.title && this.protyle.block.parentID === rename.data.id) {
                                 if (!document.body.classList.contains("body--blur") && getSelection().rangeCount > 0 &&
                                     this.protyle.title.editElement?.contains(getSelection().getRangeAt(0).startContainer)) {
                                     // 标题编辑中的不用更新 https://github.com/siyuan-note/siyuan/issues/6565
                                 } else {
-                                    this.protyle.title.setTitle(data.data.title, data.data.empty);
+                                    this.protyle.title.setTitle(rename.data.title, rename.data.empty);
                                 }
-                                if (data.data.empty) {
+                                if (rename.data.empty) {
                                     this.protyle.wysiwyg.element.setAttribute(Constants.CUSTOM_SY_TITLE_EMPTY, "true");
                                 } else {
                                     this.protyle.wysiwyg.element.removeAttribute(Constants.CUSTOM_SY_TITLE_EMPTY);
                                 }
                             }
                             // update ref
-                            this.protyle.wysiwyg.element.querySelectorAll(`[data-type~="block-ref"][data-id="${data.data.id}"]`).forEach(item => {
+                            this.protyle.wysiwyg.element.querySelectorAll(`[data-type~="block-ref"][data-id="${rename.data.id}"]`).forEach(item => {
                                 if (item.getAttribute("data-subtype") === "d") {
+                                    if (item.getAttribute("data-notebook-id") !== rename.data.box ||
+                                        item.getAttribute("data-document-id") !== rename.data.id) {
+                                        return;
+                                    }
                                     // 同 updateRef 一样处理 https://github.com/siyuan-note/siyuan/issues/10458
-                                    item.innerHTML = data.data.refText;
+                                    item.innerHTML = rename.data.refText;
                                 }
                             });
-                            if (this.protyle.surface === "workspace" &&
+                            if (isCurrentNotebook && this.protyle.surface === "workspace" &&
                                 this.protyle.content.mode === "bound" &&
-                                data.data.box === this.protyle.content.notebookId &&
-                                data.data.id === this.protyle.options.blockId) {
+                                rename.data.id === this.protyle.options.blockId) {
                                 this.protyle.host.dispatch({
                                     type: "set-document-title",
-                                    notebookId: data.data.box,
-                                    documentId: data.data.id,
-                                    title: getProtyleDocumentDisplayName(data.data.title, data.data.empty),
+                                    notebookId: rename.data.box,
+                                    documentId: rename.data.id,
+                                    title: getProtyleDocumentDisplayName(rename.data.title, rename.data.empty),
                                 });
                             }
                             break;
-                        case "moveDoc":
-                            if (this.protyle.path === data.data.fromPath) {
-                                this.protyle.path = data.data.newPath;
+                        }
+                        case "moveDoc": {
+                            const move = data as ProtyleMoveDocumentMessage;
+                            if (move.data.fromNotebook === this.protyle.notebookId &&
+                                move.data.id === this.protyle.block.rootID &&
+                                this.protyle.path === move.data.fromPath) {
+                                this.protyle.path = move.data.newPath;
                                 const identity = protyleContentIdentity(this.protyle);
                                 this.protyle.host.dispatch({
                                     type: "open-document",
-                                    notebookId: data.data.toNotebook,
+                                    notebookId: move.data.toNotebook,
                                     documentId: identity.documentId,
                                     blockId: this.protyle.block.rootID,
                                     disposition: "current",
@@ -409,6 +489,7 @@ export class Protyle {
                                 });
                             }
                             break;
+                        }
                         case "closeBox":
                         case "removeBox":
                             if (this.protyle.notebookId === data.data.box) {
@@ -422,8 +503,9 @@ export class Protyle {
                                 }
                             }
                             break;
-                        case "removeDoc":
-                            if (data.data.ids.includes(this.protyle.block.rootID)) {
+                        case "removeDoc": {
+                            const remove = data as ProtyleDocumentMessage;
+                            if (isCurrentDocumentTarget(this.protyle, remove.data)) {
                                 if (this.protyle.model) {
                                     this.protyle.host.dispatch({
                                         type: "close-document",
@@ -436,6 +518,7 @@ export class Protyle {
                                 this.settings.localFilePosition.persist();
                             }
                             break;
+                        }
                     }
                 }
             });
@@ -596,23 +679,27 @@ export class Protyle {
     }
 
     private onTransaction(data: ProtyleTransactionsMessage) {
-        // Transport 已按当前 notebookId + documentId 建立订阅，消息合同不再从全局内容库推断。
-        const transactions = data.data;
+        const identity = protyleContentIdentity(this.protyle);
+        const transactions = data.data.filter((item) => item.contentTargets.some((target) =>
+            target.notebookId === identity.notebookId && target.documentId === identity.documentId));
         if (transactions.length === 0) {
             return;
         }
         // 多窗口/多端：用广播附带的撤销状态同步本地镜像
-        if (data.context?.undoState) {
-            syncMirrorFromBroadcast(this.protyle.notebookId, data.context.undoState);
+        const currentUndoState = data.context?.undoState?.[identity.documentId];
+        if (currentUndoState) {
+            syncMirrorFromBroadcast(identity.notebookId, {
+                [identity.documentId]: currentUndoState,
+            });
         }
         if (!this.protyle.preview.element.classList.contains("fn__none") &&
-            data.context?.rootIDs?.includes(this.protyle.block.rootID)) {
+            data.context?.rootIDs?.includes(identity.documentId)) {
             this.protyle.preview.render(this.protyle);
             return;
         }
         let needCreateAction = "";
         let hasDeleteOp = false;
-        transactions.forEach((transaction: { doOperations: IOperation[] }) => {
+        transactions.forEach((transaction) => {
             transaction.doOperations.find((item: IOperation) => {
                 if (this.protyle.options.backlinkData && ["delete", "move"].includes(item.action)) {
                     // 只对特定情况刷新，否则展开、编辑等操作刷新会频繁

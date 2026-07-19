@@ -36,6 +36,7 @@ const insertDocumentReference = (
         color: `${documentId}${Constants.ZWSP}d${Constants.ZWSP}${anchor}`,
     });
     if (referenceElements[0]) {
+        referenceElements[0].setAttribute("data-document-id", documentId);
         protyle.toolbar.range.selectNodeContents(referenceElements[0]);
     }
     hideElements(["toolbar"], protyle);

@@ -34,8 +34,8 @@ func AutoSpace(rootID string) (err error) {
 	}
 
 	logging.LogInfof("formatting tree [%s]...", rootID)
-	util.PushProtyleLoading(rootID, Conf.Language(116))
-	defer ReloadProtyle(rootID, "")
+	util.PushProtyleLoading(tree.Box, tree.ID, Conf.Language(116))
+	defer ReloadProtyle(tree.Box, tree.ID, TransactionNotebookForBox(tree.Box))
 
 	FlushTxQueue()
 

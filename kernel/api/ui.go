@@ -61,7 +61,7 @@ func reloadProtyle(c *gin.Context) {
 		return
 	}
 	id := arg["id"].(string)
-	model.ReloadProtyle(id, model.TransactionNotebookForBox(notebook))
+	model.ReloadProtyle(notebook, id, model.TransactionNotebookForBox(notebook))
 }
 
 func reloadAttributeView(c *gin.Context) {

@@ -6,6 +6,7 @@ import {blockRender} from "../render/blockRender";
 import {combineAbortSignals} from "../util/abortSignal";
 import {buildSiYuanBlockUri, parseSiYuanBlockUri} from "../util/blockUri";
 import {requestBlockFold} from "../util/blockFoldRequest";
+import {getBlockRefContentTarget} from "../util/blockRefIdentity";
 import {writeText} from "../util/clipboard";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {hasClosestBlock, hasClosestByClassName, hasTopClosestByClassName} from "../util/hasClosest";
@@ -377,15 +378,16 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
     if (!nodeElement) {
         return;
     }
-    const refBlockId = element.getAttribute("data-id")!;
-    const targetNotebookId = element.getAttribute("data-notebook-id");
-    const targetDocumentId = element.getAttribute("data-document-id");
-    if (!targetNotebookId || !targetDocumentId) {
-        console.error("[Singularity/ProtyleIdentity] block reference target has no content identity", {
-            blockId: refBlockId,
-        });
+    const target = getBlockRefContentTarget(element);
+    if (!target) {
+        console.error("[Singularity/ProtyleIdentity] block reference target has no content identity");
         return;
     }
+    const {
+        blockId: refBlockId,
+        documentId: targetDocumentId,
+        notebookId: targetNotebookId,
+    } = target;
     const targetIdentity: ProtyleContentIdentity = {
         notebookId: targetNotebookId,
         documentId: targetDocumentId,
@@ -495,7 +497,7 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
         click: () => protyle.host.dispatch({
             type: "open-backlinks",
             notebookId: targetNotebookId,
-            documentId: refBlockId,
+            documentId: targetDocumentId,
         }),
     });
     menu.addItem({
@@ -507,7 +509,7 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
             type: "open-graph",
             scope: "document",
             notebookId: targetNotebookId,
-            documentId: refBlockId,
+            documentId: targetDocumentId,
         }),
     });
     menu.addItem({id: "separator_3", type: "separator"});

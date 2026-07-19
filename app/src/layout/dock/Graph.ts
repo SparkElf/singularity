@@ -400,7 +400,7 @@ export class Graph extends Model {
                     }
                     break;
                 case "removeDoc":
-                    if (this.type === "local" && data.data.ids.includes(this.rootId)) {
+                    if (this.type === "local" && data.data.notebookId === this.notebookId && data.data.documentId === this.rootId) {
                         this.parent.parent.removeTab(this.parent.id);
                     }
                     break;

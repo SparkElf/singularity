@@ -29,24 +29,25 @@ func TestPushReloadQueuePreservesCanonicalNotebookIdentity(t *testing.T) {
 	setupPushQueueTestStorage(t)
 
 	const (
+		ordinaryBox   = "20990717180105-reloadx"
 		ordinaryRoot  = "20990717180100-reloadx"
 		encryptedRoot = "20990717180101-reloadx"
 		encryptedBox  = "20990717180102-reloadx"
 		ordinaryAV    = "20990717180103-reloadx"
 		encryptedAV   = "20990717180104-reloadx"
 	)
-	AppendPushReloadProtyleEntry(ordinaryRoot, "")
-	AppendPushReloadProtyleEntry(encryptedRoot, encryptedBox)
+	AppendPushReloadProtyleEntry(ordinaryBox, ordinaryRoot, "")
+	AppendPushReloadProtyleEntry(encryptedBox, encryptedRoot, encryptedBox)
 	AppendPushReloadAttrViewEntry(ordinaryAV, "")
 	AppendPushReloadAttrViewEntry(encryptedAV, encryptedBox)
 	entries := loadPushQueue()
 	if len(entries) != 4 {
 		t.Fatalf("reload queue entries = %#v, want four entries", entries)
 	}
-	if entries[0].Action != "reloadProtyle" || entries[0].ID != ordinaryRoot || entries[0].Notebook != "" {
+	if entries[0].Action != "reloadProtyle" || entries[0].Box != ordinaryBox || entries[0].ID != ordinaryRoot || entries[0].Notebook != "" {
 		t.Fatalf("ordinary reload queue entry = %#v", entries[0])
 	}
-	if entries[1].Action != "reloadProtyle" || entries[1].ID != encryptedRoot || entries[1].Notebook != encryptedBox {
+	if entries[1].Action != "reloadProtyle" || entries[1].Box != encryptedBox || entries[1].ID != encryptedRoot || entries[1].Notebook != encryptedBox {
 		t.Fatalf("encrypted reload queue entry = %#v", entries[1])
 	}
 	if entries[2].Action != "reloadAttrView" || entries[2].ID != ordinaryAV || entries[2].Notebook != "" {
@@ -68,8 +69,8 @@ func TestPushQueueBroadcastsSameRootFromDistinctContentStores(t *testing.T) {
 		t.Fatalf("index ordinary duplicate root for push queue: %v", err)
 	}
 
-	AppendPushReloadProtyleEntry(sharedRoot, "")
-	AppendPushReloadProtyleEntry(sharedRoot, fixture.boxA)
+	AppendPushReloadProtyleEntry(ordinaryBox, sharedRoot, "")
+	AppendPushReloadProtyleEntry(fixture.boxA, sharedRoot, fixture.boxA)
 	AppendPushReloadAttrViewEntry(fixture.avID, "")
 	AppendPushReloadAttrViewEntry(fixture.avID, fixture.boxA)
 	PollPushQueue()
@@ -91,7 +92,11 @@ func TestPushQueueBroadcastsSameRootFromDistinctContentStores(t *testing.T) {
 	}
 	for _, notebook := range []string{"", fixture.boxA} {
 		event, ok := events["reload/"+notebook]
-		if !ok || event.Data.RootID != sharedRoot {
+		expectedNotebookID := ordinaryBox
+		if notebook != "" {
+			expectedNotebookID = notebook
+		}
+		if !ok || event.Data.NotebookID != expectedNotebookID || event.Data.DocumentID != sharedRoot {
 			t.Fatalf("push queue event for notebook %q = %#v, want root %s", notebook, event, sharedRoot)
 		}
 		avEvent, ok := events["refreshAttributeView/"+notebook]
@@ -106,7 +111,7 @@ func TestPushQueueDropsEncryptedReloadLockedAfterEnqueue(t *testing.T) {
 	setupPushQueueTestStorage(t)
 	connection := openPushQueueWebSocket(t, "protyle")
 
-	AppendPushReloadProtyleEntry(fixture.defID, fixture.boxA)
+	AppendPushReloadProtyleEntry(fixture.boxA, fixture.defID, fixture.boxA)
 	AppendPushReloadAttrViewEntry(fixture.avID, fixture.boxA)
 	if err := LockBox(fixture.boxA); err != nil {
 		t.Fatalf("lock encrypted notebook after push enqueue: %v", err)
@@ -125,7 +130,7 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 		blockID    = "20990717181302-reloadx"
 		defBlockID = "20990717181303-reloadx"
 	)
-	util.PushReloadProtyle(rootID, boxID)
+	util.PushReloadProtyle(boxID, rootID, boxID)
 	pushReloadAttrView(avID, boxID)
 	util.PushSetRefDynamicText(rootID, blockID, defBlockID, "Encrypted reference", boxID)
 	util.PushSetDefRefCount(rootID, blockID, []string{defBlockID}, 2, 1, boxID)
@@ -149,7 +154,7 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 			events[event.Cmd] = event
 		}
 	}
-	if event := events["reload"]; event.Data.RootID != rootID || event.Data.Notebook != boxID {
+	if event := events["reload"]; event.Data.NotebookID != boxID || event.Data.DocumentID != rootID || event.Data.Notebook != boxID {
 		t.Fatalf("unlocked encrypted reload event = %#v", event)
 	}
 	if event := events["refreshAttributeView"]; event.Data.ID != avID || event.Data.BoxID != boxID {
@@ -168,7 +173,7 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 	if err := LockBox(boxID); err != nil {
 		t.Fatalf("lock encrypted notebook before final delayed handlers: %v", err)
 	}
-	util.PushReloadProtyle(rootID, boxID)
+	util.PushReloadProtyle(boxID, rootID, boxID)
 	pushReloadAttrView(avID, boxID)
 	util.PushSetRefDynamicText(rootID, blockID, defBlockID, "Encrypted reference", boxID)
 	util.PushSetDefRefCount(rootID, blockID, []string{defBlockID}, 2, 1, boxID)
@@ -264,6 +269,8 @@ type pushQueueEvent struct {
 	Data struct {
 		RootID       string   `json:"rootID"`
 		Notebook     string   `json:"notebook"`
+		NotebookID   string   `json:"notebookId"`
+		DocumentID   string   `json:"documentId"`
 		ID           string   `json:"id"`
 		BoxID        string   `json:"boxID"`
 		BlockID      string   `json:"blockID"`

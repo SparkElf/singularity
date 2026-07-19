@@ -1075,33 +1075,33 @@ data-type="navigation-root" data-path="/">
             }
             return;
         }
-        data.data.ids.forEach((item: string) => {
-            const targetElement = this.element.querySelector(`li.b3-list-item[data-node-id="${item}"]`);
-            if (targetElement) {
-                // 子节点展开则删除
-                if (targetElement.nextElementSibling?.tagName === "UL") {
-                    targetElement.nextElementSibling.remove();
-                }
-                // 移除当前节点
-                const parentElement = targetElement.parentElement.previousElementSibling as HTMLElement;
-                if (targetElement.parentElement.childElementCount === 1) {
-                    if (parentElement) {
-                        const iconElement = parentElement.querySelector("svg");
-                        iconElement.classList.remove("b3-list-item__arrow--open");
-                        if (parentElement.dataset.type !== "navigation-root") {
-                            iconElement.parentElement.classList.add("fn__hidden");
-                        }
-                        const emojiElement = iconElement.parentElement.nextElementSibling;
-                        if (emojiElement.innerHTML === unicode2Emoji(window.siyuan.storage[Constants.LOCAL_IMAGES].folder)) {
-                            emojiElement.innerHTML = unicode2Emoji(window.siyuan.storage[Constants.LOCAL_IMAGES].file);
-                        }
-                    }
-                    targetElement.parentElement.remove();
-                } else {
-                    targetElement.remove();
-                }
+        const targetElement = this.element.querySelector(
+            `ul[data-url="${data.data.notebookId}"] li.b3-list-item[data-node-id="${data.data.documentId}"]`,
+        );
+        if (targetElement) {
+            // 子节点展开则删除
+            if (targetElement.nextElementSibling?.tagName === "UL") {
+                targetElement.nextElementSibling.remove();
             }
-        });
+            // 移除当前节点
+            const parentElement = targetElement.parentElement.previousElementSibling as HTMLElement;
+            if (targetElement.parentElement.childElementCount === 1) {
+                if (parentElement) {
+                    const iconElement = parentElement.querySelector("svg");
+                    iconElement.classList.remove("b3-list-item__arrow--open");
+                    if (parentElement.dataset.type !== "navigation-root") {
+                        iconElement.parentElement.classList.add("fn__hidden");
+                    }
+                    const emojiElement = iconElement.parentElement.nextElementSibling;
+                    if (emojiElement.innerHTML === unicode2Emoji(window.siyuan.storage[Constants.LOCAL_IMAGES].folder)) {
+                        emojiElement.innerHTML = unicode2Emoji(window.siyuan.storage[Constants.LOCAL_IMAGES].file);
+                    }
+                }
+                targetElement.parentElement.remove();
+            } else {
+                targetElement.remove();
+            }
+        }
     }
 
     private onMount(data: IWebSocketData) {

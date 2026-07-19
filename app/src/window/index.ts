@@ -140,7 +140,9 @@ class App {
                                         const initTab = tab.headElement.getAttribute("data-initdata");
                                         if (initTab) {
                                             const initTabData = JSON.parse(initTab);
-                                            if (initTabData.instance === "Editor" && data.data.ids.includes(initTabData.rootId)) {
+                                            if (initTabData.instance === "Editor" &&
+                                                data.data.notebookId === initTabData.notebookId &&
+                                                data.data.documentId === initTabData.rootId) {
                                                 tab.parent.removeTab(tab.id);
                                             }
                                         }

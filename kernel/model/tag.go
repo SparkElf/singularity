@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/88250/gulu"
 	"github.com/88250/lute/ast"
 	"github.com/emirpasic/gods/sets/hashset"
 	"github.com/siyuan-note/logging"
@@ -47,7 +46,7 @@ func RemoveTag(label string) (err error) {
 		}
 	}
 
-	var reloadTreeIDs []string
+	reloadTargets := map[util.ProtyleDocumentIdentity]struct{}{}
 	updateNodes := map[string]*ast.Node{}
 	historyDir, err := getHistoryDir(HistoryOpReplace)
 	if nil != err {
@@ -106,7 +105,7 @@ func RemoveTag(label string) (err error) {
 			return
 		}
 		util.RandomSleep(50, 150)
-		reloadTreeIDs = append(reloadTreeIDs, tree.ID)
+		reloadTargets[util.ProtyleDocumentIdentity{NotebookID: tree.Box, DocumentID: tree.ID}] = struct{}{}
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
@@ -115,9 +114,8 @@ func RemoveTag(label string) (err error) {
 		return
 	}
 
-	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
-	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id, "")
+	for target := range reloadTargets {
+		ReloadProtyle(target.NotebookID, target.DocumentID, TransactionNotebookForBox(target.NotebookID))
 	}
 
 	updateAttributeViewBlockText(updateNodes)
@@ -160,7 +158,7 @@ func RenameTag(oldLabel, newLabel string) (err error) {
 		}
 	}
 
-	var reloadTreeIDs []string
+	reloadTargets := map[util.ProtyleDocumentIdentity]struct{}{}
 	updateNodes := map[string]*ast.Node{}
 	historyDir, err := getHistoryDir(HistoryOpReplace)
 	if nil != err {
@@ -217,7 +215,7 @@ func RenameTag(oldLabel, newLabel string) (err error) {
 			return
 		}
 		util.RandomSleep(50, 150)
-		reloadTreeIDs = append(reloadTreeIDs, tree.ID)
+		reloadTargets[util.ProtyleDocumentIdentity{NotebookID: tree.Box, DocumentID: tree.ID}] = struct{}{}
 	}
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
@@ -226,9 +224,8 @@ func RenameTag(oldLabel, newLabel string) (err error) {
 		return
 	}
 
-	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
-	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id, "")
+	for target := range reloadTargets {
+		ReloadProtyle(target.NotebookID, target.DocumentID, TransactionNotebookForBox(target.NotebookID))
 	}
 
 	updateAttributeViewBlockText(updateNodes)

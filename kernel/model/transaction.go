@@ -1925,7 +1925,7 @@ func (tx *Transaction) doUpdate(operation *Operation) (ret *TxErr) {
 	if needUnfoldParentHeading {
 		newParentFoldedHeading := treenode.GetParentFoldedHeading(updatedNode)
 		if nil == oldParentFoldedHeading || (nil != newParentFoldedHeading && oldParentFoldedHeading.ID != newParentFoldedHeading.ID) {
-			unfoldHeading(newParentFoldedHeading, updatedNode)
+			unfoldHeading(newParentFoldedHeading, updatedNode, tree.Box, tree.ID)
 		}
 	}
 
@@ -1950,7 +1950,11 @@ func (tx *Transaction) doUpdate(operation *Operation) (ret *TxErr) {
 
 		evt := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)
 		evt.Data = []*Transaction{{
-			Notebook:       tx.Notebook,
+			Notebook: tx.Notebook,
+			ContentTargets: []TransactionContentTarget{{
+				NotebookID: tree.Box,
+				DocumentID: tree.ID,
+			}},
 			DoOperations:   []*Operation{{Action: "insert", ID: updatedNode.ID, PreviousID: oldParentFoldedHeading.ID, Data: insertDom}},
 			UndoOperations: []*Operation{{Action: "delete", ID: updatedNode.ID}},
 		}}
@@ -1999,7 +2003,7 @@ func (tx *Transaction) doUpdate(operation *Operation) (ret *TxErr) {
 	return
 }
 
-func unfoldHeading(heading, currentNode *ast.Node) {
+func unfoldHeading(heading, currentNode *ast.Node, notebookID, documentID string) {
 	if nil == heading {
 		return
 	}
@@ -2019,7 +2023,7 @@ func unfoldHeading(heading, currentNode *ast.Node) {
 	heading.RemoveIALAttr("fold")
 	heading.RemoveIALAttr("heading-fold")
 
-	util.BroadcastByType("protyle", "unfoldHeading", 0, "", map[string]any{"id": heading.ID, "currentNodeID": currentNode.ID})
+	util.PushProtyleUnfoldHeading(notebookID, documentID, heading.ID, currentNode.ID)
 }
 
 func getRefDefIDs(node *ast.Node) (refDefIDs []string) {
@@ -2275,11 +2279,18 @@ type Operation struct {
 	Context map[string]any `json:"context"` // 上下文信息
 }
 
+// TransactionContentTarget 标识事务实际影响的文档，不等同于 Notebook 的内容存储选择器。
+type TransactionContentTarget struct {
+	NotebookID string `json:"notebookId"`
+	DocumentID string `json:"documentId"`
+}
+
 type Transaction struct {
-	Timestamp      int64        `json:"timestamp"`
-	Notebook       string       `json:"notebook"`
-	DoOperations   []*Operation `json:"doOperations"`
-	UndoOperations []*Operation `json:"undoOperations"`
+	Timestamp      int64                      `json:"timestamp"`
+	Notebook       string                     `json:"notebook"`
+	ContentTargets []TransactionContentTarget `json:"contentTargets,omitempty"`
+	DoOperations   []*Operation               `json:"doOperations"`
+	UndoOperations []*Operation               `json:"undoOperations"`
 
 	trees          map[string]*parse.Tree // 事务中变更的树
 	nodes          map[string]*ast.Node   // 事务中变更的节点
@@ -2302,6 +2313,48 @@ type Transaction struct {
 	done       chan struct{}
 	commitErr  *TxErr
 	state      atomic.Int32 // 0: 初始化，1：未提交，:2: 已提交，3: 已回滚
+}
+
+// PopulateContentTargets 从真实请求身份和事务已加载的树建立唯一文档目标集合。
+// Notebook 保留既有内容存储选择器语义，普通笔记本仍使用空值。
+func (tx *Transaction) PopulateContentTargets(notebookID, documentID string) {
+	if tx == nil {
+		return
+	}
+	targets := make([]TransactionContentTarget, 0, len(tx.trees)+1)
+	seen := make(map[string]struct{}, len(tx.trees)+1)
+	appendTarget := func(targetNotebookID, targetDocumentID string) {
+		if targetNotebookID == "" || targetDocumentID == "" {
+			return
+		}
+		key := targetNotebookID + "\x00" + targetDocumentID
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, TransactionContentTarget{
+			NotebookID: targetNotebookID,
+			DocumentID: targetDocumentID,
+		})
+	}
+	appendTarget(notebookID, documentID)
+	for _, tree := range tx.trees {
+		if tree == nil {
+			continue
+		}
+		documentID := tree.ID
+		if documentID == "" && tree.Root != nil {
+			documentID = tree.Root.ID
+		}
+		appendTarget(tree.Box, documentID)
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].NotebookID == targets[j].NotebookID {
+			return targets[i].DocumentID < targets[j].DocumentID
+		}
+		return targets[i].NotebookID < targets[j].NotebookID
+	})
+	tx.ContentTargets = targets
 }
 
 func (tx *Transaction) GetChangedRootIDs() (ret []string) {

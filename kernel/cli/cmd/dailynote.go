@@ -100,7 +100,7 @@ var dailynoteAppendCmd = &cobra.Command{
 		}}
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
-		model.AppendPushReloadProtyleEntry(parentID, model.TransactionNotebookForBox(notebook))
+		model.AppendPushReloadProtyleEntry(notebook, parentID, model.TransactionNotebookForBox(notebook))
 		fmt.Println(parentID)
 		return nil
 	},
@@ -145,7 +145,7 @@ var dailynotePrependCmd = &cobra.Command{
 		}}
 		model.PerformTransactions(&transactions)
 		model.FlushTxQueue()
-		model.AppendPushReloadProtyleEntry(parentID, model.TransactionNotebookForBox(notebook))
+		model.AppendPushReloadProtyleEntry(notebook, parentID, model.TransactionNotebookForBox(notebook))
 		fmt.Println(parentID)
 		return nil
 	},

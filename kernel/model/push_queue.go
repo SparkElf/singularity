@@ -75,8 +75,8 @@ func AppendPushReloadDocInfoEntry(box, p string) {
 	appendPushEntry(pushEntry{Action: "reloadDocInfo", Box: box, Path: p})
 }
 
-func AppendPushReloadProtyleEntry(id, notebook string) {
-	appendPushEntry(pushEntry{Action: "reloadProtyle", ID: id, Notebook: notebook})
+func AppendPushReloadProtyleEntry(notebookID, documentID, notebook string) {
+	appendPushEntry(pushEntry{Action: "reloadProtyle", Box: notebookID, ID: documentID, Notebook: notebook})
 }
 
 func AppendPushReloadAttrViewEntry(avID, notebook string) {
@@ -152,9 +152,7 @@ func PollPushQueue() {
 			}
 			PushCreate(box, e.Path, nil)
 		case "remove":
-			evt := util.NewCmdResult("removeDoc", 0, util.PushModeBroadcast)
-			evt.Data = map[string]any{"ids": []string{e.ID}}
-			util.PushEvent(evt)
+			util.PushProtyleRemoveDoc(e.Box, e.ID)
 			cache.RemoveTreeData(e.ID)
 			cache.RemoveDocIAL(e.Path)
 		case "rename":
@@ -181,7 +179,7 @@ func PollPushQueue() {
 			if bt != nil {
 				cache.RemoveTreeDataInBox(bt.RootID, e.Notebook)
 				cache.RemoveBlockIALInBox(e.ID, e.Notebook)
-				util.PushReloadProtyle(bt.RootID, e.Notebook)
+				util.PushReloadProtyle(bt.BoxID, bt.RootID, e.Notebook)
 			}
 		case "reloadAttrView":
 			cache.RemoveAVDataInBox(e.ID, e.Notebook)

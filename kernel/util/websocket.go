@@ -374,11 +374,14 @@ func PushReloadDocInfo(docInfo map[string]any) {
 	})
 }
 
-func PushReloadProtyle(rootID, notebook string) {
-	ExecuteContentStoreBroadcast(notebook, func() {
-		BroadcastByType("protyle", "reload", 0, "", map[string]any{
-			"rootID":   rootID,
-			"notebook": notebook,
+func PushReloadProtyle(notebookID, documentID, contentStore string) {
+	ExecuteContentStoreBroadcast(contentStore, func() {
+		BroadcastByType("protyle", "reload", 0, "", ProtyleReloadData{
+			ProtyleDocumentIdentity: ProtyleDocumentIdentity{
+				NotebookID: notebookID,
+				DocumentID: documentID,
+			},
+			ContentStore: contentStore,
 		})
 	})
 }
@@ -395,8 +398,63 @@ func PushSetDefRefCount(rootID, blockID string, defIDs []string, refCount, rootR
 	})
 }
 
-func PushProtyleLoading(rootID, msg string) {
-	BroadcastByType("protyle", "addLoading", 0, msg, rootID)
+type ProtyleDocumentIdentity struct {
+	NotebookID string `json:"notebookId"`
+	DocumentID string `json:"documentId"`
+}
+
+type ProtyleUnfoldHeadingData struct {
+	ProtyleDocumentIdentity
+	ID            string `json:"id"`
+	CurrentNodeID string `json:"currentNodeID"`
+}
+
+// ProtyleReloadData carries document identity separately from the content-store
+// selector used by kernel routing and encryption lifecycle code.
+type ProtyleReloadData struct {
+	ProtyleDocumentIdentity
+	ContentStore string `json:"notebook"`
+}
+
+// ProtyleMoveDocumentData identifies the source document before a move. The
+// source notebook and document are authoritative; paths only locate the file.
+type ProtyleMoveDocumentData struct {
+	ID           string `json:"id"`
+	FromNotebook string `json:"fromNotebook"`
+	FromPath     string `json:"fromPath"`
+	ToNotebook   string `json:"toNotebook"`
+	ToPath       string `json:"toPath"`
+	NewPath      string `json:"newPath"`
+}
+
+func pushProtyleDocumentEvent(cmd, notebookID, documentID, msg string) {
+	ExecuteContentStoreBroadcast(notebookID, func() {
+		BroadcastByType("protyle", cmd, 0, msg, ProtyleDocumentIdentity{
+			NotebookID: notebookID,
+			DocumentID: documentID,
+		})
+	})
+}
+
+func PushProtyleLoading(notebookID, documentID, msg string) {
+	pushProtyleDocumentEvent("addLoading", notebookID, documentID, msg)
+}
+
+func PushProtyleRemoveDoc(notebookID, documentID string) {
+	pushProtyleDocumentEvent("removeDoc", notebookID, documentID, "")
+}
+
+func PushProtyleUnfoldHeading(notebookID, documentID, headingID, currentNodeID string) {
+	ExecuteContentStoreBroadcast(notebookID, func() {
+		BroadcastByType("protyle", "unfoldHeading", 0, "", ProtyleUnfoldHeadingData{
+			ProtyleDocumentIdentity: ProtyleDocumentIdentity{
+				NotebookID: notebookID,
+				DocumentID: documentID,
+			},
+			ID:            headingID,
+			CurrentNodeID: currentNodeID,
+		})
+	})
 }
 
 func PushReloadEmojiConf() {

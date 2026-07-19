@@ -320,11 +320,11 @@ func NetAssets2LocalAssets(rootID string, onlyImg bool, originalURL string) (err
 	}
 
 	err = netAssets2LocalAssets0(tree, onlyImg, originalURL, assetsDirPath, true)
-	notebook := TransactionNotebookForBox(tree.Box)
-	go func(notebook string) {
+	contentStore := TransactionNotebookForBox(tree.Box)
+	go func(notebookID, documentID, contentStore string) {
 		time.Sleep(128 * time.Microsecond)
-		util.PushReloadProtyle(rootID, notebook)
-	}(notebook)
+		util.PushReloadProtyle(notebookID, documentID, contentStore)
+	}(tree.Box, tree.ID, contentStore)
 	return
 }
 

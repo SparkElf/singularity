@@ -22,6 +22,63 @@ import (
 	"github.com/olahol/melody"
 )
 
+func TestProtyleDocumentEventPayloadsCarryExplicitIdentity(t *testing.T) {
+	const (
+		notebookID = "20990719000000-eventbox"
+		documentID = "20990719000001-eventdoc"
+	)
+
+	loading, err := json.Marshal(ProtyleDocumentIdentity{NotebookID: notebookID, DocumentID: documentID})
+	if err != nil {
+		t.Fatalf("marshal loading payload: %v", err)
+	}
+	unfold, err := json.Marshal(ProtyleUnfoldHeadingData{
+		ProtyleDocumentIdentity: ProtyleDocumentIdentity{NotebookID: notebookID, DocumentID: documentID},
+		ID:                      "20990719000002-eventhead",
+		CurrentNodeID:           "20990719000003-eventnode",
+	})
+	if err != nil {
+		t.Fatalf("marshal unfold payload: %v", err)
+	}
+	for name, payload := range map[string][]byte{"loading": loading, "unfold": unfold} {
+		t.Run(name, func(t *testing.T) {
+			var data map[string]any
+			if err := json.Unmarshal(payload, &data); err != nil {
+				t.Fatalf("decode %s payload: %v", name, err)
+			}
+			if data["notebookId"] != notebookID || data["documentId"] != documentID {
+				t.Fatalf("%s payload = %#v, want explicit notebookId/documentId", name, data)
+			}
+			if _, hasLegacyRootID := data["rootID"]; hasLegacyRootID {
+				t.Fatalf("%s payload retained legacy rootID: %#v", name, data)
+			}
+		})
+	}
+}
+
+func TestProtyleMoveDocumentPayloadCarriesSourceIdentity(t *testing.T) {
+	payload, err := json.Marshal(ProtyleMoveDocumentData{
+		ID:           "20990719000004-movedoc",
+		FromNotebook: "20990719000005-sourcebox",
+		FromPath:     "/source.sy",
+		ToNotebook:   "20990719000006-targetbox",
+		ToPath:       "/target.sy",
+		NewPath:      "/target",
+	})
+	if err != nil {
+		t.Fatalf("marshal move document payload: %v", err)
+	}
+	var data map[string]any
+	if err = json.Unmarshal(payload, &data); err != nil {
+		t.Fatalf("decode move document payload: %v", err)
+	}
+	if data["id"] != "20990719000004-movedoc" || data["fromNotebook"] != "20990719000005-sourcebox" ||
+		data["fromPath"] != "/source.sy" || data["toNotebook"] != "20990719000006-targetbox" ||
+		data["toPath"] != "/target.sy" || data["newPath"] != "/target" {
+		t.Fatalf("move document payload = %#v, want explicit source and destination fields", data)
+	}
+}
+
 func TestPushReloadProtyleBroadcastsOneStoreAwarePayloadShape(t *testing.T) {
 	server := melody.New()
 	connected := make(chan struct{})
@@ -72,16 +129,17 @@ func TestPushReloadProtyleBroadcastsOneStoreAwarePayloadShape(t *testing.T) {
 		t.Fatal("reload websocket session was not registered")
 	}
 
-	const rootID = "20990717180000-reloadx"
+	const documentID = "20990717180000-reloadx"
 	for _, test := range []struct {
-		name     string
-		notebook string
+		name         string
+		notebookID   string
+		contentStore string
 	}{
-		{name: "ordinary global store"},
-		{name: "encrypted store", notebook: "20990717180001-reloadx"},
+		{name: "ordinary global store", notebookID: "20990717180001-reloadx"},
+		{name: "encrypted store", notebookID: "20990717180002-reloadx", contentStore: "20990717180002-reloadx"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			PushReloadProtyle(rootID, test.notebook)
+			PushReloadProtyle(test.notebookID, documentID, test.contentStore)
 			if err = connection.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
@@ -103,8 +161,11 @@ func TestPushReloadProtyleBroadcastsOneStoreAwarePayloadShape(t *testing.T) {
 			if err = json.Unmarshal(event.Data, &data); err != nil {
 				t.Fatalf("decode reload payload object: %v", err)
 			}
-			if len(data) != 2 || data["rootID"] != rootID || data["notebook"] != test.notebook {
-				t.Fatalf("reload payload = %#v, want rootID %q and notebook %q only", data, rootID, test.notebook)
+			if len(data) != 3 || data["notebookId"] != test.notebookID || data["documentId"] != documentID || data["notebook"] != test.contentStore {
+				t.Fatalf("reload payload = %#v, want explicit document identity and selector", data)
+			}
+			if _, hasLegacyRootID := data["rootID"]; hasLegacyRootID {
+				t.Fatalf("reload payload retained legacy rootID: %#v", data)
 			}
 		})
 	}

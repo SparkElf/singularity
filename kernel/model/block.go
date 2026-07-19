@@ -996,7 +996,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 		acquireBoxOperationLock(boxID)
 		defer releaseBoxOperationLock(boxID)
 	}
-	_, node, err := loadBlockInContentStore(id, boxID, notebookID)
+	tree, node, err := loadBlockInContentStore(id, boxID, notebookID)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,7 +1022,7 @@ func GetHeadingLevelTransactionInNotebook(id, notebookID string, level int) (tra
 
 	transaction = &Transaction{Notebook: boxID}
 	if "1" == node.IALAttr("fold") {
-		unfoldHeading(node, node)
+		unfoldHeading(node, node, tree.Box, tree.ID)
 	}
 
 	luteEngine := util.NewLute()
