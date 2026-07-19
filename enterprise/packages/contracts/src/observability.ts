@@ -19,15 +19,20 @@ const availableCapacitySchema = z
     status: z.enum(["fresh", "stale"]),
   })
   .strict();
-const unavailableCapacitySchema = z
+const unavailableSampledCapacitySchema = z
   .object({
-    reason: z.enum(["no-sample", "sample-failed"]),
+    reason: z.literal("sample-failed"),
+    sampledAt: dateTimeSchema,
     status: z.literal("unavailable"),
   })
   .strict();
+const unavailableUnsampledCapacitySchema = z
+  .object({ reason: z.literal("no-sample"), status: z.literal("unavailable") })
+  .strict();
 export const spaceCapacityViewSchema = z.union([
   availableCapacitySchema,
-  unavailableCapacitySchema,
+  unavailableSampledCapacitySchema,
+  unavailableUnsampledCapacitySchema,
 ]);
 
 const availableHealthSchema = z
@@ -71,8 +76,13 @@ const AVAILABLE_CAPACITY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   sampledAt: { type: "string", format: "date-time" },
   status: { type: "string", enum: ["fresh", "stale"] },
 });
-const UNAVAILABLE_CAPACITY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
-  reason: { type: "string", enum: ["no-sample", "sample-failed"] },
+const UNAVAILABLE_SAMPLED_CAPACITY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  reason: { type: "string", enum: ["sample-failed"] },
+  sampledAt: { type: "string", format: "date-time" },
+  status: { type: "string", enum: ["unavailable"] },
+});
+const UNAVAILABLE_UNSAMPLED_CAPACITY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  reason: { type: "string", enum: ["no-sample"] },
   status: { type: "string", enum: ["unavailable"] },
 });
 const AVAILABLE_HEALTH_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
@@ -95,7 +105,8 @@ export const SPACE_OBSERVABILITY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   capacity: {
     oneOf: [
       AVAILABLE_CAPACITY_OPENAPI_SCHEMA,
-      UNAVAILABLE_CAPACITY_OPENAPI_SCHEMA,
+      UNAVAILABLE_SAMPLED_CAPACITY_OPENAPI_SCHEMA,
+      UNAVAILABLE_UNSAMPLED_CAPACITY_OPENAPI_SCHEMA,
     ],
   },
   health: {

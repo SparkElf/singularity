@@ -63,7 +63,11 @@ function capacityView(
     row.fileCount === null ||
     row.sampleDurationMilliseconds === null
   ) {
-    return { reason: "sample-failed", status: "unavailable" };
+    return {
+      reason: "sample-failed",
+      sampledAt: row.capacitySampledAt.toISOString(),
+      status: "unavailable",
+    };
   }
   return {
     assetBytes: row.assetBytes.toString(),
@@ -91,60 +95,66 @@ export class SpaceObservabilityService {
     organizationId: string;
     spaceId: string;
   }): Promise<SpaceObservabilityView> {
-    await this.spaces.requireSpaceManager(
-      input.actorUserId,
-      input.organizationId,
-      input.spaceId,
-    );
-    const rows = await this.database.client.$queryRaw<ObservationRow[]>(
-      Prisma.sql`
-        SELECT
-          health."status" AS "healthStatus",
-          health."kernel_version" AS "kernelVersion",
-          health."sampled_at" AS "healthSampledAt",
-          health."error_code" AS "healthErrorCode",
-          capacity."data_bytes" AS "dataBytes",
-          capacity."asset_bytes" AS "assetBytes",
-          capacity."file_count" AS "fileCount",
-          capacity."sample_duration_milliseconds" AS "sampleDurationMilliseconds",
-          capacity."sampled_at" AS "capacitySampledAt",
-          capacity."error_code" AS "capacityErrorCode"
-        FROM "kernel_instances" AS kernel
-        LEFT JOIN LATERAL (
-          SELECT "status", "kernel_version", "sampled_at", "error_code"
-          FROM "kernel_health_observations"
-          WHERE "kernel_instance_id" = kernel."id"
-          ORDER BY "sampled_at" DESC
-          LIMIT 1
-        ) AS health ON TRUE
-        LEFT JOIN LATERAL (
+    return this.database.client.$transaction(async (transaction) => {
+      await this.spaces.requireSpaceManagerInTransaction(
+        transaction,
+        input.actorUserId,
+        input.organizationId,
+        input.spaceId,
+      );
+      const rows = await transaction.$queryRaw<ObservationRow[]>(
+        Prisma.sql`
           SELECT
-            "data_bytes", "asset_bytes", "file_count",
-            "sample_duration_milliseconds", "sampled_at", "error_code"
-          FROM "space_capacity_observations"
-          WHERE "kernel_instance_id" = kernel."id"
-          ORDER BY "sampled_at" DESC
+            health."status" AS "healthStatus",
+            health."kernel_version" AS "kernelVersion",
+            health."sampled_at" AS "healthSampledAt",
+            health."error_code" AS "healthErrorCode",
+            capacity."data_bytes" AS "dataBytes",
+            capacity."asset_bytes" AS "assetBytes",
+            capacity."file_count" AS "fileCount",
+            capacity."sample_duration_milliseconds" AS "sampleDurationMilliseconds",
+            capacity."sampled_at" AS "capacitySampledAt",
+            capacity."error_code" AS "capacityErrorCode"
+          FROM "kernel_instances" AS kernel
+          INNER JOIN "spaces" AS managed_space
+            ON managed_space."id" = kernel."space_id"
+            AND managed_space."organization_id" = ${input.organizationId}::uuid
+          LEFT JOIN LATERAL (
+            SELECT "status", "kernel_version", "sampled_at", "error_code"
+            FROM "kernel_health_observations"
+            WHERE "kernel_instance_id" = kernel."id"
+            ORDER BY "sampled_at" DESC
+            LIMIT 1
+          ) AS health ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT
+              "data_bytes", "asset_bytes", "file_count",
+              "sample_duration_milliseconds", "sampled_at", "error_code"
+            FROM "space_capacity_observations"
+            WHERE "kernel_instance_id" = kernel."id"
+            ORDER BY "sampled_at" DESC
+            LIMIT 1
+          ) AS capacity ON TRUE
+          WHERE kernel."space_id" = ${input.spaceId}::uuid
           LIMIT 1
-        ) AS capacity ON TRUE
-        WHERE kernel."space_id" = ${input.spaceId}::uuid
-        LIMIT 1
-      `,
-    );
-    const row = rows[0];
-    if (row === undefined) {
+        `,
+      );
+      const row = rows[0];
+      if (row === undefined) {
+        return {
+          capacity: { reason: "no-sample", status: "unavailable" },
+          health: { reason: "no-sample", status: "unavailable" },
+          organizationId: input.organizationId,
+          spaceId: input.spaceId,
+        };
+      }
+      const now = this.clock.now().getTime();
       return {
-        capacity: { reason: "no-sample", status: "unavailable" },
-        health: { reason: "no-sample", status: "unavailable" },
+        capacity: capacityView(row, now),
+        health: healthView(row, now),
         organizationId: input.organizationId,
         spaceId: input.spaceId,
       };
-    }
-    const now = this.clock.now().getTime();
-    return {
-      capacity: capacityView(row, now),
-      health: healthView(row, now),
-      organizationId: input.organizationId,
-      spaceId: input.spaceId,
-    };
+    });
   }
 }
