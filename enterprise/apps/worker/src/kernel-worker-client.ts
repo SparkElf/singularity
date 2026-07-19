@@ -83,7 +83,7 @@ async function readObservation(message: IncomingMessage): Promise<unknown> {
 
 function observation(
   value: unknown,
-): Awaited<ReturnType<KernelObservationPort["read"]>> {
+): Awaited<ReturnType<KernelObservationPort["read"]>>["sample"] {
   const parsed = observationResponseSchema.safeParse(value);
   if (!parsed.success) {
     throw new WorkerJobError("kernel-response-invalid", null);
@@ -141,7 +141,10 @@ export class KernelWorkerClient implements BackupKernelPort, KernelObservationPo
       response.message.resume();
       throw new WorkerJobError("kernel-observation-failed", null);
     }
-    return observation(await readObservation(response.message));
+    return {
+      deploymentHandle: deployment.handle,
+      sample: observation(await readObservation(response.message)),
+    };
   }
 
   async #deployment(

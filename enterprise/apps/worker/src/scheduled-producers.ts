@@ -9,6 +9,15 @@ import {
 import { WORKER_CONFIGURATION } from "./tokens.js";
 import type { ArchiveAuditJob, SampleKernelJob } from "./worker.js";
 
+type SampleKernelProducerConfiguration = Pick<
+  WorkerConfiguration,
+  "sampleKernelIntervalMilliseconds"
+>;
+type ArchiveAuditProducerConfiguration = Pick<
+  WorkerConfiguration,
+  "archiveAuditIntervalMilliseconds" | "maximumAuditArchiveEvents"
+>;
+
 async function acquireProducerLock(
   transaction: Prisma.TransactionClient,
   producer: string,
@@ -33,7 +42,8 @@ export class SampleKernelJobProducer
 
   constructor(
     private readonly database: DatabaseRuntime,
-    @Inject(WORKER_CONFIGURATION) configuration: WorkerConfiguration,
+    @Inject(WORKER_CONFIGURATION)
+    configuration: SampleKernelProducerConfiguration,
   ) {
     this.intervalMilliseconds =
       configuration.sampleKernelIntervalMilliseconds;
@@ -91,7 +101,8 @@ export class ArchiveAuditJobProducer
 
   constructor(
     private readonly database: DatabaseRuntime,
-    @Inject(WORKER_CONFIGURATION) configuration: WorkerConfiguration,
+    @Inject(WORKER_CONFIGURATION)
+    configuration: ArchiveAuditProducerConfiguration,
   ) {
     this.intervalMilliseconds =
       configuration.archiveAuditIntervalMilliseconds;
