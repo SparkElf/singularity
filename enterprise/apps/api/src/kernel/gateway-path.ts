@@ -91,7 +91,12 @@ function parseSpaceRoute(rawUrl: string): {
   spaceId: string;
   url: URL;
 } | null {
-  const canonicalPath = canonicalKernelPath(rawUrl);
+  let canonicalPath: `/${string}`;
+  try {
+    canonicalPath = canonicalKernelPath(rawUrl);
+  } catch {
+    throw new KernelGatewayAdmissionError(400);
+  }
   const match = canonicalPath.match(SPACE_PREFIX);
   if (match === null) {
     return null;

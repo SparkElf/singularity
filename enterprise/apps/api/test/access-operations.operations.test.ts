@@ -12,6 +12,10 @@ import {
 } from "@singularity/database";
 import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import {
+  KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
+  parseKernelDeploymentChangedEvent,
+} from "@singularity/kernel-client";
+import {
   afterAll,
   afterEach,
   beforeAll,
@@ -705,6 +709,59 @@ describe("controlled access operations with PostgreSQL", () => {
       expect(logger.output).toContain("toState: 'ready'");
       expect(logger.output).toContain("reason: 'set-kernel-state'");
       expect(logger.output).toMatch(/elapsedMs: [0-9]/);
+    });
+
+    test("publishes a remove for a static ready deployment without an endpoint row", async () => {
+      const kernelInstance = await database.kernelInstance.findUniqueOrThrow({
+        where: { spaceId: installation.spaceId },
+        select: { id: true },
+      });
+      const events: ReturnType<typeof parseKernelDeploymentChangedEvent>[] = [];
+      const subscription = await testApi.app.get(DatabaseRuntime).listen(
+        KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
+        (payload) => {
+          events.push(parseKernelDeploymentChangedEvent(JSON.parse(payload) as unknown));
+        },
+        (error) => {
+          throw error;
+        },
+      );
+      try {
+        const ready = await runOperation(operations, {
+          operation: "set-kernel-state",
+          spaceId: installation.spaceId,
+          kernelState: "ready",
+          deploymentHandle: "kernel.static-01",
+          version: "3.2.1",
+        });
+        expect(ready.result.outcome).toBe("updated");
+        await expect(
+          database.kernelRuntimeEndpoint.count({
+            where: { spaceId: installation.spaceId },
+          }),
+        ).resolves.toBe(0);
+
+        const unavailable = await runOperation(operations, {
+          operation: "set-kernel-state",
+          spaceId: installation.spaceId,
+          kernelState: "unavailable",
+          deploymentHandle: "kernel.static-02",
+          version: "3.2.2",
+        });
+        expect(unavailable.result.outcome).toBe("updated");
+        await expect
+          .poll(() => events.length, { timeout: 5_000 })
+          .toBe(1);
+        expect(events[0]).toMatchObject({
+          deploymentHandle: "kernel.static-01",
+          kernelInstanceId: kernelInstance.id,
+          kind: "remove",
+          requestId: unavailable.result.operationId,
+          spaceId: installation.spaceId,
+        });
+      } finally {
+        await subscription.close();
+      }
     });
 
     test("revoke-user-sessions revokes every active session for the user", async () => {

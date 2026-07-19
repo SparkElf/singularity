@@ -38,6 +38,7 @@ type OperationBaseResult<Outcome extends OperationOutcome> = {
 type KernelInstanceState = SetKernelStateAccessOperation["kernelState"];
 
 interface LockedKernelInstance {
+  deploymentHandle: string | null;
   id: string;
   status: KernelInstanceState;
 }
@@ -335,13 +336,24 @@ export class AccessOperationsService implements OnModuleInit {
               },
       });
       const endpoint = endpointRows[0];
-      if (endpoint !== undefined) {
+      const previousDeploymentHandle = kernelInstance.deploymentHandle;
+      const leavesReadyState =
+        kernelInstance.status === "ready" &&
+        (command.kernelState !== "ready" ||
+          command.deploymentHandle !== previousDeploymentHandle);
+      const deploymentHandleToRemove =
+        endpoint?.deploymentHandle ??
+        (leavesReadyState ? previousDeploymentHandle : null);
+      if (
+        deploymentHandleToRemove !== null &&
+        deploymentHandleToRemove !== undefined
+      ) {
         await publishKernelDeploymentChange(transaction, {
-          deploymentHandle: endpoint.deploymentHandle,
-          kernelInstanceId: endpoint.kernelInstanceId,
+          deploymentHandle: deploymentHandleToRemove,
+          kernelInstanceId: kernelInstance.id,
           kind: "remove",
           requestId: operationId,
-          spaceId: endpoint.spaceId,
+          spaceId: endpoint?.spaceId ?? command.spaceId,
         });
       }
       await this.#appendPermissionChange(transaction, operationId, {
@@ -878,7 +890,7 @@ export class AccessOperationsService implements OnModuleInit {
     spaceId: string,
   ): Promise<LockedKernelInstance | null> {
     const rows = await transaction.$queryRaw<LockedKernelInstance[]>(
-      Prisma.sql`SELECT "id", "status" FROM "kernel_instances" WHERE "space_id" = ${spaceId} FOR UPDATE`,
+      Prisma.sql`SELECT "deployment_handle" AS "deploymentHandle", "id", "status" FROM "kernel_instances" WHERE "space_id" = ${spaceId} FOR UPDATE`,
     );
     return rows[0] ?? null;
   }

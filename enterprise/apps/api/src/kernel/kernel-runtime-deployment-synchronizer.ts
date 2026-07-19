@@ -24,6 +24,7 @@ import {
   KERNEL_RUNTIME_DEPLOYMENT_CONFIGURATION,
 } from "../tokens.js";
 import type { KernelGatewayRuntimeConfiguration } from "./configuration.js";
+import { SpaceConnectionRegistry } from "./space-connection.registry.js";
 
 interface RuntimeEndpointRow {
   deploymentHandle: string;
@@ -43,10 +44,7 @@ export class KernelRuntimeDeploymentSynchronizer
   readonly #database: DatabaseRuntime;
   readonly #deployments: RuntimeKernelDeploymentRegistry;
   readonly #configuration: KernelGatewayRuntimeConfiguration["runtimeDeployment"];
-  readonly #dynamic = new Map<
-    string,
-    { handle: string; kernelInstanceId: string; spaceId: string }
-  >();
+  readonly #dynamic = new Map<string, KernelRuntimeEndpoint>();
   #hydrated = false;
   #failed = false;
   #pending: string[] = [];
@@ -59,6 +57,7 @@ export class KernelRuntimeDeploymentSynchronizer
     deployments: RuntimeKernelDeploymentRegistry,
     @Inject(KERNEL_RUNTIME_DEPLOYMENT_CONFIGURATION)
     configuration: KernelGatewayRuntimeConfiguration["runtimeDeployment"],
+    private readonly connections: SpaceConnectionRegistry,
   ) {
     this.#database = database;
     this.#deployments = deployments;
@@ -73,6 +72,11 @@ export class KernelRuntimeDeploymentSynchronizer
         (error) => this.#listenerFailed(error),
       );
     } catch (error) {
+      this.#failed = true;
+      this.#hydrated = false;
+      this.#pending = [];
+      this.connections.closeAllByKernelLifecycle();
+      this.#clearDynamic();
       this.#logger.warn({
         event: "kernel.deployment.listener",
         outcome: "unavailable",
@@ -101,6 +105,7 @@ export class KernelRuntimeDeploymentSynchronizer
       this.#failed = true;
       this.#hydrated = false;
       this.#pending = [];
+      this.connections.closeAllByKernelLifecycle();
       this.#clearDynamic();
       await this.#subscription?.close();
       this.#subscription = undefined;
@@ -117,6 +122,7 @@ export class KernelRuntimeDeploymentSynchronizer
     this.#failed = true;
     this.#hydrated = false;
     this.#pending = [];
+    this.connections.closeAllByKernelLifecycle();
     this.#clearDynamic();
     await this.#subscription?.close();
     this.#subscription = undefined;
@@ -135,6 +141,7 @@ export class KernelRuntimeDeploymentSynchronizer
       .catch((error: unknown) => {
         this.#failed = true;
         this.#hydrated = false;
+        this.connections.closeAllByKernelLifecycle();
         this.#clearDynamic();
         this.#logger.error({
           event: "kernel.deployment.event",
@@ -148,6 +155,7 @@ export class KernelRuntimeDeploymentSynchronizer
     this.#failed = true;
     this.#hydrated = false;
     this.#pending = [];
+    this.connections.closeAllByKernelLifecycle();
     this.#clearDynamic();
     this.#logger.error({
       event: "kernel.deployment.listener",
@@ -176,6 +184,9 @@ export class KernelRuntimeDeploymentSynchronizer
     if (this.#failed) {
       return;
     }
+    // 端点事件已在事实事务提交后到达；先收紧该空间的旧连接，避免旧 Kernel
+    // 在 registry 替换或删除期间继续向浏览器发送推送。
+    this.connections.closeByKernelLifecycle(event.spaceId);
     if (row === null) {
       this.#removeDynamic(event);
       return;
@@ -247,16 +258,16 @@ export class KernelRuntimeDeploymentSynchronizer
     const key = this.#dynamicKey(endpoint);
     const previous = this.#dynamic.get(key);
     if (previous !== undefined && previous.handle !== endpoint.handle) {
-      this.#deployments.unregister(previous);
+      this.#deployments.unregister({
+        handle: previous.handle,
+        kernelInstanceId: previous.kernelInstanceId,
+        spaceId: previous.spaceId,
+      });
     }
     this.#deployments.replace(
       createKernelDeployment(endpoint, this.#configuration.tls),
     );
-    this.#dynamic.set(key, {
-      handle: endpoint.handle,
-      kernelInstanceId: endpoint.kernelInstanceId,
-      spaceId: endpoint.spaceId,
-    });
+    this.#dynamic.set(key, endpoint);
     this.#logger.debug({
       event: "kernel.deployment",
       outcome: "registered",
@@ -269,14 +280,22 @@ export class KernelRuntimeDeploymentSynchronizer
     const key = this.#dynamicKey(identity);
     const previous = this.#dynamic.get(key);
     if (previous !== undefined) {
-      this.#deployments.unregister(previous);
+      this.#deployments.unregister({
+        handle: previous.handle,
+        kernelInstanceId: previous.kernelInstanceId,
+        spaceId: previous.spaceId,
+      });
       this.#dynamic.delete(key);
     }
   }
 
   #clearDynamic(): void {
     for (const identity of this.#dynamic.values()) {
-      this.#deployments.unregister(identity);
+      this.#deployments.unregister({
+        handle: identity.handle,
+        kernelInstanceId: identity.kernelInstanceId,
+        spaceId: identity.spaceId,
+      });
     }
     this.#dynamic.clear();
   }
