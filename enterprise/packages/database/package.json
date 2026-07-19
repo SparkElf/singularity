@@ -28,6 +28,8 @@
   },
   "scripts": {
     "build": "pnpm generate && tsc -p tsconfig.build.json",
+    "deploy": "prisma migrate deploy --config prisma.config.ts && pnpm run deploy:audit-privileges",
+    "deploy:audit-privileges": "psql --no-psqlrc --set=ON_ERROR_STOP=1 --single-transaction --set=singularity_schema=\"$SINGULARITY_DB_SCHEMA\" --set=audit_writer_role=\"$SINGULARITY_AUDIT_WRITER_ROLE\" --set=audit_reader_role=\"$SINGULARITY_AUDIT_READER_ROLE\" \"$DATABASE_URL\" --file deploy/audit-privileges.sql",
     "generate": "prisma generate --config prisma.config.ts",
     "test:integration": "pnpm generate && vitest run --config vitest.integration.config.ts",
     "typecheck": "pnpm generate && tsc -p tsconfig.json"

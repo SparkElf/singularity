@@ -12,11 +12,15 @@ import {
   ORGANIZATION_GROUPS_PATH_TEMPLATE,
   ORGANIZATION_INVITATION_PATH_TEMPLATE,
   ORGANIZATION_INVITATIONS_PATH_TEMPLATE,
+  ORGANIZATION_MEMBER_PATH_TEMPLATE,
+  ORGANIZATION_MEMBER_SESSIONS_PATH_TEMPLATE,
   ORGANIZATION_MEMBERS_PATH_TEMPLATE,
+  ORGANIZATION_OWNERSHIP_PATH_TEMPLATE,
   apiProblemSchema,
   auditEventsResponseSchema,
   createdOrganizationInvitationSchema,
   loginResponseSchema,
+  organizationMemberSummarySchema,
   organizationInvitationsResponseSchema,
   organizationMembersResponseSchema,
   userGroupMembersResponseSchema,
@@ -330,6 +334,242 @@ describe("organization membership, invitation, and group HTTP contracts with Pos
         ),
     ).toEqual([
       expect.objectContaining({ action: "permission.change" }),
+    ]);
+  });
+
+  test("updates a member role and status with durable access removal and audit", async () => {
+    const graph = await createOrganizationGraph();
+    const loginIdentifier = `managed-member-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "member",
+        status: "active",
+        userId,
+      },
+    });
+    const space = await database.space.create({
+      data: {
+        name: "Managed member space",
+        organizationId: graph.organizationId,
+        status: "active",
+      },
+    });
+    await database.spaceMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "editor",
+        spaceId: space.id,
+        status: "active",
+        userId,
+      },
+    });
+
+    const updated = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_MEMBER_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+        userId,
+      })}`,
+      {
+        body: JSON.stringify({ role: "admin", status: "inactive" }),
+        headers: mutationHeaders(graph.owner),
+        method: "PATCH",
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(organizationMemberSummarySchema.parse(await updated.json())).toEqual({
+      loginIdentifier,
+      role: "admin",
+      status: "inactive",
+      userId,
+    });
+    await expect(
+      database.organizationMembership.findUniqueOrThrow({
+        where: {
+          organizationId_userId: {
+            organizationId: graph.organizationId,
+            userId,
+          },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "admin", status: "inactive" });
+    await expect(
+      database.spaceMembership.findUniqueOrThrow({
+        where: { spaceId_userId: { spaceId: space.id, userId } },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "inactive" });
+
+    const audit = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_AUDIT_EVENTS_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+      })}`,
+      { headers: { Cookie: graph.owner.cookie } },
+    );
+    expect(audit.status).toBe(200);
+    expect(
+      auditEventsResponseSchema
+        .parse(await audit.json())
+        .events.filter((event) => event.targetId === userId),
+    ).toEqual([
+      expect.objectContaining({
+        action: "permission.change",
+        actorUserId: graph.owner.userId,
+        organizationId: graph.organizationId,
+        outcome: "succeeded",
+        spaceId: null,
+        targetType: "membership",
+      }),
+    ]);
+  });
+
+  test("lets an administrator revoke every member session and records the revocation", async () => {
+    const graph = await createOrganizationGraph();
+    const adminLoginIdentifier = `admin-${randomUUID()}@example.test`;
+    const adminUserId = await createUser(adminLoginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "admin",
+        status: "active",
+        userId: adminUserId,
+      },
+    });
+    const admin = await login(adminUserId, adminLoginIdentifier);
+    const memberLoginIdentifier = `session-member-${randomUUID()}@example.test`;
+    const memberUserId = await createUser(memberLoginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "member",
+        status: "active",
+        userId: memberUserId,
+      },
+    });
+    const member = await login(memberUserId, memberLoginIdentifier);
+    await login(memberUserId, memberLoginIdentifier);
+
+    const revoked = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_MEMBER_SESSIONS_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+        userId: memberUserId,
+      })}`,
+      { headers: mutationHeaders(admin), method: "POST" },
+    );
+    expect(revoked.status).toBe(204);
+    await expect(
+      database.authSession.count({
+        where: { revokedAt: INITIAL_TIME, userId: memberUserId },
+      }),
+    ).resolves.toBe(2);
+    await expect(
+      database.authSession.count({
+        where: { revokedAt: null, userId: adminUserId },
+      }),
+    ).resolves.toBe(1);
+
+    const rejectedSession = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_MEMBERS_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+      })}`,
+      { headers: { Cookie: member.cookie } },
+    );
+    expect(rejectedSession.status).toBe(401);
+    expect(apiProblemSchema.parse(await rejectedSession.json()).code).toBe(
+      "unauthenticated",
+    );
+
+    const audit = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_AUDIT_EVENTS_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+      })}`,
+      { headers: { Cookie: graph.owner.cookie } },
+    );
+    expect(audit.status).toBe(200);
+    expect(
+      auditEventsResponseSchema
+        .parse(await audit.json())
+        .events.filter((event) => event.targetId === memberUserId),
+    ).toEqual([
+      expect.objectContaining({
+        action: "permission.change",
+        actorUserId: adminUserId,
+        organizationId: graph.organizationId,
+        outcome: "succeeded",
+        spaceId: null,
+        targetType: "session",
+      }),
+    ]);
+  });
+
+  test("transfers ownership atomically and applies the new owner-only authorization", async () => {
+    const graph = await createOrganizationGraph();
+    const loginIdentifier = `new-owner-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    await database.organizationMembership.create({
+      data: {
+        organizationId: graph.organizationId,
+        role: "member",
+        status: "active",
+        userId,
+      },
+    });
+    const newOwner = await login(userId, loginIdentifier);
+    const ownershipPath = buildPath(ORGANIZATION_OWNERSHIP_PATH_TEMPLATE, {
+      organizationId: graph.organizationId,
+    });
+
+    const transferred = await fetch(`${testApi.baseUrl}${ownershipPath}`, {
+      body: JSON.stringify({ newOwnerUserId: userId }),
+      headers: mutationHeaders(graph.owner),
+      method: "POST",
+    });
+    expect(transferred.status).toBe(204);
+    await expect(
+      database.organizationMembership.findMany({
+        orderBy: { userId: "asc" },
+        select: { role: true, userId: true },
+        where: { organizationId: graph.organizationId },
+      }),
+    ).resolves.toEqual(
+      [
+        { role: "admin", userId: graph.owner.userId },
+        { role: "owner", userId },
+      ].sort((left, right) => left.userId.localeCompare(right.userId)),
+    );
+
+    const formerOwnerRejected = await fetch(`${testApi.baseUrl}${ownershipPath}`, {
+      body: JSON.stringify({ newOwnerUserId: graph.owner.userId }),
+      headers: mutationHeaders(graph.owner),
+      method: "POST",
+    });
+    expect(formerOwnerRejected.status).toBe(403);
+    expect(apiProblemSchema.parse(await formerOwnerRejected.json()).code).toBe(
+      "forbidden",
+    );
+
+    const audit = await fetch(
+      `${testApi.baseUrl}${buildPath(ORGANIZATION_AUDIT_EVENTS_PATH_TEMPLATE, {
+        organizationId: graph.organizationId,
+      })}`,
+      { headers: { Cookie: newOwner.cookie } },
+    );
+    expect(audit.status).toBe(200);
+    expect(
+      auditEventsResponseSchema
+        .parse(await audit.json())
+        .events.filter((event) => event.targetId === userId),
+    ).toEqual([
+      expect.objectContaining({
+        action: "permission.change",
+        actorUserId: graph.owner.userId,
+        organizationId: graph.organizationId,
+        outcome: "succeeded",
+        spaceId: null,
+        targetType: "membership",
+      }),
     ]);
   });
 

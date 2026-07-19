@@ -15,14 +15,15 @@ import {
   RuntimeKernelDeploymentRegistry,
   type KernelDeploymentIdentity,
 } from "@singularity/kernel-client";
+import WebSocket, { WebSocketServer } from "ws";
 
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 
 const { privateKey } = generateKeyPairSync("ed25519");
-const testCertificate = readFileSync(
+export const TEST_TLS_CERTIFICATE = readFileSync(
   new URL("../fixtures/kernel-gateway.crt", import.meta.url),
 );
-const testPrivateKey = readFileSync(
+export const TEST_TLS_PRIVATE_KEY = readFileSync(
   new URL("../fixtures/kernel-gateway.key", import.meta.url),
 );
 
@@ -48,6 +49,17 @@ export interface TestKernelGatewayOptions {
     | TestKernelResponse;
   kernelInstanceId?: string;
   spaceId?: string;
+  websocket?: {
+    onConnection?: (socket: WebSocket, path: string) => void;
+  };
+}
+
+export interface TestKernelWebSocket {
+  readonly connections: readonly WebSocket[];
+  broadcast(data: Buffer | string): void;
+  closeAll(code?: number, reason?: string): void;
+  nextConnection(): Promise<WebSocket>;
+  terminateAll(): void;
 }
 
 export interface TestKernelGateway {
@@ -55,6 +67,7 @@ export interface TestKernelGateway {
   deployment: KernelDeploymentIdentity;
   dispose(): Promise<void>;
   readonly requests: readonly TestKernelRequest[];
+  readonly websocket: TestKernelWebSocket;
 }
 
 export function testKernelGatewayConfiguration():
@@ -67,9 +80,9 @@ export function testKernelGatewayConfiguration():
     deployments: new RuntimeKernelDeploymentRegistry([]),
     runtimeDeployment: {
       tls: {
-        caCertificate: testCertificate,
-        clientCertificate: testCertificate,
-        clientPrivateKey: testPrivateKey,
+        caCertificate: TEST_TLS_CERTIFICATE,
+        clientCertificate: TEST_TLS_CERTIFICATE,
+        clientPrivateKey: TEST_TLS_PRIVATE_KEY,
       },
       tlsProfile: "test-runtime",
     },
@@ -111,11 +124,16 @@ export async function startTestKernelGateway(
   const spaceId = options.spaceId ?? randomUUID();
   const requests: TestKernelRequest[] = [];
   const handler = options.handler ?? (() => ({ status: 404 }));
+  const webSocketServer = new WebSocketServer({
+    clientTracking: true,
+    noServer: true,
+    perMessageDeflate: false,
+  });
   const server = createServer(
     {
-      ca: testCertificate,
-      cert: testCertificate,
-      key: testPrivateKey,
+      ca: TEST_TLS_CERTIFICATE,
+      cert: TEST_TLS_CERTIFICATE,
+      key: TEST_TLS_PRIVATE_KEY,
       minVersion: "TLSv1.3",
       rejectUnauthorized: true,
       requestCert: true,
@@ -141,6 +159,14 @@ export async function startTestKernelGateway(
       }
     },
   );
+  webSocketServer.on("connection", (socket, request) => {
+    options.websocket?.onConnection?.(socket, request.url ?? "/");
+  });
+  server.on("upgrade", (request, socket, head) => {
+    webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      webSocketServer.emit("connection", client, request);
+    });
+  });
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => reject(error);
     server.once("error", onError);
@@ -157,6 +183,35 @@ export async function startTestKernelGateway(
   const { privateKey: servicePrivateKey } = generateKeyPairSync("ed25519");
   const handle = "test-kernel";
   let disposed = false;
+  const connectionWaiters: Array<(socket: WebSocket) => void> = [];
+  webSocketServer.on("connection", (socket) => {
+    connectionWaiters.shift()?.(socket);
+  });
+  const websocket: TestKernelWebSocket = {
+    get connections(): readonly WebSocket[] {
+      return [...webSocketServer.clients];
+    },
+    broadcast(data): void {
+      for (const client of webSocketServer.clients) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(data);
+        }
+      }
+    },
+    closeAll(code = 1011, reason = "service-unavailable"): void {
+      for (const client of webSocketServer.clients) {
+        client.close(code, reason);
+      }
+    },
+    nextConnection(): Promise<WebSocket> {
+      return new Promise((resolve) => connectionWaiters.push(resolve));
+    },
+    terminateAll(): void {
+      for (const client of webSocketServer.clients) {
+        client.terminate();
+      }
+    },
+  };
   return {
     configuration: {
       credentials: new KernelCredentialService({
@@ -172,27 +227,30 @@ export async function startTestKernelGateway(
           serverName: "kernel.test",
           spaceId,
           tls: {
-            caCertificate: testCertificate,
-            clientCertificate: testCertificate,
-            clientPrivateKey: testPrivateKey,
+            caCertificate: TEST_TLS_CERTIFICATE,
+            clientCertificate: TEST_TLS_CERTIFICATE,
+            clientPrivateKey: TEST_TLS_PRIVATE_KEY,
           },
         },
       ]),
       runtimeDeployment: {
         tls: {
-          caCertificate: testCertificate,
-          clientCertificate: testCertificate,
-          clientPrivateKey: testPrivateKey,
+          caCertificate: TEST_TLS_CERTIFICATE,
+          clientCertificate: TEST_TLS_CERTIFICATE,
+          clientPrivateKey: TEST_TLS_PRIVATE_KEY,
         },
         tlsProfile: "test-runtime",
       },
     },
     deployment: { handle, kernelInstanceId, spaceId },
+    websocket,
     async dispose(): Promise<void> {
       if (disposed) {
         return;
       }
       disposed = true;
+      websocket.terminateAll();
+      await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
       await new Promise<void>((resolve, reject) => {
         server.close((error) =>
           error === undefined ? resolve() : reject(error),

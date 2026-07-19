@@ -6,7 +6,11 @@ import { createApiApplication } from "../../src/application.js";
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 import type { Clock } from "../../src/identity/clock.js";
 import { testAuditConfiguration } from "./audit-configuration.js";
-import { testKernelGatewayConfiguration } from "./kernel-gateway.js";
+import {
+  TEST_TLS_CERTIFICATE,
+  TEST_TLS_PRIVATE_KEY,
+  testKernelGatewayConfiguration,
+} from "./kernel-gateway.js";
 
 export const TEST_PUBLIC_ORIGIN = "https://singularity.test";
 
@@ -18,6 +22,7 @@ export interface TestApiApplication {
 
 export interface TestApiApplicationOptions {
   clock?: Clock;
+  https?: boolean;
   kernelGateway?: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
   trustedProxyCidrs?: string;
@@ -29,6 +34,15 @@ export async function startTestApiApplication(
   const app = await createApiApplication({
     auditConfiguration: testAuditConfiguration(),
     databaseUrl: isolatedDatabaseUrl(),
+    ...(options.https === true
+      ? {
+          https: {
+            cert: TEST_TLS_CERTIFICATE,
+            key: TEST_TLS_PRIVATE_KEY,
+            minVersion: "TLSv1.3" as const,
+          },
+        }
+      : {}),
     kernelGateway:
       options.kernelGateway ?? testKernelGatewayConfiguration(),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
