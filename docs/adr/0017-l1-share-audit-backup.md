@@ -3,7 +3,7 @@ title: "ADR-017: L1分享、审计、备份恢复与运行观测"
 description: "确定L1只读分享、可验证审计链、隔离恢复和后台采样的长期边界"
 author: "Codex"
 date: "2026-07-19"
-version: "1.5.0"
+version: "1.6.0"
 status: "accepted"
 tags: ["adr", "share", "audit", "backup", "observability"]
 ---
@@ -45,7 +45,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 2. 同一组织内事件按稳定序号串联。每个事件保存上一事件MAC、规范化事件载荷的HMAC-SHA-256和密钥版本；HMAC密钥来自数据库外部的秘密管理，不进入事件、日志、备份清单或代码配置默认值。
 3. 事件写入、组织序号推进和业务状态变更在同一数据库事务内完成。规范化载荷固定包含组织、可选空间、操作者、动作、目标、结果、发生时间和`requestId`，不包含令牌、密码、正文或任意大payload。
 4. 组织`owner`和`admin`可查询本组织审计；空间`admin`只能查询自己管理空间的事件。空间成员资格不能扩大到组织级事件，组织与空间状态失效后不保留旧查询授权。
-5. Worker按已封口范围生成有序归档，写入对象存储后保存对象摘要、起止序号和链首尾MAC。归档成功不删除在线事件，保留策略后续另行决策。
+5. Worker按已封口范围生成有序归档，写入对象存储后保存对象摘要、起止序号和链首尾MAC。对象写成后、元数据提交前再次响应任务取消；取消或元数据写入失败都删除本次对象，清理失败以稳定错误码结束，不能留下无主对象或把失败报告为成功。相同任务重放时先按已提交对象键复算大小和摘要，一致才视为幂等完成。归档成功不删除在线事件，保留策略后续另行决策。
 6. HMAC链用于发现数据库内事件被篡改、删除或重排，不构成法律意义的不可否认性，也不能证明外部密钥、应用主机或数据库管理员从未同时失陷。
 
 ### 备份与隔离恢复
@@ -62,7 +62,8 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 
 1. Kernel后台采样器在有界周期内采集进程健康、数据总字节、附件字节、文件数、采样耗时、Kernel版本和最近错误。采样结果以单个不可变快照替换，读取不触发目录遍历。
 2. 私有HTTP接口只返回最近快照及`sampledAt`。没有样本、样本过旧或最近采样失败必须显式表达，不能同步调用`DataSize`补算，也不能把数据库readiness混入同一状态字段。
-3. Worker或控制面定期拉取样本并按`kernelInstanceId`写入PostgreSQL。公共空间状态只显示持久化样本及其时间，不暴露工作空间路径或采样错误原文。
+3. Worker定期拉取样本时保留实际请求使用的部署句柄。收到响应后在同一PostgreSQL事务中按组织、空间、Kernel顺序锁定权威状态，并复验组织仍活动、空间仍可采样、Kernel仍为`ready`且部署句柄未变；只有复验通过才同时写入健康与容量样本。任一事实变化都以`observation-state-conflict`结束且不写任一观测表，不能让迟到响应覆盖新实例。
+4. 采样和审计归档生产者通过声明式Worker发现机制独立调度，并以schema作用域的事务级 advisory lock串行同类生产。已有`queued`或`running`任务时不为同一Kernel或组织创建第二个活动任务；生产失败向上终止调度，不静默跳过。公共空间状态只显示持久化样本及其时间，不暴露工作空间路径、部署句柄或采样错误原文。
 
 ### 恢复实例句柄生命周期
 
@@ -86,7 +87,7 @@ L1需要交付文档只读分享、管理审计、空间备份恢复以及容量
 
 ## Integration Contracts
 
-共享集成必须补齐`DocumentShare`、`ShareChallenge`、`AuditEvent`、组织审计序列、`SpaceBackup`、`SpaceRestoreJob`、`KernelHealthObservation`和`SpaceCapacityObservation`，并保持上文唯一语义字段。API领域以明确Repository和Kernel端口表达所需字段，不引入同形DTO映射或内存fallback。Worker的备份和观测消费者必须解析同一个进程内registry，不能退回启动时静态句柄或另建恢复句柄表。
+共享集成必须补齐`DocumentShare`、`ShareChallenge`、`AuditEvent`、组织审计序列、`SpaceBackup`、`SpaceRestoreJob`、`KernelHealthObservation`和`SpaceCapacityObservation`，并保持上文唯一语义字段。API领域以明确Repository和Kernel端口表达所需字段，不引入同形DTO映射或内存fallback。Worker的备份和观测消费者必须解析同一个进程内registry，不能退回启动时静态句柄或另建恢复句柄表；观测端口返回样本及本次请求使用的唯一部署句柄，持久化处理器不从响应、首个实例或当前registry反推该身份。
 
 Kernel路由注册必须位于服务认证中间件之后，只接受私网mTLS与短期服务JWT。分享闭包读取、备份创建、恢复校验和观测读取使用不同策略项；浏览器不能直接调用这些Kernel路径。
 
