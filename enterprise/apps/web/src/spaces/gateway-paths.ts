@@ -59,6 +59,23 @@ function contentQuery(identity: ProtyleContentIdentity): string {
   }).toString();
 }
 
+function buildAssetPath(
+  space: SpaceGatewayIdentity,
+  identity: ProtyleContentIdentity,
+  path: string,
+  download: boolean,
+): string {
+  const encodedPath = encodeResourcePath(path);
+  if (!encodedPath.startsWith("assets/")) {
+    throw new Error("[protyle.gateway] asset path must start with assets/");
+  }
+
+  const query = contentQuery(identity);
+  return `${buildSpaceGatewayBasePath(space)}/${encodedPath}?${
+    download ? `${query}&download=true` : query
+  }`;
+}
+
 export function buildSpaceGatewayBasePath(identity: SpaceGatewayIdentity): string {
   const organizationId = encodeURIComponent(identity.organizationId);
   const spaceId = encodeURIComponent(identity.spaceId);
@@ -87,6 +104,28 @@ export function buildKernelUploadPath(space: SpaceGatewayIdentity): string {
   return `${buildSpaceGatewayBasePath(space)}/upload`;
 }
 
+/**
+ * 生成当前空间的附件读取地址；路径与内容身份在同一调用边界收敛。
+ */
+export function buildSpaceGatewayAssetPath(
+  space: SpaceGatewayIdentity,
+  identity: ProtyleContentIdentity,
+  path: string,
+): string {
+  return buildAssetPath(space, identity, path, false);
+}
+
+/**
+ * 生成强制下载地址；它仍携带同一内容身份，不能被当作公共文件地址。
+ */
+export function buildSpaceGatewayAssetDownloadPath(
+  space: SpaceGatewayIdentity,
+  identity: ProtyleContentIdentity,
+  path: string,
+): string {
+  return buildAssetPath(space, identity, path, true);
+}
+
 export function buildKernelWebSocketUrl(
   space: SpaceGatewayIdentity,
   identity: ProtyleContentIdentity,
@@ -105,13 +144,8 @@ export function createSpaceGatewayResourcePort(
   const basePath = buildSpaceGatewayBasePath(space);
 
   return {
-    resolveAsset: (identity, path) => {
-      const encodedPath = encodeResourcePath(path);
-      if (!encodedPath.startsWith("assets/")) {
-        throw new Error("[protyle.gateway] asset path must start with assets/");
-      }
-      return `${basePath}/${encodedPath}?${contentQuery(identity)}`;
-    },
+    resolveAsset: (identity, path) =>
+      buildSpaceGatewayAssetPath(space, identity, path),
     resolveEmoji: (identity, path) =>
       `${basePath}/emojis/${encodeResourcePath(path)}?${contentQuery(identity)}`,
     resolveExport: (identity, path) =>
