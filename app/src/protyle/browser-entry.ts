@@ -103,6 +103,14 @@ export function createRealProtyleBrowserCoreFactory<TRuntime = unknown>(
                     }
                     editor.focus();
                 },
+                navigateDocument: (navigation) => {
+                    if (disposed) {
+                        return Promise.reject(new Error(
+                            "A destroyed Protyle Core cannot navigate documents.",
+                        ));
+                    }
+                    return editor.navigateDocument(navigation);
+                },
                 setHostReadOnly: (readOnly) => {
                     if (disposed) {
                         throw new Error(
