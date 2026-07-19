@@ -389,6 +389,8 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
     const originalHTML = nodeElement.outerHTML;
     const originalSource = imgElement.getAttribute("src") || "";
     const originalPersistedSource = imgElement.getAttribute("data-src") || "";
+    // Kernel OCR 只接收持久化资源路径，不接收 Gateway 解析后的 src。
+    const currentPersistedSource = () => imgElement.getAttribute("data-src") || originalPersistedSource;
     const identity = protyleContentIdentity(protyle);
     const runtime = protyle.session!.runtime as TProtyleRuntime;
     const handle = runtime.menu.open();
@@ -490,7 +492,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
                         protyle,
                         menuSignal,
                         "/api/asset/getImageOCRText",
-                        {path: imgElement.getAttribute("src")},
+                        {path: currentPersistedSource()},
                         "read",
                     ).then((response) => {
                         originalOCR = response.data.text;
@@ -514,7 +516,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
                     protyle,
                     menuSignal,
                     "/api/asset/ocr",
-                    {path: imgElement.getAttribute("src"), force: true},
+                    {path: currentPersistedSource(), force: true},
                     "write",
                 ).then(() => undefined),
             }],
@@ -614,7 +616,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
         };
         const newSource = cleanSource(metadata.sourceInput.value);
         if (originalSource === newSource || !newSource.startsWith("data:image/")) {
-            persistOCR(imgElement.getAttribute("src") || "");
+            persistOCR(currentPersistedSource());
             commit();
             return;
         }
@@ -634,7 +636,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
                 imgElement.setAttribute("data-src", originalPersistedSource);
                 updateImageNetworkMark(protyle, assetElement, originalPersistedSource || originalSource);
                 notify(protyle, "error", protyle.localization.text("uploadError"));
-                persistOCR(originalSource);
+                persistOCR(originalPersistedSource);
                 commit();
             }
         });
