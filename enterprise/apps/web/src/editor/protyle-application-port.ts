@@ -122,8 +122,10 @@ export function createProtyleApplicationPort(
     fontSizeScrollZoom: true,
     fullWidth: true,
     headingEmbedMode: 0,
+    listItemDotNumberClickFocus: true,
     katexMacros: "{}",
     listLogicalOutdent: false,
+    pasteURLAutoConvert: true,
     markdown: {
       inlineAsterisk: true,
       inlineMark: true,
@@ -151,6 +153,7 @@ export function createProtyleApplicationPort(
       readOnly = value;
     },
     spellcheck: false,
+    suppressBlockLinkPopoverOnMenu: true,
   } satisfies ProtyleApplicationSettings["editor"];
 
   document.documentElement.style.setProperty(
@@ -192,6 +195,7 @@ export function createProtyleApplicationPort(
         documentMove: false,
         flashcardDeck: false,
         fullscreen: false,
+        navigationHistory: false,
         quickFlashcard: false,
         tableMenu: false,
         webBlockLink: false,
@@ -205,6 +209,7 @@ export function createProtyleApplicationPort(
           settings.hotkeys.editor.heading,
           settings.hotkeys.editor.insert,
           settings.hotkeys.editor.list,
+          settings.hotkeys.editor.table,
           toolbarHotkeys,
         ].some((group) => Object.values(group).includes(hotkey)),
         general: {
@@ -295,6 +300,18 @@ export function createProtyleApplicationPort(
             checkToggle: "⌘↩",
             indent: "⇥",
             outdent: "⇧⇥",
+          },
+          table: {
+            "delete-column": "⇧⌘-",
+            "delete-row": "⌘-",
+            insertColumnLeft: "",
+            insertColumnRight: "",
+            insertRowAbove: "",
+            insertRowBelow: "",
+            moveToDown: "⌥⌘B",
+            moveToLeft: "⌥⌘L",
+            moveToRight: "⌥⌘R",
+            moveToUp: "⌥⌘T",
           },
         },
       },

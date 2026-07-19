@@ -281,6 +281,41 @@ export const goForward = async (app: App) => {
     }
 };
 
+export const pushBackLocation = (protyle: IProtyle, location: {
+    blockId: string,
+    position: {start: number, end: number},
+    zoomId?: string,
+}) => {
+    if (!protyle.model) {
+        return;
+    }
+    const lastStack = window.siyuan.backStack[window.siyuan.backStack.length - 1];
+    if (lastStack && lastStack.id === location.blockId && lastStack.zoomId === location.zoomId) {
+        lastStack.position = location.position;
+        return;
+    }
+    if (forwardStack.length > 0) {
+        if (previousIsBack) {
+            window.siyuan.backStack.push(forwardStack.pop());
+        }
+        forwardStack = [];
+        document.querySelector("#barForward")?.classList.add("toolbar__item--disabled");
+    }
+    window.siyuan.backStack.push({
+        position: location.position,
+        id: location.blockId,
+        protyle,
+        zoomId: location.zoomId,
+    });
+    if (window.siyuan.backStack.length > Constants.SIZE_UNDO) {
+        window.siyuan.backStack.shift();
+    }
+    previousIsBack = false;
+    if (window.siyuan.backStack.length > 1) {
+        document.querySelector("#barBack")?.classList.remove("toolbar__item--disabled");
+    }
+};
+
 export const pushBack = (protyle: IProtyle, range?: Range, blockElement?: Element) => {
     if (!protyle.model) {
         return;
@@ -300,32 +335,10 @@ export const pushBack = (protyle: IProtyle, range?: Range, blockElement?: Elemen
     if (editElement) {
         const position = getSelectionOffset(editElement, undefined, range);
         const id = blockElement.getAttribute("data-node-id") || protyle.block.rootID;
-        const lastStack = window.siyuan.backStack[window.siyuan.backStack.length - 1];
-        if (lastStack && lastStack.id === id && (
-            (protyle.block.showAll && lastStack.zoomId === protyle.block.id) || (!lastStack.zoomId && !protyle.block.showAll)
-        )) {
-            lastStack.position = position;
-        } else {
-            if (forwardStack.length > 0) {
-                if (previousIsBack) {
-                    window.siyuan.backStack.push(forwardStack.pop());
-                }
-                forwardStack = [];
-                document.querySelector("#barForward")?.classList.add("toolbar__item--disabled");
-            }
-            window.siyuan.backStack.push({
-                position,
-                id,
-                protyle,
-                zoomId: protyle.block.showAll ? protyle.block.id : undefined,
-            });
-            if (window.siyuan.backStack.length > Constants.SIZE_UNDO) {
-                window.siyuan.backStack.shift();
-            }
-            previousIsBack = false;
-        }
-        if (window.siyuan.backStack.length > 1) {
-            document.querySelector("#barBack")?.classList.remove("toolbar__item--disabled");
-        }
+        pushBackLocation(protyle, {
+            blockId: id,
+            position,
+            zoomId: protyle.block.showAll ? protyle.block.id : undefined,
+        });
     }
 };

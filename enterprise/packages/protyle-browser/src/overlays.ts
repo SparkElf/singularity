@@ -32,7 +32,7 @@ export function createProtyleOverlayPort<TOverlay>(
   };
 
   return {
-    add: (overlay) => {
+    add: (overlay, onBeforeClose) => {
       if (disposed) {
         throw new Error("[protyle.overlays] cannot add an overlay after disposal");
       }
@@ -47,7 +47,11 @@ export function createProtyleOverlayPort<TOverlay>(
             }
             closed = true;
             registrations.delete(registration);
-            closeOverlay(overlay);
+            try {
+              onBeforeClose?.();
+            } finally {
+              closeOverlay(overlay);
+            }
           },
         },
       };
@@ -63,7 +67,17 @@ export function createProtyleOverlayPort<TOverlay>(
         return;
       }
       disposed = true;
-      registrations.forEach(({ handle }) => handle.close());
+      const failures: unknown[] = [];
+      Array.from(registrations).forEach(({ handle }) => {
+        try {
+          handle.close();
+        } catch (error) {
+          failures.push(error);
+        }
+      });
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "[protyle.overlays] overlay disposal failed");
+      }
     },
   };
 }

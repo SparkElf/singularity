@@ -126,6 +126,7 @@ export const onGet = (options: {
     hideCoreElements(["gutterOnly"], options.protyle);
     options.protyle.block.parentID = options.data.data.parentID;
     options.protyle.block.parent2ID = options.data.data.parent2ID;
+    options.protyle.block.parentDocument = options.data.data.parentDocument;
     options.protyle.block.rootID = options.data.data.rootID;
     options.protyle.block.showAll = action.includes(Constants.CB_GET_ALL);
     options.protyle.block.mode = options.data.data.mode;

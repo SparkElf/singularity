@@ -1,16 +1,12 @@
 import {setEditMode} from "../util/setEditMode";
 import {scrollEvent} from "../scroll/event";
-import {isMobile} from "../../util/functions";
 import {Constants} from "../../constants";
-import {isMac} from "../util/browserPlatform";
+import {isMac, isNarrowViewport} from "../util/browserPlatform";
 import {lineNumberRender} from "../render/highlightRender";
-import {hideMessage, showMessage} from "../../dialog/message";
-import {genUUID} from "../../util/genID";
 import {getContenteditableElement, getLastBlock} from "../wysiwyg/getBlock";
 import {genEmptyElement, genHeadingElement} from "../wysiwyg/blockElement";
 import {transaction} from "../wysiwyg/transaction";
 import {focusByRange} from "../util/selection";
-import {moveResize} from "../../dialog/moveResize";
 import {
     hasClosestBlock,
     hasClosestByAttribute,
@@ -19,6 +15,105 @@ import {
     isInEmbedBlock
 } from "../util/hasClosest";
 import {hideElements} from "./hideElements";
+import {positionElementInViewport} from "./positionElement";
+
+const toolbarResizeDirections = ["move", "rd", "ld", "lt", "rt", "r", "d", "t", "l"] as const;
+
+const enableToolbarMoveResize = (protyle: IProtyle) => {
+    const element = protyle.toolbar.subElement;
+    let endGesture: (() => void) | undefined;
+
+    const pinToolbar = () => {
+        const pinElement = element.querySelector<HTMLElement>('.block__icons [data-type="pin"]')!;
+        pinElement.querySelector("svg use")!.setAttribute("xlink:href", "#iconUnpin");
+        pinElement.setAttribute("aria-label", protyle.localization.text("unpin"));
+        element.firstElementChild!.setAttribute("data-drag", "true");
+    };
+
+    element.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || isNarrowViewport()) {
+            return;
+        }
+        const target = event.target as HTMLElement;
+        const handle = target.closest<HTMLElement>(toolbarResizeDirections
+            .map((direction) => `.resize__${direction}`)
+            .join(","));
+        if (!handle) {
+            return;
+        }
+        const direction = toolbarResizeDirections.find((item) => handle.classList.contains(`resize__${item}`))!;
+        const startRect = element.getBoundingClientRect();
+        const pointerId = event.pointerId;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        let moved = false;
+        const gesture = new AbortController();
+
+        endGesture?.();
+        const finish = () => {
+            if (endGesture !== finish) {
+                return;
+            }
+            endGesture = undefined;
+            gesture.abort();
+            element.style.userSelect = "";
+            if (moved && !protyle.requestSignal.aborted) {
+                pinToolbar();
+                hideElements(["gutter"], protyle);
+            }
+        };
+        endGesture = finish;
+        element.style.userSelect = "none";
+        event.preventDefault();
+
+        document.addEventListener("pointermove", (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) {
+                return;
+            }
+            moved = true;
+            const deltaX = moveEvent.clientX - startX;
+            const deltaY = moveEvent.clientY - startY;
+            const viewportWidth = document.documentElement.clientWidth;
+            const viewportHeight = document.documentElement.clientHeight;
+
+            if (direction === "move") {
+                positionElementInViewport(element, startRect.left + deltaX, startRect.top + deltaY);
+                return;
+            }
+
+            const startRight = startRect.right;
+            const startBottom = startRect.bottom;
+            if (direction.includes("l")) {
+                const left = Math.max(0, Math.min(startRect.left + deltaX, startRight - 200));
+                element.style.left = `${left}px`;
+                element.style.width = `${startRight - left}px`;
+                element.style.maxWidth = "none";
+            } else if (direction.includes("r")) {
+                const width = Math.max(200, Math.min(startRect.width + deltaX, viewportWidth - startRect.left));
+                element.style.width = `${width}px`;
+                element.style.maxWidth = "none";
+            }
+            if (direction.includes("t")) {
+                const top = Math.max(0, Math.min(startRect.top + deltaY, startBottom - 160));
+                element.style.top = `${top}px`;
+                element.style.height = `${startBottom - top}px`;
+                element.style.maxHeight = "";
+            } else if (direction.includes("d")) {
+                const height = Math.max(160, Math.min(startRect.height + deltaY, viewportHeight - startRect.top));
+                element.style.height = `${height}px`;
+                element.style.maxHeight = "";
+            }
+        }, {signal: gesture.signal});
+        const finishPointer = (endEvent: PointerEvent) => {
+            if (endEvent.pointerId === pointerId) {
+                finish();
+            }
+        };
+        document.addEventListener("pointerup", finishPointer, {signal: gesture.signal});
+        document.addEventListener("pointercancel", finishPointer, {signal: gesture.signal});
+    }, {signal: protyle.requestSignal});
+    protyle.requestSignal.addEventListener("abort", () => endGesture?.(), {once: true});
+};
 
 export const initUI = (protyle: IProtyle) => {
     protyle.contentElement = document.createElement("div");
@@ -58,14 +153,7 @@ export const initUI = (protyle: IProtyle) => {
 
     protyle.element.appendChild(protyle.toolbar.element);
     protyle.element.appendChild(protyle.toolbar.subElement);
-    moveResize(protyle.toolbar.subElement, () => {
-        const pinElement = protyle.toolbar.subElement.querySelector('.block__icons [data-type="pin"]');
-        if (pinElement) {
-            pinElement.querySelector("svg use").setAttribute("xlink:href", "#iconUnpin");
-            pinElement.setAttribute("aria-label", protyle.localization.text("unpin"));
-            protyle.toolbar.subElement.firstElementChild.setAttribute("data-drag", "true");
-        }
-    });
+    enableToolbarMoveResize(protyle);
 
     protyle.element.append(protyle.highlight.styleElement);
 
@@ -75,10 +163,8 @@ export const initUI = (protyle: IProtyle) => {
     document.execCommand("DefaultParagraphSeparator", false, "p");
 
     let wheelTimeout: number;
-    const wheelId = genUUID();
     const isMacOS = isMac();
-    let fontSize = protyle.settings.editor.fontSize;
-    const applyFontSize = () => {
+    const applyFontSize = (fontSize: number) => {
         document.documentElement.style.setProperty("--b3-font-size-editor", `${fontSize}px`);
         protyle.settings.editor.setFontSize(fontSize);
     };
@@ -92,7 +178,6 @@ export const initUI = (protyle: IProtyle) => {
     };
     protyle.requestSignal.addEventListener("abort", () => {
         clearTimeout(wheelTimeout);
-        hideMessage(wheelId);
     }, {once: true});
     protyle.contentElement.addEventListener("mousewheel", (event: WheelEvent) => {
         if (!protyle.settings.editor.fontSizeScrollZoom || (isMacOS && !event.metaKey) ||
@@ -100,6 +185,7 @@ export const initUI = (protyle: IProtyle) => {
             return;
         }
         event.stopPropagation();
+        let fontSize = protyle.settings.editor.fontSize;
         if (event.deltaY < 0) {
             if (fontSize < 72) {
                 fontSize++;
@@ -113,23 +199,17 @@ export const initUI = (protyle: IProtyle) => {
                 return;
             }
         }
-        applyFontSize();
+        applyFontSize(fontSize);
         clearTimeout(wheelTimeout);
-        showMessage(`${protyle.localization.text("fontSize")} ${fontSize}px<span class="fn__space"></span>
-<button class="b3-button b3-button--white">${protyle.localization.text("reset")} 16px</button>`, undefined, undefined, wheelId);
         wheelTimeout = window.setTimeout(() => {
             persistFontSize();
             protyle.wysiwyg.element.querySelectorAll(".code-block .protyle-linenumber__rows").forEach((block: HTMLElement) => {
                 lineNumberRender(block.parentElement, protyle);
             });
-            document.querySelector(`#message [data-id="${wheelId}"] button`)?.addEventListener("click", () => {
-                fontSize = 16;
-                applyFontSize();
-                persistFontSize();
-                hideMessage(wheelId);
-                protyle.wysiwyg.element.querySelectorAll(".code-block .protyle-linenumber__rows").forEach((block: HTMLElement) => {
-                    lineNumberRender(block.parentElement, protyle);
-                });
+            protyle.host.dispatch({
+                type: "notify",
+                level: "info",
+                message: `${protyle.localization.text("fontSize")} ${fontSize}px`,
             });
         }, Constants.TIMEOUT_LOAD);
     }, {passive: true, signal: protyle.requestSignal});
@@ -345,7 +425,7 @@ export const getPadding = (protyle: IProtyle) => {
     if (protyle.options.typewriterMode) {
         bottom = protyle.element.clientHeight / 2;
     }
-    if (!isMobile()) {
+    if (!isNarrowViewport()) {
         let isFullWidth = protyle.wysiwyg.element.getAttribute(Constants.CUSTOM_SY_FULLWIDTH);
         if (!isFullWidth) {
             isFullWidth = protyle.settings.editor.fullWidth ? "true" : "false";

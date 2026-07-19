@@ -115,8 +115,9 @@ ${padHTML}
                     if (protyle.options.render.breadcrumbDocName && isOnlyMeta(event)) {
                         protyle.host.dispatch({
                             type: "open-document",
-                            notebookId: protyle.notebookId,
-                            documentId: id,
+                            notebookId: target.dataset.notebookId!,
+                            documentId: target.dataset.documentId!,
+                            blockId: id,
                             disposition: "current",
                             scope: id === protyle.block.rootID ? "target" : "subtree",
                             attention: "focus",
@@ -303,9 +304,9 @@ ${padHTML}
             }
             response.data.forEach((item: IBreadcrumb) => {
                 let isCurrent = false;
-                if (!protyle.block.showAll && item.id === protyle.block.parentID) {
+                if (!protyle.block.showAll && item.blockId === protyle.block.parentID) {
                     isCurrent = true;
-                } else if (protyle.block.showAll && item.id === protyle.block.id) {
+                } else if (protyle.block.showAll && item.blockId === protyle.block.id) {
                     isCurrent = true;
                 }
                 menu.addItem({
@@ -313,7 +314,7 @@ ${padHTML}
                     icon: getIconByType(item.type, item.subType),
                     label: item.name,
                     click() {
-                        zoomOut({protyle, id: item.id});
+                        zoomOut({protyle, id: item.blockId});
                     }
                 });
             });
@@ -703,18 +704,18 @@ ${padHTML}
             let html = "";
             response.data.forEach((item: IBreadcrumb, index: number) => {
                 let isCurrent = false;
-                if (!protyle.block.showAll && item.id === protyle.block.parentID) {
+                if (!protyle.block.showAll && item.blockId === protyle.block.parentID) {
                     isCurrent = true;
-                } else if (protyle.block.showAll && item.id === protyle.block.id) {
+                } else if (protyle.block.showAll && item.blockId === protyle.block.id) {
                     isCurrent = true;
                 }
                 if (index === 0 && !protyle.options.render.breadcrumbDocName) {
-                    html += `<span class="protyle-breadcrumb__item${isCurrent ? " protyle-breadcrumb__item--active" : ""}" data-node-id="${item.id}"${response.data.length === 1 ? ' style="max-width:none"' : ""}>
-    <svg class="popover__block" data-id="${item.id}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
+                    html += `<span class="protyle-breadcrumb__item${isCurrent ? " protyle-breadcrumb__item--active" : ""}" data-node-id="${item.blockId}" data-notebook-id="${item.notebookId}" data-document-id="${item.documentId}"${response.data.length === 1 ? ' style="max-width:none"' : ""}>
+    <svg class="popover__block" data-id="${item.blockId}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
 </span>`;
                 } else {
-                    html += `<span class="protyle-breadcrumb__item${isCurrent ? " protyle-breadcrumb__item--active" : ""}" data-node-id="${item.id}"${(response.data.length === 1 || index === 0) ? ' style="max-width:none"' : ""}>
-    <svg class="popover__block" data-id="${item.id}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
+                    html += `<span class="protyle-breadcrumb__item${isCurrent ? " protyle-breadcrumb__item--active" : ""}" data-node-id="${item.blockId}" data-notebook-id="${item.notebookId}" data-document-id="${item.documentId}"${(response.data.length === 1 || index === 0) ? ' style="max-width:none"' : ""}>
+    <svg class="popover__block" data-id="${item.blockId}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
     ${item.name ? `<span class="protyle-breadcrumb__text" title="${item.name}">${item.name}</span>` : ""}
 </span>`;
                 }

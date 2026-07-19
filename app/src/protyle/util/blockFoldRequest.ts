@@ -14,15 +14,22 @@ export interface BlockFoldResult {
     readonly zoomIn: boolean;
 }
 
+export interface BlockFoldTarget extends ProtyleContentIdentity {
+    readonly blockId: string;
+}
+
 export const requestBlockFold = async (
     protyle: IProtyle,
-    identity: ProtyleContentIdentity,
+    target: BlockFoldTarget,
 ): Promise<BlockFoldResult> => {
     const response = await protyle.session!.runtime.transport.request<BlockFoldResponse>(
         "/api/block/checkBlockFold",
-        {id: identity.documentId},
+        {id: target.blockId},
         {
-            identity,
+            identity: {
+                documentId: target.documentId,
+                notebookId: target.notebookId,
+            },
             intent: "read",
             signal: protyle.requestSignal,
         },

@@ -1,6 +1,6 @@
 import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
-import {confirmDialog} from "../../../dialog/confirmDialog";
+import {openProtyleConfirm} from "../../wysiwyg/dialogOwner";
 import {upDownHint} from "../../util/upDownHint";
 import {bindEditEvent, getColId, getEditHTML} from "./col";
 import {updateAttrViewCellAnimation} from "./action";
@@ -11,7 +11,7 @@ import * as dayjs from "dayjs";
 import {getFieldsByData} from "./view";
 import {getFieldIdByCellElement} from "./row";
 import {Constants} from "../../../constants";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition} from "../../toolbar/position";
 import {currentAVOverlay} from "./overlay";
 import {openAVMenu} from "./menu";
 
@@ -148,7 +148,7 @@ export const removeCellOption = (protyle: IProtyle, cellElements: HTMLElement[],
     target.remove();
     if (menuElement) {
         const cellRect = cellElements[cellElements.length - 1].getBoundingClientRect();
-        setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+        setToolbarPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
     }
 };
 
@@ -264,7 +264,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
             menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll + (menuElement.querySelector(".b3-chips").clientHeight - oldChipsHeight);
             // chips 增减导致菜单高度变化后重新定位（锁底部，顶部自适应，避免底部溢出视口）
             const cellRect = cellElements[cellElements.length - 1].getBoundingClientRect();
-            setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+            setToolbarPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
         }
     });
     if (!menuHandle) {
@@ -321,7 +321,10 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
         label: localization.text("delete"),
         icon: "iconTrashcan",
         click() {
-            confirmDialog(localization.text("deleteOpConfirm"), localization.text("confirmDelete"), () => {
+            openProtyleConfirm({
+                destructive: true,
+                message: localization.text("confirmDelete"),
+                onConfirm: () => {
                 let colOptions: { name: string, color: string }[] = [];
                 fields.find(column => {
                     if (column.id === colId) {
@@ -398,9 +401,12 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll + (menuElement.querySelector(".b3-chips").clientHeight - oldChipsHeight);
                     // chips 增减导致菜单高度变化后重新定位（锁底部，顶部自适应，避免底部溢出视口）
                     const cellRect = cellElements[cellElements.length - 1].getBoundingClientRect();
-                    setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+                    setToolbarPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
                 }
-            }, undefined, true);
+                },
+                protyle,
+                title: localization.text("deleteOpConfirm"),
+            });
         }
     });
     menu.addItem({type: "separator"});
@@ -504,7 +510,7 @@ export const setColOption = (protyle: IProtyle, data: IAV, target: HTMLElement, 
                     menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll;
                     // chips 增减导致菜单高度变化后重新定位（锁底部，顶部自适应，避免底部溢出视口）
                     const cellRect = cellElements[cellElements.length - 1].getBoundingClientRect();
-                    setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+                    setToolbarPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
                     name = inputElement.value;
                     desc = descElement.value;
                     color = newColor;
@@ -726,7 +732,7 @@ export const addColOptionOrCell = (protyle: IProtyle, data: IAV, cellElements: H
         menuElement.querySelector(".b3-menu__items").scrollTop = oldScroll + (menuElement.querySelector(".b3-chips").clientHeight - oldChipsHeight);
         // chips 增减导致菜单高度变化后重新定位（锁底部，顶部自适应，避免底部溢出视口）
         const cellRect = cellElements[cellElements.length - 1].getBoundingClientRect();
-        setPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+        setToolbarPosition(menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
     }
 };
 

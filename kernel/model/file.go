@@ -503,14 +503,14 @@ func ListDocTree(boxID, listPath string, sortMode int, flashcard, showHidden boo
 }
 
 func GetDoc(startID, endID, id string, index int, query string, queryTypes, querySubTypes map[string]bool, queryMethod, mode int, size int, isBacklink bool, originalRefBlockIDs map[string]string, highlight bool) (
-	blockCount int, dom, parentID, parent2ID, rootID, typ string, eof, scroll bool, boxID, docPath string, isBacklinkExpand bool, keywords []string, err error) {
+	blockCount int, dom, parentID, parent2ID, rootID, typ string, eof, scroll bool, boxID, docPath string, isBacklinkExpand bool, keywords []string, parentDocument *ContentTarget, err error) {
 	return GetDocInBox(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight, "")
 }
 
 // GetDocInBox 与 GetDoc 一致，但按 boxID 路由到加密 db 或全局 db。
 // 加密笔记本打开文档时传入 boxID，blocktree/content 查询走加密 db；boxID 为空时 fall-through 全局 db。
 func GetDocInBox(startID, endID, id string, index int, query string, queryTypes, querySubTypes map[string]bool, queryMethod, mode int, size int, isBacklink bool, originalRefBlockIDs map[string]string, highlight bool, boxID string) (
-	blockCount int, dom, parentID, parent2ID, rootID, typ string, eof, scroll bool, boxIDOut, docPath string, isBacklinkExpand bool, keywords []string, err error) {
+	blockCount int, dom, parentID, parent2ID, rootID, typ string, eof, scroll bool, boxIDOut, docPath string, isBacklinkExpand bool, keywords []string, parentDocument *ContentTarget, err error) {
 	//os.MkdirAll("pprof", 0755)
 	//cpuProfile, _ := os.Create("pprof/GetDoc")
 	//pprof.StartCPUProfile(cpuProfile)
@@ -644,6 +644,7 @@ func GetDocInBox(startID, endID, id string, index int, query string, queryTypes,
 		}
 	}
 	rootID = tree.Root.ID
+	parentDocument = parentDocumentTarget(tree)
 	if !isDoc {
 		typ = node.Type.String()
 	}
@@ -815,6 +816,22 @@ func GetDocInBox(startID, endID, id string, index int, query string, queryTypes,
 	}
 	keywords = gulu.Str.RemoveDuplicatedElem(keywords)
 	return
+}
+
+func parentDocumentTarget(tree *parse.Tree) *ContentTarget {
+	parentDir := path.Dir(tree.Path)
+	if parentDir == "/" {
+		return nil
+	}
+	parent := treenode.GetBlockTreeRootByPath(tree.Box, parentDir+".sy")
+	if parent == nil {
+		return nil
+	}
+	return &ContentTarget{
+		BlockID:    parent.ID,
+		NotebookID: parent.BoxID,
+		DocumentID: parent.RootID,
+	}
 }
 
 func loadNodesByStartEnd(tree *parse.Tree, startID, endID string) (nodes []*ast.Node, eof bool) {

@@ -43,6 +43,12 @@ import {setEditMode} from "./util/setEditMode";
 import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "./util/contentLoad";
 import {createProtyleReadOnlyState, isProtyleReadOnly, setHostReadOnly} from "./runtime/readOnly";
 
+type ProtyleTransactionsMessage = IWebSocketData & {
+    cmd: "transactions";
+    data: Array<{ doOperations: IOperation[] }>;
+    sid: string;
+};
+
 const dispatchWorkspaceOutlineRefresh = (protyle: IProtyle) => {
     if (protyle.surface !== "workspace") {
         return;
@@ -165,6 +171,7 @@ export class Protyle {
             getInstance: () => this,
             destroy: () => this.destroy(),
             focus: () => this.focus(),
+            navigateDocument: (navigation) => this.navigateDocument(navigation),
             setHostReadOnly: (readOnly) => this.setHostReadOnly(readOnly),
             // 旧下游仍读取 app；新的内容能力不从该视图取得。
             app: application as unknown as IProtyle["app"],
@@ -306,7 +313,7 @@ export class Protyle {
                             setFoldById(data.data, this.protyle);
                             break;
                         case "transactions":
-                            this.onTransaction(data);
+                            this.onTransaction(data as ProtyleTransactionsMessage);
                             break;
                         case "readonly":
                             this.settings.editor.setReadOnly(data.data);
@@ -387,10 +394,12 @@ export class Protyle {
                         case "moveDoc":
                             if (this.protyle.path === data.data.fromPath) {
                                 this.protyle.path = data.data.newPath;
+                                const identity = protyleContentIdentity(this.protyle);
                                 this.protyle.host.dispatch({
                                     type: "open-document",
                                     notebookId: data.data.toNotebook,
-                                    documentId: this.protyle.block.rootID,
+                                    documentId: identity.documentId,
+                                    blockId: this.protyle.block.rootID,
                                     disposition: "current",
                                     scope: "target",
                                     attention: "none",
@@ -501,9 +510,94 @@ export class Protyle {
         this.applyReadOnlyState();
     }
 
-    private onTransaction(data: IWebSocketData) {
+    public async navigateDocument(navigation: TProtyleDocumentNavigation): Promise<void> {
+        const action: TProtyleAction[] = [];
+        if (navigation.scope === "context") {
+            action.push(Constants.CB_GET_CONTEXT);
+        }
+        if (navigation.zoom) {
+            action.push(Constants.CB_GET_ALL);
+        }
+        if (navigation.attention === "focus" || navigation.attention === "focus-and-highlight") {
+            action.push(Constants.CB_GET_FOCUS);
+        }
+        if (navigation.attention === "highlight" || navigation.attention === "focus-and-highlight") {
+            action.push(Constants.CB_GET_HL);
+        }
+        if (navigation.restoreScroll === "always") {
+            action.push(Constants.CB_GET_SCROLL);
+        } else if (navigation.restoreScroll === "if-document") {
+            action.push(Constants.CB_GET_ROOTSCROLL);
+        }
+
+        const restoresDocumentPosition = navigation.restoreScroll === "always" ||
+            (navigation.restoreScroll === "if-document" && navigation.blockId === navigation.documentId);
+        const scrollAttr = restoresDocumentPosition
+            ? this.settings.localFilePosition.get({
+                notebookId: navigation.notebookId,
+                documentId: navigation.documentId,
+            })
+            : undefined;
+        const restoredZoomId = scrollAttr?.zoomInId && scrollAttr.zoomInId !== scrollAttr.rootId
+            ? scrollAttr.zoomInId
+            : undefined;
+        if (restoredZoomId && !action.includes(Constants.CB_GET_ALL)) {
+            action.push(Constants.CB_GET_ALL);
+        }
+
+        let requestBody: Record<string, unknown>;
+        if (restoredZoomId) {
+            requestBody = {
+                id: restoredZoomId,
+                size: Constants.SIZE_GET_MAX,
+            };
+        } else if (scrollAttr) {
+            requestBody = {
+                id: scrollAttr.rootId,
+                startID: scrollAttr.startId,
+                endID: scrollAttr.endId,
+            };
+        } else {
+            requestBody = {
+                id: navigation.blockId,
+                mode: navigation.scope === "context" ? 3 : 0,
+                size: navigation.zoom || navigation.scope === "subtree"
+                    ? Constants.SIZE_GET_MAX
+                    : this.settings.editor.dynamicLoadBlocks,
+            };
+        }
+
+        const load = beginProtyleContentLoad(this.protyle);
+        try {
+            const response = await requestProtyleContent<IWebSocketData>(
+                this.protyle,
+                "/api/filetree/getDoc",
+                requestBody,
+                load,
+            );
+            if (!load.isCurrent()) {
+                return;
+            }
+            onGet({
+                action,
+                data: response,
+                load,
+                protyle: this.protyle,
+                scrollAttr,
+                scrollPosition: navigation.scroll === "start" ? "start" : undefined,
+            });
+        } catch (error) {
+            if (!load.isCurrent()) {
+                return;
+            }
+            removeLoading(this.protyle);
+            throw error;
+        }
+    }
+
+    private onTransaction(data: ProtyleTransactionsMessage) {
         // Transport 已按当前 notebookId + documentId 建立订阅，消息合同不再从全局内容库推断。
-        const transactions: Array<{ doOperations: IOperation[] }> = data.data;
+        const transactions = data.data;
         if (transactions.length === 0) {
             return;
         }
@@ -535,7 +629,7 @@ export class Protyle {
                     if (item.action === "delete") {
                         hasDeleteOp = true;
                     }
-                    onTransaction(this.protyle, [item], false);
+                    onTransaction(this.protyle, [item], false, data.sid);
                     // 反链面板移除元素后，文档为空
                     if (!(item.action === "delete" && typeof item.data?.createEmptyParagraph === "boolean" &&
                         !item.data.createEmptyParagraph)) {
@@ -754,8 +848,13 @@ export class Protyle {
         enableProtyle(this.protyle);
     }
 
-    public renderAVAttribute(element: HTMLElement, id: string, cb?: (element: HTMLElement) => void) {
-        renderAVAttribute(element, id, this.protyle, cb);
+    public renderAVAttribute(
+        element: HTMLElement,
+        id: string,
+        cb?: (element: HTMLElement) => void,
+        onEmpty?: () => void,
+    ) {
+        renderAVAttribute(element, id, this.protyle, cb, onEmpty);
     }
 
     public switchMode(mode: TEditorMode) {

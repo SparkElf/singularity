@@ -1,5 +1,9 @@
 import {protyleContentIdentity} from "./contentLoad";
-import {getCompressURL} from "../../util/image";
+
+const thumbnailAssetSource = (path: string) =>
+    path.startsWith("assets/") && [".jpeg", ".jpg", ".png"].some((extension) => path.endsWith(extension))
+        ? `${path}?style=thumb`
+        : path;
 
 /** Preserve persisted AV paths while routing browser-readable assets through the bound Session. */
 export const resolveProtyleAssetSource = (protyle: IProtyle, path: string): string => {
@@ -9,7 +13,7 @@ export const resolveProtyleAssetSource = (protyle: IProtyle, path: string): stri
     if (protyle.content.mode === "bound") {
         return protyle.session!.runtime.resources.resolveAsset(protyleContentIdentity(protyle), path);
     }
-    return getCompressURL(path);
+    return thumbnailAssetSource(path);
 };
 
 export const resolveProtyleAssetBackground = (protyle: IProtyle, cssText: string): string => {

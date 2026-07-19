@@ -36,6 +36,11 @@ export interface ProtyleDocumentStatistics {
   readonly blockCount: number;
 }
 
+export interface ProtyleTextPosition {
+  readonly start: number;
+  readonly end: number;
+}
+
 export type ProtyleBlockAttributeFocus =
   | "bookmark"
   | "name"
@@ -48,6 +53,7 @@ export type ProtyleHostEvent =
       type: "open-document";
       notebookId: string;
       documentId: string;
+      blockId: string;
       disposition: ProtyleDocumentDisposition;
       scope: ProtyleDocumentScope;
       attention: ProtyleDocumentAttention;
@@ -239,6 +245,14 @@ export type ProtyleHostEvent =
       documentId: string;
     }
   | {
+      type: "record-navigation-location";
+      notebookId: string;
+      documentId: string;
+      blockId: string;
+      position: ProtyleTextPosition;
+      zoomId?: string;
+    }
+  | {
       type: "toggle-document-fullscreen";
       notebookId: string;
       documentId: string;
@@ -305,6 +319,18 @@ export type ProtyleParticipation = "live" | "detached";
 export interface ProtyleContentIdentity {
   readonly documentId: string;
   readonly notebookId: string;
+}
+
+export interface ProtyleContentTarget extends ProtyleContentIdentity {
+  readonly blockId: string;
+}
+
+export interface ProtyleDocumentNavigation extends ProtyleContentTarget {
+  readonly attention: ProtyleDocumentAttention;
+  readonly restoreScroll: ProtyleDocumentScrollRestore;
+  readonly scope: ProtyleDocumentScope;
+  readonly scroll: ProtyleDocumentScroll;
+  readonly zoom: boolean;
 }
 
 export interface ProtyleRequestOptions {
@@ -412,7 +438,7 @@ export interface ProtyleMenuHandle<TMenu> {
 }
 
 export interface ProtyleOverlayPort<TOverlay> {
-  add: (overlay: TOverlay) => ProtyleOverlayHandle;
+  add: (overlay: TOverlay, onBeforeClose?: () => void) => ProtyleOverlayHandle;
   bringToFront: (overlay: TOverlay) => void;
   forEach: (visitor: (overlay: TOverlay) => void) => void;
   dispose: () => void;
@@ -522,6 +548,7 @@ export interface ProtylePluginPort<TOptions, TToolbar, TEditor> {
 export interface ProtyleController {
   destroy: () => void;
   focus: () => void;
+  navigateDocument: (navigation: ProtyleDocumentNavigation) => Promise<void>;
   setHostReadOnly: (readOnly: boolean) => void;
 }
 
@@ -702,13 +729,16 @@ export interface ProtyleApplicationSettings {
     readonly fontSizeScrollZoom: boolean;
     readonly fullWidth: boolean;
     readonly headingEmbedMode: number;
+    readonly listItemDotNumberClickFocus: boolean;
     readonly rtl: boolean;
     readonly dynamicLoadBlocks: number;
     readonly katexMacros: string;
     readonly listLogicalOutdent: boolean;
+    readonly pasteURLAutoConvert: boolean;
     readonly plantUMLServePath: string;
     readonly readOnly: boolean;
     readonly spellcheck: boolean;
+    readonly suppressBlockLinkPopoverOnMenu: boolean;
     readonly displayNetImgMark: boolean;
     readonly markdown: {
       readonly inlineAsterisk: boolean;
@@ -746,6 +776,7 @@ export interface ProtyleApplicationSettings {
     readonly documentMove: boolean;
     readonly flashcardDeck: boolean;
     readonly fullscreen: boolean;
+    readonly navigationHistory: boolean;
     readonly quickFlashcard: boolean;
     readonly tableMenu: boolean;
     readonly webBlockLink: boolean;
@@ -847,6 +878,18 @@ export interface ProtyleApplicationSettings {
         readonly checkToggle: string;
         readonly indent: string;
         readonly outdent: string;
+      };
+      readonly table: {
+        readonly "delete-column": string;
+        readonly "delete-row": string;
+        readonly insertColumnLeft: string;
+        readonly insertColumnRight: string;
+        readonly insertRowAbove: string;
+        readonly insertRowBelow: string;
+        readonly moveToDown: string;
+        readonly moveToLeft: string;
+        readonly moveToRight: string;
+        readonly moveToUp: string;
       };
     };
   };

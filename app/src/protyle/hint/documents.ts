@@ -1,4 +1,3 @@
-import {getNewDocTargetFromSavePath} from "../../util/parseNewDocTarget";
 import {insertHTML} from "../util/insertHTML";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {contentPathWithoutExtension, joinContentPath} from "./path";
@@ -6,6 +5,60 @@ import type {HintDocumentHPathResponse, HintDocumentSavePathResponse} from "./pr
 import {beginHintRequest, reportHintRequestFailure, requestHint} from "./request";
 
 type ReferencedDocumentPlacement = "configured" | "sub-document";
+
+type ConfiguredDocumentTarget = {
+    kind: "hPath";
+    hPath: string;
+    title: string;
+} | {
+    kind: "subDoc";
+    parentPath: string;
+    title: "";
+};
+
+const configuredDocumentTarget = (options: {
+    currentNotebookId: string;
+    currentPath: string;
+    hPath: string;
+    targetNotebookId: string;
+    templatePath: string;
+}): ConfiguredDocumentTarget => {
+    const crossNotebook = options.targetNotebookId !== options.currentNotebookId;
+    let templatePath = options.templatePath.trim();
+    let absolute = templatePath.startsWith("/");
+    if (crossNotebook && templatePath && !absolute) {
+        templatePath = "/" + templatePath;
+        absolute = true;
+    }
+    if (!templatePath && !crossNotebook) {
+        return {
+            kind: "subDoc",
+            parentPath: options.currentPath || "/",
+            title: "",
+        };
+    }
+
+    const templateSegments = templatePath.split("/").filter(Boolean);
+    let title = "";
+    if (templatePath && !templatePath.endsWith("/")) {
+        title = templateSegments.pop()!;
+    }
+    const parentSegments = absolute ? [] : options.hPath.split("/").filter(Boolean);
+    templateSegments.forEach((segment) => {
+        if (segment === "..") {
+            parentSegments.pop();
+        } else if (segment !== ".") {
+            parentSegments.push(segment);
+        }
+    });
+    return {
+        kind: "hPath",
+        hPath: title
+            ? "/" + [...parentSegments, title].join("/")
+            : parentSegments.length === 0 ? "/" : "/" + parentSegments.join("/") + "/",
+        title,
+    };
+};
 
 const insertDocumentReference = (
     protyle: IProtyle,
@@ -17,11 +70,12 @@ const insertDocumentReference = (
     const anchor = trimmed
         ? trimmed.substring(0, protyle.settings.editor.blockRefDynamicAnchorTextMaxLen)
         : protyle.localization.kernelText(16);
-    insertHTML(`<span data-type="block-ref" data-id="${documentId}" data-notebook-id="${notebookId}" data-subtype="d">${Lute.EscapeHTMLStr(anchor)}</span>`, protyle);
+    insertHTML(`<span data-type="block-ref" data-id="${documentId}" data-notebook-id="${notebookId}" data-document-id="${documentId}" data-subtype="d">${Lute.EscapeHTMLStr(anchor)}</span>`, protyle);
     protyle.host.dispatch({
         type: "open-document",
         notebookId,
         documentId,
+        blockId: documentId,
         disposition: "current",
         scope: "context",
         attention: "none",
@@ -84,13 +138,12 @@ export const createReferencedDocument = (
                 hPath = response.data;
             }
 
-            const target = getNewDocTargetFromSavePath({
+            const target = configuredDocumentTarget({
                 templatePath: savePath.data.path,
                 hPath: hPath || "/",
                 targetNotebookId,
                 currentNotebookId: currentIdentity.notebookId,
-                hasFocusTarget: true,
-                currentPath: protyle.path,
+                currentPath: protyle.path!,
             });
             const targetIdentity = {notebookId: targetNotebookId, documentId};
             if (target.kind === "hPath") {

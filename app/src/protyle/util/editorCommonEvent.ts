@@ -27,7 +27,6 @@ import {
 } from "../wysiwyg/superBlock";
 import {transaction, turnsIntoOneTransaction} from "../wysiwyg/transaction";
 import {updateListOrder} from "../wysiwyg/list";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {onGet} from "./onGet";
 import {blockRender} from "../render/blockRender";
 import {uploadFiles} from "../upload";
@@ -42,9 +41,42 @@ import {insertGalleryItemAnimation} from "../render/av/gallery/item";
 import {clearSelect} from "./clear";
 import {dragoverTab} from "../render/av/view";
 import {setFold} from "./blockFold";
-import {isEncryptedBox} from "../../util/pathName";
 import {beginProtyleDrag, currentProtyleDrag, endProtyleDrag} from "../ui/dragState";
 import {touchDragOwner} from "../ui/touchDragState";
+import {
+    beginProtyleContentLoad,
+    protyleContentIdentity,
+    requestProtyleContent,
+} from "./contentLoad";
+import {
+    parseDocumentDragTargets,
+} from "./documentDrag";
+
+const requestEditorEvent = <TResponse>(
+    protyle: IProtyle,
+    path: string,
+    body: unknown,
+    intent: "read" | "write",
+    identity = protyleContentIdentity(protyle),
+) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+    identity,
+    intent,
+    signal: protyle.requestSignal,
+});
+
+const renderDocumentReferences = (
+    protyle: IProtyle,
+    markdown: string,
+    targets: readonly {readonly blockId: string; readonly notebookId: string}[],
+) => {
+    const targetNotebooks = new Map(targets.map((target) => [target.blockId, target.notebookId]));
+    const container = document.createElement("div");
+    container.innerHTML = protyle.lute.Md2BlockDOM(markdown);
+    container.querySelectorAll<HTMLElement>('[data-type~="block-ref"][data-id]').forEach((element) => {
+        element.dataset.notebookId = targetNotebooks.get(element.dataset.id!)!;
+    });
+    return container.innerHTML;
+};
 
 const convertListItemSubtype = (listItem: Element, subtype: string) => {
     const actionElement = listItem.querySelector(".protyle-action");
@@ -380,10 +412,10 @@ const moveTo = async (protyle: IProtyle, sourceProtyle: IProtyle, sourceElements
     undoOperations.reverse();
     for (let j = 0; j < copyFoldHeadingIds.length; j++) {
         const childrenItem = copyFoldHeadingIds[j];
-        const responseTransaction = await fetchSyncPost("/api/block/getHeadingInsertTransaction", {
+        const responseTransaction = await requestEditorEvent<IWebSocketData>(sourceProtyle, "/api/block/getHeadingInsertTransaction", {
             id: childrenItem.oldId,
             notebook: sourceProtyle.notebookId,
-        });
+        }, "read");
         responseTransaction.data.doOperations.splice(0, 1);
         responseTransaction.data.doOperations[0].previousID = childrenItem.newId;
         responseTransaction.data.undoOperations.splice(0, 1);
@@ -843,6 +875,9 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 gutterType = type;
             }
         }
+        const documentDragTargets = parseDocumentDragTargets(
+            event.dataTransfer.getData(Constants.SIYUAN_DROP_NOTEBOOK),
+        );
         if (gutterType.startsWith(`${Constants.SIYUAN_DROP_GUTTER}NodeAttributeView${Constants.ZWSP}ViewTab${Constants.ZWSP}`.toLowerCase())) {
             const drag = currentProtyleDrag(protyle);
             if (drag?.transferType === gutterType && drag.identity.notebookId === protyle.notebookId) {
@@ -905,9 +940,23 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 // 引用：getRefText → Md2BlockDOM((id 'text'))
                 // lite 模式下 Shift（原嵌入块）也走引用，避免依赖后端 SQL 查询的嵌入块。
                 let html = "";
+                const referenceTargets = selectedIds.map((blockId) => ({
+                    blockId,
+                    notebookId: drag.identity.notebookId,
+                }));
                 for (let i = 0; i < selectedIds.length; i++) {
-                    const response = await fetchSyncPost("/api/block/getRefText", {id: selectedIds[i]});
-                    html += protyle.lute.Md2BlockDOM(`((${selectedIds[i]} '${response.data}'))`);
+                    const response = await requestEditorEvent<IWebSocketData>(protyle, "/api/block/getRefText", {
+                        id: selectedIds[i],
+                        notebook: drag.identity.notebookId,
+                    }, "read", {
+                        documentId: drag.identity.documentId,
+                        notebookId: drag.identity.notebookId,
+                    });
+                    html += renderDocumentReferences(
+                        protyle,
+                        `((${selectedIds[i]} '${response.data}'))`,
+                        [referenceTargets[i]],
+                    );
                 }
                 insertHTML(html, protyle);
             } else if (event.shiftKey) {
@@ -1336,9 +1385,10 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
                 dragoverElement = undefined;
             }
-        } else if (event.dataTransfer.getData(Constants.SIYUAN_DROP_FILE)?.split("-").length > 1) {
+        } else if (documentDragTargets.length > 0) {
             // 文件树拖拽
-            const ids = event.dataTransfer.getData(Constants.SIYUAN_DROP_FILE).split(",");
+            const documentTargets = documentDragTargets;
+            const ids = documentTargets.map((target) => target.documentId);
             if (!event.altKey && (!targetElement || (
                 !targetElement.classList.contains("av__row") && !targetElement.classList.contains("av__gallery-item") &&
                 !targetElement.classList.contains("av__gallery-add")
@@ -1358,14 +1408,29 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     if (ids.length > 1) {
                         html += "- ";
                     }
-                    const response = await fetchSyncPost("/api/block/getRefText", {id: ids[i]});
+                    const response = await requestEditorEvent<IWebSocketData>(protyle, "/api/block/getRefText", {
+                        id: ids[i],
+                        notebook: documentTargets[i].notebookId,
+                    }, "read", documentTargets[i]);
                     html += `((${ids[i]} '${response.data}'))`;
                     if (ids.length > 1 && i !== ids.length - 1) {
                         html += "\n";
                     }
                 }
-                insertHTML(protyle.lute.Md2BlockDOM(html), protyle);
+                insertHTML(renderDocumentReferences(protyle, html, documentTargets.map((target) => ({
+                    blockId: target.documentId,
+                    notebookId: target.notebookId,
+                }))), protyle);
             } else if (targetElement && !protyle.options.backlinkData && targetElement.className.indexOf("dragover__") > -1) {
+                if (documentTargets.some((target) => target.notebookId !== protyle.notebookId)) {
+                    console.error("[protyle.document-drag] cross-notebook move is not supported", {
+                        sourceNotebookIds: Array.from(new Set(documentTargets.map((target) => target.notebookId))),
+                        targetNotebookId: protyle.notebookId,
+                    });
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
                 const scrollTop = protyle.contentElement.scrollTop;
                 if (targetElement.classList.contains("av__row") ||
                     targetElement.classList.contains("av__gallery-item") ||
@@ -1424,21 +1489,21 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     if (targetElement.classList.contains("dragover__bottom")) {
                         for (let i = ids.length - 1; i > -1; i--) {
                             if (ids[i]) {
-                                await fetchSyncPost("/api/filetree/doc2Heading", {
+                                await requestEditorEvent<IWebSocketData>(protyle, "/api/filetree/doc2Heading", {
                                     srcID: ids[i],
                                     after: true,
                                     targetID: targetElement.getAttribute("data-node-id"),
-                                });
+                                }, "write");
                             }
                         }
                     } else {
                         for (let i = 0; i < ids.length; i++) {
                             if (ids[i]) {
-                                await fetchSyncPost("/api/filetree/doc2Heading", {
+                                await requestEditorEvent<IWebSocketData>(protyle, "/api/filetree/doc2Heading", {
                                     srcID: ids[i],
                                     after: false,
                                     targetID: targetElement.getAttribute("data-node-id"),
-                                });
+                                }, "write");
                             }
                         }
                     }
@@ -1447,11 +1512,12 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                         id: protyle.block.id,
                         size: protyle.settings.editor.dynamicLoadBlocks,
                     };
-                    if (isEncryptedBox(protyle.notebookId)) {
-                        getDocParam.notebook = protyle.notebookId;
-                    }
-                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
-                        onGet({data: getResponse, protyle});
+                    const load = beginProtyleContentLoad(protyle);
+                    void requestProtyleContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam, load).then((getResponse) => {
+                        if (!load.isCurrent()) {
+                            return;
+                        }
+                        onGet({data: getResponse, protyle, load});
                         if (protyle.surface === "workspace") {
                             protyle.host.dispatch({
                                 type: "refresh-outline",
@@ -1461,9 +1527,15 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                         }
                         // 文档标题互转后，编辑区会跳转到开头 https://github.com/siyuan-note/siyuan/issues/2939
                         setTimeout(() => {
-                            protyle.contentElement.scrollTop = scrollTop;
-                            protyle.scroll.lastScrollTop = scrollTop - 1;
+                            if (load.isCurrent()) {
+                                protyle.contentElement.scrollTop = scrollTop;
+                                protyle.scroll.lastScrollTop = scrollTop - 1;
+                            }
                         }, Constants.TIMEOUT_LOAD);
+                    }).catch((error) => {
+                        if (load.isCurrent()) {
+                            console.error("[protyle.transport] document reload after drop failed", error);
+                        }
                     });
                 }
                 targetElement.classList.remove("dragover__bottom", "dragover__top", "dragover__left", "dragover__right");
@@ -1567,17 +1639,17 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         let action: string;
         if (event.altKey || (event.shiftKey && protyle.lite)) {
             // Alt=引用；lite 模式 Shift 也为引用
-            action = window.siyuan.languages.dragTipRef;
+            action = protyle.localization.text("dragTipRef");
         } else if (event.shiftKey) {
-            action = window.siyuan.languages.dragTipEmbed;
+            action = protyle.localization.text("dragTipEmbed");
         } else if (event.ctrlKey || protyle.lite) {
             // Ctrl=创建副本；lite 模式无修饰键也为复制
-            action = window.siyuan.languages.duplicate;
+            action = protyle.localization.text("duplicate");
         } else if (isChild) {
-            action = window.siyuan.languages.dragTipListItemChild.replace("${x}", targetText);
+            action = protyle.localization.text("dragTipListItemChild").replace("${x}", targetText);
         } else {
             const key = position === "bottom" ? "dragTipListItemAfter" : "dragTipListItemBefore";
-            action = window.siyuan.languages[key].replace("${x}", targetText);
+            action = protyle.localization.text(key).replace("${x}", targetText);
         }
         showDragTip(currentProtyleDrag(protyle)?.title ?? "", action, event.clientX, event.clientY);
     };
@@ -1624,8 +1696,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
         if (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_FILE)) {
             // 文档面板拖拽文档到编辑器
             showDragTip(drag?.title ?? "",
-                isAvTarget ? window.siyuan.languages.addToDatabase :
-                    (event.altKey ? window.siyuan.languages.dragTip2Heading : window.siyuan.languages.dragTipRef),
+                isAvTarget ? protyle.localization.text("addToDatabase") :
+                    (event.altKey ? protyle.localization.text("dragTip2Heading") : protyle.localization.text("dragTipRef")),
                 event.clientX, event.clientY);
         } else if (gutterType && !isAvSubType && !(event.altKey && isInEmbedBlock(event.target))) {
             // 普通块（段落/标题/列表/引用/AV块等，排除 AV 行/列/视图/卡片）拖入编辑器
@@ -1633,17 +1705,17 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             let action: string;
             if (isAvTarget) {
                 // 拖到数据库视图：绑定为记录
-                action = window.siyuan.languages.addToDatabase;
+                action = protyle.localization.text("addToDatabase");
             } else if (event.altKey || (event.shiftKey && protyle.lite)) {
                 // Alt=引用；lite 模式 Shift 也为引用（原嵌入块改为引用）
-                action = window.siyuan.languages.dragTipRef;
+                action = protyle.localization.text("dragTipRef");
             } else if (event.shiftKey) {
-                action = window.siyuan.languages.dragTipEmbed;
+                action = protyle.localization.text("dragTipEmbed");
             } else if (event.ctrlKey || protyle.lite) {
                 // Ctrl=创建副本；lite 模式无修饰键也为复制（不移动源块）
-                action = window.siyuan.languages.duplicate;
+                action = protyle.localization.text("duplicate");
             } else {
-                action = window.siyuan.languages.move;
+                action = protyle.localization.text("move");
             }
             showDragTip(drag!.title, action, event.clientX, event.clientY);
         } else {
@@ -2088,8 +2160,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                             // left/right 始终用前方/后方，top/bottom 根据 col 布局判断
                             const isHorizontal = point.className === "dragover__left" || point.className === "dragover__right";
                             const key = (isHorizontal || cachedIsCol)
-                                ? (isFront ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetBack)
-                                : (isFront ? window.siyuan.languages.dragTipMoveTargetAbove : window.siyuan.languages.dragTipMoveTargetBelow);
+                                ? (isFront ? protyle.localization.text("dragTipMoveTargetFront") : protyle.localization.text("dragTipMoveTargetBack"))
+                                : (isFront ? protyle.localization.text("dragTipMoveTargetAbove") : protyle.localization.text("dragTipMoveTargetBelow"));
                             showDragTip(drag!.title, key.replace("${x}", displayText),
                                 event.clientX, event.clientY);
                         }
@@ -2154,8 +2226,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     const sbText = getContenteditableElement(sbFirstBlock)?.textContent?.trim() || "";
                     if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && sbText) {
                         const key = isSbLeftEdge
-                            ? window.siyuan.languages.dragTipMoveTargetFront
-                            : window.siyuan.languages.dragTipMoveTargetBack;
+                            ? protyle.localization.text("dragTipMoveTargetFront")
+                            : protyle.localization.text("dragTipMoveTargetBack");
                         showDragTip(drag!.title, key.replace("${x}", sbText),
                             event.clientX, event.clientY);
                     }
@@ -2173,7 +2245,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                 if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
                     showDragTip(drag!.title,
-                        window.siyuan.languages.dragTipMoveTargetFront.replace("${x}", cachedTargetText),
+                        protyle.localization.text("dragTipMoveTargetFront").replace("${x}", cachedTargetText),
                         event.clientX, event.clientY);
                 }
             } else if (event.clientX > nodeRect.right - 32 && event.clientX < nodeRect.right &&
@@ -2183,7 +2255,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                 if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
                     showDragTip(drag!.title,
-                        window.siyuan.languages.dragTipMoveTargetBack.replace("${x}", cachedTargetText),
+                        protyle.localization.text("dragTipMoveTargetBack").replace("${x}", cachedTargetText),
                         event.clientX, event.clientY);
                 }
             } else if (targetElement.classList.contains("av__row--header")) {
@@ -2197,7 +2269,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                     if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
                         showDragTip(drag!.title,
-                            (cachedIsCol ? window.siyuan.languages.dragTipMoveTargetBack : window.siyuan.languages.dragTipMoveTargetBelow).replace("${x}", cachedTargetText),
+                            (cachedIsCol ? protyle.localization.text("dragTipMoveTargetBack") : protyle.localization.text("dragTipMoveTargetBelow")).replace("${x}", cachedTargetText),
                             event.clientX, event.clientY);
                     }
                 } else if (disabledPosition !== "top") {
@@ -2206,7 +2278,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     // 默认移动时，更新下半为带目标名的位置文案（超级块本身跳过）
                     if (!event.altKey && !event.shiftKey && !event.ctrlKey && gutterType && !isAvSubType && !isAvTarget && !targetElement.classList.contains("sb") && cachedTargetText) {
                         showDragTip(drag!.title,
-                            (cachedIsCol ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetAbove).replace("${x}", cachedTargetText),
+                            (cachedIsCol ? protyle.localization.text("dragTipMoveTargetFront") : protyle.localization.text("dragTipMoveTargetAbove")).replace("${x}", cachedTargetText),
                             event.clientX, event.clientY);
                     }
                 }
@@ -2299,8 +2371,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
             if (targetText && (isFront || isBack)) {
                 const isCol = hasClosestByAttribute(targetElement as HTMLElement, "data-sb-layout", "col");
                 const key = isCol
-                    ? (isFront ? window.siyuan.languages.dragTipMoveTargetFront : window.siyuan.languages.dragTipMoveTargetBack)
-                    : (isFront ? window.siyuan.languages.dragTipMoveTargetAbove : window.siyuan.languages.dragTipMoveTargetBelow);
+                    ? (isFront ? protyle.localization.text("dragTipMoveTargetFront") : protyle.localization.text("dragTipMoveTargetBack"))
+                    : (isFront ? protyle.localization.text("dragTipMoveTargetAbove") : protyle.localization.text("dragTipMoveTargetBelow"));
                 showDragTip(drag!.title, key.replace("${x}", targetText),
                     event.clientX, event.clientY);
             }

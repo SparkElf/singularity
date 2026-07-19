@@ -20,19 +20,10 @@ import {
     setLastNodeRange,
 } from "../util/selection";
 import {Constants} from "../../constants";
-import {isMobile} from "../../util/functions";
 import {previewDocImage} from "../preview/image";
 import {getDiagramBlock, previewDiagram} from "../preview/diagram";
-import {
-    contentMenu,
-    enterBack,
-    fileAnnotationRefMenu,
-    imgMenu,
-    inlineMathMenu,
-    linkMenu,
-    refMenu,
-    tagMenu
-} from "../../menus/protyle";
+import {contentMenu} from "../ui/contentMenu";
+import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../ui/inlineMenu";
 import * as dayjs from "dayjs";
 import {dropEvent} from "../util/editorCommonEvent";
 import {input} from "./input";
@@ -49,21 +40,16 @@ import {transaction, updateTransaction} from "./transaction";
 import {toggleTaskListItem} from "./list";
 import {hideElements} from "../ui/hideElements";
 import {getEnableHTML, removeEmbed} from "./removeEmbed";
-import {keydown} from "./keydown";
+import {keydown, navigateBackFromFocusedBlock} from "./keydown";
 import {removeBlock} from "./remove";
 import {highlightRender} from "../render/highlightRender";
-import {openAttr} from "../../menus/commonMenuItem";
 import {blockRender} from "../render/blockRender";
-import {pushBack} from "../../util/backForward";
-import {isIOSDevice, isMac} from "../util/browserPlatform";
-import {copyPlainText, encodeBase64, readClipboard} from "../util/clipboard";
+import {isIOSDevice, isMac, isNarrowViewport} from "../util/browserPlatform";
+import {copyPlainText, createSiyuanClipboardHTML, readClipboard} from "../util/clipboard";
 import {isOnlyMeta} from "../util/keyboard";
-import {MenuItem} from "../../menus/Menu";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
 import {onGet} from "../util/onGet";
 import {clearTableCell, getTableRangeHTML, isIncludeCell, setTableAlign, updateTableTitle} from "../util/table";
 import {countBlockStatistics, countSelectionStatistics} from "../util/statistics";
-import {showMessage} from "../../dialog/message";
 import {getBacklinkHeadingMore, loadBreadcrumb} from "./renderBacklink";
 import {removeSearchMark} from "../util/searchMark";
 import {commonClick} from "./commonClick";
@@ -83,23 +69,33 @@ import {
 } from "../render/av/cell";
 import {emojiContentHTML, unicodeToEmoji} from "../hint/emoji";
 import {openProtyleEmojiMenu} from "../ui/emojiMenu";
-import {openLink} from "../../editor/openLink";
+import {openProtyleLink} from "../util/openLink";
 import {mathRender} from "../render/mathRender";
 import {editAssetItem} from "../render/av/asset";
-import {img3115} from "../../boot/compatibleVersion";
-import {globalClickHideMenu} from "../../boot/globalEvent/click";
+import {protyleContentIdentity} from "../util/contentLoad";
 import {hideTooltip} from "../ui/tooltip";
 import {openGalleryItemMenu} from "../render/av/gallery/util";
 import {clearSelect} from "../util/clear";
 import {chartRender} from "../render/chartRender";
-import {reloadProtyle} from "../util/reload";
 import {updateCalloutType} from "./callout";
+import {closeContainingBlockPanel} from "../BlockPanel";
 import {nbsp2space, removeZWJ} from "../util/normalizeText";
 import {setFold} from "../util/blockFold";
-import {BlockPanel} from "../../block/Panel";
-import {isEncryptedBox, parseSiYuanUriInfo} from "../../util/pathName";
+import {openBlockPanel} from "../BlockPanel";
+import {parseSiYuanBlockUri} from "../util/blockUri";
 import {zoomOut} from "../util/zoom";
 import {requestBlockFold} from "../util/blockFoldRequest";
+import {normalizeImageContainerStyles, openImageMenu} from "./imageMenu";
+
+const requestWysiwygContent = <TResponse>(
+    protyle: IProtyle,
+    path: string,
+    body: unknown,
+) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+    identity: protyleContentIdentity(protyle),
+    intent: "read",
+    signal: protyle.requestSignal,
+});
 
 export class WYSIWYG {
     public lastHTMLs: { [key: string]: string } = {};
@@ -108,13 +104,16 @@ export class WYSIWYG {
 
     private preventClick: boolean;
     private readonly settings: IProtyle["settings"];
+    private contentMenuHandle?: ReturnType<TProtyleRuntime["menu"]["open"]>;
+    private imageMenuHandle?: ReturnType<TProtyleRuntime["menu"]["open"]>;
+    private tableSelectionMenuHandle?: ReturnType<TProtyleRuntime["menu"]["open"]>;
 
     constructor(protyle: IProtyle) {
         this.settings = protyle.settings;
         this.element = document.createElement("div");
         this.element.className = "protyle-wysiwyg";
         this.element.setAttribute("spellcheck", "false");
-        if (isMobile()) {
+        if (isNarrowViewport()) {
             // iPhone，iPad 端输入 contenteditable 为 true 时会在块中间插入 span
             // Android 端空块输入法弹出会收起 https://ld246.com/article/1689713888289
             this.element.setAttribute("contenteditable", "false");
@@ -126,6 +125,11 @@ export class WYSIWYG {
         }
         this.bindCommonEvent(protyle);
         this.bindEvent(protyle);
+        protyle.requestSignal.addEventListener("abort", () => {
+            this.closeContentMenu();
+            this.closeImageMenu();
+            this.closeTableSelectionMenu();
+        }, {once: true});
         if (protyle.options.action.includes(Constants.CB_GET_HISTORY)) {
             return;
         }
@@ -243,9 +247,103 @@ export class WYSIWYG {
         });
     }
 
+    private closeTableSelectionMenu() {
+        const handle = this.tableSelectionMenuHandle;
+        this.tableSelectionMenuHandle = undefined;
+        handle?.close();
+    }
+
+    private closeContentMenu() {
+        const handle = this.contentMenuHandle;
+        this.contentMenuHandle = undefined;
+        handle?.close();
+    }
+
+    private closeImageMenu() {
+        const handle = this.imageMenuHandle;
+        this.imageMenuHandle = undefined;
+        handle?.close();
+    }
+
+    private openContentMenu(protyle: IProtyle, nodeElement: Element) {
+        this.closeContentMenu();
+        const handle = contentMenu(protyle, nodeElement);
+        this.contentMenuHandle = handle;
+        const previousRemove = handle.menu.removeCB;
+        handle.menu.removeCB = () => {
+            try {
+                previousRemove?.();
+            } finally {
+                if (this.contentMenuHandle === handle) {
+                    this.contentMenuHandle = undefined;
+                }
+            }
+        };
+        return handle;
+    }
+
+    private showImageMenu(
+        protyle: IProtyle,
+        range: Range,
+        assetElement: HTMLElement,
+        position: {clientX: number, clientY: number},
+    ) {
+        this.closeImageMenu();
+        const handle = openImageMenu({assetElement, position, protyle, range});
+        if (!handle) {
+            return;
+        }
+        this.imageMenuHandle = handle;
+        const previousRemove = handle.menu.removeCB;
+        handle.menu.removeCB = () => {
+            try {
+                previousRemove?.();
+            } finally {
+                if (this.imageMenuHandle === handle) {
+                    this.imageMenuHandle = undefined;
+                }
+            }
+        };
+        return handle;
+    }
+
+    private recordNavigationLocation(
+        protyle: IProtyle,
+        range: Range,
+        blockElement: HTMLElement,
+    ) {
+        if (!protyle.settings.features.navigationHistory) {
+            return;
+        }
+        const editableElement = getContenteditableElement(blockElement);
+        if (!editableElement) {
+            return;
+        }
+        const identity = protyleContentIdentity(protyle);
+        protyle.host.dispatch({
+            type: "record-navigation-location",
+            notebookId: identity.notebookId,
+            documentId: identity.documentId,
+            blockId: blockElement.getAttribute("data-node-id")!,
+            position: getSelectionOffset(editableElement, undefined, range),
+            ...(protyle.block.showAll ? {zoomId: protyle.block.id!} : {}),
+        });
+    }
+
+    private openTableSelectionMenu(protyle: IProtyle) {
+        this.closeTableSelectionMenu();
+        const handle = protyle.session!.runtime.menu.open();
+        this.tableSelectionMenuHandle = handle;
+        handle.menu.removeCB = () => {
+            if (this.tableSelectionMenuHandle === handle) {
+                this.tableSelectionMenuHandle = undefined;
+            }
+        };
+        return handle;
+    }
+
     private bindCommonEvent(protyle: IProtyle) {
         this.element.addEventListener("copy", async (event: ClipboardEvent & { target: HTMLElement }) => {
-            window.siyuan.ctrlIsPressed = false; // https://github.com/siyuan-note/siyuan/issues/6373
             // https://github.com/siyuan-note/siyuan/issues/4600
             if (event.target.tagName === "PROTYLE-HTML" || event.target.localName === "input") {
                 event.stopPropagation();
@@ -309,12 +407,12 @@ export class WYSIWYG {
                     const item = selectElements[i] as HTMLElement;
                     // 复制列表项中的块会变为复制列表项，因此不能使用 getTopAloneElement https://github.com/siyuan-note/siyuan/issues/8925
                     if (isRefText) {
-                        html += getTextStar(item) + "\n\n";
+                        html += getTextStar(item, protyle.localization, protyleContentIdentity(protyle)) + "\n\n";
                     } else {
                         let itemHTML = "";
                         if (item.getAttribute("data-type") === "NodeHeading" && item.getAttribute("fold") === "1") {
                             needClipboardWrite = true;
-                            const response = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
+                            const response = await requestWysiwygContent<IWebSocketData>(protyle, "/api/block/getHeadingChildrenDOM", {
                                 id: item.getAttribute("data-node-id"),
                                 notebook: protyle.notebookId,
                                 removeFoldAttr: false
@@ -322,7 +420,7 @@ export class WYSIWYG {
                             itemHTML = response.data;
                         } else if (item.getAttribute("data-type") !== "NodeBlockQueryEmbed" && item.querySelector('[data-type="NodeHeading"][fold="1"]')) {
                             needClipboardWrite = true;
-                            const response = await fetchSyncPost("/api/block/getBlockDOM", {
+                            const response = await requestWysiwygContent<IWebSocketData>(protyle, "/api/block/getBlockDOM", {
                                 id: item.getAttribute("data-node-id"),
                                 notebook: protyle.notebookId,
                             });
@@ -530,7 +628,12 @@ export class WYSIWYG {
                 event.clipboardData.setData("text/siyuan", textSiyuan);
                 restoreLuteMarkdownSyntax(protyle);
                 // 在 text/html 中插入注释节点，用于右键菜单粘贴时获取 text/siyuan 数据
-                const textHTML = `<!--data-siyuan='${encodeBase64(textSiyuan)}'-->` + removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html));
+                const sourceIdentity = protyleContentIdentity(protyle);
+                const textHTML = createSiyuanClipboardHTML(textSiyuan, {
+                    spaceId: protyle.session!.spaceId,
+                    notebookId: sourceIdentity.notebookId,
+                    documentId: sourceIdentity.documentId,
+                }, removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)));
                 event.clipboardData.setData("text/html", textHTML);
                 if (needClipboardWrite) {
                     try {
@@ -683,7 +786,11 @@ export class WYSIWYG {
                         const ids: string[] = [];
                         if (!hasSelectClassElement && protyle.scroll && !protyle.scroll.element.classList.contains("fn__none") && !protyle.scroll.keepLazyLoad &&
                             (startElement.getBoundingClientRect().top < -protyle.contentElement.clientHeight * 2 || endElement.getBoundingClientRect().bottom > protyle.contentElement.clientHeight * 2)) {
-                            showMessage(window.siyuan.languages.crossKeepLazyLoad);
+                            protyle.host.dispatch({
+                                type: "notify",
+                                level: "info",
+                                message: protyle.localization.text("crossKeepLazyLoad"),
+                            });
                         }
                         selectElements.forEach(item => {
                             if (!hasClosestByClassName(item, "protyle-wysiwyg--select")) {
@@ -1165,7 +1272,7 @@ export class WYSIWYG {
 
                 const imgElement = dragElement.parentElement.parentElement;
                 if (dragElement.tagName === "IMG") {
-                    img3115(imgElement);
+                    normalizeImageContainerStyles(imgElement);
                 }
                 // 3.4.1 以前历史数据兼容
                 if (dragElement.tagName === "IFRAME") {
@@ -1223,7 +1330,7 @@ export class WYSIWYG {
                 tableBlockElement = nodeElement;
                 if (tableBlockElement) {
                     tableBlockElement.querySelector(".table__select").removeAttribute("style");
-                    window.siyuan.menus.menu.remove();
+                    this.closeTableSelectionMenu();
                     hideElements(["toolbar"], protyle);
                     if (target.classList.contains("table__select")) {
                         target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement;
@@ -1632,11 +1739,12 @@ export class WYSIWYG {
                         if (getSelection().rangeCount > 0) {
                             getSelection().getRangeAt(0).collapse(false);
                         }
-                        window.siyuan.menus.menu.remove();
+                        const menuHandle = this.openTableSelectionMenu(protyle);
+                        const {menu} = menuHandle;
                         if (!protyle.disabled) {
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            menu.addItem({
                                 id: "mergeCell",
-                                label: window.siyuan.languages.mergeCell,
+                                label: protyle.localization.text("mergeCell"),
                                 click: () => {
                                     if (tableBlockElement) {
                                         const selectCellElements: HTMLTableCellElement[] = [];
@@ -1756,16 +1864,16 @@ export class WYSIWYG {
                                         });
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "separator_1",
                                 type: "separator"
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "alignLeft",
                                 icon: "iconAlignLeft",
-                                accelerator: window.siyuan.config.keymap.editor.general.alignLeft.custom,
-                                label: window.siyuan.languages.alignLeft,
+                                accelerator: protyle.settings.hotkeys.editor.general.alignLeft,
+                                label: protyle.localization.text("alignLeft"),
                                 click: () => {
                                     if (tableBlockElement) {
                                         const selectCellElements: HTMLTableCellElement[] = [];
@@ -1786,12 +1894,12 @@ export class WYSIWYG {
                                         setTableAlign(protyle, selectCellElements, tableBlockElement, "left", getEditorRange(tableBlockElement));
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "alignCenter",
                                 icon: "iconAlignCenter",
-                                accelerator: window.siyuan.config.keymap.editor.general.alignCenter.custom,
-                                label: window.siyuan.languages.alignCenter,
+                                accelerator: protyle.settings.hotkeys.editor.general.alignCenter,
+                                label: protyle.localization.text("alignCenter"),
                                 click: () => {
                                     if (tableBlockElement) {
                                         const selectCellElements: HTMLTableCellElement[] = [];
@@ -1812,12 +1920,12 @@ export class WYSIWYG {
                                         setTableAlign(protyle, selectCellElements, tableBlockElement, "center", getEditorRange(tableBlockElement));
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "alignRight",
                                 icon: "iconAlignRight",
-                                accelerator: window.siyuan.config.keymap.editor.general.alignRight.custom,
-                                label: window.siyuan.languages.alignRight,
+                                accelerator: protyle.settings.hotkeys.editor.general.alignRight,
+                                label: protyle.localization.text("alignRight"),
                                 click: () => {
                                     if (tableBlockElement) {
                                         const selectCellElements: HTMLTableCellElement[] = [];
@@ -1837,11 +1945,11 @@ export class WYSIWYG {
                                         setTableAlign(protyle, selectCellElements, tableBlockElement, "right", getEditorRange(tableBlockElement));
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "useDefaultAlign",
                                 icon: "",
-                                label: window.siyuan.languages.useDefaultAlign,
+                                label: protyle.localization.text("useDefaultAlign"),
                                 click: () => {
                                     if (tableBlockElement) {
                                         const selectCellElements: HTMLTableCellElement[] = [];
@@ -1862,15 +1970,15 @@ export class WYSIWYG {
                                         setTableAlign(protyle, selectCellElements, tableBlockElement, "", getEditorRange(tableBlockElement));
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "separator_2",
                                 type: "separator"
-                            }).element);
+                            });
                         }
-                        window.siyuan.menus.menu.append(new MenuItem({
+                        menu.addItem({
                             id: "copyPlainText",
-                            label: window.siyuan.languages.copyPlainText,
+                            label: protyle.localization.text("copyPlainText"),
                             click() {
                                 if (tableBlockElement) {
                                     const selectCellElements: HTMLTableCellElement[] = [];
@@ -1899,44 +2007,44 @@ export class WYSIWYG {
                                     focusBlock(tableBlockElement);
                                 }
                             }
-                        }).element);
-                        window.siyuan.menus.menu.append(new MenuItem({
+                        });
+                        menu.addItem({
                             id: "copy",
                             icon: "iconCopy",
                             accelerator: "⌘C",
-                            label: window.siyuan.languages.copy,
+                            label: protyle.localization.text("copy"),
                             click() {
                                 if (tableBlockElement) {
                                     focusByRange(getEditorRange(tableBlockElement));
                                     document.execCommand("copy");
                                 }
                             }
-                        }).element);
+                        });
                         if (!protyle.disabled) {
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            menu.addItem({
                                 id: "cut",
                                 icon: "iconCut",
                                 accelerator: "⌘X",
-                                label: window.siyuan.languages.cut,
+                                label: protyle.localization.text("cut"),
                                 click() {
                                     if (tableBlockElement) {
                                         focusByRange(getEditorRange(tableBlockElement));
                                         document.execCommand("cut");
                                     }
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "clear",
-                                label: window.siyuan.languages.clear,
+                                label: protyle.localization.text("clear"),
                                 icon: "iconTrashcan",
                                 accelerator: "⌦",
                                 click() {
                                     clearTableCell(protyle, tableBlockElement as HTMLElement);
                                 }
-                            }).element);
-                            window.siyuan.menus.menu.append(new MenuItem({
+                            });
+                            menu.addItem({
                                 id: "paste",
-                                label: window.siyuan.languages.paste,
+                                label: protyle.localization.text("paste"),
                                 icon: "iconPaste",
                                 accelerator: "⌘V",
                                 async click() {
@@ -1951,9 +2059,9 @@ export class WYSIWYG {
                                         }
                                     }
                                 }
-                            }).element);
+                            });
                         }
-                        window.siyuan.menus.menu.popup({x: mouseUpEvent.clientX - 8, y: mouseUpEvent.clientY - 16});
+                        menu.popup({x: mouseUpEvent.clientX - 8, y: mouseUpEvent.clientY - 16});
                     }
                 }
 
@@ -1967,7 +2075,7 @@ export class WYSIWYG {
                 if (getSelection().rangeCount > 0) {
                     const range = getSelection().getRangeAt(0);
                     if (range.toString() === "" ||
-                        window.siyuan.shiftIsPressed  // https://ld246.com/article/1650096678723
+                        event.shiftKey  // https://ld246.com/article/1650096678723
                     ) {
                         if (event.detail > 2) {
                             // table 前或最后一个 cell 三击状态不对
@@ -2048,7 +2156,6 @@ export class WYSIWYG {
         });
 
         this.element.addEventListener("cut", async (event: ClipboardEvent & { target: HTMLElement }) => {
-            window.siyuan.ctrlIsPressed = false; // https://github.com/siyuan-note/siyuan/issues/6373
             if (protyle.disabled) {
                 return;
             }
@@ -2127,7 +2234,7 @@ export class WYSIWYG {
                     let itemHTML = "";
                     if (item.getAttribute("data-type") === "NodeHeading" && item.getAttribute("fold") === "1") {
                         needClipboardWrite = true;
-                        const response = await fetchSyncPost("/api/block/getHeadingChildrenDOM", {
+                        const response = await requestWysiwygContent<IWebSocketData>(protyle, "/api/block/getHeadingChildrenDOM", {
                             id: item.getAttribute("data-node-id"),
                             notebook: protyle.notebookId,
                             removeFoldAttr: false
@@ -2135,7 +2242,7 @@ export class WYSIWYG {
                         itemHTML = response.data;
                     } else if (item.getAttribute("data-type") !== "NodeBlockQueryEmbed" && item.querySelector('[data-type="NodeHeading"][fold="1"]')) {
                         needClipboardWrite = true;
-                        const response = await fetchSyncPost("/api/block/getBlockDOM", {
+                        const response = await requestWysiwygContent<IWebSocketData>(protyle, "/api/block/getBlockDOM", {
                             id: item.getAttribute("data-node-id"),
                             notebook: protyle.notebookId,
                         });
@@ -2378,7 +2485,12 @@ export class WYSIWYG {
                 restoreLuteMarkdownSyntax(protyle);
                 event.clipboardData.setData("text/siyuan", textSiyuan);
                 // 在 text/html 中插入注释节点，用于右键菜单粘贴时获取 text/siyuan 数据
-                const textHTML = `<!--data-siyuan='${encodeBase64(textSiyuan)}'-->` + removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html));
+                const sourceIdentity = protyleContentIdentity(protyle);
+                const textHTML = createSiyuanClipboardHTML(textSiyuan, {
+                    spaceId: protyle.session!.spaceId,
+                    notebookId: sourceIdentity.notebookId,
+                    documentId: sourceIdentity.documentId,
+                }, removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)));
                 event.clipboardData.setData("text/html", textHTML);
                 if (needClipboardWrite) {
                     try {
@@ -2503,7 +2615,6 @@ export class WYSIWYG {
                         id: avTabHeaderElement.parentElement.querySelector(".item--focus").getAttribute("data-id"),
                         avID: nodeElement.getAttribute("data-av-id"),
                     }]);
-                    window.siyuan.menus.menu.remove();
                     openViewMenu({
                         protyle,
                         blockElement: nodeElement,
@@ -2545,7 +2656,7 @@ export class WYSIWYG {
                     return false;
                 } else if (types.includes("a")) {
                     linkMenu(protyle, target);
-                    if (window.siyuan.config.editor.floatWindowMode === 0 &&
+                    if (protyle.settings.editor.suppressBlockLinkPopoverOnMenu &&
                         target.getAttribute("data-href")?.startsWith("siyuan://blocks")) {
                         // 阻止 popover
                         target.setAttribute("prevent-popover", "true");
@@ -2562,7 +2673,7 @@ export class WYSIWYG {
                 return false;
             }
             if (target.tagName === "IMG" && hasClosestByClassName(target, "img")) {
-                imgMenu(protyle, protyle.toolbar.range, target.parentElement.parentElement, {
+                this.showImageMenu(protyle, protyle.toolbar.range, target.parentElement.parentElement, {
                     clientX: x + 4,
                     clientY: y
                 });
@@ -2570,11 +2681,11 @@ export class WYSIWYG {
             }
             if (!isNotEditBlock(nodeElement) && !nodeElement.classList.contains("protyle-wysiwyg--select") &&
                 !hasClosestByClassName(target, "protyle-action") && // https://github.com/siyuan-note/siyuan/issues/8983
-                (isMobile() || event.detail.target || (beforeContextmenuRange && nodeElement.contains(beforeContextmenuRange.startContainer)))
+                (isNarrowViewport() || event.detail.target || (beforeContextmenuRange && nodeElement.contains(beforeContextmenuRange.startContainer)))
             ) {
-                if ((!isMobile() || protyle.toolbar?.element.classList.contains("fn__none")) && !nodeElement.classList.contains("av")) {
-                    contentMenu(protyle, nodeElement);
-                    window.siyuan.menus.menu.popup({x, y: y + 13, h: 26});
+                if ((!isNarrowViewport() || protyle.toolbar?.element.classList.contains("fn__none")) && !nodeElement.classList.contains("av")) {
+                    const handle = this.openContentMenu(protyle, nodeElement);
+                    handle.menu.popup({x, y: y + 13, h: 26});
                     protyle.toolbar?.element.classList.add("fn__none");
                     if (nodeElement.classList.contains("table")) {
                         nodeElement.querySelector(".table__select").removeAttribute("style");
@@ -2630,19 +2741,25 @@ export class WYSIWYG {
                         id: protyle.wysiwyg.element.firstElementChild.getAttribute("data-node-id"),
                         mode: 1,
                         size: protyle.settings.editor.dynamicLoadBlocks,
+                        notebook: protyle.notebookId,
                     };
-                    if (isEncryptedBox(protyle.notebookId)) {
-                        getDocParam.notebook = protyle.notebookId;
-                    }
-                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+                    preventGetTopHTML = true;
+                    void requestWysiwygContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam).then((getResponse) => {
+                        if (protyle.requestSignal.aborted) {
+                            return;
+                        }
                         preventGetTopHTML = false;
                         onGet({
                             data: getResponse,
                             protyle,
                             action: [Constants.CB_GET_BEFORE, Constants.CB_GET_UNCHANGEID],
                         });
+                    }).catch((error) => {
+                        if (!protyle.requestSignal.aborted) {
+                            console.error("[protyle.dynamic-load] previous page request failed", error);
+                            preventGetTopHTML = false;
+                        }
                     });
-                    preventGetTopHTML = true;
                 } else if (event.deltaY > 0 && protyle.wysiwyg.element.lastElementChild.getAttribute("data-eof") !== "2" &&
                     (protyle.contentElement.clientHeight === protyle.contentElement.scrollHeight ||
                         protyle.contentElement.clientHeight + Math.ceil(protyle.contentElement.scrollTop) >= protyle.contentElement.scrollHeight)) {
@@ -2650,19 +2767,25 @@ export class WYSIWYG {
                         id: protyle.wysiwyg.element.lastElementChild.getAttribute("data-node-id"),
                         mode: 2,
                         size: protyle.settings.editor.dynamicLoadBlocks,
+                        notebook: protyle.notebookId,
                     };
-                    if (isEncryptedBox(protyle.notebookId)) {
-                        getDocParam.notebook = protyle.notebookId;
-                    }
-                    fetchPost("/api/filetree/getDoc", getDocParam, getResponse => {
+                    preventGetTopHTML = true;
+                    void requestWysiwygContent<IWebSocketData>(protyle, "/api/filetree/getDoc", getDocParam).then((getResponse) => {
+                        if (protyle.requestSignal.aborted) {
+                            return;
+                        }
                         preventGetTopHTML = false;
                         onGet({
                             data: getResponse,
                             protyle,
                             action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
                         });
+                    }).catch((error) => {
+                        if (!protyle.requestSignal.aborted) {
+                            console.error("[protyle.dynamic-load] next page request failed", error);
+                            preventGetTopHTML = false;
+                        }
                     });
-                    preventGetTopHTML = true;
                 }
             }
             if (event.deltaX === 0) {
@@ -2674,7 +2797,7 @@ export class WYSIWYG {
                 const tableSelectElement = tableElement.querySelector(".table__select") as HTMLElement;
                 if (tableSelectElement?.style.width) {
                     tableSelectElement.removeAttribute("style");
-                    window.siyuan.menus.menu.remove();
+                    this.closeTableSelectionMenu();
                 }
             }
         }, {passive: true});
@@ -2689,7 +2812,6 @@ export class WYSIWYG {
                 event.preventDefault();
                 return;
             }
-            window.siyuan.ctrlIsPressed = false; // https://github.com/siyuan-note/siyuan/issues/6373
             // https://github.com/siyuan-note/siyuan/issues/4600
             if (event.target.tagName === "PROTYLE-HTML" || event.target.localName === "input") {
                 event.stopPropagation();
@@ -2787,7 +2909,7 @@ export class WYSIWYG {
                 return;
             }
             if (event.inputType === "historyUndo") {
-                window.siyuan.menus.menu.remove();
+                this.closeTableSelectionMenu();
                 return;
             }
             const range = getEditorRange(this.element);
@@ -2863,7 +2985,7 @@ export class WYSIWYG {
 
             if (event.eventPhase !== 3 && !event.shiftKey && (event.key.indexOf("Arrow") > -1 || event.key === "Home" || event.key === "End" || event.key === "PageUp" || event.key === "PageDown") && !event.isComposing) {
                 if (nodeElement && protyle.hint.element.classList.contains("fn__none") &&
-                    window.siyuan.menus.menu.element.classList.contains("fn__none")) {
+                    !this.tableSelectionMenuHandle) {
                     clearSelect(["img", "av"], protyle.wysiwyg.element);
                     this.refreshOutline(protyle);
                     if (range.toString() === "" && !nodeElement.classList.contains("protyle-wysiwyg--select")) {
@@ -2965,14 +3087,18 @@ export class WYSIWYG {
                 const breadcrumbId = backlinkBreadcrumbItemElement.getAttribute("data-id");
                 if (breadcrumbId) {
                     if (ctrlIsPressed && !event.shiftKey && !event.altKey) {
+                        const breadcrumbNotebookId = backlinkBreadcrumbItemElement.getAttribute("data-notebook-id")!;
+                        const breadcrumbDocumentId = backlinkBreadcrumbItemElement.getAttribute("data-document-id")!;
                         void requestBlockFold(protyle, {
-                            notebookId: protyle.notebookId,
-                            documentId: breadcrumbId,
+                            notebookId: breadcrumbNotebookId,
+                            documentId: breadcrumbDocumentId,
+                            blockId: breadcrumbId,
                         }).then(({zoomIn}) => {
                             protyle.host.dispatch({
                                 type: "open-document",
-                                notebookId: protyle.notebookId,
-                                documentId: breadcrumbId,
+                                notebookId: breadcrumbNotebookId,
+                                documentId: breadcrumbDocumentId,
+                                blockId: breadcrumbId,
                                 disposition: "current",
                                 scope: zoomIn ? "subtree" : "context",
                                 attention: "focus",
@@ -3050,23 +3176,27 @@ export class WYSIWYG {
                 if (range.toString() === "" || event.shiftKey) {
                     let refBlockId: string;
                     let refNotebookId: string;
+                    let refDocumentId: string;
                     if (blockRefElement) {
                         refBlockId = blockRefElement.getAttribute("data-id");
                         refNotebookId = blockRefElement.getAttribute("data-notebook-id");
+                        refDocumentId = blockRefElement.getAttribute("data-document-id");
                     } else if (aElement) {
-                        const blockInfo = parseSiYuanUriInfo(aLink);
-                        refBlockId = blockInfo?.id;
+                        const blockInfo = parseSiYuanBlockUri(aLink);
+                        refBlockId = blockInfo?.blockId;
                         refNotebookId = blockInfo?.notebookId;
+                        refDocumentId = blockInfo?.documentId;
                     }
-                    if (!refBlockId || !refNotebookId) {
-                        console.error("[Singularity/ProtyleIdentity] block target has no notebook", {
+                    if (!refBlockId || !refNotebookId || !refDocumentId) {
+                        console.error("[Singularity/ProtyleIdentity] block target has no content identity", {
                             blockId: refBlockId,
                         });
                         return;
                     }
                     void requestBlockFold(protyle, {
+                        blockId: refBlockId,
                         notebookId: refNotebookId,
-                        documentId: refBlockId,
+                        documentId: refDocumentId,
                     }).then(({zoomIn, isRoot}) => {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : (ctrlIsPressed ? "background-tab" : "current"));
@@ -3074,7 +3204,8 @@ export class WYSIWYG {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: refNotebookId,
-                            documentId: refBlockId,
+                            documentId: refDocumentId,
+                            blockId: refBlockId,
                             disposition,
                             scope: zoomIn ? "subtree" : "context",
                             attention: opensInBackground ? "highlight" : (isRoot ? "focus" : "focus-and-highlight"),
@@ -3083,23 +3214,19 @@ export class WYSIWYG {
                             zoom: zoomIn,
                         });
                         if (event.shiftKey) {
-                            window.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape"}));
+                            closeContainingBlockPanel(protyle.element);
                         }
                     }).catch((error) => {
                         if (!protyle.requestSignal.aborted) {
                             console.error("[protyle.transport] block fold request failed", error);
                         }
                     });
-                    if (protyle.model) {
-                        // 打开双链需记录到后退中 https://github.com/siyuan-note/insider/issues/801
-                        let blockElement: HTMLElement | false;
-                        if (blockRefElement) {
-                            blockElement = hasClosestBlock(blockRefElement);
-                        } else if (aElement) {
-                            blockElement = hasClosestBlock(aElement);
-                        }
-                        if (blockElement) {
-                            pushBack(protyle, getEditorRange(this.element), blockElement);
+                    // 打开双链需记录到后退中 https://github.com/siyuan-note/insider/issues/801
+                    const navigationSource = blockRefElement || aElement;
+                    if (navigationSource) {
+                        const navigationBlock = hasClosestBlock(navigationSource);
+                        if (navigationBlock) {
+                            this.recordNavigationLocation(protyle, getEditorRange(this.element), navigationBlock);
                         }
                     }
                     return;
@@ -3110,7 +3237,7 @@ export class WYSIWYG {
             if (fileElement && range.toString() === "") {
                 event.stopPropagation();
                 event.preventDefault();
-                openLink(protyle, fileElement.getAttribute("data-id"), event, ctrlIsPressed);
+                openProtyleLink(protyle, fileElement.getAttribute("data-id"));
                 return;
             }
 
@@ -3121,7 +3248,7 @@ export class WYSIWYG {
                 aLink) {
                 event.stopPropagation();
                 event.preventDefault();
-                openLink(protyle, aLink, event, ctrlIsPressed);
+                openProtyleLink(protyle, aLink);
                 return;
             }
 
@@ -3157,39 +3284,22 @@ export class WYSIWYG {
                 return;
             }
 
-            if (window.siyuan.isPublish) {
-                const passwordButtonElement = hasClosestByClassName(event.target, "protyle-password__button");
-                if (passwordButtonElement) {
-                    fetchPost("/api/filetree/authFilePublishAccess", {
-                        id: passwordButtonElement.parentElement.parentElement.getAttribute("data-node-id"),
-                        password: passwordButtonElement.parentElement.querySelector("input").value
-                    }, (response) => {
-                        if (response.msg) {
-                            showMessage(response.msg);
-                        } else {
-                            reloadProtyle(protyle, true);
-                            this.refreshOutline(protyle);
-                        }
-                    });
-                    event.stopPropagation();
-                    return;
-                }
-            }
-
             const embedItemElement = hasClosestByClassName(event.target, "protyle-wysiwyg__embed");
             if (embedItemElement) {
                 if (event.shiftKey || event.altKey || ctrlIsPressed) {
                     const embedId = embedItemElement.getAttribute("data-id");
                     const embedNotebookId = embedItemElement.getAttribute("data-notebook-id");
-                    if (!embedId || !embedNotebookId) {
-                        console.error("[Singularity/ProtyleIdentity] embedded block target has no notebook", {
+                    const embedDocumentId = embedItemElement.getAttribute("data-document-id");
+                    if (!embedId || !embedNotebookId || !embedDocumentId) {
+                        console.error("[Singularity/ProtyleIdentity] embedded block target has no content identity", {
                             blockId: embedId,
                         });
                         return;
                     }
                     void requestBlockFold(protyle, {
+                        blockId: embedId,
                         notebookId: embedNotebookId,
-                        documentId: embedId,
+                        documentId: embedDocumentId,
                     }).then(({zoomIn}) => {
                         const disposition = event.shiftKey ? "split-bottom" :
                             (event.altKey ? "split-right" : "background-tab");
@@ -3197,7 +3307,8 @@ export class WYSIWYG {
                         protyle.host.dispatch({
                             type: "open-document",
                             notebookId: embedNotebookId,
-                            documentId: embedId,
+                            documentId: embedDocumentId,
+                            blockId: embedId,
                             disposition,
                             scope: zoomIn ? "subtree" : "context",
                             attention: opensInBackground ? "highlight" : "focus",
@@ -3237,13 +3348,20 @@ export class WYSIWYG {
             const openFloatElement = hasClosestByAttribute(event.target, "data-action", "openFloat");
             if (openFloatElement) {
                 const id = openFloatElement.getAttribute("data-id");
-                window.siyuan.blockPanels.push(new BlockPanel({
-                    app: protyle.app,
+                const notebookId = openFloatElement.getAttribute("data-notebook-id");
+                const documentId = openFloatElement.getAttribute("data-document-id");
+                if (!id || !notebookId || !documentId) {
+                    console.error("[Singularity/ProtyleIdentity] block panel target has no content identity", {
+                        blockId: id,
+                    });
+                    return;
+                }
+                openBlockPanel({
+                    sourceProtyle: protyle,
                     isBacklink: false,
-                    notebookId: protyle.notebookId,
                     targetElement: openFloatElement,
-                    refDefs: [{refID: id}]
-                }));
+                    references: [{blockId: id, documentId, notebookId}],
+                });
                 event.stopPropagation();
                 event.preventDefault();
                 return;
@@ -3301,7 +3419,7 @@ export class WYSIWYG {
             if (actionElement) {
                 const type = actionElement.parentElement.parentElement.getAttribute("data-type");
                 if (type === "img" && !protyle.disabled) {
-                    imgMenu(protyle, range, actionElement.parentElement.parentElement, {
+                    this.showImageMenu(protyle, range, actionElement.parentElement.parentElement, {
                         clientX: event.clientX + 4,
                         clientY: event.clientY
                     });
@@ -3314,7 +3432,7 @@ export class WYSIWYG {
                         if (actionElement.parentElement.parentElement.classList.contains("protyle-wysiwyg")) {
                             // 缩放列表项 https://ld246.com/article/1653123034794
                             setFold(protyle, actionElement.parentElement);
-                        } else {
+                        } else if (protyle.settings.editor.listItemDotNumberClickFocus) {
                             let hasFold = true;
                             const oldHTML = actionElement.parentElement.parentElement.outerHTML;
                             Array.from(actionElement.parentElement.parentElement.children).find((listItemElement) => {
@@ -3338,7 +3456,14 @@ export class WYSIWYG {
                         }
                         hideElements(["gutter"], protyle);
                     } else if (event.shiftKey && !protyle.disabled) {
-                        openAttr(actionElement.parentElement, "bookmark", protyle);
+                        const identity = protyleContentIdentity(protyle);
+                        protyle.host.dispatch({
+                            type: "open-block-attributes",
+                            notebookId: identity.notebookId,
+                            documentId: identity.documentId,
+                            blockId: actionId,
+                            focus: "bookmark",
+                        });
                     } else if (ctrlIsPressed) {
                         zoomOut({protyle, id: actionId});
                     } else {
@@ -3346,9 +3471,9 @@ export class WYSIWYG {
                             if (!protyle.disabled) {
                                 toggleTaskListItem(protyle, actionElement.parentElement);
                             }
-                        } else if (window.siyuan.config.editor.listItemDotNumberClickFocus) {
+                        } else {
                             if (protyle.block.showAll && protyle.block.id === actionId) {
-                                enterBack(protyle, actionId);
+                                navigateBackFromFocusedBlock(protyle, actionElement.parentElement);
                             } else {
                                 zoomOut({protyle, id: actionId});
                             }
@@ -3363,7 +3488,6 @@ export class WYSIWYG {
                 hasClosestByClassName(event.target, "iframe");
             if (!event.shiftKey && !ctrlIsPressed && selectElement) {
                 selectElement.classList.add("protyle-wysiwyg--select");
-                globalClickHideMenu(event.target);
                 event.stopPropagation();
                 return;
             }
@@ -3515,8 +3639,11 @@ export class WYSIWYG {
                     // https://github.com/siyuan-note/siyuan/issues/5901
                     focusByRange(newRange);
                 }
-                pushBack(protyle, newRange);
-            }, (isMobile() || isIOSDevice()) ? 520 : 0); // Android/iPad 双击慢了出不来
+                const navigationBlock = hasClosestBlock(newRange.startContainer);
+                if (navigationBlock) {
+                    this.recordNavigationLocation(protyle, newRange, navigationBlock);
+                }
+            }, (isNarrowViewport() || isIOSDevice()) ? 520 : 0); // Android/iPad 双击慢了出不来
 
             protyle.hint.enableExtend = false;
 

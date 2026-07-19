@@ -498,14 +498,16 @@ export class Gutter {
             }
             if (isOnlyMeta(event)) {
                 if (protyle.options.backlinkData) {
+                    const identity = protyleContentIdentity(protyle);
                     void requestBlockFold(protyle, {
-                        notebookId: protyle.notebookId,
-                        documentId: id,
+                        ...identity,
+                        blockId: id,
                     }).then(({zoomIn}) => {
                         protyle.host.dispatch({
                             type: "open-document",
-                            notebookId: protyle.notebookId,
-                            documentId: id,
+                            notebookId: identity.notebookId,
+                            documentId: identity.documentId,
+                            blockId: id,
                             disposition: "current",
                             scope: zoomIn ? "subtree" : "context",
                             attention: "focus",
@@ -2273,22 +2275,26 @@ export class Gutter {
                 icon: "iconEnter",
                 accelerator: `${updateHotkeyTip(protyle.settings.hotkeys.general.enter)}/${updateHotkeyTip("⌘" + gutterText(protyle, "click"))}`,
                 label: gutterText(protyle, "openBy"),
-                click: () => requestBlockFold(protyle, {
-                    notebookId: protyle.notebookId,
-                    documentId: id,
-                }).then(({zoomIn}) => {
-                    protyle.host.dispatch({
-                        type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: id,
-                        disposition: "current",
-                        scope: zoomIn ? "subtree" : "context",
-                        attention: "focus",
-                        scroll: "auto",
-                        restoreScroll: zoomIn ? "never" : "if-document",
-                        zoom: zoomIn,
-                    });
-                }).catch((error) => reportGutterActionFailure(protyle, "open folded block", error)),
+                click: () => {
+                    const identity = protyleContentIdentity(protyle);
+                    return requestBlockFold(protyle, {
+                        ...identity,
+                        blockId: id,
+                    }).then(({zoomIn}) => {
+                        protyle.host.dispatch({
+                            type: "open-document",
+                            notebookId: identity.notebookId,
+                            documentId: identity.documentId,
+                            blockId: id,
+                            disposition: "current",
+                            scope: zoomIn ? "subtree" : "context",
+                            attention: "focus",
+                            scroll: "auto",
+                            restoreScroll: zoomIn ? "never" : "if-document",
+                            zoom: zoomIn,
+                        });
+                    }).catch((error) => reportGutterActionFailure(protyle, "open folded block", error));
+                },
             });
         }
         if (!protyle.disabled) {

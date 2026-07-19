@@ -1,7 +1,7 @@
 import {transaction} from "../../wysiwyg/transaction";
 import {escapeAttr, escapeHtml} from "../../../util/escape";
 import {getColIconByType} from "./col";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition} from "../../toolbar/position";
 import {genCellValue} from "./cell";
 import * as dayjs from "dayjs";
 import {unicodeToEmoji} from "../../hint/emoji";
@@ -192,7 +192,7 @@ export const addFilter = (options: {
                         blockID
                     }]);
                     options.menuElement.innerHTML = getFiltersHTML(options.data, options.protyle);
-                    setPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
+                    setToolbarPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
                 }
             });
         }

@@ -1,6 +1,6 @@
 import {getColIconByType} from "./col";
 import {transaction} from "../../wysiwyg/transaction";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition} from "../../toolbar/position";
 import {unicodeToEmoji} from "../../hint/emoji";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
@@ -63,7 +63,7 @@ export const addSort = (options: {
                         options.protyle,
                     );
                     bindSortsEvent(options.protyle, options.menuElement, options.data, options.blockID);
-                    setPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
+                    setToolbarPosition(options.menuElement, options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom, options.tabRect.height, 0, true);
                 }
             });
         }

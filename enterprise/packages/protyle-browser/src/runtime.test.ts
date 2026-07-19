@@ -21,6 +21,7 @@ describe("createProtyleFactory", () => {
     const controller = {
       destroy: vi.fn(),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     };
     const coreCreate = vi.fn().mockResolvedValue(controller);
@@ -107,28 +108,60 @@ describe("createProtyleMenuPort", () => {
 });
 
 describe("createProtyleOverlayPort", () => {
-  it("closes and unregisters each owner handle exactly once", () => {
-    const closed: string[] = [];
+  it("notifies each owner before closing and unregisters its handle exactly once", () => {
+    const lifecycle: string[] = [];
     const overlayPort = createProtyleOverlayPort<{ id: string }>((overlay) => {
-      closed.push(overlay.id);
+      lifecycle.push(`closed:${overlay.id}`);
     });
     const first = { id: "overlay-1" };
     const second = { id: "overlay-2" };
-    const firstHandle = overlayPort.add(first);
-    overlayPort.add(second);
+    const firstHandle = overlayPort.add(first, () => {
+      lifecycle.push(`owner:${first.id}`);
+    });
+    overlayPort.add(second, () => {
+      lifecycle.push(`owner:${second.id}`);
+    });
 
     firstHandle.close();
     firstHandle.close();
     const active: string[] = [];
     overlayPort.forEach((overlay) => active.push(overlay.id));
 
-    expect(closed).toEqual([first.id]);
+    expect(lifecycle).toEqual([`owner:${first.id}`, `closed:${first.id}`]);
     expect(active).toEqual([second.id]);
     overlayPort.dispose();
     overlayPort.dispose();
 
-    expect(closed).toEqual([first.id, second.id]);
+    expect(lifecycle).toEqual([
+      `owner:${first.id}`,
+      `closed:${first.id}`,
+      `owner:${second.id}`,
+      `closed:${second.id}`,
+    ]);
     expect(() => overlayPort.add({ id: "late" })).toThrowError(/\[protyle\.overlays]/);
+  });
+
+  it("attempts every owner and overlay close before reporting a disposal failure", () => {
+    const lifecycle: string[] = [];
+    const ownerFailure = new Error("owner close failed");
+    const overlayPort = createProtyleOverlayPort<{ id: string }>((overlay) => {
+      lifecycle.push(`closed:${overlay.id}`);
+    });
+    overlayPort.add({ id: "overlay-1" }, () => {
+      lifecycle.push("owner:overlay-1");
+      throw ownerFailure;
+    });
+    overlayPort.add({ id: "overlay-2" }, () => {
+      lifecycle.push("owner:overlay-2");
+    });
+
+    expect(() => overlayPort.dispose()).toThrowError(AggregateError);
+    expect(lifecycle).toEqual([
+      "owner:overlay-1",
+      "closed:overlay-1",
+      "owner:overlay-2",
+      "closed:overlay-2",
+    ]);
   });
 });
 
@@ -142,16 +175,19 @@ describe("createProtyleSession", () => {
         unregisterFirst();
       }),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     } satisfies ProtyleController;
     const secondEditor = {
       destroy: vi.fn(() => order.push("editor-2")),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     } satisfies ProtyleController;
     const reentrantEditor = {
       destroy: vi.fn(),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     } satisfies ProtyleController;
     let unregisterFirst: () => void = () => undefined;
@@ -220,11 +256,13 @@ describe("createProtyleSession", () => {
         throw editorFailure;
       }),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     } satisfies ProtyleController;
     const secondEditor = {
       destroy: vi.fn(() => order.push("editor-2")),
       focus: vi.fn(),
+      navigateDocument: vi.fn(() => Promise.resolve()),
       setHostReadOnly: vi.fn(),
     } satisfies ProtyleController;
     editors.register(firstEditor);

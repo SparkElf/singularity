@@ -3,7 +3,6 @@ import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {openMenuPanel} from "./openMenuPanel";
 import {updateAttrViewCellAnimation} from "./action";
 import {isNotCtrl} from "../../util/keyboard";
-import {isDynamicRef, objEquals} from "../../../util/functions";
 import {focusBlock, focusByRange} from "../../util/selection";
 import * as dayjs from "dayjs";
 import {unicodeToEmoji} from "../../hint/emoji";
@@ -14,7 +13,7 @@ import {closeAVOverlay, currentAVOverlay, registerAVOverlay} from "./overlay";
 import {genAVValueHTML} from "./blockAttr";
 import {Constants} from "../../../constants";
 import {hintRef} from "../../hint/extend";
-import {getAssetName, pathPosix} from "../../../util/pathName";
+import {assetDisplayName, contentPathExtension} from "../../hint/path";
 import {mergeAddOption} from "./select";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldIdByCellElement} from "./row";
@@ -39,6 +38,21 @@ const renderCellURL = (urlContent: string) => {
     }
     // host 统一在输出处转义，避免非 http 协议（如 asd:<img...>）绕过 https://github.com/siyuan-note/siyuan/issues/9291
     return `<span class="av__celltext av__celltext--url" data-type="url" data-href="${escapeAttr(urlContent)}"><span>${Lute.EscapeHTMLStr(host)}</span><span class="ft__on-surface">${Lute.EscapeHTMLStr(suffix)}</span></span>`;
+};
+
+const sameAVCellValue = (left: unknown, right: unknown): boolean => {
+    if (left === right || (typeof left === "number" && Number.isNaN(left) &&
+        typeof right === "number" && Number.isNaN(right))) {
+        return true;
+    }
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") {
+        return false;
+    }
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const keys = Object.keys(leftRecord);
+    return keys.length === Object.keys(rightRecord).length &&
+        keys.every((key) => sameAVCellValue(leftRecord[key], rightRecord[key]));
 };
 
 export const getCellText = (cellElement: HTMLElement | false) => {
@@ -236,7 +250,7 @@ const transformCellValue = (colType: TAVCol, value: IAVCellValue): IAVCellValue 
     } else if (colType === "mAsset") {
         const content = getCellValueContent(value).toString();
         newValue.mAsset = [{
-            type: Constants.SIYUAN_ASSETS_IMAGE.includes(pathPosix().extname(content).toLowerCase()) ? "image" : "file",
+            type: Constants.SIYUAN_ASSETS_IMAGE.includes(contentPathExtension(content)) ? "image" : "file",
             content,
             name: "",
         }];
@@ -340,7 +354,7 @@ export const genCellValue = (colType: TAVCol, value: string | any) => {
                 relation: {blockIDs: [value], contents: []}
             };
         } else if (colType === "mAsset") {
-            const type = pathPosix().extname(value).toLowerCase();
+            const type = contentPathExtension(value);
             cellValue = {
                 type: colType,
                 mAsset: [{
@@ -606,7 +620,7 @@ export const popTextCell = (protyle: IProtyle, cellElements: HTMLElement[], type
                         addDragFill(cellElements[0], protyle.localization);
                     }
                     let textPlain = inputElement.value;
-                    if (isDynamicRef(textPlain)) {
+                    if (/^\(\(\d{14}-\w{7} '.*'\)\)$/.test(textPlain)) {
                         textPlain = textPlain.substring(2, 22 + 2);
                     } else {
                         textPlain = textPlain.substring(2);
@@ -784,7 +798,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
                 // https://github.com/siyuan-note/siyuan/issues/13892
                 if (!link && value.startsWith("assets/")) {
                     link = value;
-                    name = getAssetName(value) + pathPosix().extname(value);
+                    name = assetDisplayName(value) + contentPathExtension(value);
                 }
                 // https://github.com/siyuan-note/siyuan/issues/12308
                 if (html) {
@@ -899,7 +913,7 @@ export const updateCellsValue = async (protyle: IProtyle, nodeElement: HTMLEleme
             }
             cellValue.date.formattedContent = oldValue.date.formattedContent;
         }
-        if (!objEquals(cellValue, oldValue)) {
+        if (!sameAVCellValue(cellValue, oldValue)) {
             doOperations.push({
                 action: "updateAttrViewCell",
                 id: cellId,
@@ -953,10 +967,16 @@ export const renderCellAttr = (cellElement: Element, value: IAVCellValue) => {
             cellElement.classList.add("av__cell-uncheck");
         }
     } else if (value.type === "block") {
+        const textElement = cellElement.querySelector(".av__celltext")!;
         if (value.isDetached) {
             cellElement.setAttribute("data-detached", "true");
+            textElement.removeAttribute("data-id");
+            textElement.removeAttribute("data-notebook-id");
+            textElement.removeAttribute("data-document-id");
         } else {
-            cellElement.querySelector(".av__celltext").setAttribute("data-id", value.block.id);
+            textElement.setAttribute("data-id", value.block.id!);
+            textElement.setAttribute("data-notebook-id", value.block.notebookId!);
+            textElement.setAttribute("data-document-id", value.block.documentId!);
             cellElement.removeAttribute("data-detached");
         }
     }
@@ -981,7 +1001,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block.content || "")}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("more")}</span>`;
         } else {
             const targetReference = registerAVBlockValueTarget(protyle, cellValue.block);
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}"${cellValue.block.notebookId ? ` data-notebook-id="${cellValue.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("update")}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}" data-notebook-id="${escapeAttr(cellValue.block.notebookId!)}" data-document-id="${escapeAttr(cellValue.block.documentId!)}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content)}</span><span class="b3-chip b3-chip--info b3-chip--small" data-type="block-more">${localization.text("update")}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = `<span class="av__celltext" data-content="${cellValue?.number.isNotEmpty ? cellValue?.number.content : ""}">${cellValue?.number.formattedContent || cellValue?.number.content || ""}</span>`;
@@ -1051,7 +1071,7 @@ export const renderCell = (cellValue: IAVCellValue, rowIndex: number, showIcon: 
                 } else {
                     // data-block-id 用于更新 emoji
                     const targetReference = registerAVBlockValueTarget(protyle, item.block);
-                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}"${item.block.notebookId ? ` data-notebook-id="${item.block.notebookId}"` : ""} data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
+                    text += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-notebook-id="${escapeAttr(item.block.notebookId!)}" data-document-id="${escapeAttr(item.block.documentId!)}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                 }
             }
         });
@@ -1094,7 +1114,7 @@ const renderRollup = (
             text = `<span class="av__celltext">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
         } else {
             const targetReference = registerAVBlockValueTarget(protyle, cellValue.block);
-            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block?.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block?.content || localization.text("untitled"))}</span>`;
+            text = `<span class="b3-menu__avemoji${showIcon ? "" : " fn__none"}" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${cellValue.block.icon || ""}">${unicodeToEmoji(protyle, cellValue.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${cellValue.block.id}" data-notebook-id="${escapeAttr(cellValue.block.notebookId!)}" data-document-id="${escapeAttr(cellValue.block.documentId!)}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(cellValue.block.content || localization.text("untitled"))}</span>`;
         }
     } else if (cellValue.type === "number") {
         text = cellValue?.number.formattedContent || cellValue?.number.content.toString() || "";

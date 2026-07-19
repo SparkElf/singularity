@@ -266,6 +266,51 @@ func TestGetHPathByIDHoldsEncryptedResponseGate(t *testing.T) {
 	}
 }
 
+func TestGetDocReturnsExplicitParentDocumentTarget(t *testing.T) {
+	boxID := setupEncryptedResponseTest(t, 1)[0]
+	const (
+		parentDocumentID = "20990719130001-parentx"
+		childDocumentID  = "20990719130002-childxx"
+	)
+	createEnterpriseDirectoryTree(t, boxID, parentDocumentID, "/"+parentDocumentID+".sy", "/Parent", "Parent")
+	createEnterpriseDirectoryTree(t, boxID, childDocumentID, "/"+parentDocumentID+"/"+childDocumentID+".sy", "/Parent/Child", "Child")
+
+	previousMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(previousMode) })
+	router := gin.New()
+	router.Use(ContentResponseLifecycle)
+	router.POST("/api/filetree/getDoc", getDoc)
+	body, err := json.Marshal(map[string]string{
+		"id":       childDocumentID,
+		"notebook": boxID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/filetree/getDoc", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			ParentDocument *model.ContentTarget `json:"parentDocument"`
+		} `json:"data"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode document response: %v", err)
+	}
+	if response.Code != http.StatusOK || result.Code != 0 || result.Data.ParentDocument == nil {
+		t.Fatalf("document response = status %d, %#v", response.Code, result)
+	}
+	target := result.Data.ParentDocument
+	if target.BlockID != parentDocumentID || target.NotebookID != boxID || target.DocumentID != parentDocumentID {
+		t.Fatalf("parent document target = %#v", target)
+	}
+}
+
 func TestDuplicateDocRequiresExplicitExistingNotebook(t *testing.T) {
 	_, _, missingID := setupNotebookArgTest(t)
 	previousMode := gin.Mode()

@@ -1,10 +1,38 @@
+import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
+
 const SIYUAN_HTML_PATTERN = /<!--data-siyuan='([^']+)'-->/;
 const SIYUAN_HTML_GLOBAL_PATTERN = /<!--data-siyuan='[^']+'-->/g;
+const SIYUAN_CLIPBOARD_VERSION = 1;
 
-export interface BrowserClipboardData extends IClipboardData {
+export interface ProtyleClipboardSourceIdentity extends ProtyleContentIdentity {
+    readonly spaceId: string;
+}
+
+export interface ProtyleClipboardData {
+    files?: File[];
+    localFiles?: ILocalFiles[];
+    siyuanHTML?: string;
+    sourceIdentity?: ProtyleClipboardSourceIdentity;
+    textHTML?: string;
+    textPlain?: string;
+}
+
+export interface BrowserClipboardData extends ProtyleClipboardData {
     textHTML: string;
     textPlain: string;
     siyuanHTML: string;
+}
+
+interface SiyuanClipboardPayload {
+    readonly source: ProtyleClipboardSourceIdentity;
+    readonly siyuanHTML: string;
+    readonly version: typeof SIYUAN_CLIPBOARD_VERSION;
+}
+
+interface ParsedSiyuanClipboardData {
+    readonly sourceIdentity?: ProtyleClipboardSourceIdentity;
+    readonly textHtml: string;
+    readonly textSiyuan: string;
 }
 
 export const encodeBase64 = (text: string): string => {
@@ -18,7 +46,48 @@ export const encodeBase64 = (text: string): string => {
     return btoa(binary);
 };
 
-export const getTextSiyuanFromTextHTML = (html: string) => {
+const parseClipboardPayload = (value: unknown): SiyuanClipboardPayload | undefined => {
+    if (!value || typeof value !== "object") {
+        return;
+    }
+    const payload = value as Record<string, unknown>;
+    const source = payload.source;
+    if (payload.version !== SIYUAN_CLIPBOARD_VERSION ||
+        typeof payload.siyuanHTML !== "string" ||
+        !source || typeof source !== "object") {
+        return;
+    }
+    const identity = source as Record<string, unknown>;
+    if (typeof identity.spaceId !== "string" || identity.spaceId === "" ||
+        typeof identity.notebookId !== "string" || identity.notebookId === "" ||
+        typeof identity.documentId !== "string" || identity.documentId === "") {
+        return;
+    }
+    return {
+        version: SIYUAN_CLIPBOARD_VERSION,
+        source: {
+            spaceId: identity.spaceId,
+            notebookId: identity.notebookId,
+            documentId: identity.documentId,
+        },
+        siyuanHTML: payload.siyuanHTML,
+    };
+};
+
+export const createSiyuanClipboardHTML = (
+    siyuanHTML: string,
+    sourceIdentity: ProtyleClipboardSourceIdentity,
+    html: string,
+) => {
+    const payload: SiyuanClipboardPayload = {
+        version: SIYUAN_CLIPBOARD_VERSION,
+        source: sourceIdentity,
+        siyuanHTML,
+    };
+    return `<!--data-siyuan='${encodeBase64(JSON.stringify(payload))}'-->${html}`;
+};
+
+export const getTextSiyuanFromTextHTML = (html: string): ParsedSiyuanClipboardData => {
     if (html.trimStart().startsWith("<html") &&
         html.substring(0, html.indexOf(">")).includes('xmlns:x="urn:schemas-microsoft-com:office:excel"')) {
         return {
@@ -33,8 +102,13 @@ export const getTextSiyuanFromTextHTML = (html: string) => {
     }
     try {
         const bytes = Uint8Array.from(atob(match[1]), (char) => char.charCodeAt(0));
+        const payload = parseClipboardPayload(JSON.parse(new TextDecoder().decode(bytes)));
+        if (!payload) {
+            throw new Error("clipboard payload does not match version 1");
+        }
         return {
-            textSiyuan: new TextDecoder().decode(bytes),
+            sourceIdentity: payload.source,
+            textSiyuan: payload.siyuanHTML,
             textHtml: html.replace(SIYUAN_HTML_GLOBAL_PATTERN, ""),
         };
     } catch (error) {
@@ -66,6 +140,7 @@ export const readClipboard = async (): Promise<BrowserClipboardData> => {
             const parsed = getTextSiyuanFromTextHTML(html);
             value.textHTML = parsed.textHtml;
             value.siyuanHTML = parsed.textSiyuan;
+            value.sourceIdentity = parsed.sourceIdentity;
         }
         if (item.types.includes("text/plain")) {
             value.textPlain = await (await item.getType("text/plain")).text();

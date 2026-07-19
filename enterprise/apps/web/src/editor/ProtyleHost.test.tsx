@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import type {
   ProtyleController,
+  ProtyleDocumentNavigation,
   ProtyleFactory,
 } from "@singularity/protyle-browser";
 import {
@@ -18,6 +19,7 @@ function createController() {
   return {
     destroy: vi.fn(),
     focus: vi.fn(),
+    navigateDocument: vi.fn(() => Promise.resolve()),
     setHostReadOnly: vi.fn(),
   } satisfies ProtyleController;
 }
@@ -96,6 +98,92 @@ describe("ProtyleHost", () => {
     unmount();
     expect(createOptions?.signal.aborted).toBe(true);
     expect(controller.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("consumes each matching semantic navigation command once when the controller is ready", async () => {
+    const controller = createController();
+    const creation = deferred<ProtyleController>();
+    const create = vi.fn<TestFactory["create"]>().mockReturnValue(creation.promise);
+    const factory: TestFactory = { create };
+    const session = createSession("space-a");
+    const onNavigationCommandComplete = vi.fn();
+    const firstNavigation = {
+      attention: "focus-and-highlight",
+      blockId: "block-a",
+      documentId: "doc-a",
+      notebookId: "notebook-a",
+      restoreScroll: "never",
+      scope: "context",
+      scroll: "start",
+      zoom: false,
+    } satisfies ProtyleDocumentNavigation;
+
+    const { rerender, unmount } = render(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        notebookId="notebook-a"
+        onNavigationCommandComplete={onNavigationCommandComplete}
+        readOnly={false}
+        session={session}
+      />,
+    );
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+
+    rerender(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        navigationCommand={{ navigation: firstNavigation, sequence: 1 }}
+        notebookId="notebook-a"
+        onNavigationCommandComplete={onNavigationCommandComplete}
+        readOnly={false}
+        session={session}
+      />,
+    );
+    creation.resolve(controller);
+
+    await waitFor(() => expect(controller.navigateDocument).toHaveBeenCalledOnce());
+    expect(controller.navigateDocument).toHaveBeenLastCalledWith(firstNavigation);
+    await waitFor(() => expect(onNavigationCommandComplete).toHaveBeenCalledWith(1));
+
+    rerender(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        navigationCommand={{ navigation: firstNavigation, sequence: 1 }}
+        notebookId="notebook-a"
+        onNavigationCommandComplete={onNavigationCommandComplete}
+        readOnly
+        session={session}
+      />,
+    );
+    expect(controller.navigateDocument).toHaveBeenCalledOnce();
+
+    const secondNavigation = {
+      ...firstNavigation,
+      attention: "none",
+      blockId: "block-b",
+      scroll: "auto",
+      zoom: true,
+    } satisfies ProtyleDocumentNavigation;
+    rerender(
+      <ProtyleHost
+        documentId="doc-a"
+        factory={factory}
+        navigationCommand={{ navigation: secondNavigation, sequence: 2 }}
+        notebookId="notebook-a"
+        onNavigationCommandComplete={onNavigationCommandComplete}
+        readOnly
+        session={session}
+      />,
+    );
+
+    await waitFor(() => expect(controller.navigateDocument).toHaveBeenCalledTimes(2));
+    expect(controller.navigateDocument).toHaveBeenLastCalledWith(secondNavigation);
+    await waitFor(() => expect(onNavigationCommandComplete).toHaveBeenCalledWith(2));
+
+    unmount();
   });
 
   it("destroys the current editor before recreating it for notebook, document, and session changes", async () => {

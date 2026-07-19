@@ -6,10 +6,9 @@ import {focusBlock} from "../../util/selection";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {getRowHTML, stickyRow, updateHeader} from "./row";
 import {getCalcValue} from "./calc";
-import {renderAVAttribute} from "./blockAttr";
+import {refreshAVAttribute} from "./blockAttr";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
-import {isTouchInput} from "../../util/browserPlatform";
-import {isMobile} from "../../../util/functions";
+import {isNarrowViewport, isTouchInput} from "../../util/browserPlatform";
 import {renderGallery} from "./gallery/render";
 import {getFieldsByData, getViewIcon} from "./view";
 import {openMenuPanel} from "./openMenuPanel";
@@ -394,6 +393,7 @@ const afterRenderTable = (options: ITableOptions) => {
     }
     bindAvSearch({
         blockElement: options.blockElement,
+        clearLabel: options.protyle.localization.text("clear"),
         query: options.resetData.query,
         isSearching: options.resetData.isSearching,
         onChange: () => updateSearch(options.blockElement, options.protyle),
@@ -421,7 +421,7 @@ export const avRender = async (element: Element, protyle: IProtyle, cb?: (data: 
         const load = inheritedLoad?.owner === e && inheritedLoad.namespace === "render"
             ? inheritedLoad
             : beginAVRenderLoad(protyle, e, "render");
-        if (isMobile() || isTouchInput()) {
+        if (isNarrowViewport() || isTouchInput()) {
             e.classList.add("av--touch");
         }
 
@@ -816,12 +816,7 @@ export const refreshAV = (protyle: IProtyle, operation: IOperation) => {
         refreshTimeouts.delete(protyle);
         // 修改表格名 avID 传入到 id 上了 https://github.com/siyuan-note/siyuan/issues/12724
         const avID = operation.action === "setAttrViewName" ? operation.id : operation.avID;
-        const attrElement = document.querySelector(`.b3-dialog--open[data-key="${Constants.DIALOG_ATTR}"] .custom-attr > [data-av-id="${avID}"]`) as HTMLElement;
-        if (attrElement) {
-            // 更新属性面板
-            attrElement.removeAttribute("data-rendering");
-            renderAVAttribute(attrElement.parentElement, attrElement.dataset.nodeId, protyle);
-        }
+        refreshAVAttribute(protyle, avID);
         getAVElements(protyle, avID).forEach((item) => {
             item.removeAttribute("data-render");
             if (operation.action === "sortAttrViewRow") {

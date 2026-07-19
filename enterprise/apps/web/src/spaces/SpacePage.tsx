@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -87,8 +88,12 @@ import type {
   SpaceProtyleMenuSurfaceFactory,
   SpaceProtyleRuntime,
 } from "@/spaces/space-session.ts";
-import { ProtyleHost } from "@/editor/ProtyleHost.tsx";
+import {
+  ProtyleHost,
+  type ProtyleHostNavigationCommand,
+} from "@/editor/ProtyleHost.tsx";
 import type {
+  ProtyleDocumentNavigation,
   ProtyleFactory,
   ProtyleSession,
 } from "@singularity/protyle-browser";
@@ -109,6 +114,10 @@ export interface SpacePageProps {
   readonly createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory;
 }
 
+interface SpaceNavigationCommand extends ProtyleHostNavigationCommand {
+  readonly spaceId: string;
+}
+
 function isReadySpaceRuntime(
   runtime: SpaceRuntimeBootstrap | undefined,
 ): runtime is ReadySpaceRuntimeBootstrap {
@@ -123,6 +132,10 @@ function createSpaceHostMediator(
     readonly spaceId: string;
   }) => void,
   clearSelection: () => void,
+  queueNavigation: (
+    spaceId: string,
+    navigation: ProtyleDocumentNavigation,
+  ) => void,
   event: ProtyleMediatorEvent,
   bootstrap: ReadySpaceRuntimeBootstrap,
 ): void {
@@ -132,6 +145,16 @@ function createSpaceHostMediator(
         documentId: event.documentId,
         notebookId: event.notebookId,
         spaceId: bootstrap.spaceId,
+      });
+      queueNavigation(bootstrap.spaceId, {
+        attention: event.attention,
+        blockId: event.blockId,
+        documentId: event.documentId,
+        notebookId: event.notebookId,
+        restoreScroll: event.restoreScroll,
+        scope: event.scope,
+        scroll: event.scroll,
+        zoom: event.zoom,
       });
       return;
     case "close-document": {
@@ -175,6 +198,7 @@ function createSpaceHostMediator(
       window.open(event.url, "_blank", "noopener,noreferrer");
       return;
     case "activate-document":
+    case "record-navigation-location":
     case "open-ai-actions":
     case "open-ai-writing":
     case "open-block-attributes":
@@ -267,8 +291,10 @@ interface WorkspaceSpaceLinkProps {
 interface ReadyWorkspaceProps {
   readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
   readonly identity: SpaceRuntimePathParameters;
+  readonly navigationCommand: ProtyleHostNavigationCommand | null;
   readonly onDirectoryAccessLost: (category: ContentDirectoryAccessLoss) => void;
   readonly onDirectoryStatusChange: (status: ContentDirectoryStatus) => void;
+  readonly onNavigationCommandComplete: (sequence: number) => void;
   readonly readOnly: boolean;
   readonly session: ProtyleSession<SpaceProtyleRuntime> | null;
   readonly status: ContentDirectoryStatus;
@@ -277,8 +303,10 @@ interface ReadyWorkspaceProps {
 function ReadyWorkspace({
   createProtyleFactoryForSpace,
   identity,
+  navigationCommand,
   onDirectoryAccessLost,
   onDirectoryStatusChange,
+  onNavigationCommandComplete,
   readOnly,
   session,
   status,
@@ -286,6 +314,7 @@ function ReadyWorkspace({
   const selection = useContentSelectionStore((state) =>
     state.selection?.spaceId === identity.spaceId ? state.selection : null,
   );
+  const previousSessionRef = useRef(session);
   const factory = useMemo(
     () => createProtyleFactoryForSpace(identity.spaceId),
     [createProtyleFactoryForSpace, identity.spaceId],
@@ -298,6 +327,22 @@ function ReadyWorkspace({
     setEditorAttempt(0);
     setEditorError(false);
   }, [selection?.documentId, selection?.notebookId, session?.spaceId]);
+
+  useEffect(() => {
+    const sessionChanged = previousSessionRef.current !== session;
+    previousSessionRef.current = session;
+    if (
+      navigationCommand &&
+      (
+        sessionChanged ||
+        !selection ||
+        selection.notebookId !== navigationCommand.navigation.notebookId ||
+        selection.documentId !== navigationCommand.navigation.documentId
+      )
+    ) {
+      onNavigationCommandComplete(navigationCommand.sequence);
+    }
+  }, [navigationCommand, onNavigationCommandComplete, selection, session]);
 
   const retryEditor = async () => {
     if (!session || editorRetrying) {
@@ -332,8 +377,10 @@ function ReadyWorkspace({
               key={`${session.spaceId}:${selection.notebookId}:${selection.documentId}:${editorAttempt}`}
               documentId={selection.documentId}
               factory={factory}
+              navigationCommand={navigationCommand}
               notebookId={selection.notebookId}
               onError={() => setEditorError(true)}
+              onNavigationCommandComplete={onNavigationCommandComplete}
               readOnly={readOnly}
               session={session}
             />
@@ -509,6 +556,8 @@ export function SpacePage({
   const queryClient = useQueryClient();
   const selectDocument = useContentSelectionStore((state) => state.selectDocument);
   const clearSelection = useContentSelectionStore((state) => state.clearSelection);
+  const navigationSequenceRef = useRef(0);
+  const [navigationCommand, setNavigationCommand] = useState<SpaceNavigationCommand | null>(null);
   const spacesQuery = useAuthorizedSpaces();
   const runtimeQuery = useQuery({
     enabled: organizationId !== "" && spaceId !== "",
@@ -538,6 +587,11 @@ export function SpacePage({
     readonly routeKey: string;
   } | null>(null);
   const [directoryStatus, setDirectoryStatus] = useState<ContentDirectoryStatus>("loading");
+
+  useEffect(() => {
+    setNavigationCommand(null);
+  }, [routeKey]);
+
   const currentSessionFailure = sessionFailure?.routeKey === routeKey
     ? sessionFailure
     : null;
@@ -587,17 +641,33 @@ export function SpacePage({
       }),
     ]);
   }, [identity, queryClient, routeKey]);
+  const queueNavigation = useCallback((
+    targetSpaceId: string,
+    navigation: ProtyleDocumentNavigation,
+  ) => {
+    setNavigationCommand({
+      navigation,
+      sequence: ++navigationSequenceRef.current,
+      spaceId: targetSpaceId,
+    });
+  }, []);
+  const completeNavigationCommand = useCallback((sequence: number) => {
+    setNavigationCommand((current) =>
+      current?.sequence === sequence ? null : current,
+    );
+  }, []);
   const handleHostEvent = useCallback(
     (event: ProtyleMediatorEvent, bootstrap: ReadySpaceRuntimeBootstrap) => {
       createSpaceHostMediator(
         queryClient,
         selectDocument,
         clearSelection,
+        queueNavigation,
         event,
         bootstrap,
       );
     },
-    [clearSelection, queryClient, selectDocument],
+    [clearSelection, queryClient, queueNavigation, selectDocument],
   );
   const pollAttempts =
     pollState.routeKey === routeKey ? pollState.attempts : 0;
@@ -896,8 +966,14 @@ export function SpacePage({
             <ReadyWorkspace
               createProtyleFactoryForSpace={createProtyleFactoryForSpace}
               identity={readyBootstrap}
+              navigationCommand={
+                navigationCommand?.spaceId === readyBootstrap.spaceId
+                  ? navigationCommand
+                  : null
+              }
               onDirectoryAccessLost={handleDirectoryAccessLost}
               onDirectoryStatusChange={setDirectoryStatus}
+              onNavigationCommandComplete={completeNavigationCommand}
               readOnly={readyBootstrap.role === "viewer"}
               session={session}
               status={directoryStatus}

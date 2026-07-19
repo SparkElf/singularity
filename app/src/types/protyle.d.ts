@@ -119,11 +119,13 @@ interface ILuteRender {
 }
 
 interface IBreadcrumb {
-    id: string,
+    blockId: string,
+    notebookId: string,
+    documentId: string,
     name: string,
     type: string,
     subType: string,
-    children: []
+    children: IBreadcrumb[]
 }
 
 interface ILuteOptions extends IMarkdownConfig {
@@ -559,6 +561,10 @@ type TProtyleSurface = import("../../../enterprise/packages/protyle-browser/src/
 
 type TProtyleParticipation = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleParticipation;
 
+type TProtyleContentTarget = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleContentTarget;
+
+type TProtyleDocumentNavigation = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleDocumentNavigation;
+
 type TProtyleReadOnlyState = import("../protyle/runtime/readOnly").ProtyleReadOnlyState;
 
 type TProtyleBoundContent = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleBoundContent;
@@ -599,6 +605,7 @@ interface IProtyle {
     /** Registry entries own the same lifecycle surface as the public Core controller. */
     destroy: () => void,
     focus: () => void,
+    navigateDocument: (navigation: TProtyleDocumentNavigation) => Promise<void>,
     setHostReadOnly: (readOnly: boolean) => void,
     observerLoad?: ResizeObserver,
     observer?: ResizeObserver,
@@ -633,6 +640,7 @@ interface IProtyle {
         scroll?: boolean
         parentID?: string,
         parent2ID?: string,
+        parentDocument?: TProtyleContentTarget | null,
         rootID?: string,
         showAll?: boolean
         mode?: number

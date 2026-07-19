@@ -53,6 +53,7 @@ import {confirmDialog} from "../dialog/confirmDialog";
 import {needSubscribe} from "../util/needSubscribe";
 import {getCloudURL} from "../config/util/about";
 import {resize} from "../protyle/util/resize";
+import {pushBackLocation} from "../util/backForward";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -302,7 +303,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
         case "open-document":
             void openFileById({
                 app,
-                id: event.documentId,
+                id: event.blockId,
                 notebookId: event.notebookId,
                 action: getLegacyDocumentActions(event.scope, event.attention, event.restoreScroll),
                 scrollPosition: event.scroll === "start" ? "start" : undefined,
@@ -552,6 +553,15 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
                     resize: false,
                 });
             }
+            return;
+        }
+        case "record-navigation-location": {
+            const editor = requireSourceEditor(app, event);
+            pushBackLocation(editor, {
+                blockId: event.blockId,
+                position: event.position,
+                zoomId: event.zoomId,
+            });
             return;
         }
         case "update-document-statistics":

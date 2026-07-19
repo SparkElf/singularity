@@ -11,7 +11,7 @@ import {matchHotKey} from "../util/hotKey";
 import {isMac, isNarrowViewport} from "../util/browserPlatform";
 import {readText} from "../util/clipboard";
 import * as dayjs from "dayjs";
-import {getDocDisplayName} from "../../util/pathName";
+import {getProtyleDocumentDisplayName} from "../runtime/displayName";
 import {getContenteditableElement, getNoContainerElement} from "../wysiwyg/getBlock";
 import {commonHotkey} from "../wysiwyg/commonHotkey";
 import {nbsp2space} from "../util/normalizeText";
@@ -237,12 +237,13 @@ export class Title {
                     return;
                 }
                 if (matchHotKey(protyle.settings.hotkeys.general.enterBack, event)) {
-                    const ids = protyle.path.split("/");
-                    if (ids.length > 2) {
+                    const parentDocument = protyle.block.parentDocument;
+                    if (parentDocument) {
                         protyle.host.dispatch({
                             type: "open-document",
-                            notebookId: protyle.notebookId,
-                            documentId: ids[ids.length - 2],
+                            notebookId: parentDocument.notebookId,
+                            documentId: parentDocument.documentId,
+                            blockId: parentDocument.blockId,
                             disposition: "current",
                             scope: "target",
                             attention: "focus",
@@ -531,7 +532,11 @@ export class Title {
                 type: "set-document-title",
                 notebookId: identity.notebookId,
                 documentId: identity.documentId,
-                title: getDocDisplayName(response.data.name, response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true"),
+                title: getProtyleDocumentDisplayName(
+                    response.data.name,
+                    response.data.ial[Constants.CUSTOM_SY_TITLE_EMPTY] === "true",
+                    protyle.localization.kernelText(16),
+                ),
             });
         }
         let nodeAttrHTML = "";

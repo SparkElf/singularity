@@ -386,9 +386,9 @@ export class Hint {
                     if (nodeElement) {
                         refText = item.ial["custom-sy-av-s-text-" + nodeElement.getAttribute("data-av-id")] || refText;
                     }
-                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${refText}</span>`;
+                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-document-id="${item.rootID}" data-subtype="s">${refText}</span>`;
                 } else {
-                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${oldValue}</span>`;
+                    blockRefHTML = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-document-id="${item.rootID}" data-subtype="s">${oldValue}</span>`;
                 }
                 const blockTarget = source === "av" ? registerAVBlockTarget(protyle, {
                     blockId: item.id,

@@ -11,9 +11,9 @@ import {toggleUpdateRelationBtn} from "./relation";
 import {bindRollupData, getRollupHTML} from "./rollup";
 import {Constants} from "../../../constants";
 import * as dayjs from "dayjs";
-import {setPosition} from "../../../util/setPosition";
-import {duplicateNameAddOne, isMobile} from "../../../util/functions";
-import {Dialog} from "../../../dialog";
+import {setToolbarPosition} from "../../toolbar/position";
+import {isNarrowViewport} from "../../util/browserPlatform";
+import {openProtyleDialog} from "../../wysiwyg/dialogOwner";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
 import {getFieldsByData} from "./view";
 import {hasClosestByClassName} from "../../util/hasClosest";
@@ -27,6 +27,14 @@ export const getColId = (element: Element, viewType: TAVView) => {
     } else if (["gallery", "kanban"].includes(viewType)) {
         return element.getAttribute("data-field-id");
     }
+};
+
+const duplicateColumnName = (name: string) => {
+    if (!name) {
+        return "";
+    }
+    const match = name.match(/^(.*) \((\d+)\)$/);
+    return match ? `${match[1]} (${Number.parseInt(match[2], 10) + 1})` : `${name} (1)`;
 };
 
 export const duplicateCol = (options: {
@@ -45,7 +53,7 @@ export const duplicateCol = (options: {
             return true;
         }
     });
-    newColData.name = duplicateNameAddOne(newColData.name);
+    newColData.name = duplicateColumnName(newColData.name);
     newColData.id = Lute.NewNodeID();
     const newUpdated = dayjs().format("YYYYMMDDHHmmss");
     const blockId = options.blockElement.getAttribute("data-node-id");
@@ -472,7 +480,7 @@ export const bindEditEvent = (options: {
                 // 添加选项后面板增高，需按首次锚点重新定位（sticky 锁底部，顶部上移避免溢出视口）
                 const prevTop = parseFloat(options.menuElement.dataset.positionTop);
                 if (!isNaN(prevTop)) {
-                    setPosition(options.menuElement, parseFloat(options.menuElement.dataset.positionX), prevTop, 0, 0, true);
+                    setToolbarPosition(options.menuElement, parseFloat(options.menuElement.dataset.positionX), prevTop, 0, 0, true);
                 }
             }
         });
@@ -689,7 +697,7 @@ const addAttrViewColAnimation = (options: {
         });
         const tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
         if (tabRect) {
-            setPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
+            setToolbarPosition(menuElement, tabRect.right - menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
         }
         return;
     }
@@ -1163,9 +1171,12 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
                         if (!load.isCurrent()) {
                             return;
                         }
-                        const dialog = new Dialog({
+                        const dialog = openProtyleDialog({
+                            protyle,
                             title: localization.text("removeColConfirm"),
-                            content: `<div class="b3-dialog__content">
+                            width: isNarrowViewport() ? "92vw" : "520px",
+                        });
+                        dialog.bodyElement.innerHTML = `<div class="b3-dialog__content">
     ${localization.text("confirmRemoveRelationField")
                                 .replace("${x}", colData.key.name || localization.kernelText(272))
                                 .replace("${y}", relResponse.data.av.name || localization.kernelText(267))
@@ -1178,51 +1189,29 @@ export const showColMenu = (protyle: IProtyle, blockElement: Element, cellElemen
     <button class="fn__block b3-button b3-button--remove" data-action="keep-relation">${localization.text("removeButKeepRelationField")}</button>
     <div class="fn__hr"></div>
     <button class="fn__block b3-button b3-button--cancel">${localization.text("cancel")}</button>
-</div>`,
-                            width: isMobile() ? "92vw" : "520px",
-                        });
-                        dialog.element.addEventListener("click", (event) => {
-                            let target = event.target as HTMLElement;
-                            const isDispatch = typeof event.detail === "string";
-                            while (target && target !== dialog.element || isDispatch) {
-                                const action = target.getAttribute("data-action");
-                                if (action === "delete" || (isDispatch && event.detail === "Enter")) {
-                                    removeColByMenu({
-                                        protyle,
-                                        colId,
-                                        avID,
-                                        blockID,
-                                        oldValue,
-                                        type,
-                                        cellElement,
-                                        blockElement,
-                                        removeDest: true
-                                    });
-                                    dialog.destroy();
-                                    break;
-                                } else if (action === "keep-relation") {
-                                    removeColByMenu({
-                                        protyle,
-                                        colId,
-                                        avID,
-                                        blockID,
-                                        oldValue,
-                                        type,
-                                        cellElement,
-                                        blockElement,
-                                        removeDest: false
-                                    });
-                                    dialog.destroy();
-                                    break;
-                                } else if (target.classList.contains("b3-button--cancel") || (isDispatch && event.detail === "Escape")) {
-                                    dialog.destroy();
-                                    break;
-                                }
-                                target = target.parentElement;
+</div>`;
+                        dialog.bodyElement.addEventListener("click", (event) => {
+                            const target = (event.target as Element).closest<HTMLButtonElement>("button");
+                            if (!target) {
+                                return;
                             }
-                        });
-                        dialog.element.querySelector("button").focus();
-                        dialog.element.setAttribute("data-key", Constants.DIALOG_CONFIRM);
+                            const action = target.dataset.action;
+                            if (action === "delete" || action === "keep-relation") {
+                                removeColByMenu({
+                                    protyle,
+                                    colId,
+                                    avID,
+                                    blockID,
+                                    oldValue,
+                                    type,
+                                    cellElement,
+                                    blockElement,
+                                    removeDest: action === "delete"
+                                });
+                            }
+                            dialog.close();
+                        }, {signal: dialog.signal});
+                        dialog.bodyElement.querySelector<HTMLButtonElement>("button")!.focus();
                         return;
                     }
                 }
@@ -1340,7 +1329,7 @@ export const removeCol = (options: {
         closeOwnedAVOverlay(options.protyle, "panel", options.avPanelElement);
     } else {
         options.menuElement.innerHTML = getPropertiesHTML(options.fields, options.protyle);
-        setPosition(options.menuElement,
+        setToolbarPosition(options.menuElement,
             options.tabRect.right - options.menuElement.clientWidth, options.tabRect.bottom,
             options.tabRect.height, 0, true);
     }

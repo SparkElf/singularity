@@ -1334,13 +1334,14 @@ func getDoc(c *gin.Context) {
 	var boxID, docPath string
 	var isBacklinkExpand bool
 	var keywords []string
+	var parentDocument *model.ContentTarget
 	var err error
 	// 加密笔记本的打开文档走 InBox 版（查加密 blocktree + content db）
 	if contentStore != "" {
-		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, err =
+		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, parentDocument, err =
 			model.GetDocInBox(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight, contentStore)
 	} else {
-		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, err =
+		blockCount, content, parentID, parent2ID, rootID, typ, eof, scroll, boxID, docPath, isBacklinkExpand, keywords, parentDocument, err =
 			model.GetDoc(startID, endID, id, index, query, queryTypes, querySubTypes, queryMethod, mode, size, isBacklink, originalRefBlockIDs, highlight)
 	}
 	if errors.Is(err, model.ErrBlockNotFound) {
@@ -1379,6 +1380,7 @@ func getDoc(c *gin.Context) {
 		"scroll":           scroll,
 		"box":              boxID,
 		"path":             docPath,
+		"parentDocument":   parentDocument,
 		"isSyncing":        isSyncing,
 		"isBacklinkExpand": isBacklinkExpand,
 		"keywords":         keywords,

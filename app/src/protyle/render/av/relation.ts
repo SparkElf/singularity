@@ -5,12 +5,12 @@ import {transaction} from "../../wysiwyg/transaction";
 import {updateCellsValue} from "./cell";
 import {updateAttrViewCellAnimation} from "./action";
 import {focusBlock} from "../../util/selection";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition} from "../../toolbar/position";
 import * as dayjs from "dayjs";
 import {getFieldsByData, getViewName} from "./view";
 import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";
-import {isMobile} from "../../../util/functions";
+import {isNarrowViewport} from "../../util/browserPlatform";
 import {writeText} from "../../util/clipboard";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {openAVMenu} from "./menu";
@@ -99,7 +99,7 @@ export const openSearchAV = (protyle: IProtyle, avId: string, target: HTMLElemen
     menu.addItem({
         iconHTML: "",
         type: "empty",
-        label: `<div class="fn__flex-column b3-menu__filter"${isMobile() ? "" : ' style="width: 50vw"'} >
+        label: `<div class="fn__flex-column b3-menu__filter"${isNarrowViewport() ? "" : ' style="width: 50vw"'} >
     <input class="b3-text-field fn__flex-shrink"/>
     <div class="fn__hr"></div>
     <div class="b3-list fn__flex-1 b3-list--background">
@@ -443,7 +443,7 @@ draggable="true">${genSelectItemHTML({
 <button class="b3-menu__separator"></button>
 ${html || genSelectItemHTML({type: "empty"}, options.protyle.localization)}`;
         const cellRect = options.cellElements[options.cellElements.length - 1].getBoundingClientRect();
-        setPosition(options.menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
+        setToolbarPosition(options.menuElement, cellRect.left, cellRect.bottom, cellRect.height, 0, true);
         options.menuElement.querySelector(".b3-menu__items .b3-menu__item:not(.fn__none)").classList.add("b3-menu__item--current");
         const inputElement = options.menuElement.querySelector("input");
         inputElement.focus();

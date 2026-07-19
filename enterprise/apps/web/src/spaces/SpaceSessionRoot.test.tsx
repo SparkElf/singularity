@@ -188,6 +188,7 @@ describe("SpaceSessionRoot", () => {
     act(() => {
       activeSession!.runtime.host.dispatch({
         attention: "none",
+        blockId: "20260718000100-docum01",
         disposition: "current",
         documentId: "20260718000100-docum01",
         notebookId: "20260718000000-noteb01",
@@ -203,6 +204,7 @@ describe("SpaceSessionRoot", () => {
     await waitFor(() => expect(onHostEvent).toHaveBeenCalledOnce());
     expect(onHostEvent).toHaveBeenCalledWith(
       expect.objectContaining({
+        blockId: "20260718000100-docum01",
         documentId: "20260718000100-docum01",
         notebookId: "20260718000000-noteb01",
         sourceEditorId: "editor-primary",

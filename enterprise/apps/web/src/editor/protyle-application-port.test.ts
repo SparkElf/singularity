@@ -61,6 +61,11 @@ describe("createProtyleApplicationPort", () => {
       widget: false,
     });
     expect(restored.settings.hotkeys.editor.general.insertRight).toBe("⌥.");
+    expect(restored.settings.hotkeys.editor.table.moveToUp).toBe("⌥⌘T");
+    expect(restored.settings.editor.listItemDotNumberClickFocus).toBe(true);
+    expect(restored.settings.editor.pasteURLAutoConvert).toBe(true);
+    expect(restored.settings.editor.suppressBlockLinkPopoverOnMenu).toBe(true);
+    expect(restored.settings.features.navigationHistory).toBe(false);
     expect(restored.settings.icons.file).toBe("1f4c4");
     expect(restored.settings.localFilePosition.get(identity)).toEqual(position);
     expect(restored.settings.navigation.openFilesUseCurrentTab).toBe(false);

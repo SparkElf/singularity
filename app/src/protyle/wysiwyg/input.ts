@@ -12,6 +12,7 @@ import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
 import {headingTurnIntoList, turnIntoTaskList} from "./turnIntoList";
 import {updateAVName} from "../render/av/action";
 import {setFold} from "../util/blockFold";
+import {protyleContentIdentity} from "../util/contentLoad";
 
 export const input = async (protyle: IProtyle, blockElement: HTMLElement, range: Range, needRender = true, event?: InputEvent) => {
     if (!blockElement.parentElement) {
@@ -140,17 +141,14 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
 
     const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
     if (refElement && refElement.getAttribute("data-subtype") === "d") {
-        const response = await protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+        const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
             id: refElement.getAttribute("data-id"),
         }, {
-            identity: {
-                notebookId: protyle.notebookId,
-                documentId: protyle.options.blockId!,
-            },
+            identity: protyleContentIdentity(protyle),
             intent: "read",
-            signal: protyle.ownerSignal,
+            signal: protyle.requestSignal,
         });
-        if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+        if (protyle.destroyed || protyle.requestSignal.aborted || !protyle.wysiwyg.element.contains(refElement)) {
             return;
         }
         if (response.data !== refElement.innerHTML.replace("<wbr>", "")) {
@@ -298,22 +296,20 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
                 // https://github.com/siyuan-note/siyuan/issues/6087
                 realElement.querySelectorAll('[data-type~="block-ref"][data-subtype="d"]').forEach(refItem => {
                     if (refItem.textContent === "") {
-                        void protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+                        void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                             id: refItem.getAttribute("data-id"),
                         }, {
-                            identity: {
-                                notebookId: protyle.notebookId,
-                                documentId: protyle.options.blockId!,
-                            },
+                            identity: protyleContentIdentity(protyle),
                             intent: "read",
-                            signal: protyle.ownerSignal,
+                            signal: protyle.requestSignal,
                         }).then((response) => {
-                            if (protyle.destroyed || protyle.ownerSignal?.aborted || !refItem.isConnected) {
+                            if (protyle.destroyed || protyle.requestSignal.aborted ||
+                                !protyle.wysiwyg.element.contains(refItem)) {
                                 return;
                             }
                             refItem.innerHTML = response.data;
                         }).catch((error) => {
-                            if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                            if (!protyle.destroyed && !protyle.requestSignal.aborted) {
                                 console.error("[protyle.transport] block reference request failed", error);
                             }
                         });

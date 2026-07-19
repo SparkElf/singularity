@@ -13,7 +13,7 @@ import {
     getEditHTML,
     removeCol
 } from "./col";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition as setPosition} from "../../toolbar/position";
 import {hasClosestByAttribute, hasClosestByClassName} from "../../util/hasClosest";
 import {
     addColOptionOrCell,
@@ -46,11 +46,11 @@ import {updateAttrViewCellAnimation} from "./action";
 import {addAssetLink, bindAssetEvent, editAssetItem, getAssetHTML, updateAssetCell} from "./asset";
 import {Constants} from "../../../constants";
 import {hideElements} from "../../ui/hideElements";
-import {pathPosix} from "../../../util/pathName";
+import {contentPathExtension} from "../../hint/path";
 import {unicodeToEmoji} from "../../hint/emoji";
 import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
-import {isMobile} from "../../../util/functions";
-import {openLink} from "../../../editor/openLink";
+import {isNarrowViewport} from "../../util/browserPlatform";
+import {openProtyleLink} from "../../util/openLink";
 import {previewAttrViewImages} from "../../preview/image";
 import {openAssetMenu} from "../../ui/assetMenu";
 import {
@@ -75,7 +75,7 @@ import {
 import {bindRollupData, getRollupHTML, goSearchRollupCol} from "./rollup";
 import {openCalcMenu} from "./calc";
 import {escapeAttr, escapeHtml} from "../../../util/escape";
-import {Dialog} from "../../../dialog";
+import {openProtyleDialog} from "../../wysiwyg/dialogOwner";
 import {bindLayoutEvent, getLayoutHTML, updateLayout} from "./layout";
 import {setGalleryCover, setGalleryRatio, setGallerySize} from "./gallery/util";
 import {
@@ -201,7 +201,7 @@ export const openMenuPanel = (options: {
         avPanelElement = document.createElement("div");
         avPanelElement.className = "av__panel";
         avPanelElement.innerHTML = `<div class="b3-dialog__scrim" data-type="close"></div>
-<div class="b3-menu${options.type === "filters" ? " av__filter-panel" : ""}" ${["select", "date", "asset", "relation", "rollup"].includes(options.type) ? `style="${["select", "asset", "relation"].includes(options.type) ? "max-height: calc(100vh - 32px);display: flex;flex-direction: column;" : ""}min-width: 200px;${isMobile() ? "max-width: 90vw;" : "max-width: 50vw;"}"` : ""}>${html}</div>`;
+<div class="b3-menu${options.type === "filters" ? " av__filter-panel" : ""}" ${["select", "date", "asset", "relation", "rollup"].includes(options.type) ? `style="${["select", "asset", "relation"].includes(options.type) ? "max-height: calc(100vh - 32px);display: flex;flex-direction: column;" : ""}min-width: 200px;${isNarrowViewport() ? "max-width: 90vw;" : "max-width: 50vw;"}"` : ""}>${html}</div>`;
         document.body.append(avPanelElement);
         registerAVOverlay(options.protyle, "panel", avPanelElement);
         let closeCB: () => void;
@@ -1474,9 +1474,12 @@ export const openMenuPanel = (options: {
                     });
                     const isTwoWay = colData.type === "relation" && colData.relation?.isTwoWay;
                     if (isCustomAttr || isTwoWay) {
-                        const dialog = new Dialog({
+                        const dialog = openProtyleDialog({
+                            protyle: options.protyle,
                             title: localization.text(isTwoWay ? "removeColConfirm" : "deleteOpConfirm"),
-                            content: `<div class="b3-dialog__content">
+                            width: "520px",
+                        });
+                        dialog.bodyElement.innerHTML = `<div class="b3-dialog__content">
     ${isTwoWay ? localization.text("confirmRemoveRelationField")
                                     .replace("${x}", menuElement.querySelector("input").value || localization.kernelText(272))
                                     .replace("${y}", menuElement.querySelector('.b3-menu__item[data-type="goSearchAV"] .b3-menu__accelerator').textContent)
@@ -1488,52 +1491,29 @@ export const openMenuPanel = (options: {
     <button class="fn__block b3-button b3-button--remove${isTwoWay ? "" : " fn__none"}" data-action="keep-relation">${localization.text("removeButKeepRelationField")}</button>
     <div class="fn__hr"></div>
     <button class="fn__block b3-button b3-button--cancel">${localization.text("cancel")}</button>
-</div>`,
-                            width: "520px",
-                        });
-                        dialog.element.addEventListener("click", (dialogEvent) => {
-                            let target = dialogEvent.target as HTMLElement;
-                            const isDispatch = typeof dialogEvent.detail === "string";
-                            while (target && target !== dialog.element || isDispatch) {
-                                const action = target.getAttribute("data-action");
-                                if (action === "delete" || (isDispatch && dialogEvent.detail === "Enter")) {
-                                    removeCol({
-                                        protyle: options.protyle,
-                                        fields,
-                                        avID,
-                                        blockID,
-                                        menuElement,
-                                        isCustomAttr,
-                                        blockElement: options.blockElement,
-                                        avPanelElement,
-                                        tabRect,
-                                        isTwoWay: true
-                                    });
-                                    dialog.destroy();
-                                    break;
-                                } else if (action === "keep-relation") {
-                                    removeCol({
-                                        protyle: options.protyle,
-                                        fields,
-                                        avID,
-                                        blockID,
-                                        menuElement,
-                                        isCustomAttr,
-                                        blockElement: options.blockElement,
-                                        avPanelElement,
-                                        tabRect,
-                                        isTwoWay: false
-                                    });
-                                    dialog.destroy();
-                                    break;
-                                } else if (target.classList.contains("b3-button--cancel") || (isDispatch && dialogEvent.detail === "Escape")) {
-                                    dialog.destroy();
-                                    break;
-                                }
-                                target = target.parentElement;
+</div>`;
+                        dialog.bodyElement.addEventListener("click", (dialogEvent) => {
+                            const target = (dialogEvent.target as Element).closest<HTMLButtonElement>("button");
+                            if (!target) {
+                                return;
                             }
-                        });
-                        dialog.element.setAttribute("data-key", Constants.DIALOG_CONFIRM);
+                            const action = target.dataset.action;
+                            if (action === "delete" || action === "keep-relation") {
+                                removeCol({
+                                    protyle: options.protyle,
+                                    fields,
+                                    avID,
+                                    blockID,
+                                    menuElement,
+                                    isCustomAttr,
+                                    blockElement: options.blockElement,
+                                    avPanelElement,
+                                    tabRect,
+                                    isTwoWay: action === "delete"
+                                });
+                            }
+                            dialog.close();
+                        }, {signal: dialog.signal});
                     } else {
                         removeCol({
                             protyle: options.protyle,
@@ -1597,7 +1577,7 @@ export const openMenuPanel = (options: {
                     openAssetMenu({
                         onSelect: (url, name) => {
                             let value: IAVCellAssetValue;
-                            if (Constants.SIYUAN_ASSETS_IMAGE.includes(pathPosix().extname(url).toLowerCase())) {
+                            if (Constants.SIYUAN_ASSETS_IMAGE.includes(contentPathExtension(url))) {
                                 value = {
                                     type: "image",
                                     content: url,
@@ -1629,7 +1609,7 @@ export const openMenuPanel = (options: {
                         previewAttrViewImages(options.protyle, assetLink, avID, options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
                             options.blockElement.querySelector('[data-type="av-search"]')?.textContent.trim() || "");
                     } else {
-                        openLink(options.protyle, assetLink, event, event.ctrlKey || event.metaKey);
+                        openProtyleLink(options.protyle, assetLink);
                     }
                     event.preventDefault();
                     event.stopPropagation();

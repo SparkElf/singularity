@@ -1,4 +1,3 @@
-import {addClearButton} from "../../../util/addClearButton";
 import {focusBlock} from "../../util/selection";
 
 const collapseAvSearch = (searchInputElement: HTMLElement, viewsElement: HTMLElement) => {
@@ -10,6 +9,7 @@ const collapseAvSearch = (searchInputElement: HTMLElement, viewsElement: HTMLEle
 
 export const bindAvSearch = (options: {
     blockElement: HTMLElement,
+    clearLabel: string,
     query?: string,
     isSearching?: boolean,
     onChange: () => void,
@@ -53,15 +53,31 @@ export const bindAvSearch = (options: {
             collapseAvSearch(searchInputElement, viewsElement);
         }
     });
-    addClearButton({
-        inputElement: searchInputElement,
-        right: 0,
-        width: "1em",
-        height: searchInputElement.clientHeight,
-        clearCB() {
-            collapseAvSearch(searchInputElement, viewsElement);
-            focusBlock(options.blockElement);
-            options.onChange();
+    const clearElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    clearElement.classList.add("b3-form__icon-clear", "ariaLabel");
+    clearElement.setAttribute("aria-label", options.clearLabel);
+    clearElement.style.width = "1em";
+    clearElement.style.height = `${searchInputElement.clientHeight}px`;
+    clearElement.innerHTML = '<use href="#iconCloseRound"></use>';
+    searchInputElement.after(clearElement);
+    const updateClear = () => {
+        const empty = searchInputElement.textContent === "";
+        clearElement.classList.toggle("fn__none", empty);
+        if (empty) {
+            searchInputElement.style.removeProperty("margin-right");
+        } else {
+            searchInputElement.style.setProperty("margin-right", `${clearElement.clientWidth}px`, "important");
         }
+    };
+    clearElement.addEventListener("click", () => {
+        searchInputElement.textContent = "";
+        searchInputElement.focus();
+        updateClear();
+        collapseAvSearch(searchInputElement, viewsElement);
+        focusBlock(options.blockElement);
+        options.onChange();
     });
+    searchInputElement.addEventListener("input", updateClear);
+    searchInputElement.addEventListener("cut", () => setTimeout(updateClear));
+    updateClear();
 };

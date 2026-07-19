@@ -94,9 +94,10 @@ func appendRefreshRefCountTask(blockID, boxID string) {
 }
 
 type Backlink struct {
-	DOM        string       `json:"dom"`
-	BlockPaths []*BlockPath `json:"blockPaths"`
-	Expand     bool         `json:"expand"`
+	DOM        string        `json:"dom"`
+	BlockPaths []*BlockPath  `json:"blockPaths"`
+	Expand     bool          `json:"expand"`
+	Target     ContentTarget `json:"target"`
 
 	node *ast.Node // 仅用于按文档内容顺序排序
 }
@@ -387,12 +388,22 @@ func buildBacklink(refID string, refTree *parse.Tree, originalRefBlockIDs map[st
 	dom := renderBlockDOMByNodes(renderNodes, luteEngine, boxID)
 	var blockPaths []*BlockPath
 	if (nil != node.Parent && ast.NodeDocument != node.Parent.Type) || (ast.NodeHeading != node.Type && 0 < treenode.HeadingLevel(node)) {
-		blockPaths = buildBlockBreadcrumb(node, nil, false)
+		blockPaths = buildBlockBreadcrumb(node, nil, false, refTree.Box, refTree.Root.ID)
 	}
 	if 1 > len(blockPaths) {
 		blockPaths = []*BlockPath{}
 	}
-	ret = &Backlink{DOM: dom, BlockPaths: blockPaths, Expand: expand, node: node}
+	ret = &Backlink{
+		DOM:        dom,
+		BlockPaths: blockPaths,
+		Expand:     expand,
+		Target: ContentTarget{
+			BlockID:    node.ID,
+			NotebookID: refTree.Box,
+			DocumentID: refTree.Root.ID,
+		},
+		node: node,
+	}
 	return
 }
 
