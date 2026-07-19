@@ -58,6 +58,35 @@ func TestPushReloadQueuePreservesCanonicalNotebookIdentity(t *testing.T) {
 	}
 }
 
+func TestPushRenameQueuePreservesCanonicalDocumentIdentity(t *testing.T) {
+	setupPushQueueTestStorage(t)
+	connection := openPushQueueWebSocket(t, "protyle")
+	const (
+		notebookID = "20990717180110-renamex"
+		documentID = "20990717180111-renamex"
+	)
+	result := RenameDocResult{
+		NotebookID: notebookID,
+		DocumentID: documentID,
+		Title:      "Canonical title",
+		Empty:      true,
+		RefText:    "Canonical reference",
+	}
+	AppendPushRenameEntry("/"+documentID+".sy", result)
+	entries := loadPushQueue()
+	if len(entries) != 1 || entries[0].Box != notebookID || entries[0].ID != documentID ||
+		entries[0].Title != result.Title || !entries[0].Empty || entries[0].RefText != result.RefText {
+		t.Fatalf("rename queue entry = %#v", entries)
+	}
+
+	PollPushQueue()
+	event := readPushQueueEvent(t, connection, 5*time.Second)
+	if event.Cmd != "rename" || event.Data.NotebookID != notebookID || event.Data.DocumentID != documentID ||
+		event.Data.Title != result.Title || !event.Data.Empty || event.Data.RefText != result.RefText {
+		t.Fatalf("rename queue event = %#v", event)
+	}
+}
+
 func TestPushQueueBroadcastsSameRootFromDistinctContentStores(t *testing.T) {
 	fixture := setupDerivedContentStoreFixture(t)
 	setupPushQueueTestStorage(t)
@@ -113,6 +142,12 @@ func TestPushQueueDropsEncryptedReloadLockedAfterEnqueue(t *testing.T) {
 
 	AppendPushReloadProtyleEntry(fixture.boxA, fixture.defID, fixture.boxA)
 	AppendPushReloadAttrViewEntry(fixture.avID, fixture.boxA)
+	AppendPushRenameEntry("/"+fixture.defID+".sy", RenameDocResult{
+		NotebookID: fixture.boxA,
+		DocumentID: fixture.defID,
+		Title:      "Locked title",
+		RefText:    "Locked reference",
+	})
 	if err := LockBox(fixture.boxA); err != nil {
 		t.Fatalf("lock encrypted notebook after push enqueue: %v", err)
 	}
@@ -132,27 +167,29 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 	)
 	util.PushReloadProtyle(boxID, rootID, boxID)
 	pushReloadAttrView(avID, boxID)
-	util.PushSetRefDynamicText(rootID, blockID, defBlockID, "Encrypted reference", boxID)
-	util.PushSetDefRefCount(rootID, blockID, []string{defBlockID}, 2, 1, boxID)
+	util.PushSetRefDynamicText(boxID, rootID, blockID, defBlockID, "Encrypted reference", boxID)
+	util.PushSetDefRefCount(boxID, rootID, blockID, []string{defBlockID}, 2, 1, boxID)
 	events := map[string]pushQueueEvent{}
-	for _, subscription := range []struct {
-		typ      string
-		conn     *websocket.Conn
-		commands map[string]struct{}
-	}{
-		{typ: "protyle", conn: protyleConnection, commands: map[string]struct{}{"reload": {}, "refreshAttributeView": {}}},
-		{typ: "main", conn: mainConnection, commands: map[string]struct{}{"setRefDynamicText": {}, "setDefRefCount": {}}},
-	} {
-		for range len(subscription.commands) {
-			event := readPushQueueEvent(t, subscription.conn, 5*time.Second)
-			if _, ok := subscription.commands[event.Cmd]; !ok {
-				t.Fatalf("%s websocket received unexpected command %q", subscription.typ, event.Cmd)
-			}
-			if _, duplicated := events[event.Cmd]; duplicated {
-				t.Fatalf("%s websocket received duplicate command %q", subscription.typ, event.Cmd)
-			}
-			events[event.Cmd] = event
+	protyleCommands := map[string]struct{}{
+		"reload": {}, "refreshAttributeView": {}, "setRefDynamicText": {}, "setDefRefCount": {},
+	}
+	for range len(protyleCommands) {
+		event := readPushQueueEvent(t, protyleConnection, 5*time.Second)
+		if _, ok := protyleCommands[event.Cmd]; !ok {
+			t.Fatalf("protyle websocket received unexpected command %q", event.Cmd)
 		}
+		if _, duplicated := events[event.Cmd]; duplicated {
+			t.Fatalf("protyle websocket received duplicate command %q", event.Cmd)
+		}
+		events[event.Cmd] = event
+	}
+	mainEvent := readPushQueueEvent(t, mainConnection, 5*time.Second)
+	if mainEvent.Cmd != "setDefRefCount" {
+		t.Fatalf("main websocket received command %q, want setDefRefCount", mainEvent.Cmd)
+	}
+	if mainEvent.Data.NotebookID != boxID || mainEvent.Data.DocumentID != rootID ||
+		mainEvent.Data.RootRefCount != 1 {
+		t.Fatalf("main file-tree reference projection = %#v", mainEvent)
 	}
 	if event := events["reload"]; event.Data.NotebookID != boxID || event.Data.DocumentID != rootID || event.Data.Notebook != boxID {
 		t.Fatalf("unlocked encrypted reload event = %#v", event)
@@ -160,13 +197,13 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 	if event := events["refreshAttributeView"]; event.Data.ID != avID || event.Data.BoxID != boxID {
 		t.Fatalf("unlocked encrypted AV event = %#v", event)
 	}
-	if event := events["setRefDynamicText"]; event.Data.RootID != rootID || event.Data.BlockID != blockID ||
-		event.Data.DefBlockID != defBlockID || event.Data.RefText != "Encrypted reference" || event.Data.BoxID != boxID {
+	if event := events["setRefDynamicText"]; event.Data.NotebookID != boxID || event.Data.DocumentID != rootID ||
+		event.Data.BlockID != blockID || event.Data.DefBlockID != defBlockID || event.Data.RefText != "Encrypted reference" {
 		t.Fatalf("unlocked encrypted dynamic-reference event = %#v", event)
 	}
-	if event := events["setDefRefCount"]; event.Data.RootID != rootID || event.Data.BlockID != blockID ||
+	if event := events["setDefRefCount"]; event.Data.NotebookID != boxID || event.Data.DocumentID != rootID || event.Data.BlockID != blockID ||
 		event.Data.RefCount != 2 || event.Data.RootRefCount != 1 || len(event.Data.DefIDs) != 1 ||
-		event.Data.DefIDs[0] != defBlockID || event.Data.BoxID != boxID {
+		event.Data.DefIDs[0] != defBlockID {
 		t.Fatalf("unlocked encrypted reference-count event = %#v", event)
 	}
 
@@ -175,8 +212,8 @@ func TestFinalContentEventHandlersDropLockedEncryptedStore(t *testing.T) {
 	}
 	util.PushReloadProtyle(boxID, rootID, boxID)
 	pushReloadAttrView(avID, boxID)
-	util.PushSetRefDynamicText(rootID, blockID, defBlockID, "Encrypted reference", boxID)
-	util.PushSetDefRefCount(rootID, blockID, []string{defBlockID}, 2, 1, boxID)
+	util.PushSetRefDynamicText(boxID, rootID, blockID, defBlockID, "Encrypted reference", boxID)
+	util.PushSetDefRefCount(boxID, rootID, blockID, []string{defBlockID}, 2, 1, boxID)
 	assertNoPushQueueEvent(t, protyleConnection, 250*time.Millisecond)
 	assertNoPushQueueEvent(t, mainConnection, 250*time.Millisecond)
 }
@@ -276,6 +313,8 @@ type pushQueueEvent struct {
 		BlockID      string   `json:"blockID"`
 		DefBlockID   string   `json:"defBlockID"`
 		RefText      string   `json:"refText"`
+		Title        string   `json:"title"`
+		Empty        bool     `json:"empty"`
 		RefCount     int      `json:"refCount"`
 		RootRefCount int      `json:"rootRefCount"`
 		DefIDs       []string `json:"defIDs"`

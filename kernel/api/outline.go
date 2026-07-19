@@ -48,25 +48,37 @@ func getDocOutline(c *gin.Context) {
 	if util.InvalidIDPattern(rootID, ret) {
 		return
 	}
-	boxID, err := encryptedNotebookForResponse(c, arg)
-	if err != nil {
-		ret.Code = -1
-		ret.Msg = err.Error()
-		return
-	}
-
+	var err error
 	var headings []*model.Path
-	if boxID != "" {
-		headings, err = model.OutlineInBox(rootID, preview, boxID)
+	var boxID string
+	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "id")
+	if enterprise {
+		if !identityOK {
+			ret.Code = -1
+			ret.Msg = "document identity is unavailable"
+			return
+		}
+		headings, err = model.OutlineInBox(documentScope.DocumentID, preview, documentScope.NotebookID)
 	} else {
-		headings, err = model.Outline(rootID, preview)
+		var responseErr error
+		boxID, responseErr = encryptedNotebookForResponse(c, arg)
+		if responseErr != nil {
+			ret.Code = -1
+			ret.Msg = responseErr.Error()
+			return
+		}
+		if boxID != "" {
+			headings, err = model.OutlineInBox(rootID, preview, boxID)
+		} else {
+			headings, err = model.Outline(rootID, preview)
+		}
 	}
 	if err != nil {
 		ret.Code = 1
 		ret.Msg = err.Error()
 		return
 	}
-	if model.IsReadOnlyRoleContext(c) {
+	if !enterprise && model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		bt := treenode.GetBlockTreeInBox(rootID, boxID)
 		if bt != nil {
@@ -79,6 +91,10 @@ func getDocOutline(c *gin.Context) {
 				headings = nil
 			}
 		}
+	}
+	if enterprise {
+		ret.Data = enterpriseDiscoveryOutlineProjections(headings)
+		return
 	}
 	ret.Data = headings
 }

@@ -1,4 +1,9 @@
-import { apiProblemSchema, type ApiProblem } from "@singularity/contracts";
+import {
+  apiProblemSchema,
+  RUNTIME_ACCESS_LOST_HEADER_NAME,
+  RUNTIME_ACCESS_LOST_HEADER_VALUE,
+  type ApiProblem,
+} from "@singularity/contracts";
 
 interface RuntimeSchema<T> {
   parse(value: unknown): T;
@@ -7,12 +12,18 @@ interface RuntimeSchema<T> {
 export class ApiProblemError extends Error {
   readonly problem: ApiProblem;
   readonly retryAfterSeconds: number | null;
+  readonly runtimeAccessLost: boolean;
 
-  constructor(problem: ApiProblem, retryAfterSeconds: number | null) {
+  constructor(
+    problem: ApiProblem,
+    retryAfterSeconds: number | null,
+    runtimeAccessLost = false,
+  ) {
     super(problem.code);
     this.name = "ApiProblemError";
     this.problem = problem;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.runtimeAccessLost = runtimeAccessLost;
   }
 }
 
@@ -93,7 +104,11 @@ async function assertSuccessful(response: Response): Promise<void> {
     );
   }
 
-  throw new ApiProblemError(problem, retryAfterSeconds);
+  const runtimeAccessLost =
+    response.status === 404 &&
+    response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME) ===
+      RUNTIME_ACCESS_LOST_HEADER_VALUE;
+  throw new ApiProblemError(problem, retryAfterSeconds, runtimeAccessLost);
 }
 
 export async function requestJson<T>(
@@ -132,4 +147,10 @@ export function isApiProblem(
   code: ApiProblem["code"],
 ): error is ApiProblemError {
   return error instanceof ApiProblemError && error.problem.code === code;
+}
+
+export function isRuntimeAccessLostProblem(
+  error: unknown,
+): error is ApiProblemError {
+  return error instanceof ApiProblemError && error.runtimeAccessLost;
 }

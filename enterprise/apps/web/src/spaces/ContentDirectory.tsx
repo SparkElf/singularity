@@ -2,6 +2,7 @@ import type {
   ContentDirectoryDocument,
   ContentDirectoryDocumentsResponse,
 } from "@singularity/contracts";
+import type { ProtyleRuntimeErrorEvent } from "@singularity/protyle-browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpenIcon,
@@ -15,7 +16,10 @@ import {
   useState,
 } from "react";
 
-import { isApiProblem } from "@/api/http.ts";
+import {
+  isApiProblem,
+  isRuntimeAccessLostProblem,
+} from "@/api/http.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import {
@@ -36,10 +40,15 @@ import {
 import { ContentDirectoryTree } from "@/spaces/ContentDirectoryTree.tsx";
 
 export type ContentDirectoryStatus = "empty" | "error" | "loading" | "ready";
-export type ContentDirectoryAccessLoss = "forbidden" | "unauthenticated";
+export type ContentDirectoryAccessLoss = Omit<
+  ProtyleRuntimeErrorEvent,
+  "category"
+> & {
+  readonly category: "forbidden" | "unauthenticated";
+};
 
 interface ContentDirectoryProps {
-  readonly onAccessLost: (category: ContentDirectoryAccessLoss) => void;
+  readonly onAccessLost: (event: ContentDirectoryAccessLoss) => void;
   readonly onStatusChange: (status: ContentDirectoryStatus) => void;
   readonly scope: ContentSelectionScope;
 }
@@ -119,22 +128,28 @@ export function ContentDirectory({
     if (accessLossGenerationRef.current === currentGeneration) {
       return true;
     }
+    let accessLoss: ContentDirectoryAccessLoss | null = null;
     if (isApiProblem(error, "unauthenticated")) {
-      accessLossGenerationRef.current = currentGeneration;
-      clearContentSelection(scope);
-      setStatus("loading");
-      onAccessLost("unauthenticated");
-      return true;
+      accessLoss = {
+        category: "unauthenticated",
+        triggeringRequestId: error.problem.requestId,
+        type: "runtime-error",
+      };
+    } else if (isRuntimeAccessLostProblem(error)) {
+      accessLoss = {
+        category: "forbidden",
+        triggeringRequestId: error.problem.requestId,
+        type: "runtime-error",
+      };
     }
-    if (isApiProblem(error, "not-found")) {
-      accessLossGenerationRef.current = currentGeneration;
-      clearContentSelection(scope);
-      setStatus("loading");
-      onAccessLost("forbidden");
-      return true;
+    if (accessLoss === null) {
+      return false;
     }
-    return false;
-  }, [onAccessLost, scope]);
+    accessLossGenerationRef.current = ++requestGenerationRef.current;
+    setStatus("loading");
+    onAccessLost(accessLoss);
+    return true;
+  }, [onAccessLost]);
 
   useEffect(() => {
     if (!notebooksQuery.error || refreshing || handleAccessError(notebooksQuery.error)) {
@@ -233,7 +248,9 @@ export function ContentDirectory({
         }
         const firstDocument = page.documents[0];
         if (firstDocument) {
-          selectContentDocument(scope, firstDocument);
+          if (!selectContentDocument(scope, firstDocument)) {
+            return;
+          }
           setStatus("ready");
           console.info("[content.directory]", {
             documentId: firstDocument.documentId,
@@ -310,7 +327,21 @@ export function ContentDirectory({
     });
   }, [handleAccessError, queryClient, scope]);
 
-  const commitSelection = useCallback((document: ContentDirectoryDocument) => {
+  const commitSelection = useCallback((
+    document: ContentDirectoryDocument,
+    expectedGeneration: number,
+  ) => {
+    if (expectedGeneration !== requestGenerationRef.current) {
+      console.warn("[content.directory]", {
+        documentId: document.documentId,
+        generation: scope.generation,
+        notebookId: document.notebookId,
+        phase: "selection",
+        result: "stale-generation-rejected",
+        spaceId: scope.spaceId,
+      });
+      return;
+    }
     if (!selectContentDocument(scope, document)) {
       return;
     }
@@ -336,7 +367,9 @@ export function ContentDirectory({
     if (current?.notebookId !== notebookId) {
       return;
     }
-    clearContentSelection(scope);
+    if (!clearContentSelection(scope)) {
+      return;
+    }
     setStatus("empty");
     console.warn("[content.directory]", {
       generation: scope.generation,

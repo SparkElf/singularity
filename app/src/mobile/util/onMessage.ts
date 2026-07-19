@@ -2,8 +2,7 @@ import {openMobileFileById} from "../editor";
 import {
     processSync,
     progressLoading,
-    setDefRefCount,
-    setRefDynamicText,
+    setFileTreeRefCount,
     transactionError
 } from "../../dialog/processSystem";
 import {App} from "../../index";
@@ -43,13 +42,10 @@ export const onMessage = (app: App, data: IWebSocketData) => {
                 renderSnippet();
                 break;
             case "setDefRefCount":
-                setDefRefCount(data.data);
+                setFileTreeRefCount(data.data);
                 break;
             case "reloadTag":
                 window.siyuan.mobile.docks.tag?.update();
-                break;
-            case "setRefDynamicText":
-                setRefDynamicText(data.data);
                 break;
             case "reloadPlugin":
                 reloadPlugin(app, data.data);

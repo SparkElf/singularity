@@ -1,9 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
 import { SpaceAccessPage } from "@/enterprise/SpaceAccessPage.tsx";
 
@@ -11,14 +18,20 @@ const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEMBER_ID = "22222222-2222-4222-8222-222222222222";
 const GROUP_ID = "33333333-3333-4333-8333-333333333333";
+const CSRF_TOKEN = "A".repeat(43);
+const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const SPACE_BASE_PATH =
   `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
-    status: 200,
+    status,
   });
+}
+
+function noContentResponse(): Response {
+  return new Response(null, { status: 204 });
 }
 
 function createTestQueryClient(): QueryClient {
@@ -30,9 +43,11 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderSpaceAccessPage(): void {
+function renderSpaceAccessPage(
+  queryClient = createTestQueryClient(),
+): QueryClient {
   render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter
           initialEntries={[
@@ -44,35 +59,95 @@ function renderSpaceAccessPage(): void {
               path="/organizations/:organizationId/settings/spaces/:spaceId/access"
               element={<SpaceAccessPage />}
             />
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
   cleanup();
+  useCsrfStore.getState().clearCsrfToken();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("SpaceAccessPage delegated administration", () => {
-  it("loads space-scoped candidates without organization-management reads", async () => {
+  it("uses space-scoped candidates to grant member and group access", async () => {
     const requestedPaths: string[] = [];
+    const mutationRequests: Array<{
+      body: Record<string, unknown>;
+      csrf: string | null;
+      path: string;
+    }> = [];
+    let directMemberAdded = false;
+    let groupGrantAdded = false;
     vi.stubGlobal(
       "fetch",
-      vi.fn<typeof fetch>((input) => {
+      vi.fn<typeof fetch>((input, init) => {
         const path = new URL(
           input instanceof Request ? input.url : String(input),
           window.location.origin,
         ).pathname;
         requestedPaths.push(path);
+        if (
+          path === `${SPACE_BASE_PATH}/members/${MEMBER_ID}` &&
+          init?.method === "PUT"
+        ) {
+          mutationRequests.push({
+            body: JSON.parse(String(init.body)) as Record<string, unknown>,
+            csrf: new Headers(init.headers).get("X-CSRF-Token"),
+            path,
+          });
+          directMemberAdded = true;
+          return Promise.resolve(noContentResponse());
+        }
+        if (
+          path === `${SPACE_BASE_PATH}/groups/${GROUP_ID}` &&
+          init?.method === "PUT"
+        ) {
+          mutationRequests.push({
+            body: JSON.parse(String(init.body)) as Record<string, unknown>,
+            csrf: new Headers(init.headers).get("X-CSRF-Token"),
+            path,
+          });
+          groupGrantAdded = true;
+          return Promise.resolve(noContentResponse());
+        }
         switch (path) {
           case `${SPACE_BASE_PATH}/members`:
-            return Promise.resolve(jsonResponse({ members: [] }));
+            return Promise.resolve(
+              jsonResponse({
+                members: directMemberAdded
+                  ? [
+                      {
+                        loginIdentifier: "reader@example.test",
+                        role: "viewer",
+                        status: "active",
+                        userId: MEMBER_ID,
+                      },
+                    ]
+                  : [],
+              }),
+            );
           case `${SPACE_BASE_PATH}/groups`:
-            return Promise.resolve(jsonResponse({ grants: [] }));
+            return Promise.resolve(
+              jsonResponse({
+                grants: groupGrantAdded
+                  ? [
+                      {
+                        groupId: GROUP_ID,
+                        groupName: "资料阅读组",
+                        groupStatus: "active",
+                        role: "viewer",
+                      },
+                    ]
+                  : [],
+              }),
+            );
           case `${SPACE_BASE_PATH}/member-candidates`:
             return Promise.resolve(
               jsonResponse({
@@ -101,6 +176,7 @@ describe("SpaceAccessPage delegated administration", () => {
         }
       }),
     );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
 
     renderSpaceAccessPage();
 
@@ -110,6 +186,45 @@ describe("SpaceAccessPage delegated administration", () => {
     expect(
       await screen.findByRole("option", { name: "资料阅读组" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "添加成员" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "添加授权" }),
+    ).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("组织成员"), {
+      target: { value: MEMBER_ID },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加成员" }));
+    await waitFor(() => {
+      expect(mutationRequests).toEqual([
+        {
+          body: { role: "viewer" },
+          csrf: CSRF_TOKEN,
+          path: `${SPACE_BASE_PATH}/members/${MEMBER_ID}`,
+        },
+      ]);
+    });
+
+    fireEvent.change(screen.getByLabelText("用户组"), {
+      target: { value: GROUP_ID },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加授权" }));
+    await waitFor(() => {
+      expect(mutationRequests).toEqual([
+        {
+          body: { role: "viewer" },
+          csrf: CSRF_TOKEN,
+          path: `${SPACE_BASE_PATH}/members/${MEMBER_ID}`,
+        },
+        {
+          body: { role: "viewer" },
+          csrf: CSRF_TOKEN,
+          path: `${SPACE_BASE_PATH}/groups/${GROUP_ID}`,
+        },
+      ]);
+    });
     expect(requestedPaths).toEqual(
       expect.arrayContaining([
         `${SPACE_BASE_PATH}/member-candidates`,
@@ -122,5 +237,42 @@ describe("SpaceAccessPage delegated administration", () => {
     expect(requestedPaths).not.toContain(
       `/api/v1/organizations/${ORGANIZATION_ID}/groups`,
     );
+  });
+
+  it("clears the client session and returns to login when a candidate query is unauthenticated", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = new URL(
+          input instanceof Request ? input.url : String(input),
+          window.location.origin,
+        ).pathname;
+        switch (path) {
+          case `${SPACE_BASE_PATH}/members`:
+            return Promise.resolve(jsonResponse({ members: [] }));
+          case `${SPACE_BASE_PATH}/groups`:
+            return Promise.resolve(jsonResponse({ grants: [] }));
+          case `${SPACE_BASE_PATH}/member-candidates`:
+            return Promise.resolve(jsonResponse({
+              code: "unauthenticated",
+              requestId: REQUEST_ID,
+              status: 401,
+            }, 401));
+          case `${SPACE_BASE_PATH}/group-candidates`:
+            return Promise.resolve(jsonResponse({ groups: [] }));
+          default:
+            throw new Error(`Unexpected request: ${path}`);
+        }
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderSpaceAccessPage(queryClient);
+
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
   });
 });

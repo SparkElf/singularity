@@ -25,6 +25,10 @@ import {
   test,
 } from "vitest";
 
+import {
+  ACCESS_CHANGE_CHANNEL,
+  AccessChangedPublisher,
+} from "../src/kernel/access-changed.js";
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
 import { runAccessOperationsApplication } from "../src/operations/application.js";
 import { runAccessOperation } from "../src/operations/runner.js";
@@ -576,64 +580,129 @@ describe("controlled access operations with PostgreSQL", () => {
         userId,
         role: "viewer",
       });
+      const notificationRequestIds: string[] = [];
+      const subscription = await testApi.app.get(DatabaseRuntime).listen(
+        ACCESS_CHANGE_CHANNEL,
+        (payload) => {
+          const notification = JSON.parse(payload) as { requestId: string };
+          notificationRequestIds.push(notification.requestId);
+        },
+        (error) => {
+          throw error;
+        },
+      );
+      try {
+        const repeatable = [
+          {
+            command: {
+              operation: "set-space-member",
+              role: "viewer",
+              spaceId: installation.spaceId,
+              userId,
+            },
+            noOpRuns: "both",
+            outcome: "updated",
+          },
+          {
+            command: {
+              operation: "set-kernel-state",
+              spaceId: installation.spaceId,
+              kernelState: "starting",
+            },
+            noOpRuns: "outside-scope",
+            outcome: "updated",
+          },
+          {
+            command: {
+              operation: "revoke-space-member",
+              spaceId: installation.spaceId,
+              userId,
+            },
+            noOpRuns: "second",
+            outcome: "revoked",
+          },
+          {
+            command: { operation: "revoke-user-sessions", userId },
+            noOpRuns: "both",
+            outcome: "revoked",
+          },
+          {
+            command: {
+              operation: "revoke-organization-member",
+              organizationId: installation.organizationId,
+              userId,
+            },
+            noOpRuns: "second",
+            outcome: "revoked",
+          },
+          {
+            command: { operation: "disable-user", userId },
+            noOpRuns: "second",
+            outcome: "updated",
+          },
+          {
+            command: {
+              operation: "disable-space",
+              spaceId: installation.spaceId,
+            },
+            noOpRuns: "second",
+            outcome: "updated",
+          },
+          {
+            command: {
+              operation: "disable-organization",
+              organizationId: installation.organizationId,
+            },
+            noOpRuns: "second",
+            outcome: "updated",
+          },
+        ] as const satisfies ReadonlyArray<{
+          command: AccessOperation;
+          noOpRuns: "both" | "outside-scope" | "second";
+          outcome: AccessOperationResult["outcome"];
+        }>;
+        const noOpOperationIds: string[] = [];
 
-      const repeatable = [
-        {
-          command: {
-            operation: "set-kernel-state",
-            spaceId: installation.spaceId,
-            kernelState: "starting",
-          },
-          outcome: "updated",
-        },
-        {
-          command: {
-            operation: "revoke-space-member",
-            spaceId: installation.spaceId,
-            userId,
-          },
-          outcome: "revoked",
-        },
-        {
-          command: { operation: "revoke-user-sessions", userId },
-          outcome: "revoked",
-        },
-        {
-          command: {
-            operation: "revoke-organization-member",
-            organizationId: installation.organizationId,
-            userId,
-          },
-          outcome: "revoked",
-        },
-        {
-          command: { operation: "disable-user", userId },
-          outcome: "updated",
-        },
-        {
-          command: {
-            operation: "disable-space",
-            spaceId: installation.spaceId,
-          },
-          outcome: "updated",
-        },
-        {
-          command: {
-            operation: "disable-organization",
-            organizationId: installation.organizationId,
-          },
-          outcome: "updated",
-        },
-      ] as const satisfies ReadonlyArray<{
-        command: AccessOperation;
-        outcome: AccessOperationResult["outcome"];
-      }>;
+        for (const { command, noOpRuns, outcome } of repeatable) {
+          const first = await runOperation(operations, command);
+          const second = await runOperation(operations, command);
+          expect(first.result.outcome).toBe(outcome);
+          expect(second.result.outcome).toBe(outcome);
+          if (noOpRuns === "both") {
+            noOpOperationIds.push(first.result.operationId);
+          }
+          if (noOpRuns !== "outside-scope") {
+            noOpOperationIds.push(second.result.operationId);
+          }
+        }
 
-      for (const { command, outcome } of repeatable) {
-        const first = await runOperation(operations, command);
-        const second = await runOperation(operations, command);
-        expect(first.result.outcome).toBe(outcome);
-        expect(second.result.outcome).toBe(outcome);
+        const barrierRequestId = randomUUID();
+        await database.$transaction(async (transaction) => {
+          await testApi.app.get(AccessChangedPublisher).publish(transaction, {
+            kind: "close",
+            reason: "forbidden",
+            requestId: barrierRequestId,
+            selectors: [{ kind: "user", value: installation.userId }],
+          });
+        });
+        await expect
+          .poll(() => notificationRequestIds.includes(barrierRequestId), {
+            timeout: 5_000,
+          })
+          .toBe(true);
+
+        expect(
+          notificationRequestIds.filter((requestId) =>
+            noOpOperationIds.includes(requestId),
+          ),
+        ).toEqual([]);
+        await expect(
+          database.auditEvent.count({
+            where: { requestId: { in: noOpOperationIds } },
+          }),
+        ).resolves.toBe(0);
+      } finally {
+        await subscription.close();
       }
     });
 
@@ -752,8 +821,7 @@ describe("controlled access operations with PostgreSQL", () => {
         await expect
           .poll(() => events.length, { timeout: 5_000 })
           .toBe(1);
-        expect(events[0]).toMatchObject({
-          deploymentHandle: "kernel.static-01",
+        expect(events[0]).toEqual({
           kernelInstanceId: kernelInstance.id,
           kind: "remove",
           requestId: unavailable.result.operationId,

@@ -1,69 +1,77 @@
 ---
-title: "奇点 L1 实现重启交接"
-description: "L1 implementation checkpoint、并行范围与恢复顺序"
+title: "奇点 L1 实现交接"
+description: "L1 implementation收口状态、稳定合同与集中评审验证入口"
 author: "Codex"
 date: "2026-07-19"
-version: "1.0.0"
-status: "working"
+version: "2.0.0"
+status: "review-pending"
 tags: ["l1", "implementation", "handoff"]
 ---
 
-# 奇点 L1 实现重启交接
+# 奇点 L1 实现交接
 
-## 目标
+## 目标与阶段
 
-权威方案：`output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md`。
-L0 已完成；当前仍处于 implementation，L1 全部生产代码、永久测试代码、旧路径清理和文档完成前，不进入正式 code-review 或 verification。
+权威方案为`output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md`。L0已经完成；L1生产代码、公共合同、迁移、调用方、永久测试代码、旧路径删除与功能文档已经完成implementation收口，所有功能owner均已释放。当前尚未完成整阶段code-review、安全与许可证复评，也未运行本波正式verification，因此不能宣告L1完成。
 
-## 当前基线
+## 当前现场
 
-- 远程：`origin/master`。
-- 最近已推送的独立 P3 提交：`d8245f555`（真实 Vite Core 编辑器 browser integration 合同）。
-- 本交接提交包含一批尚未完成的 ACL/ADR-018 实现草稿和旧路径收口改动；它是可恢复 checkpoint，不表示功能已验收。
-- 工作估计：实现代码约 `75%–85%`；包含集中评审和验证约 `65%–75%`。现实剩余 `4–7` 个工作日；跨进程撤权或 P5 E2E 暴露跨层回归时可能 `7–10` 个工作日。
+- 仓库：`/root/projects/singularity`；环境：WSL2 Linux；分支：`master`；远程：`origin/master`。
+- 本轮implementation开始前的`HEAD`与`origin/master`均为`9ccb54f74`（`feat(backup): harden restore lifecycle`）；本文所在checkpoint提交承载其后的完整实现工作树。
+- Enterprise正式命令必须使用Node `24.18.0`与pnpm `11.9.0`；SiYuan App使用自身锁定的pnpm `11.12.0`。不得以默认Node 22的结果作为交付证据。
+- 固定PostgreSQL 17测试服务为`singularity-postgres-test`，仅绑定`127.0.0.1:55432`并使用数据库`singularity_test`。本实现波未启动、停止或重配该容器，也未触碰用户占用的3000端口进程。
+- implementation期间没有运行正式runner、typecheck、build、Prisma、数据库、浏览器或服务验收；各owner只执行了允许的静态语法、格式、路径与差异检查。
 
-## 2026-07-19 重启快照
+## 纵向功能状态
 
-- 仓库：`/root/projects/singularity`；环境：WSL2 Linux；分支：`master`。
-- `HEAD` 与 `origin/master` 均为 `1fbdc62c6`（`chore(l1): checkpoint implementation state`），不存在未推送提交。
-- 工作树仍包含 ACL、组织管理、P4 内容/插件、编辑器旧路径和 P5 入口的并行未提交改动。重启不会丢失这些磁盘改动；禁止统一 `stash`、清理或回退。
-- 本快照没有启动、停止或重配 PostgreSQL、Kernel、API、Web 或 watch 服务，也没有运行正式测试、typecheck、build、Prisma 或数据库命令。
-- ACL owner 已完成真实 HTTPS/WSS/LISTEN 测试骨架、提交/回滚投递、独立 Operations 撤权、四类 selector、组合交集、零迟到推送、浏览器禁发帧和 listener failure 合同；对应工作树文件为 `docs/adr/0018-cross-process-access-change.md`、`enterprise/apps/api/test/access-change.http.test.ts`、`enterprise/apps/api/test/support/kernel-gateway.ts`。
-- ACL 已在工作树完成 `enterprise/packages/database/src/index.ts` 与 `enterprise/apps/api/src/kernel/access-changed.ts`：显式关闭与意外 clean `end` 已分流，`error`/意外 `end` 只失败一次且不重连；安全日志包含 `selectorKinds` 和必要选择值，不记录原始 payload。对应永久测试代码与测试支撑已收口，静态语法和差异检查通过，仍等待 L1 集中评审与验证。
-- `enterprise/apps/api/src/organizations/organization-management.service.ts` 与 `enterprise/apps/api/test/organization-management.http.test.ts` 属于另一个 owner；ACL 恢复时不得覆盖。
-- 其余 Protyle、P4 和 P5 脏文件应按各智能体交接继续，集成 owner 在所有实现 owner 释放文件后统一检查和提交。
+| 功能 | 已落盘合同 | verification重点 |
+| --- | --- | --- |
+| 身份、邀请与会话 | 本地账号、OIDC、显式邀请绑定、CSRF单一请求owner、到期/撤销/禁用强制下线与统一`SessionRedirect` | 真实HTTP、并发邀请、401清理、会话与WSS关闭 |
+| 组织、用户组与空间管理 | owner防降级、组织/组/空间生命周期、两级授权、相同状态写入幂等且不重复通知或审计 | PostgreSQL通知屏障、角色边界、管理页面组件 |
+| 内容目录与Session组合根 | 目录产生显式`spaceId + notebookId + documentId`，锁态/空库不创建Protyle，撤权有序销毁且网络故障保留内容 | 真实Kernel目录、分页、迟到响应、撤权清屏 |
+| Gateway与Kernel生命周期 | mTLS、服务JWT、动态端点唯一、通知fail-closed、pending/active连接关闭、私网监听和恢复deployment事实源 | HTTPS/WSS、LISTEN、shutdown与恢复对账 |
+| Protyle与Vite入口 | canonical标题/推送身份、同文档多实例来源、viewer唯一写门禁、正式PluginPort、Vite唯一企业生产入口 | P3/P4 browser integration、AST闭包、App runner |
+| Discovery与工作面板 | 空间搜索/图谱仅用空间身份；文档搜索、大纲、反链、历史和局部图谱携带显式内容身份 | Kernel/Nest/contracts、迟到请求、不可导航节点 |
+| 分享与主动内容 | 公网最小投影、每次读取重验分享、资源闭包、MIME隔离、PDF canvas、canonical OCR路径 | HTTP、组件、browser integration与真实分享E2E |
+| 审计与可观测性 | 调用前intent、明确结果/`indeterminate`、声明式Worker最终化、唯一HMAC事件、真实`requestId`/`kernelInstanceId` | Gateway失败窗口、Worker有界批次/MAC/租约、日志字段省略 |
+| 备份、恢复与容量健康 | Worker claim、加密/明文归档一致性、隔离恢复Kernel、显式激活、容量/健康三态投影 | PostgreSQL锁、Go归档、真实恢复E2E、观测错误码 |
+| Worker镜像与供应链 | Node 24非root镜像、Go恢复命令、appearance、健康检查、三镜像SBOM/漏洞/许可证闭包 | 冷构建、断网制品探测、healthy smoke与报告非空性 |
 
-## Checkpoint 范围
+## 稳定不变量
 
-- `.github/workflows/singularity-l0.yml`：测试库审计角色与部署入口草稿。
-- `docs/adr/0018-cross-process-access-change.md`：ADR-018 前五项实现状态勾选；集中验证仍未完成。
-- `enterprise/apps/api/src/application.ts`：HTTPS 测试启动选项。
-- `enterprise/apps/api/test/support/{kernel-gateway.ts,test-app.ts}`：真实 TLS/WSS 测试支撑草稿。
-- `enterprise/apps/api/test/access-change.http.test.ts`：真实 PostgreSQL/HTTPS/WSS/operations 撤权合同草稿。
-- `enterprise/apps/api/test/kernel-gateway.http.test.ts`、`organization-management.http.test.ts`：同批 API 永久测试扩展。
-- `enterprise/packages/database/package.json`、`test/audit-acl.integration.test.ts`：审计 ACL 部署合同草稿。
-- `app/src/block/Panel.ts`：旧 BlockPanel 入口收口草稿，按 P5 原子旧路径删除处理；不要在恢复时回退或混入 P3。
+- 内容链显式携带`spaceId + notebookId + documentId`；禁止从DOM、全局状态、URL、首响应、首节点或当前编辑器推断。
+- 每个真实边界只有一个解析、校验或清理owner；下游依赖已验证合同，不添加重复guard、fallback、兼容字段或第二事实源。
+- viewer、撤权与锁定状态不得产生写事务或迟到推送；显式撤权按freeze、dispose、清DOM/选择、通知上层的顺序完成，Kernel或网络故障不冒充撤权。
+- 空间搜索和图谱不携带文档身份；文档面板只走当前Session的Gateway内容链，图谱导航身份只来自源block。
+- 浏览器只传播服务端真实HTTP/WS请求产生的`requestId`；后续事件使用可选`triggeringRequestId`，无来源时省略，不生成随机替代值。
+- 内容审计intent写入失败时不调用Kernel；明确Kernel结果的resolve失败不覆盖内容响应；查询、React和归档只消费`audit_events`。
+- 后端装配优先Nest原生`@Module`、`@Injectable`、Controller、DI、schema和Worker声明式decorator；业务状态转移留在显式service/handler。
+- `app/src/block/Panel.ts`、`EmbeddedProtyleOwner`与上游Webpack仍有desktop/mobile/export等真实消费者，必须保留；企业Vite闭包通过AST门禁排除这些路径，不把企业入口收口误写成上游源码物理删除。
 
-实现期只做静态语法、差异和文件归属检查；本 checkpoint 未运行 unit、contract、integration、browser、E2E、typecheck、build、Prisma 或数据库命令。
+## P5真实链
 
-## 暂停的并行线
+- 唯一E2E入口使用真实React/Vite、Nest API、PostgreSQL、mTLS Gateway、Go Kernel与声明式Worker，不使用`page.route`替代目标后端。
+- 已落盘登录、空间选择、编辑保存重载、viewer写拒绝、撤权清屏、分享即时撤销、备份隔离恢复与内容审计最终事件链。
+- 启动器使用测试私有schema、工作区、密钥与对象存储；退出时清理API、Worker、源/恢复Kernel、schema和临时文件，但不启动或停止固定PostgreSQL服务。
+- 企业Web镜像只交付Vite `dist`；旧企业shell runner、错位Adapter测试和企业Webpack入口已物理删除。上游App构建链保持不变。
 
-1. **ACL/ADR-018**：恢复后继续独占 `application.ts`、API test support、`access-change.http.test.ts`、database ACL/package、workflow 迁移段和 ADR-018。完成后静态检查并释放文件，不自行提交。
-2. **P4 PluginPort**：尚未落盘生产文件。目标是 public `ProtylePluginPort` 的非空 React 注入、菜单/快捷键/斜杠/paste 合同和独立 browser integration；不得改 PDF、API、CI 或 `Panel.ts`。
-3. **P4 主动内容/PDF**：尚未落盘生产文件。已确认仓内 `app/stage/protyle/js/pdf` 资产可复用，不新增依赖；需要决定受控 loader 或字面动态入口，并实现授权字节到 canvas 的生命周期。不得改 PluginPort、ACL support 或 lockfile。
+## 下一阶段
 
-## 恢复顺序
+1. 对完整implementation工作树执行一次集中`code-review + test-governance`，按功能纵向并行复评生产链、测试价值、安全、许可证与旧路径删除。
+2. 复评问题按共同根因整批返回implementation修复；所有关联问题收口并复评通过后才进入verification。
+3. verification使用Node 24与固定PostgreSQL 17集中运行`pnpm verify:b4`、`pnpm verify:s0-s3`、`pnpm test:e2e`、Kernel `go test -vet=off -tags="fts5 sqlcipher" ./...`及供应链矩阵。不得运行`app pnpm build`。
+4. 批量收集失败后按共同根因修复，不形成“修一个case、跑一次”的循环；最终证据回到统一矩阵。
+5. verification通过后更新权威方案的最终证据，提交并推送修复批次，再根据第9.3节逐项证明L1完成。
 
-1. 读取本文件、`AGENTS.md`、方案文件和当前 `git status`；确认 checkpoint 后再继续。
-2. 先完成 ACL/ADR-018，释放 API support 和 workflow；仍不运行正式测试。
-3. 用独立 agent 并行完成 P4 PluginPort 与 P4 主动内容/PDF；共享合同、manifest、lockfile 和 CI 由集成 owner 最后统一处理。
-4. P4 完成后，单一集成 owner 收口 P5：真实 React + Nest + PostgreSQL + Gateway + Go Kernel E2E、旧 Webpack Web 入口/旧 Adapter/重复 runner/`Panel.ts` 物理删除。
-5. 全部 implementation 完成后才进入集中 code-review；复评通过后由 verification 一次运行完整矩阵。
+## 恢复入口
 
-## 不变量
+```text
+cd /root/projects/singularity
+cat /root/projects/AGENTS.md
+cat AGENTS.md
+cat docs/architecture/l1-implementation-handoff.md
+git status --short --branch
+git log -12 --oneline --decorate
+```
 
-- 内容链显式携带 `spaceId + notebookId + documentId`；禁止从 DOM、全局状态、首响应或首实例推断。
-- viewer/撤权/锁定状态不得产生写事务或迟到推送；连接关闭前先停上游订阅。
-- 后端优先 Nest 原生装饰器、metadata、DI、schema 与拦截器；业务状态转移留在显式 service/use case。
-- 不新增未获批准的 fallback、双路径、同义字段或重复下游校验。
-- 固定测试库使用 PostgreSQL 17 Docker 映射 `127.0.0.1:55432`；服务动作必须经用户授权。
+恢复时以仓库、代理状态和真实测试结果为准，不使用旧百分比、旧owner、旧HEAD或历史“暂停线”推断当前状态，不回退共享工作树。

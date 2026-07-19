@@ -1,12 +1,16 @@
 import type { DynamicModule, Type } from "@nestjs/common";
 import { Module } from "@nestjs/common";
 import { DiscoveryModule } from "@nestjs/core";
-import type { DatabaseRuntime } from "@singularity/database";
+import {
+  AuditWriter,
+  type DatabaseRuntime,
+} from "@singularity/database";
 import { KernelPrivateClient } from "@singularity/kernel-client";
 import { FileObjectStore } from "@singularity/object-store";
 
 import type { WorkerConfiguration } from "./configuration.js";
 import { WorkerDeclarationDiscovery } from "./declaration-discovery.js";
+import { ContentAuditHandler } from "./content-audit-reconciliation.js";
 import { KernelWorkerClient } from "./kernel-worker-client.js";
 import {
   ArchiveAuditHandler,
@@ -18,6 +22,7 @@ import { PostgresWorkerJobRepository } from "./postgres-job-repository.js";
 import { RestorePlatformModule } from "./restore-platform.module.js";
 import {
   ArchiveAuditJobProducer,
+  ContentAuditJobProducer,
   SampleKernelJobProducer,
 } from "./scheduled-producers.js";
 import {
@@ -52,6 +57,12 @@ export class WorkerModule {
         {
           provide: WORKER_CONFIGURATION,
           useValue: options.configuration,
+        },
+        {
+          provide: AuditWriter,
+          inject: [WORKER_CONFIGURATION],
+          useFactory: (configuration: WorkerConfiguration) =>
+            new AuditWriter(configuration.audit),
         },
         {
           provide: FileObjectStore,
@@ -97,6 +108,8 @@ export class WorkerModule {
         ArchiveAuditHandler,
         ArchiveAuditJobProducer,
         BackupSpaceHandler,
+        ContentAuditHandler,
+        ContentAuditJobProducer,
         KernelWorkerClient,
         PostgresWorkerJobRepository,
         RestoreSpaceHandler,

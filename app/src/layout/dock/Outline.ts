@@ -342,14 +342,16 @@ export class Outline extends Model {
                     this.onTransaction(data);
                     break;
                 case "rename":
-                    if (this.type === "local" && this.blockId === data.data.id) {
-                        this.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
-                        this.protyle.model.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
-                    } else {
-                        this.updateDocTitle({
-                            title: data.data.title,
-                            icon: Constants.ZWSP
-                        }, -1);
+                    if (this.notebookId === data.data.notebookId && this.blockId === data.data.documentId) {
+                        if (this.type === "local") {
+                            this.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
+                            this.protyle.model.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));
+                        } else {
+                            this.updateDocTitle({
+                                title: data.data.title,
+                                icon: Constants.ZWSP
+                            }, -1);
+                        }
                     }
                     break;
                 case "closeBox":
@@ -545,7 +547,7 @@ export class Outline extends Model {
     }
 
     private onTransaction(data: IWebSocketData) {
-        if (data.data.rootID !== this.blockId) {
+        if (data.data.notebookId !== this.notebookId || data.data.documentId !== this.blockId) {
             return;
         }
         let needReload = false;
@@ -581,7 +583,7 @@ export class Outline extends Model {
             }
             fetchPost("/api/outline/getDocOutline", outlineParam, response => {
                 // 文档切换后不再更新原有推送 https://github.com/siyuan-note/siyuan/issues/13409
-                if (data.data.rootID !== this.blockId) {
+                if (data.data.notebookId !== this.notebookId || data.data.documentId !== this.blockId) {
                     return;
                 }
                 this.update(response);

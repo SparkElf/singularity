@@ -1,4 +1,9 @@
-import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  generateKeyPairSync,
+  randomUUID,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:https";
@@ -8,15 +13,19 @@ import { TLSSocket } from "node:tls";
 
 import { kernelRoutePolicies } from "@singularity/authorization";
 import {
+  AuditWriter,
   DatabaseRuntime,
   Prisma,
+  parseAuditConfiguration,
   type DatabaseClient,
 } from "@singularity/database";
 import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import {
+  KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
   KernelCredentialService,
   KernelPrivateClient,
   KernelRoutePolicyRegistry,
+  parseKernelDeploymentChangedEvent,
   RuntimeKernelDeploymentRegistry,
 } from "@singularity/kernel-client";
 import {
@@ -43,6 +52,7 @@ import {
   type BackupKernelPort,
   type RestoreDeploymentPort,
 } from "../src/l1-handlers.js";
+import { ContentAuditHandler } from "../src/content-audit-reconciliation.js";
 import {
   KernelWorkerClient,
   WORKER_OBSERVATION_PATH,
@@ -50,6 +60,7 @@ import {
 import { PostgresWorkerJobRepository } from "../src/postgres-job-repository.js";
 import {
   ArchiveAuditJobProducer,
+  ContentAuditJobProducer,
   SampleKernelJobProducer,
 } from "../src/scheduled-producers.js";
 import { WorkerJobScheduler } from "../src/scheduler.js";
@@ -471,6 +482,129 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     expect(output).not.toContain(rootDirectory);
   });
 
+  it("fences a late backup attempt after the worker lease is taken over", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const archive = Buffer.from(ARCHIVE_BODY_SENTINEL, "utf8");
+    const sha256 = createHash("sha256").update(archive).digest("hex");
+    const backup = await database.client.spaceBackup.create({
+      data: {
+        createdByUserId: fixture.userId,
+        organizationId: fixture.organizationId,
+        sourceSpaceId: fixture.sourceSpaceId,
+        status: "queued",
+      },
+    });
+    const firstJob = backupJob(fixture, backup.id);
+    const secondJob = { ...firstJob, attempt: 2 };
+    await database.client.workerJob.create({
+      data: {
+        availableAt: new Date("2026-07-19T09:00:00.000Z"),
+        attempt: 1,
+        id: firstJob.id,
+        kind: "backup_space",
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+        organizationId: fixture.organizationId,
+        payload: {
+          backupId: backup.id,
+          spaceId: fixture.sourceSpaceId,
+        },
+        requestId: firstJob.requestId,
+        status: "running",
+        workerId: "backup-old-worker",
+      },
+    });
+    let releaseFirst!: () => void;
+    const firstRelease = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const kernel: BackupKernelPort = {
+      async createBackup(job) {
+        if (job.attempt === 1) {
+          firstStarted();
+          await firstRelease;
+        }
+        return {
+          body: (async function* () {
+            yield archive;
+          })(),
+          formatVersion: 1,
+          kernelVersion: job.attempt === 1 ? "old-attempt" : "new-attempt",
+          sha256,
+        };
+      },
+    };
+    const handler = new BackupSpaceHandler(
+      database,
+      kernel,
+      MAXIMUM_BACKUP_BYTES,
+      objects,
+      logger,
+    );
+    const firstExecution = handler.execute(
+      firstJob,
+      new AbortController().signal,
+    );
+    void firstExecution.catch(() => undefined);
+    await firstStartedPromise;
+    await expect(
+      handler.execute(firstJob, new AbortController().signal),
+    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "backup-claim-active",
+    });
+    await expect(
+      database.client.spaceBackup.findUniqueOrThrow({
+        where: { id: backup.id },
+      }),
+    ).resolves.toMatchObject({
+      status: "running",
+      workerAttempt: 1,
+      workerJobId: firstJob.id,
+    });
+    await database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "worker_jobs"
+        SET
+          "attempt" = 2,
+          "worker_id" = 'backup-new-worker',
+          "lease_expires_at" = ${new Date(Date.now() + 60_000)}
+        WHERE "id" = ${firstJob.id}::uuid
+      `,
+    );
+    try {
+      await handler.execute(secondJob, new AbortController().signal);
+    } finally {
+      releaseFirst();
+    }
+    await expect(firstExecution).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "backup-state-conflict",
+    });
+
+    await expect(
+      database.client.spaceBackup.findUniqueOrThrow({
+        where: { id: backup.id },
+      }),
+    ).resolves.toMatchObject({
+      kernelVersion: "new-attempt",
+      status: "succeeded",
+    });
+    const claim = await database.client.$queryRaw<
+      Array<{ workerAttempt: number | null; workerJobId: string | null }>
+    >(
+      Prisma.sql`
+        SELECT
+          "worker_attempt" AS "workerAttempt",
+          "worker_job_id" AS "workerJobId"
+        FROM "space_backups"
+        WHERE "id" = ${backup.id}::uuid
+      `,
+    );
+    expect(claim[0]).toEqual({ workerAttempt: null, workerJobId: null });
+  });
+
   it("records restore validation and the committed Kernel transition once", async () => {
     const fixture = await createRestoreFixture(database.client, objects);
     const job = restoreJob(fixture);
@@ -503,13 +637,41 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
       objects,
       logger,
     );
-
-    await handler.execute(job, new AbortController().signal);
-    await expect(
-      handler.execute(job, new AbortController().signal),
-    ).resolves.toBeUndefined();
+    const deploymentEvents: ReturnType<
+      typeof parseKernelDeploymentChangedEvent
+    >[] = [];
+    const subscription = await database.listen(
+      KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
+      (payload) => {
+        deploymentEvents.push(
+          parseKernelDeploymentChangedEvent(JSON.parse(payload) as unknown),
+        );
+      },
+      (error) => {
+        throw error;
+      },
+    );
+    try {
+      await handler.execute(job, new AbortController().signal);
+      await expect(
+        handler.execute(job, new AbortController().signal),
+      ).resolves.toBeUndefined();
+      await expect
+        .poll(() => deploymentEvents.length, { timeout: 5_000 })
+        .toBe(1);
+    } finally {
+      await subscription.close();
+    }
 
     expect(restoreCalls).toBe(1);
+    expect(deploymentEvents).toEqual([
+      {
+        kernelInstanceId: fixture.targetKernelInstanceId,
+        kind: "upsert",
+        requestId: job.requestId,
+        spaceId: fixture.targetSpaceId,
+      },
+    ]);
     await expect(
       database.client.spaceRestoreJob.findUniqueOrThrow({
         where: { id: fixture.restoreId },
@@ -1061,7 +1223,7 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
     }
   });
 
-  it("archives one sealed audit range without deleting its online events", async () => {
+  it("accepts only an exact replay of one archived audit range", async () => {
     const fixture = await createManagedSpace(database.client);
     const firstMac = "a".repeat(64);
     const lastMac = "b".repeat(64);
@@ -1150,15 +1312,42 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
     const job = handler.decode(record);
     await handler.execute(job, new AbortController().signal);
     await expect(
-      repository.complete({
-        completedAt: new Date("2026-07-19T10:04:00.000Z"),
-        jobId: record.id,
-        workerId: "audit-archive-worker",
-      }),
-    ).resolves.toBe(true);
-    await expect(
       handler.execute(job, new AbortController().signal),
     ).resolves.toBeUndefined();
+    await database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "worker_jobs"
+        SET
+          "payload" = ${JSON.stringify({
+            fromSequence: "2",
+            throughSequence: "2",
+          })}::jsonb,
+          "lease_expires_at" = ${new Date("2026-07-19T10:04:00.000Z")}
+        WHERE "id" = ${record.id}::uuid
+      `,
+    );
+    const reclaimed = await repository.claimBatch({
+      kinds: ["archive-audit"],
+      leaseExpiresAt: new Date("2026-07-19T10:10:00.000Z"),
+      limit: 1,
+      now: new Date("2026-07-19T10:05:00.000Z"),
+      workerId: "audit-archive-replay-worker",
+    });
+    const changedRangeRecord = reclaimed[0];
+    if (changedRangeRecord === undefined) {
+      throw new Error("Changed audit archive range was not claimable");
+    }
+    expect(changedRangeRecord).toMatchObject({
+      attempt: record.attempt + 1,
+      id: record.id,
+      payload: { fromSequence: "2", throughSequence: "2" },
+    });
+    const changedRangeJob = handler.decode(changedRangeRecord);
+    await expect(
+      handler.execute(changedRangeJob, new AbortController().signal),
+    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "audit-archive-range-conflict",
+    });
 
     const archive = await database.client.auditArchive.findUniqueOrThrow({
       where: { id: record.id },
@@ -1210,5 +1399,436 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
       }),
     ).resolves.toBe(1);
     await expect(producer.produce(producedAt)).resolves.toBe(0);
+  });
+});
+
+interface ContentAuditIntentFixture {
+  action: "content.delete" | "content.edit" | "content.export";
+  availableAt: Date;
+  documentId: string;
+  occurredAt: Date;
+  observedOutcome: "failed" | "succeeded" | null;
+  requestId: string;
+}
+
+async function insertContentAuditIntent(
+  database: DatabaseClient,
+  fixture: ManagedSpaceFixture,
+  intent: ContentAuditIntentFixture,
+): Promise<void> {
+  await database.$executeRaw(
+    Prisma.sql`
+      INSERT INTO "content_audit_intents" (
+        "request_id", "organization_id", "space_id", "actor_user_id",
+        "action", "document_id", "occurred_at", "observed_outcome", "available_at"
+      ) VALUES (
+        ${intent.requestId}::uuid, ${fixture.organizationId}::uuid,
+        ${fixture.sourceSpaceId}::uuid, ${fixture.userId}::uuid,
+        ${intent.action}::"audit_action", ${intent.documentId}, ${intent.occurredAt},
+        ${intent.observedOutcome}::"audit_outcome", ${intent.availableAt}
+      )
+    `,
+  );
+}
+
+describe("L1 cross-Kernel content audit reconciliation with PostgreSQL", () => {
+  let database: DatabaseRuntime;
+
+  beforeAll(() => {
+    database = new DatabaseRuntime(isolatedDatabaseUrl());
+  });
+
+  beforeEach(async () => {
+    await database.client.$executeRaw(
+      Prisma.sql`DELETE FROM "worker_jobs" WHERE "kind" = 'reconcile-content-audit'`,
+    );
+    await database.client.$executeRaw(
+      Prisma.sql`DELETE FROM "content_audit_intents"`,
+    );
+  });
+
+  afterAll(async () => {
+    await database.onApplicationShutdown();
+  });
+
+  it("creates at most one active reconciliation job per organization", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const now = new Date("2026-07-19T10:00:00.000Z");
+    await insertContentAuditIntent(database.client, fixture, {
+      action: "content.edit",
+      availableAt: new Date("2026-07-19T09:59:00.000Z"),
+      documentId: "document-producer",
+      occurredAt: new Date("2026-07-19T09:58:00.000Z"),
+      observedOutcome: null,
+      requestId: randomUUID(),
+    });
+    const producer = new ContentAuditJobProducer(database, {
+      contentAuditReconciliationIntervalMilliseconds: 5_000,
+    });
+
+    const results = await Promise.all([
+      producer.produce(now),
+      producer.produce(now),
+    ]);
+
+    expect(results.sort()).toEqual([0, 1]);
+    await expect(
+      database.client.$queryRaw<Array<{ payload: unknown }>>(
+        Prisma.sql`
+          SELECT "payload"
+          FROM "worker_jobs"
+          WHERE "organization_id" = ${fixture.organizationId}::uuid
+            AND "kind" = 'reconcile-content-audit'
+            AND "status" IN ('queued', 'running')
+        `,
+      ),
+    ).resolves.toEqual([{ payload: {} }]);
+  });
+
+  it("finalizes bounded resolved and due batches in order with independently verifiable MACs", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const occurredAt = [
+      new Date("2026-07-19T09:58:00.000Z"),
+      new Date("2026-07-19T09:58:01.000Z"),
+      new Date("2026-07-19T09:58:02.000Z"),
+    ];
+    const intents: ContentAuditIntentFixture[] = [
+      {
+        action: "content.edit",
+        availableAt: occurredAt[0]!,
+        documentId: "document-succeeded",
+        occurredAt: occurredAt[0]!,
+        observedOutcome: "succeeded",
+        requestId: randomUUID(),
+      },
+      {
+        action: "content.delete",
+        availableAt: occurredAt[1]!,
+        documentId: "document-failed",
+        occurredAt: occurredAt[1]!,
+        observedOutcome: "failed",
+        requestId: randomUUID(),
+      },
+      {
+        action: "content.export",
+        availableAt: occurredAt[2]!,
+        documentId: "document-indeterminate",
+        occurredAt: occurredAt[2]!,
+        observedOutcome: null,
+        requestId: randomUUID(),
+      },
+    ];
+    for (const intent of intents) {
+      await insertContentAuditIntent(database.client, fixture, intent);
+    }
+    const key = Buffer.alloc(32, 23);
+    const keyVersion = "content-audit-test-v1";
+    const writer = new AuditWriter(
+      parseAuditConfiguration({
+        SINGULARITY_AUDIT_HMAC_KEY: key.toString("base64url"),
+        SINGULARITY_AUDIT_KEY_VERSION: keyVersion,
+      }),
+    );
+    const logger = new CapturingWorkerLogger();
+    const handler = new ContentAuditHandler(
+      writer,
+      database,
+      { contentAuditBatchSize: 2 },
+      logger,
+    );
+    const producer = new ContentAuditJobProducer(database, {
+      contentAuditReconciliationIntervalMilliseconds: 5_000,
+    });
+    const now = new Date("2026-07-19T10:00:00.000Z");
+    await expect(producer.produce(now)).resolves.toBe(1);
+    const repository = new PostgresWorkerJobRepository(database);
+    const claimed = await repository.claimBatch({
+      kinds: ["reconcile-content-audit"],
+      leaseExpiresAt: new Date("2026-07-19T10:05:00.000Z"),
+      limit: 1,
+      now,
+      workerId: "content-audit-worker",
+    });
+    const record = claimed[0];
+    if (record === undefined) {
+      throw new Error("Content audit reconciliation job was not claimable");
+    }
+
+    await handler.execute(handler.decode(record), new AbortController().signal);
+
+    await expect(
+      database.client.$queryRaw<Array<{ count: bigint }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::bigint AS count
+          FROM "content_audit_intents"
+          WHERE "organization_id" = ${fixture.organizationId}::uuid
+        `,
+      ),
+    ).resolves.toEqual([{ count: 1n }]);
+    await expect(
+      database.client.auditEvent.count({
+        where: { organizationId: fixture.organizationId },
+      }),
+    ).resolves.toBe(2);
+    await expect(
+      repository.complete({
+        completedAt: new Date("2026-07-19T10:00:00.001Z"),
+        jobId: record.id,
+        workerId: "content-audit-worker",
+      }),
+    ).resolves.toBe(true);
+    const nextProducedAt = new Date("2026-07-19T10:00:00.002Z");
+    await expect(producer.produce(nextProducedAt)).resolves.toBe(1);
+    const nextClaimed = await repository.claimBatch({
+      kinds: ["reconcile-content-audit"],
+      leaseExpiresAt: new Date("2026-07-19T10:05:00.000Z"),
+      limit: 1,
+      now: nextProducedAt,
+      workerId: "content-audit-worker",
+    });
+    const nextRecord = nextClaimed[0];
+    if (nextRecord === undefined) {
+      throw new Error("Remaining content audit batch was not claimable");
+    }
+    await handler.execute(
+      handler.decode(nextRecord),
+      new AbortController().signal,
+    );
+
+    await expect(
+      database.client.$queryRaw<Array<{ count: bigint }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::bigint AS count
+          FROM "content_audit_intents"
+          WHERE "organization_id" = ${fixture.organizationId}::uuid
+        `,
+      ),
+    ).resolves.toEqual([{ count: 0n }]);
+    const events = await database.client.$queryRaw<
+      Array<{
+        action: string;
+        actorUserId: string;
+        auditEventId: string;
+        occurredAt: Date;
+        outcome: string;
+        previousMac: string | null;
+        requestId: string;
+        sequence: bigint;
+        spaceId: string;
+        targetId: string;
+        targetType: string;
+        mac: string;
+        keyVersion: string;
+        organizationId: string;
+      }>
+    >(Prisma.sql`
+      SELECT
+        "id" AS "auditEventId", "organization_id" AS "organizationId",
+        "sequence", "space_id" AS "spaceId", "actor_user_id" AS "actorUserId",
+        "action"::text AS "action", "target_type" AS "targetType",
+        "target_id" AS "targetId", "outcome"::text AS "outcome",
+        "occurred_at" AS "occurredAt", "request_id" AS "requestId",
+        "previous_mac" AS "previousMac", "mac", "key_version" AS "keyVersion"
+      FROM "audit_events"
+      WHERE "organization_id" = ${fixture.organizationId}::uuid
+      ORDER BY "sequence"
+    `);
+    expect(events.map((event) => event.outcome)).toEqual([
+      "succeeded",
+      "failed",
+      "indeterminate",
+    ]);
+    let previousMac: string | null = null;
+    for (const event of events) {
+      const expectedMac = createHmac("sha256", key)
+        .update(
+          JSON.stringify([
+            "singularity.audit-event.v1",
+            event.auditEventId,
+            event.organizationId,
+            event.sequence.toString(),
+            previousMac,
+            event.spaceId,
+            event.actorUserId,
+            event.action,
+            event.targetType,
+            event.targetId,
+            event.outcome,
+            event.occurredAt.toISOString(),
+            event.requestId,
+            keyVersion,
+          ]),
+          "utf8",
+        )
+        .digest("hex");
+      expect(event.mac).toBe(expectedMac);
+      previousMac = event.mac;
+    }
+  });
+
+  it("rolls back failed finalization, retries the intent, and does not duplicate a replay", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const requestId = randomUUID();
+    await insertContentAuditIntent(database.client, fixture, {
+      action: "content.edit",
+      availableAt: new Date("2026-07-19T09:59:00.000Z"),
+      documentId: "document-retry",
+      occurredAt: new Date("2026-07-19T09:58:00.000Z"),
+      observedOutcome: "succeeded",
+      requestId,
+    });
+    const key = Buffer.alloc(32, 29);
+    const writer = new AuditWriter(
+      parseAuditConfiguration({
+        SINGULARITY_AUDIT_HMAC_KEY: key.toString("base64url"),
+        SINGULARITY_AUDIT_KEY_VERSION: "content-audit-retry-v1",
+      }),
+    );
+    const logger = new CapturingWorkerLogger();
+    const handler = new ContentAuditHandler(
+      writer,
+      database,
+      { contentAuditBatchSize: 10 },
+      logger,
+    );
+    const producer = new ContentAuditJobProducer(database, {
+      contentAuditReconciliationIntervalMilliseconds: 5_000,
+    });
+    const producedAt = new Date();
+    await producer.produce(producedAt);
+    const repository = new PostgresWorkerJobRepository(database);
+    const workerId = "content-audit-retry-worker";
+    const firstClaim = await repository.claimBatch({
+      kinds: ["reconcile-content-audit"],
+      leaseExpiresAt: new Date(producedAt.getTime() + 5 * 60_000),
+      limit: 1,
+      now: producedAt,
+      workerId,
+    });
+    const firstRecord = firstClaim[0];
+    if (firstRecord === undefined) {
+      throw new Error("Initial content audit job was not claimable");
+    }
+    const triggerName = "singularity_test_fail_content_audit_event_insert";
+    const functionName = "singularity_test_fail_content_audit_event";
+    await database.client.$executeRaw(Prisma.sql`
+      CREATE OR REPLACE FUNCTION ${Prisma.raw(functionName)}()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $function$
+      BEGIN
+        RAISE EXCEPTION 'content audit event test failure';
+      END;
+      $function$
+    `);
+    await database.client.$executeRaw(Prisma.sql`
+      CREATE TRIGGER ${Prisma.raw(triggerName)}
+      BEFORE INSERT ON "audit_events"
+      FOR EACH ROW EXECUTE FUNCTION ${Prisma.raw(functionName)}()
+    `);
+    let failure: unknown;
+    try {
+      await handler.execute(
+        handler.decode(firstRecord),
+        new AbortController().signal,
+      );
+    } catch (error) {
+      failure = error;
+    } finally {
+      await database.client.$executeRaw(Prisma.sql`
+        DROP TRIGGER IF EXISTS ${Prisma.raw(triggerName)} ON "audit_events"
+      `);
+      await database.client.$executeRaw(Prisma.sql`
+        DROP FUNCTION IF EXISTS ${Prisma.raw(functionName)}()
+      `);
+    }
+    expect(failure).toMatchObject<Partial<WorkerJobError>>({
+      code: "content-audit-finalization-failed",
+    });
+    const loggedError = logger.entries.find(
+      (entry) =>
+        entry.event === "content.audit-finalization" &&
+        entry.outcome === "failed",
+    )?.error;
+    expect(loggedError).toBeInstanceOf(Error);
+    expect((loggedError as Error).stack).toContain(
+      (loggedError as Error).message,
+    );
+    const retryAt = (failure as WorkerJobError).retryAt;
+    if (retryAt === null) {
+      throw new Error("Content audit failure did not schedule a retry");
+    }
+    await expect(
+      database.client.$queryRaw<Array<{ count: bigint }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::bigint AS count
+          FROM "content_audit_intents"
+          WHERE "request_id" = ${requestId}::uuid
+        `,
+      ),
+    ).resolves.toEqual([{ count: 1n }]);
+    await expect(
+      database.client.auditEvent.count({
+        where: { organizationId: fixture.organizationId },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      repository.fail({
+        errorCode: "content-audit-finalization-failed",
+        failedAt: new Date(),
+        jobId: firstRecord.id,
+        retryAt,
+        workerId,
+      }),
+    ).resolves.toBe(true);
+    const retryClaim = await repository.claimBatch({
+      kinds: ["reconcile-content-audit"],
+      leaseExpiresAt: new Date(retryAt.getTime() + 60_000),
+      limit: 1,
+      now: new Date(retryAt.getTime() + 1),
+      workerId,
+    });
+    const retryRecord = retryClaim[0];
+    if (retryRecord === undefined) {
+      throw new Error("Retried content audit job was not claimable");
+    }
+    await handler.execute(handler.decode(retryRecord), new AbortController().signal);
+    await expect(
+      database.client.auditEvent.count({
+        where: { organizationId: fixture.organizationId },
+      }),
+    ).resolves.toBe(1);
+
+    await database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "worker_jobs"
+        SET "lease_expires_at" = ${new Date(0)}
+        WHERE "id" = ${retryRecord.id}::uuid
+      `,
+    );
+    const replayClaim = await repository.claimBatch({
+      kinds: ["reconcile-content-audit"],
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      limit: 1,
+      now: new Date(),
+      workerId: "content-audit-replay-worker",
+    });
+    const replayRecord = replayClaim[0];
+    if (replayRecord === undefined) {
+      throw new Error("Expired content audit job was not reclaimable");
+    }
+    await handler.execute(handler.decode(replayRecord), new AbortController().signal);
+    await expect(
+      database.client.auditEvent.count({
+        where: { organizationId: fixture.organizationId },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      repository.complete({
+        completedAt: new Date(),
+        jobId: replayRecord.id,
+        workerId: "content-audit-replay-worker",
+      }),
+    ).resolves.toBe(true);
   });
 });

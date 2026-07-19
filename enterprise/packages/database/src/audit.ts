@@ -1,19 +1,74 @@
-import { createHmac, randomUUID, type KeyObject } from "node:crypto";
-
-import { Inject, Injectable } from "@nestjs/common";
-import { Prisma } from "@singularity/database";
-
 import {
-  auditEventView,
-  type AppendAuditEvent,
-  type AuditEventView,
-} from "./audit.types.js";
+  createHmac,
+  createSecretKey,
+  randomUUID,
+  type KeyObject,
+} from "node:crypto";
 
-export const AUDIT_CONFIGURATION = Symbol("AUDIT_CONFIGURATION");
+import type {
+  AuditAction,
+  AuditOutcome,
+  AuditTargetType,
+} from "@singularity/contracts";
+
+import { Prisma } from "./generated/prisma/client.js";
 
 export interface AuditConfiguration {
   hmacKey: KeyObject;
   keyVersion: string;
+}
+
+export interface AuditConfigurationEnvironment {
+  readonly SINGULARITY_AUDIT_HMAC_KEY?: string;
+  readonly SINGULARITY_AUDIT_KEY_VERSION?: string;
+}
+
+export class AuditConfigurationError extends Error {
+  constructor() {
+    super("Audit configuration is unavailable");
+    this.name = "AuditConfigurationError";
+  }
+}
+
+export function parseAuditConfiguration(
+  environment: AuditConfigurationEnvironment,
+): AuditConfiguration {
+  const encoded = environment.SINGULARITY_AUDIT_HMAC_KEY;
+  const keyVersion = environment.SINGULARITY_AUDIT_KEY_VERSION;
+  if (
+    encoded === undefined ||
+    !/^[A-Za-z0-9_-]+$/.test(encoded) ||
+    keyVersion === undefined ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(keyVersion)
+  ) {
+    throw new AuditConfigurationError();
+  }
+  let key: Buffer;
+  try {
+    key = Buffer.from(encoded, "base64url");
+  } catch {
+    throw new AuditConfigurationError();
+  }
+  if (
+    key.byteLength < 32 ||
+    key.byteLength > 128 ||
+    key.toString("base64url") !== encoded
+  ) {
+    throw new AuditConfigurationError();
+  }
+  return { hmacKey: createSecretKey(key), keyVersion };
+}
+
+export interface AppendAuditEvent {
+  action: AuditAction;
+  actorUserId: string | null;
+  occurredAt: Date;
+  organizationId: string;
+  outcome: AuditOutcome;
+  requestId: string;
+  spaceId: string | null;
+  targetId: string;
+  targetType: AuditTargetType;
 }
 
 interface AuditSequenceRow {
@@ -21,14 +76,11 @@ interface AuditSequenceRow {
   lastSequence: bigint;
 }
 
-@Injectable()
 export class AuditWriter {
   readonly #hmacKey: KeyObject;
   readonly #keyVersion: string;
 
-  constructor(
-    @Inject(AUDIT_CONFIGURATION) configuration: AuditConfiguration,
-  ) {
+  constructor(configuration: AuditConfiguration) {
     this.#hmacKey = configuration.hmacKey;
     this.#keyVersion = configuration.keyVersion;
   }
@@ -36,8 +88,8 @@ export class AuditWriter {
   async appendPermissionChange(
     transaction: Prisma.TransactionClient,
     input: Omit<AppendAuditEvent, "action" | "outcome">,
-  ): Promise<AuditEventView> {
-    return this.append(transaction, {
+  ): Promise<void> {
+    await this.append(transaction, {
       ...input,
       action: "permission.change",
       outcome: "succeeded",
@@ -47,7 +99,7 @@ export class AuditWriter {
   async append(
     transaction: Prisma.TransactionClient,
     input: AppendAuditEvent,
-  ): Promise<AuditEventView> {
+  ): Promise<void> {
     await transaction.$executeRaw(
       Prisma.sql`
         INSERT INTO "organization_audit_sequences" (
@@ -119,13 +171,5 @@ export class AuditWriter {
         WHERE "organization_id" = ${input.organizationId}::uuid
       `,
     );
-    return auditEventView({
-      ...input,
-      auditEventId,
-      keyVersion: this.#keyVersion,
-      mac,
-      previousMac: state.lastMac,
-      sequence,
-    });
   }
 }

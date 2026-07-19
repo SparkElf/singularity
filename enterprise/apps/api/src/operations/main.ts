@@ -1,7 +1,8 @@
 import "reflect-metadata";
 
+import { parseAuditConfiguration } from "@singularity/database";
+
 import { runAccessOperationsApplication } from "./application.js";
-import { parseAuditConfiguration } from "../configuration.js";
 
 process.exitCode = await runAccessOperationsApplication({
   auditConfiguration: parseAuditConfiguration(process.env),

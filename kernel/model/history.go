@@ -438,17 +438,7 @@ func RollbackDocHistory(historyPath, notebook string) (err error) {
 		ReloadProtyle(boxID, rootID, TransactionNotebookForBox(boxID))
 
 		// 刷新页签名
-		refText := getNodeRefText(tree.Root)
-		evt := util.NewCmdResult("rename", 0, util.PushModeBroadcast)
-		evt.Data = map[string]any{
-			"box":     boxID,
-			"id":      tree.Root.ID,
-			"path":    tree.Path,
-			"title":   tree.Root.IALAttr("title"),
-			"empty":   "" != tree.Root.IALAttr(NodeAttrTitleEmpty),
-			"refText": refText,
-		}
-		util.PushEvent(evt)
+		pushRenameDoc(canonicalRenameDocResult(tree))
 
 		// 收集引用的定义块 ID
 		refDefIDs := getRefDefIDs(tree.Root)

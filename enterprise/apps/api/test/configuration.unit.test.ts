@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
+import {
+  AuditConfigurationError,
+  parseAuditConfiguration,
+} from "@singularity/database";
 
 import {
   ApiConfigurationError,
-  parseAuditConfiguration,
+  DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
+  parseContentAuditIndeterminateAfterMilliseconds,
   parseOidcClientSecretFiles,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
@@ -33,9 +38,28 @@ describe("API deployment configuration", () => {
     },
   ])("rejects incomplete audit configuration: %o", (environment) => {
     expect(() => parseAuditConfiguration(environment)).toThrow(
-      ApiConfigurationError,
+      AuditConfigurationError,
     );
   });
+
+  test("owns the content audit indeterminate deadline at the API boundary", () => {
+    expect(parseContentAuditIndeterminateAfterMilliseconds(undefined)).toBe(
+      DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
+    );
+    expect(parseContentAuditIndeterminateAfterMilliseconds("45000")).toBe(
+      45_000,
+    );
+    expect(parseContentAuditIndeterminateAfterMilliseconds("1")).toBe(1);
+  });
+
+  test.each(["0", "-1", "9007199254740992", "1.5", "unknown"])(
+    "rejects an invalid content audit deadline: %s",
+    (value) => {
+      expect(() =>
+        parseContentAuditIndeterminateAfterMilliseconds(value),
+      ).toThrow(ApiConfigurationError);
+    },
+  );
 
   test("parses the OIDC secret mapping at the application boundary", () => {
     expect(parseOidcClientSecretFiles(JSON.stringify({

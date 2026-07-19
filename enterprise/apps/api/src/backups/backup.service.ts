@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import { Inject, Injectable } from "@nestjs/common";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 import { unactivatedSpaceRestoreStatuses } from "@singularity/contracts";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { conflict, notFound } from "../problem.js";

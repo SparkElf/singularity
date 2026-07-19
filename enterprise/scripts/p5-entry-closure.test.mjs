@@ -4,13 +4,14 @@ import {
   readdir,
   readFile,
 } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import ts from "typescript";
 
 import {
   auditProductionClosure,
+  collectModuleLoads,
   formatAuditReport,
 } from "./protyle-vite-closure-audit.mjs";
 
@@ -19,6 +20,14 @@ const repositoryRoot = join(scriptsDirectory, "../..");
 const webRoot = join(repositoryRoot, "enterprise/apps/web");
 const e2eRoot = join(webRoot, "tests/e2e");
 const sourceExtensions = new Set([".js", ".mjs", ".ts", ".tsx"]);
+const forbiddenLegacyAppTargets = new Set([
+  "app/src/index",
+  "app/src/block/Panel",
+  "app/src/host/plugin",
+  "app/src/host/protyle",
+  "app/src/layout/Model",
+  "app/src/protyle/EmbeddedProtyleOwner",
+].map((path) => resolve(repositoryRoot, path)));
 
 async function source(path) {
   return readFile(join(repositoryRoot, path), "utf8");
@@ -124,6 +133,23 @@ function propertyInitializer(sourceFile, name) {
   return initializer;
 }
 
+function variableInitializers(sourceFile, name) {
+  const initializers = [];
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.initializer !== undefined
+    ) {
+      initializers.push(node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return initializers;
+}
+
 function stringProperty(sourceFile, name) {
   const initializer = propertyInitializer(sourceFile, name);
   assert.ok(
@@ -160,6 +186,42 @@ function dockerInstructions(contents) {
           instruction: line.slice(0, separator).toUpperCase(),
         };
   });
+}
+
+function htmlScriptEntries(contents) {
+  const entries = [];
+  for (const script of contents.matchAll(/<script\b([^>]*)>/gi)) {
+    const attributes = new Map();
+    for (const attribute of script[1].matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      attributes.set(attribute[1].toLowerCase(), attribute[3]);
+    }
+    entries.push({
+      src: attributes.get("src") ?? null,
+      type: attributes.get("type") ?? null,
+    });
+  }
+  return entries;
+}
+
+function webSourceBoundary(file, sourceFile) {
+  const forbiddenLegacyImports = [];
+  let publicCoreImports = 0;
+  for (const moduleLoad of collectModuleLoads(sourceFile)) {
+    if (moduleLoad.specifier === "@singularity/protyle-browser/core") {
+      publicCoreImports += 1;
+    }
+    if (moduleLoad.specifier === null || !moduleLoad.specifier.startsWith(".")) {
+      continue;
+    }
+    const target = resolve(dirname(file), moduleLoad.specifier)
+      .replace(/\.(?:[cm]?[jt]sx?)$/, "");
+    if (forbiddenLegacyAppTargets.has(target)) {
+      forbiddenLegacyImports.push(
+        `${relative(repositoryRoot, file)} -> ${relative(repositoryRoot, target)}`,
+      );
+    }
+  }
+  return {forbiddenLegacyImports, publicCoreImports};
 }
 
 test("P5 has one independent non-parallel Playwright entry", async () => {
@@ -206,6 +268,30 @@ test("real P5 E2E sources do not replace the React, Gateway, or Kernel chain", a
   }
 });
 
+test("P5 setup binds the real Kernel identity and keeps the CLI binary in the app tree", async () => {
+  const stackSource = parseSource(
+    "start-stack.mjs",
+    await source("enterprise/apps/web/tests/e2e/support/start-stack.mjs"),
+  );
+  const binaryRoots = variableInitializers(stackSource, "kernelBinaryRoot");
+  assert.equal(binaryRoots.length, 1);
+  assert.ok(ts.isCallExpression(binaryRoots[0]));
+  assert.equal(binaryRoots[0].expression.getText(), "join");
+  assert.equal(binaryRoots[0].arguments[0]?.getText(), "appRoot");
+
+  const kernelIdentities = variableInitializers(stackSource, "kernelInstanceId");
+  assert.ok(kernelIdentities.some((initializer) =>
+    ts.isAwaitExpression(initializer) &&
+    ts.isCallExpression(initializer.expression) &&
+    initializer.expression.expression.getText() === "readKernelInstanceId",
+  ));
+  assert.equal(kernelIdentities.some((initializer) => initializer.getText() === "randomUUID()"), false);
+  assert.equal(
+    stringProperty(stackSource, "SINGULARITY_KERNEL_LISTEN_ADDRESS"),
+    "127.0.0.1",
+  );
+});
+
 test("the Vite production closure excludes the upstream shell and migration adapters", () => {
   const report = auditProductionClosure();
   assert.deepEqual(report.violations, [], formatAuditReport(report));
@@ -243,15 +329,48 @@ test("the enterprise production web image builds and serves only the Vite artifa
   }
 });
 
-test("obsolete enterprise browser runners and Webpack entries are physically absent", async () => {
-  await access(join(webRoot, "index.html"));
+test("the enterprise HTML entry and browser runner files have one Vite production path", async () => {
+  const indexHtml = await source("enterprise/apps/web/index.html");
+  const packageJson = JSON.parse(await source("enterprise/apps/web/package.json"));
+
+  assert.deepEqual(htmlScriptEntries(indexHtml), [{
+    src: "/src/main.tsx",
+    type: "module",
+  }]);
+  assert.match(packageJson.scripts.build, /(?:^|&&\s*)vite build$/);
+  assert.equal(
+    Object.values(packageJson.scripts).some((command) => /\bwebpack\b/i.test(command)),
+    false,
+  );
+
   await access(join(webRoot, "src/main.tsx"));
   await access(join(webRoot, "vite.config.ts"));
   await access(join(webRoot, "playwright.integration.config.ts"));
   await access(join(webRoot, "playwright.e2e.config.ts"));
-  assert.equal(await exists(join(webRoot, "playwright.shell.config.ts")), false);
-  assert.equal(await exists(join(webRoot, "tests/shell")), false);
-  assert.equal(await exists(join(e2eRoot, ".gitkeep")), false);
+  for (const obsoletePath of [
+    "playwright.shell.config.ts",
+    "tests/shell",
+    "tests/e2e/.gitkeep",
+    "src/editor/AppProtylePluginPort.test.js",
+    "src/editor/ModelReconnectLifecycle.test.js",
+  ]) {
+    assert.equal(await exists(join(webRoot, obsoletePath)), false, obsoletePath);
+  }
+
+  const publicCoreImporters = [];
+  for (const file of await collectSourceFiles(join(webRoot, "src"))) {
+    const sourceFile = parseSource(file, await readFile(file, "utf8"));
+    const boundary = webSourceBoundary(file, sourceFile);
+    assert.deepEqual(
+      boundary.forbiddenLegacyImports,
+      [],
+      `${file} imports an upstream legacy shell owner`,
+    );
+    for (let index = 0; index < boundary.publicCoreImports; index += 1) {
+      publicCoreImporters.push(relative(repositoryRoot, file));
+    }
+  }
+  assert.deepEqual(publicCoreImporters, ["enterprise/apps/web/src/main.tsx"]);
 
   const rootEntries = await readdir(webRoot);
   assert.deepEqual(

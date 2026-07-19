@@ -52,8 +52,24 @@ describe("Kernel Gateway path admission", () => {
       });
       expect(target?.policy.audit).toBe(audit);
       expect(target?.upstreamPath).toBe(path);
+      expect(target?.forceDownload).toBe(false);
     },
   );
+
+  test("preserves an explicit asset download decision in the admitted target", () => {
+    const target = parseKernelGatewayTarget(
+      "GET",
+      `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/assets/inline.png?notebookId=${NOTEBOOK_ID}&documentId=${DOCUMENT_ID}&download=true`,
+      {},
+      policies,
+    );
+
+    expect(target).toMatchObject({
+      forceDownload: true,
+      surface: "asset",
+      upstreamPath: `/assets/inline.png?box=${NOTEBOOK_ID}&download=true`,
+    });
+  });
 
   test.each([
     `//api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/kernel/ws?notebookId=${NOTEBOOK_ID}&documentId=${DOCUMENT_ID}&type=protyle`,

@@ -265,6 +265,20 @@ func TestValidateEnterpriseRestoredWorkspacePreservesEncryptedSYBoundary(t *test
 	if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
 		t.Fatalf("validate encrypted restore workspace: %v", err)
 	}
+
+	t.Run("truncated envelope", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		invalid, encryptErr := util.EncryptWithAAD(make([]byte, 32), nil, []byte("restore-test"))
+		if encryptErr != nil {
+			t.Fatal(encryptErr)
+		}
+		invalid = invalid[:len(invalid)-1]
+		writeRestoredWorkspaceFile(t, workspaceRoot, "data/"+boxID+"/.siyuan/conf.json", []byte(`{"encrypted":true}`))
+		writeRestoredWorkspaceFile(t, workspaceRoot, "data/"+boxID+"/"+rootID+".sy", invalid)
+		if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+			t.Fatal("truncated encrypted envelope was accepted")
+		}
+	})
 }
 
 func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruption(t *testing.T) {
@@ -307,6 +321,28 @@ func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruptio
 		)
 		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
 			t.Fatalf("validate degraded cross-boundary reference text: %v", err)
+		}
+	})
+
+	t.Run("reference target must remain in its source notebook", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		sourceBoxID := "20260719000003-box0001"
+		targetBoxID := "20260719000004-box0002"
+		targetID := "20260719000002-target1"
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+sourceBoxID+"/20260719000000-restor1.sy",
+			restoredTreeJSON(t, "20260719000000-restor1", targetID, true),
+		)
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+targetBoxID+"/"+targetID+".sy",
+			restoredTreeJSON(t, targetID, "", false),
+		)
+		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+			t.Fatal("cross-notebook reference target was accepted")
 		}
 	})
 

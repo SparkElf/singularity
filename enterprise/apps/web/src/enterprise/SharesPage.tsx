@@ -15,8 +15,10 @@ import {
   SaveIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 
+import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
+import { locationTarget } from "@/auth/return-to.ts";
 import {
   Alert,
   AlertDescription,
@@ -52,6 +54,7 @@ import {
 import {
   changeSpaceSharePassword,
   createSpaceShare,
+  enterpriseManagementAccessQueryKey,
   getSpaceShares,
   revokeSpaceShare,
   spaceSharesQueryKey,
@@ -59,9 +62,12 @@ import {
 import { publicSharePagePath } from "@/shares/routes.ts";
 import {
   ContentDirectory,
+  type ContentDirectoryAccessLoss,
   type ContentDirectoryStatus,
 } from "@/spaces/ContentDirectory.tsx";
 import {
+  clearContentSelection,
+  getContentSelectionForScope,
   useContentSelectionScope,
   useContentSelectionStore,
 } from "@/spaces/content-selection.ts";
@@ -175,26 +181,53 @@ function SharesPageContent({
   organizationId,
   spaceId,
 }: SharesPageContentProps) {
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [directoryStatus, setDirectoryStatus] =
     useState<ContentDirectoryStatus>("loading");
   const selectionScope = useContentSelectionScope({ organizationId, spaceId });
   const storeSelection = useContentSelectionStore((state) => state.selection);
-  const selection = selectionScope && storeSelection?.spaceId === spaceId
-    ? storeSelection
-    : null;
+  const selection = selectionScope === null || storeSelection === null
+    ? null
+    : getContentSelectionForScope(selectionScope);
   const sharesQuery = useQuery({
     queryKey: spaceSharesQueryKey(organizationId, spaceId),
     queryFn: ({ signal }) => getSpaceShares(organizationId, spaceId, signal),
   });
-  const handleDirectoryAccessLost = useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: spaceSharesQueryKey(organizationId, spaceId),
+  const handleDirectoryAccessLost = useCallback((
+    event: ContentDirectoryAccessLoss,
+  ) => {
+    if (selectionScope === null) {
+      return;
+    }
+    clearContentSelection(selectionScope);
+    console.warn("[content.directory]", {
+      category: event.category,
+      phase: "share-management-access",
+      result: "access-lost",
+      spaceId,
+      ...(event.documentId ? { documentId: event.documentId } : {}),
+      ...(event.triggeringRequestId
+        ? { triggeringRequestId: event.triggeringRequestId }
+        : {}),
     });
-  }, [organizationId, queryClient, spaceId]);
+    if (event.category === "unauthenticated") {
+      setSessionExpired(true);
+      return;
+    }
+    void Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: enterpriseManagementAccessQueryKey,
+      }),
+      queryClient.invalidateQueries({
+        queryKey: spaceSharesQueryKey(organizationId, spaceId),
+      }),
+    ]);
+  }, [organizationId, queryClient, selectionScope, spaceId]);
   const invalidateShares = async () => {
     await queryClient.invalidateQueries({
       queryKey: spaceSharesQueryKey(organizationId, spaceId),
@@ -232,6 +265,9 @@ function SharesPageContent({
       await invalidateShares();
     },
   });
+  if (sessionExpired) {
+    return <SessionRedirect returnTo={locationTarget(location)} />;
+  }
 
   if (sharesQuery.error) {
     return (

@@ -41,6 +41,8 @@ type pushEntry struct {
 	Path     string `json:"path,omitempty"`
 	ID       string `json:"id,omitempty"`
 	Title    string `json:"title,omitempty"`
+	Empty    bool   `json:"empty,omitempty"`
+	RefText  string `json:"refText,omitempty"`
 }
 
 var (
@@ -67,8 +69,16 @@ func AppendPushRemoveEntry(box, p, id string) {
 	appendPushEntry(pushEntry{Action: "remove", Box: box, Path: p, ID: id})
 }
 
-func AppendPushRenameEntry(box, p, title string) {
-	appendPushEntry(pushEntry{Action: "rename", Box: box, Path: p, Title: title})
+func AppendPushRenameEntry(p string, result RenameDocResult) {
+	appendPushEntry(pushEntry{
+		Action:  "rename",
+		Box:     result.NotebookID,
+		Path:    p,
+		ID:      result.DocumentID,
+		Title:   result.Title,
+		Empty:   result.Empty,
+		RefText: result.RefText,
+	})
 }
 
 func AppendPushReloadDocInfoEntry(box, p string) {
@@ -156,10 +166,16 @@ func PollPushQueue() {
 			cache.RemoveTreeData(e.ID)
 			cache.RemoveDocIAL(e.Path)
 		case "rename":
-			util.BroadcastByType("filetree", "rename", 0, "", map[string]any{
-				"box":   e.Box,
-				"path":  e.Path,
-				"title": e.Title,
+			if e.Box == "" || e.ID == "" {
+				logging.LogWarnf("push queue rename: document identity is incomplete")
+				continue
+			}
+			pushRenameDoc(RenameDocResult{
+				NotebookID: e.Box,
+				DocumentID: e.ID,
+				Title:      e.Title,
+				Empty:      e.Empty,
+				RefText:    e.RefText,
 			})
 			cache.RemoveDocIAL(e.Path)
 		case "reloadDocInfo":

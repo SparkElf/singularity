@@ -2484,7 +2484,7 @@ func (tx *Transaction) commit() (err error) {
 	for _, tree := range trees {
 		runTransactionPostCommit("tree notification", func() {
 			refreshDocInfoWithSize(tree, sizes[tree.Box+"\x00"+tree.ID])
-			util.PushSaveDoc(tree.ID, "tx", []any{tx})
+			util.PushSaveDoc(tree.Box, tree.ID, "tx", []any{tx})
 			checkUpsertInUserGuide(tree)
 		})
 	}

@@ -191,13 +191,12 @@ describe("ProcessRestoreDeployment startup reconciliation with PostgreSQL", () =
     if (lifecycle === undefined) {
       throw new Error("Kernel lifecycle reconciliation log is missing");
     }
-    expect(notificationEvent).toMatchObject({
-      deploymentHandle: fixture.handle,
+    expect(notificationEvent).toEqual({
       kernelInstanceId: fixture.kernelInstanceId,
       kind: "remove",
+      requestId: lifecycle.requestId,
       spaceId: fixture.spaceId,
     });
-    expect(notificationEvent.requestId).toBe(lifecycle?.requestId);
   });
 
   it("fails a ready restore and removes its isolated target once", async () => {
@@ -334,13 +333,12 @@ describe("ProcessRestoreDeployment startup reconciliation with PostgreSQL", () =
       throw new Error("Restore reconciliation logs are missing");
     }
     expect(backupLog?.requestId).toBe(lifecycleLog?.requestId);
-    expect(notificationEvent).toMatchObject({
-      deploymentHandle: fixture.handle,
+    expect(notificationEvent).toEqual({
       kernelInstanceId: fixture.kernelInstanceId,
       kind: "remove",
+      requestId: lifecycleLog.requestId,
       spaceId: fixture.spaceId,
     });
-    expect(notificationEvent.requestId).toBe(lifecycleLog?.requestId);
   });
 
   it("shares production platform providers and closes their database once", async () => {

@@ -20,7 +20,7 @@ export interface PendingSpaceConnection {
 export interface SpaceConnectionHandle {
   readonly connectionId: string;
   readonly signal: AbortSignal;
-  activate(expiresAt: Date): boolean;
+  activate(expiresAt: Date, kernelInstanceId: string): boolean;
   bindUpstream(close: () => void): boolean;
   browserClosed(): void;
   clientMessageReceived(): void;
@@ -34,6 +34,7 @@ interface ConnectionRecord extends PendingSpaceConnection {
   closeUpstream?: () => void;
   expiresAt?: Date;
   expiryTimer?: ReturnType<typeof setTimeout>;
+  kernelInstanceId?: string;
   state: SpaceConnectionState;
 }
 
@@ -100,7 +101,8 @@ export class SpaceConnectionRegistry {
     return {
       connectionId: record.connectionId,
       signal: record.abortController.signal,
-      activate: (expiresAt) => this.#activate(record, expiresAt),
+      activate: (expiresAt, kernelInstanceId) =>
+        this.#activate(record, expiresAt, kernelInstanceId),
       bindUpstream: (close) => this.#bindUpstream(record, close),
       browserClosed: () => this.#close(record, "kernel-unavailable", false),
       clientMessageReceived: () =>
@@ -151,7 +153,11 @@ export class SpaceConnectionRegistry {
     }
   }
 
-  #activate(record: ConnectionRecord, expiresAt: Date): boolean {
+  #activate(
+    record: ConnectionRecord,
+    expiresAt: Date,
+    kernelInstanceId: string,
+  ): boolean {
     if (record.state !== "pending") {
       return false;
     }
@@ -159,6 +165,7 @@ export class SpaceConnectionRegistry {
       this.#close(record, "unauthenticated", true);
       return false;
     }
+    record.kernelInstanceId = kernelInstanceId;
     record.state = "active";
     this.#scheduleExpiry(record, expiresAt);
     return true;
@@ -224,6 +231,9 @@ export class SpaceConnectionRegistry {
           outcome: "upstream-close-failed",
           requestId: record.requestId,
           spaceId: record.spaceId,
+          ...(record.kernelInstanceId !== undefined
+            ? { kernelInstanceId: record.kernelInstanceId }
+            : {}),
         });
       }
     }
@@ -237,6 +247,9 @@ export class SpaceConnectionRegistry {
           outcome: "browser-close-failed",
           requestId: record.requestId,
           spaceId: record.spaceId,
+          ...(record.kernelInstanceId !== undefined
+            ? { kernelInstanceId: record.kernelInstanceId }
+            : {}),
         });
       }
     }

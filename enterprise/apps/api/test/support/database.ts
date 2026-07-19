@@ -1,6 +1,7 @@
 import type { DatabaseClient } from "@singularity/database";
 
 const TEST_TABLES = `
+  "content_audit_intents",
   "audit_events",
   "audit_archives",
   "organization_audit_sequences",

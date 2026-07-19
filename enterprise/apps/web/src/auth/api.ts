@@ -11,7 +11,6 @@ import {
   loginResponseSchema,
   oidcProvidersResponseSchema,
   oidcStartResponseSchema,
-  type CsrfResponse,
   type AcceptLocalOrganizationInvitationRequest,
   type AcceptOrganizationInvitationRequest,
   type LoginRequest,
@@ -21,7 +20,87 @@ import {
   type OidcStartResponse,
 } from "@singularity/contracts";
 
-import { requestJson, requestNoContent } from "@/api/http.ts";
+import {
+  NetworkFailureError,
+  requestJson,
+  requestNoContent,
+} from "@/api/http.ts";
+import { useCsrfStore } from "@/auth/csrf-store.ts";
+
+interface ActiveCsrfFetch {
+  readonly controller: AbortController;
+  readonly lifecycle: {
+    settled: boolean;
+    waiters: number;
+  };
+  readonly promise: Promise<string>;
+  readonly revision: number;
+}
+
+let activeCsrfFetch: ActiveCsrfFetch | null = null;
+
+function invalidatedCsrfFetchError(): NetworkFailureError {
+  return new NetworkFailureError(
+    new DOMException("The browser session changed during the CSRF request", "AbortError"),
+  );
+}
+
+function createCsrfFetch(revision: number): ActiveCsrfFetch {
+  const controller = new AbortController();
+  const lifecycle = {
+    settled: false,
+    waiters: 0,
+  };
+  const promise = requestJson(csrfResponseSchema, AUTH_CSRF_PATH, {
+    signal: controller.signal,
+  }).then(({ csrfToken }) => {
+    const state = useCsrfStore.getState();
+    if (state.csrfRevision !== revision) {
+      throw invalidatedCsrfFetchError();
+    }
+    state.setCsrfToken(csrfToken);
+    return csrfToken;
+  }).finally(() => {
+    lifecycle.settled = true;
+    if (activeCsrfFetch?.controller === controller) {
+      activeCsrfFetch = null;
+    }
+  });
+  return { controller, lifecycle, promise, revision };
+}
+
+function waitForCsrfFetch(
+  active: ActiveCsrfFetch,
+  signal?: AbortSignal,
+): Promise<string> {
+  active.lifecycle.waiters += 1;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (outcome: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      active.lifecycle.waiters -= 1;
+      if (active.lifecycle.waiters === 0 && !active.lifecycle.settled) {
+        active.controller.abort();
+      }
+      outcome();
+    };
+    const abort = () => {
+      finish(() => reject(new NetworkFailureError(signal?.reason)));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    void active.promise.then(
+      (csrfToken) => finish(() => resolve(csrfToken)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+    if (signal?.aborted) {
+      abort();
+    }
+  });
+}
 
 export function login(
   request: LoginRequest,
@@ -35,10 +114,20 @@ export function login(
   });
 }
 
-export function getCsrfToken(signal?: AbortSignal): Promise<CsrfResponse> {
-  return requestJson(csrfResponseSchema, AUTH_CSRF_PATH, {
-    signal: signal ?? null,
-  });
+export function getOrFetchCsrfToken(signal?: AbortSignal): Promise<string> {
+  const state = useCsrfStore.getState();
+  if (state.csrfToken !== null) {
+    return Promise.resolve(state.csrfToken);
+  }
+  if (
+    activeCsrfFetch === null ||
+    activeCsrfFetch.revision !== state.csrfRevision ||
+    activeCsrfFetch.controller.signal.aborted
+  ) {
+    activeCsrfFetch?.controller.abort();
+    activeCsrfFetch = createCsrfFetch(state.csrfRevision);
+  }
+  return waitForCsrfFetch(activeCsrfFetch, signal);
 }
 
 export function logout(csrfToken: string, signal?: AbortSignal): Promise<void> {

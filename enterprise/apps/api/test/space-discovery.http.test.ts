@@ -22,6 +22,7 @@ import {
   type TestApiApplication,
 } from "./support/test-app.js";
 import {
+  combineTestKernelGatewayConfigurations,
   startTestKernelGateway,
   type TestKernelGateway,
   type TestKernelRequest,
@@ -32,12 +33,21 @@ const PASSWORD = "correct horse battery staple";
 const NOTEBOOK_ID = "20260719150000-noteb01";
 const DOCUMENT_ID = "20260719150001-docum01";
 const BLOCK_ID = "20260719150002-block01";
+const SECOND_NOTEBOOK_ID = "20260719160000-noteb02";
+const SECOND_DOCUMENT_ID = "20260719160001-docum02";
+const SECOND_BLOCK_ID = "20260719160002-block02";
 const SEARCH_PATH = "/internal/enterprise/discovery/search";
 const GRAPH_PATH = "/internal/enterprise/discovery/graph";
 const DOCUMENT_SEARCH_PATH = "/api/search/fullTextSearchBlock";
+const DOCUMENT_OUTLINE_PATH = "/api/outline/getDocOutline";
 const DOCUMENT_BACKLINKS_PATH = "/api/ref/getBacklink2";
 const DOCUMENT_HISTORY_PATH = "/api/history/searchHistory";
 const DOCUMENT_GRAPH_PATH = "/api/graph/getLocalGraph";
+const INVALID_SCHEMA_QUERY = "invalid-kernel-schema";
+const INVALID_CONTENT_TYPE_QUERY = "invalid-kernel-content-type";
+const OVERSIZED_RESPONSE_QUERY = "oversized-kernel-response";
+const FAILED_STATUS_QUERY = "failed-kernel-status";
+const MAX_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const SEARCH_RESPONSE = {
   blocks: [
@@ -46,6 +56,19 @@ const SEARCH_RESPONSE = {
       documentId: DOCUMENT_ID,
       id: BLOCK_ID,
       notebookId: NOTEBOOK_ID,
+    },
+  ],
+  matchedBlockCount: 1,
+  pageCount: 1,
+};
+
+const SECOND_SEARCH_RESPONSE = {
+  blocks: [
+    {
+      content: "Beta knowledge",
+      documentId: SECOND_DOCUMENT_ID,
+      id: SECOND_BLOCK_ID,
+      notebookId: SECOND_NOTEBOOK_ID,
     },
   ],
   matchedBlockCount: 1,
@@ -80,6 +103,10 @@ const DOCUMENT_RESPONSES = new Map<string, unknown>([
     },
   ],
   [
+    DOCUMENT_OUTLINE_PATH,
+    [{ children: [], id: BLOCK_ID, name: "Alpha outline" }],
+  ],
+  [
     DOCUMENT_BACKLINKS_PATH,
     {
       backlinks: [
@@ -103,7 +130,7 @@ const DOCUMENT_RESPONSES = new Map<string, unknown>([
   [
     DOCUMENT_GRAPH_PATH,
     {
-      links: [{ from: DOCUMENT_ID, to: BLOCK_ID }],
+      links: [{ from: BLOCK_ID, to: "knowledge/tag" }],
       nodes: [
         {
           documentId: DOCUMENT_ID,
@@ -132,6 +159,40 @@ interface AuthenticatedSpace {
 
 function kernelResponse(request: TestKernelRequest): TestKernelResponse {
   if (request.path === SEARCH_PATH) {
+    const { query } = JSON.parse(request.body.toString("utf8")) as {
+      readonly query: string;
+    };
+    if (query === INVALID_SCHEMA_QUERY) {
+      return {
+        body: JSON.stringify({ ...SEARCH_RESPONSE, internalPath: "/data" }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      };
+    }
+    if (query === INVALID_CONTENT_TYPE_QUERY) {
+      return {
+        body: JSON.stringify(SEARCH_RESPONSE),
+        headers: { "content-type": "text/plain" },
+        status: 200,
+      };
+    }
+    if (query === OVERSIZED_RESPONSE_QUERY) {
+      return {
+        body: JSON.stringify({
+          ...SEARCH_RESPONSE,
+          internalPayload: "x".repeat(MAX_DISCOVERY_RESPONSE_BYTES),
+        }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      };
+    }
+    if (query === FAILED_STATUS_QUERY) {
+      return {
+        body: JSON.stringify({ error: "unavailable" }),
+        headers: { "content-type": "application/json" },
+        status: 500,
+      };
+    }
     return {
       body: JSON.stringify(SEARCH_RESPONSE),
       headers: { "content-type": "application/json" },
@@ -156,6 +217,17 @@ function kernelResponse(request: TestKernelRequest): TestKernelResponse {
   return { status: 404 };
 }
 
+function secondKernelResponse(request: TestKernelRequest): TestKernelResponse {
+  if (request.path === SEARCH_PATH) {
+    return {
+      body: JSON.stringify(SECOND_SEARCH_RESPONSE),
+      headers: { "content-type": "application/json" },
+      status: 200,
+    };
+  }
+  return { status: 404 };
+}
+
 function cookiePair(response: Response): string {
   const pair = response.headers.get("set-cookie")?.split(";", 1)[0];
   if (!pair?.startsWith(`${AUTH_SESSION_COOKIE_NAME}=`)) {
@@ -168,18 +240,34 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
   let database: DatabaseClient;
   let kernel: TestKernelGateway;
   let passwordDigest: string;
+  let secondKernel: TestKernelGateway;
   let testApi: TestApiApplication;
 
   beforeAll(async () => {
-    kernel = await startTestKernelGateway({ handler: kernelResponse });
+    kernel = await startTestKernelGateway({
+      deploymentHandle: "test-discovery-first-space",
+      handler: kernelResponse,
+    });
     try {
-      testApi = await startTestApiApplication({
-        kernelGateway: kernel.configuration,
+      secondKernel = await startTestKernelGateway({
+        deploymentHandle: "test-discovery-second-space",
+        handler: secondKernelResponse,
       });
-      database = testApi.app.get(DatabaseRuntime).client;
-      passwordDigest = await testApi.app
-        .get(PasswordHasher)
-        .hashPassword(PASSWORD);
+      try {
+        testApi = await startTestApiApplication({
+          kernelGateway: combineTestKernelGatewayConfigurations(
+            kernel,
+            secondKernel,
+          ),
+        });
+        database = testApi.app.get(DatabaseRuntime).client;
+        passwordDigest = await testApi.app
+          .get(PasswordHasher)
+          .hashPassword(PASSWORD);
+      } catch (error) {
+        await secondKernel.dispose();
+        throw error;
+      }
     } catch (error) {
       await kernel.dispose();
       throw error;
@@ -194,7 +282,7 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     try {
       await testApi.dispose();
     } finally {
-      await kernel.dispose();
+      await Promise.all([kernel.dispose(), secondKernel.dispose()]);
     }
   });
 
@@ -352,6 +440,116 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     expect(JSON.parse(requests[0]!.body.toString("utf8"))).toEqual(body);
   });
 
+  test("rejects content identity in a public space query before Kernel", async () => {
+    const authenticated = await createAuthenticatedSpace();
+    const requestOffset = kernel.requests.length;
+    const response = await fetch(
+      `${testApi.baseUrl}${buildSpaceDiscoverySearchPath(authenticated)}`,
+      {
+        body: JSON.stringify({
+          documentId: DOCUMENT_ID,
+          method: "keyword",
+          notebookId: NOTEBOOK_ID,
+          query: "Alpha",
+        }),
+        headers: discoveryHeaders(authenticated),
+        method: "POST",
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(kernel.requests).toHaveLength(requestOffset);
+  });
+
+  test.each([
+    { query: INVALID_SCHEMA_QUERY, source: "schema" },
+    { query: INVALID_CONTENT_TYPE_QUERY, source: "content type" },
+    { query: OVERSIZED_RESPONSE_QUERY, source: "size" },
+    { query: FAILED_STATUS_QUERY, source: "status" },
+  ])(
+    "maps an invalid Kernel response $source to service unavailable",
+    async ({ query }) => {
+      const authenticated = await createAuthenticatedSpace();
+      const requestOffset = kernel.requests.length;
+      const response = await fetch(
+        `${testApi.baseUrl}${buildSpaceDiscoverySearchPath(authenticated)}`,
+        {
+          body: JSON.stringify({ method: "keyword", query }),
+          headers: discoveryHeaders(authenticated),
+          method: "POST",
+        },
+      );
+
+      expect(response.status).toBe(503);
+      expect(apiProblemSchema.parse(await response.json()).code).toBe(
+        "service-unavailable",
+      );
+      expect(kernel.requests.slice(requestOffset)).toHaveLength(1);
+    },
+  );
+
+  test("routes the same discovery query only to the Kernel owned by each space", async () => {
+    const first = await createAuthenticatedSpace();
+    await database.space.create({
+      data: {
+        id: secondKernel.deployment.spaceId,
+        name: "Second Discovery Space",
+        organizationId: first.organizationId,
+        status: "active",
+      },
+    });
+    await database.spaceMembership.create({
+      data: {
+        organizationId: first.organizationId,
+        role: "viewer",
+        spaceId: secondKernel.deployment.spaceId,
+        status: "active",
+        userId: first.userId,
+      },
+    });
+    await database.kernelInstance.create({
+      data: {
+        deploymentHandle: secondKernel.deployment.handle,
+        id: secondKernel.deployment.kernelInstanceId,
+        spaceId: secondKernel.deployment.spaceId,
+        status: "ready",
+        version: "3.7.2",
+      },
+    });
+    const second = { ...first, spaceId: secondKernel.deployment.spaceId };
+    const firstRequestOffset = kernel.requests.length;
+    const secondRequestOffset = secondKernel.requests.length;
+    const body = { method: "keyword", query: "same-query" } as const;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      fetch(`${testApi.baseUrl}${buildSpaceDiscoverySearchPath(first)}`, {
+        body: JSON.stringify(body),
+        headers: discoveryHeaders(first),
+        method: "POST",
+      }),
+      fetch(`${testApi.baseUrl}${buildSpaceDiscoverySearchPath(second)}`, {
+        body: JSON.stringify(body),
+        headers: discoveryHeaders(second),
+        method: "POST",
+      }),
+    ]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(spaceDiscoverySearchResponseSchema.parse(await firstResponse.json()))
+      .toEqual(SEARCH_RESPONSE);
+    expect(spaceDiscoverySearchResponseSchema.parse(await secondResponse.json()))
+      .toEqual(SECOND_SEARCH_RESPONSE);
+    const firstRequests = kernel.requests.slice(firstRequestOffset);
+    const secondRequests = secondKernel.requests.slice(secondRequestOffset);
+    expect(firstRequests).toHaveLength(1);
+    expect(secondRequests).toHaveLength(1);
+    expectServiceIdentityRequest(firstRequests[0]!, SEARCH_PATH);
+    expectServiceIdentityRequest(secondRequests[0]!, SEARCH_PATH);
+    expect(JSON.parse(firstRequests[0]!.body.toString("utf8"))).toEqual(body);
+    expect(JSON.parse(secondRequests[0]!.body.toString("utf8"))).toEqual(body);
+  });
+
   test("reads an authorized space graph with explicit navigation identities", async () => {
     const authenticated = await createAuthenticatedSpace();
     const requestOffset = kernel.requests.length;
@@ -380,6 +578,10 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
       path: DOCUMENT_SEARCH_PATH,
     },
     {
+      body: { id: DOCUMENT_ID, preview: false },
+      path: DOCUMENT_OUTLINE_PATH,
+    },
+    {
       body: { id: DOCUMENT_ID, k: "", mSort: "3", mk: "", sort: "3" },
       path: DOCUMENT_BACKLINKS_PATH,
     },
@@ -389,7 +591,11 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     },
     {
       body: {
-        conf: { d3: {}, dailyNote: false, type: {} },
+        conf: {
+          d3: {},
+          dailyNote: false,
+          type: { paragraph: true, tag: true },
+        },
         id: DOCUMENT_ID,
         k: "Alpha",
         type: "local",

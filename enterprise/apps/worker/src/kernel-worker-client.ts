@@ -25,7 +25,7 @@ const observationCountSchema = z
   .refine((value) => BigInt(value) <= POSTGRES_BIGINT_MAXIMUM);
 const observationErrorCodeSchema = z
   .string()
-  .refine((value) => value.trim().length > 0);
+  .regex(/^[a-z][a-z0-9-]{0,63}$/);
 const observationDateTimeSchema = z.string().datetime({ offset: true });
 const observationResponseSchema = z
   .object({
@@ -81,7 +81,7 @@ async function readObservation(message: IncomingMessage): Promise<unknown> {
   }
 }
 
-function observation(
+export function parseKernelObservationResponse(
   value: unknown,
 ): Awaited<ReturnType<KernelObservationPort["read"]>>["sample"] {
   const parsed = observationResponseSchema.safeParse(value);
@@ -143,7 +143,9 @@ export class KernelWorkerClient implements BackupKernelPort, KernelObservationPo
     }
     return {
       deploymentHandle: deployment.handle,
-      sample: observation(await readObservation(response.message)),
+      sample: parseKernelObservationResponse(
+        await readObservation(response.message),
+      ),
     };
   }
 

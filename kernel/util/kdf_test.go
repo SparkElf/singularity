@@ -130,6 +130,26 @@ func TestAESGCMEnvelopeHeaderTampering(t *testing.T) {
 	}
 }
 
+// TestEncryptionNonceRejectsStructurallyIncompleteCiphertext 验证恢复入口不会把截断密文当成合法信封。
+func TestEncryptionNonceRejectsStructurallyIncompleteCiphertext(t *testing.T) {
+	key, _ := GenerateDEK()
+	envelope, err := Encrypt(key, nil)
+	if err != nil {
+		t.Fatalf("encrypt empty plaintext: %v", err)
+	}
+	if _, err = EncryptionNonce(envelope[:len(envelope)-1]); err == nil {
+		t.Fatal("truncated envelope was accepted")
+	}
+	if _, err = EncryptionNonce(make([]byte, encryptionGCMNonceSize+encryptionGCMTagSize-1)); err == nil {
+		t.Fatal("truncated legacy ciphertext was accepted")
+	}
+	invalidNonceLength := append([]byte(nil), envelope...)
+	invalidNonceLength[len(encryptionMagic)+2] = encryptionGCMNonceSize - 1
+	if _, err = EncryptionNonce(invalidNonceLength); err == nil {
+		t.Fatal("invalid envelope nonce length was accepted")
+	}
+}
+
 // TestAESGCMInvalidKeyLength 验证非 32 字节密钥被拒绝。
 func TestAESGCMInvalidKeyLength(t *testing.T) {
 	shortKey := []byte("too-short")

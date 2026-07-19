@@ -18,12 +18,13 @@ import { isApiProblem } from "@/api/http.ts";
 import {
   acceptLocalOrganizationInvitation,
   acceptOrganizationInvitation,
-  getCsrfToken,
+  getOrFetchCsrfToken,
   getOidcProviders,
   startOidc,
 } from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { SPACES_PATH, locationTarget, loginPath } from "@/auth/return-to.ts";
+import { clearClientSession } from "@/auth/session-state.ts";
 import {
   Alert,
   AlertDescription,
@@ -65,13 +66,13 @@ export function InvitationAcceptPage() {
   };
   const currentAccountMutation = useMutation({
     mutationFn: async (invitationToken: string) => {
-      let csrfToken = useCsrfStore.getState().csrfToken;
-      if (csrfToken === null) {
-        const response = await getCsrfToken();
-        csrfToken = response.csrfToken;
-        useCsrfStore.getState().setCsrfToken(csrfToken);
-      }
+      const csrfToken = await getOrFetchCsrfToken();
       await acceptOrganizationInvitation({ invitationToken }, csrfToken);
+    },
+    onError: (error) => {
+      if (isApiProblem(error, "unauthenticated")) {
+        clearClientSession(queryClient);
+      }
     },
     onSuccess: () => finish(),
   });

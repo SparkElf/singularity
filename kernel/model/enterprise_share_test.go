@@ -63,7 +63,7 @@ func TestEnterpriseShareAssetIdentityAndDispositionAreStable(t *testing.T) {
 func TestEnterpriseShareProjectionDropsIdentityAndActiveContentMarkup(t *testing.T) {
 	rendered, err := rewriteEnterpriseSharedAssetLinks(
 		util.SanitizeHTML(
-			`<div data-node-id="20260718010101-private"><svg><script>alert(1)</script></svg><p>正文</p></div>`,
+			`<div data-node-id="20260718010101-private"><svg><script>alert(1)</script></svg><p>正文</p><a href="/organizations/internal/spaces/private">内部链接</a><a href="siyuan://blocks/20260718010101-private">块引用</a><a href="https://docs.example.test/guide">外部链接</a><a href="https://user:secret@docs.example.test/private">凭据链接</a><img src="https://tracking.example.test/pixel.png"></div>`,
 		),
 		map[string]string{},
 	)
@@ -72,6 +72,12 @@ func TestEnterpriseShareProjectionDropsIdentityAndActiveContentMarkup(t *testing
 	}
 	if strings.Contains(rendered, "data-node-id") || strings.Contains(rendered, "<svg") || strings.Contains(rendered, "script") {
 		t.Fatalf("shared projection retained private or active markup: %s", rendered)
+	}
+	if strings.Contains(rendered, "/organizations/internal") || strings.Contains(rendered, "20260718010101-private") || strings.Contains(rendered, "user:secret") || strings.Contains(rendered, "tracking.example.test") {
+		t.Fatalf("shared projection retained an internal or unbound URL: %s", rendered)
+	}
+	if !strings.Contains(rendered, `href="https://docs.example.test/guide"`) {
+		t.Fatalf("shared projection lost an external link: %s", rendered)
 	}
 	if !strings.Contains(rendered, "正文") {
 		t.Fatalf("shared projection lost document text: %s", rendered)

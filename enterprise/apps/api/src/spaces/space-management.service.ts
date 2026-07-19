@@ -8,9 +8,8 @@ import type {
   SpaceRole,
   UpdateSpaceRequest,
 } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import { unactivatedSpaceRestorePersistenceStatuses } from "../backups/restore-status.persistence.js";
 import type { Clock } from "../identity/clock.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
@@ -255,6 +254,19 @@ export class SpaceManagementService {
         spaceId,
         [userId],
       );
+      const existingMemberships = await transaction.$queryRaw<
+        Array<{ role: SpaceRole; status: "active" | "inactive" }>
+      >(
+        Prisma.sql`
+          SELECT "role", "status"
+          FROM "space_memberships"
+          WHERE "organization_id" = ${organizationId}
+            AND "space_id" = ${spaceId}
+            AND "user_id" = ${userId}
+          FOR UPDATE
+        `,
+      );
+      const existingMembership = existingMemberships[0];
       const target = await transaction.organizationMembership.findFirst({
         where: {
           organizationId,
@@ -266,6 +278,12 @@ export class SpaceManagementService {
       });
       if (target === null) {
         throw notFound();
+      }
+      if (
+        existingMembership?.role === role &&
+        existingMembership.status === "active"
+      ) {
+        return;
       }
       await transaction.spaceMembership.upsert({
         where: { spaceId_userId: { spaceId, userId } },
@@ -309,7 +327,7 @@ export class SpaceManagementService {
         [userId],
       );
       const revoked = await transaction.spaceMembership.updateMany({
-        where: { organizationId, spaceId, userId },
+        where: { organizationId, spaceId, status: "active", userId },
         data: { status: "inactive" },
       });
       if (revoked.count > 0) {
@@ -396,6 +414,21 @@ export class SpaceManagementService {
       });
       if (group === null) {
         throw notFound();
+      }
+      const existingGrants = await transaction.$queryRaw<
+        Array<{ role: SpaceRole }>
+      >(
+        Prisma.sql`
+          SELECT "role"
+          FROM "space_group_grants"
+          WHERE "organization_id" = ${organizationId}
+            AND "space_id" = ${spaceId}
+            AND "group_id" = ${groupId}
+          FOR UPDATE
+        `,
+      );
+      if (existingGrants[0]?.role === role) {
+        return;
       }
       await transaction.spaceGroupGrant.upsert({
         where: { spaceId_groupId: { groupId, spaceId } },

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useParams } from "react-router";
 
+import { isApiProblem } from "@/api/http.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -147,9 +148,12 @@ export function SpaceAccessPage() {
     },
   });
 
-  const queryError = membersQuery.error ?? grantsQuery.error;
   const directoryError =
-    memberCandidatesQuery.error ?? groupCandidatesQuery.error;
+    memberCandidatesQuery.error ?? groupCandidatesQuery.error ?? null;
+  const queryError =
+    membersQuery.error ??
+    grantsQuery.error ??
+    (isApiProblem(directoryError, "unauthenticated") ? directoryError : null);
   if (queryError) {
     return (
       <PageFailure

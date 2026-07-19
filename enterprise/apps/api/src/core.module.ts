@@ -1,15 +1,15 @@
 import type { DynamicModule } from "@nestjs/common";
 import { Module } from "@nestjs/common";
 import { DiscoveryModule } from "@nestjs/core";
-import { DatabaseRuntime } from "@singularity/database";
-
-import { AuditController } from "./audit/audit.controller.js";
-import { AuditService } from "./audit/audit.service.js";
 import {
   AuditWriter,
-  AUDIT_CONFIGURATION,
+  DatabaseRuntime,
   type AuditConfiguration,
-} from "./audit/audit-writer.service.js";
+} from "@singularity/database";
+
+import { AuditController } from "./audit/audit.controller.js";
+import { ContentAuditIntentService } from "./audit/content-audit-intent.service.js";
+import { AuditService } from "./audit/audit.service.js";
 import { BackupController } from "./backups/backup.controller.js";
 import { BackupService } from "./backups/backup.service.js";
 import type { ApiConfiguration } from "./configuration.js";
@@ -41,6 +41,7 @@ import { SpaceObservabilityController } from "./spaces/space-observability.contr
 import { SpaceObservabilityService } from "./spaces/space-observability.service.js";
 import {
   API_CONFIGURATION,
+  AUDIT_CONFIGURATION,
   CLOCK,
   OIDC_CLIENT_SECRET_RESOLVER,
   OIDC_PROVIDER_CLIENT,
@@ -78,7 +79,13 @@ export class CoreModule {
         },
         { provide: AUDIT_CONFIGURATION, useValue: options.auditConfiguration },
         AuditService,
-        AuditWriter,
+        {
+          provide: AuditWriter,
+          inject: [AUDIT_CONFIGURATION],
+          useFactory: (configuration: AuditConfiguration) =>
+            new AuditWriter(configuration),
+        },
+        ContentAuditIntentService,
         BackupService,
         SpaceObservabilityService,
         {
@@ -142,6 +149,7 @@ export class CoreModule {
         SpaceManagementService,
         AuditService,
         AuditWriter,
+        ContentAuditIntentService,
         BackupService,
         SpaceObservabilityService,
       ],

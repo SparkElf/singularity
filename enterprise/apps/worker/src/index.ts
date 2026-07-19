@@ -8,6 +8,7 @@ export {
   type ClaimedWorkerJob,
   type DeclaredWorkerJobHandler,
   type RestoreSpaceJob,
+  type ReconcileContentAuditJob,
   type SampleKernelJob,
   type WorkerJobBase,
   type WorkerJobHandler,
@@ -57,8 +58,10 @@ export {
   type KernelObservationPort,
   type RestoreDeploymentPort,
 } from "./l1-handlers.js";
+export { ContentAuditHandler } from "./content-audit-reconciliation.js";
 export {
   ArchiveAuditJobProducer,
+  ContentAuditJobProducer,
   SampleKernelJobProducer,
 } from "./scheduled-producers.js";
 export { WorkerJobScheduler } from "./scheduler.js";

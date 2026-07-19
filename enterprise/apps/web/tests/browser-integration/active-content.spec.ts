@@ -35,6 +35,17 @@ interface ObservedAssetRequest {
   readonly path: string;
 }
 
+interface ObservedOcrRequest {
+  readonly documentId: string;
+  readonly notebookId: string;
+  readonly path: string;
+}
+
+interface ActiveContentBoundary {
+  readonly assetRequests: ObservedAssetRequest[];
+  readonly ocrRequests: ObservedOcrRequest[];
+}
+
 const ACTIVE_ASSETS: readonly AssetFixture[] = [
   {
     body: Buffer.from("<script>window.__activeContentExecuted = true</script>", "utf8"),
@@ -137,11 +148,12 @@ function documentResponse(): object {
     assetLink(PNG_ASSET),
     ...ACTIVE_ASSETS.map((asset) => assetLink(asset)),
   ].join(" ");
+  const image = `<span contenteditable="false" data-type="img" class="img"><span> </span><span><span class="protyle-action protyle-icons"></span><img src="${PNG_ASSET.path}" data-src="${PNG_ASSET.path}" alt="OCR 样例"><span class="protyle-action__drag"></span><span class="protyle-action__title"><span></span></span></span><span> </span></span>`;
   return {
     code: 0,
     data: {
       blockCount: 1,
-      content: `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">主动内容安全样例 ${links}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`,
+      content: `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">主动内容安全样例 ${links} ${image}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`,
       eof: false,
       id: DOCUMENT_ID,
       isBacklinkExpand: false,
@@ -160,11 +172,14 @@ function documentResponse(): object {
   };
 }
 
-async function installGatewayBoundary(page: Page): Promise<ObservedAssetRequest[]> {
+async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary> {
   const assets = new Map(
     [PDF_ASSET, PNG_ASSET, ...ACTIVE_ASSETS].map((asset) => [asset.path, asset] as const),
   );
-  const requests: ObservedAssetRequest[] = [];
+  const boundary: ActiveContentBoundary = {
+    assetRequests: [],
+    ocrRequests: [],
+  };
 
   await page.routeWebSocket(/\/kernel\/ws(?:\?|$)/, () => undefined);
   await page.route("**/api/v1/**", async (route) => {
@@ -235,7 +250,7 @@ async function installGatewayBoundary(page: Page): Promise<ObservedAssetRequest[
         await route.abort("failed");
         return;
       }
-      requests.push({
+      boundary.assetRequests.push({
         documentId: url.searchParams.get("documentId") ?? "",
         download: url.searchParams.get("download") === "true",
         notebookId: url.searchParams.get("notebookId") ?? "",
@@ -266,6 +281,17 @@ async function installGatewayBoundary(page: Page): Promise<ObservedAssetRequest[
       return;
     }
     const kernelPath = path.slice(kernelPrefix.length);
+    if (kernelPath === "/api/asset/getImageOCRText") {
+      const body = request.postDataJSON() as { path?: unknown };
+      const headers = request.headers();
+      boundary.ocrRequests.push({
+        documentId: headers["x-singularity-document-id"] ?? "",
+        notebookId: headers["x-singularity-notebook-id"] ?? "",
+        path: typeof body.path === "string" ? body.path : "",
+      });
+      await fulfillJson(route, { code: 0, data: { text: "受控 OCR 文本" }, msg: "" });
+      return;
+    }
     if (kernelPath === "/api/filetree/getDoc") {
       await fulfillJson(route, documentResponse());
       return;
@@ -304,7 +330,7 @@ async function installGatewayBoundary(page: Page): Promise<ObservedAssetRequest[
     await route.abort("failed");
   });
 
-  return requests;
+  return boundary;
 }
 
 async function openWorkspace(page: Page) {
@@ -318,10 +344,19 @@ test.describe("active content and PDF preview", () => {
   test("renders an authorized PDF only through PDF.js canvas", async ({ page }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
-    const requests = await installGatewayBoundary(page);
+    const boundary = await installGatewayBoundary(page);
     const editor = await openWorkspace(page);
 
-    await editor.getByText(PDF_ASSET.label).click();
+    await editor.getByText(PDF_ASSET.label).click({ button: "right" });
+    const linkMenu = page.locator('[data-protyle-menu][data-name="inline-a"]');
+    await expect(linkMenu).toBeVisible();
+    const openBy = linkMenu.locator(':scope > .b3-menu__items > [data-id="openBy"]');
+    await openBy.hover();
+    const openCurrent = openBy.locator(
+      ':scope > .b3-menu__submenu > .b3-menu__items > [data-id="openBy"]',
+    );
+    await expect(openCurrent).toBeVisible();
+    await openCurrent.click();
     const preview = page.locator("[data-asset-preview]");
     await expect(preview).toBeVisible();
     const canvas = preview.locator("[data-pdf-canvas]");
@@ -347,7 +382,7 @@ test.describe("active content and PDF preview", () => {
       return false;
     })).toBe(true);
     await expect(preview.locator("iframe, object, embed")).toHaveCount(0);
-    expect(requests).toContainEqual({
+    expect(boundary.assetRequests).toContainEqual({
       documentId: DOCUMENT_ID,
       download: false,
       notebookId: NOTEBOOK_ID,
@@ -361,7 +396,7 @@ test.describe("active content and PDF preview", () => {
   test("inlines only a Gateway-approved inert image MIME", async ({ page }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
-    const requests = await installGatewayBoundary(page);
+    const boundary = await installGatewayBoundary(page);
     const editor = await openWorkspace(page);
 
     await editor.getByText(PNG_ASSET.label).click();
@@ -373,7 +408,7 @@ test.describe("active content and PDF preview", () => {
     ))).toBe(true);
     expect(await image.getAttribute("src")).toMatch(/^blob:/);
     await expect(preview.locator("iframe, object, embed, script")).toHaveCount(0);
-    expect(requests).toContainEqual({
+    expect(boundary.assetRequests).toContainEqual({
       documentId: DOCUMENT_ID,
       download: false,
       notebookId: NOTEBOOK_ID,
@@ -384,12 +419,40 @@ test.describe("active content and PDF preview", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
+  test("submits the canonical persisted image path to OCR", async ({ page }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installGatewayBoundary(page);
+    const editor = await openWorkspace(page);
+    const image = editor.locator(
+      `[data-node-id="${BLOCK_ID}"] [data-type~="img"] img[data-src="${PNG_ASSET.path}"]`,
+    );
+
+    await expect(image).toBeVisible();
+    expect(await image.getAttribute("src")).toContain(`${GATEWAY_BASE_PATH}/${PNG_ASSET.path}`);
+    expect(await image.getAttribute("data-src")).toBe(PNG_ASSET.path);
+    await image.click({ button: "right" });
+    const imageMenu = page.locator('[data-protyle-menu][data-name="inline-img"]');
+    await expect(imageMenu).toBeVisible();
+    const ocr = imageMenu.locator(':scope > .b3-menu__items > [data-id="ocr"]');
+    await expect(ocr).toBeVisible();
+    await ocr.hover();
+    await expect.poll(() => boundary.ocrRequests.length).toBe(1);
+    expect(boundary.ocrRequests).toContainEqual({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+      path: PNG_ASSET.path,
+    });
+
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
   test("downloads HTML, JavaScript, SVG, XML, and unknown bytes without executing them", async ({
     page,
   }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
-    const requests = await installGatewayBoundary(page);
+    const boundary = await installGatewayBoundary(page);
     const editor = await openWorkspace(page);
 
     for (const asset of ACTIVE_ASSETS) {
@@ -407,7 +470,7 @@ test.describe("active content and PDF preview", () => {
     }
 
     for (const asset of ACTIVE_ASSETS) {
-      expect(requests).toContainEqual({
+      expect(boundary.assetRequests).toContainEqual({
         documentId: DOCUMENT_ID,
         download: true,
         notebookId: NOTEBOOK_ID,

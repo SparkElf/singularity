@@ -37,6 +37,8 @@ const (
 
 	encryptionAlgorithmAES256GCM byte = 1
 	encryptionEnvelopeHeaderSize      = len(encryptionMagic) + 3 // magic + spec + algorithm + nonce length
+	encryptionGCMNonceSize            = 12
+	encryptionGCMTagSize              = 16
 )
 
 // Argon2Params 是 Argon2id 密钥派生函数的参数。参数本身不是秘密，会随配置落盘，以便跨平台一致地派生密钥。
@@ -116,15 +118,18 @@ func EncryptionNonce(ciphertext []byte) ([]byte, error) {
 			return nil, errors.New("unsupported encrypted envelope algorithm")
 		}
 		nonceLength := int(ciphertext[len(encryptionMagic)+2])
-		if nonceLength == 0 || len(ciphertext) < encryptionEnvelopeHeaderSize+nonceLength {
+		if nonceLength != encryptionGCMNonceSize {
 			return nil, errors.New("invalid encrypted envelope nonce length")
+		}
+		if len(ciphertext) < encryptionEnvelopeHeaderSize+nonceLength+encryptionGCMTagSize {
+			return nil, errors.New("encrypted envelope too short")
 		}
 		return append([]byte(nil), ciphertext[encryptionEnvelopeHeaderSize:encryptionEnvelopeHeaderSize+nonceLength]...), nil
 	}
-	if len(ciphertext) < 12 {
+	if len(ciphertext) < encryptionGCMNonceSize+encryptionGCMTagSize {
 		return nil, errors.New("ciphertext too short to extract nonce")
 	}
-	return append([]byte(nil), ciphertext[:12]...), nil
+	return append([]byte(nil), ciphertext[:encryptionGCMNonceSize]...), nil
 }
 
 // DeriveSubKey 用 HKDF-SHA256 从主 DEK 派生用途隔离的子密钥。

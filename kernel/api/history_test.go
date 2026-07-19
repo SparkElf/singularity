@@ -11,10 +11,12 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +228,38 @@ func TestHistoryHTTPRejectsInvalidNotebookWithoutData(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSearchHistoryRejectsInvalidPage(t *testing.T) {
+	previousMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(previousMode) })
+
+	for _, page := range []float64{-1, 0, 1.5, float64(math.MaxInt), 1e20} {
+		t.Run(strconv.FormatFloat(page, 'g', -1, 64), func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"page": page})
+			if err != nil {
+				t.Fatal(err)
+			}
+			router := gin.New()
+			router.POST("/api/history/searchHistory", searchHistory)
+			request := httptest.NewRequest(http.MethodPost, "/api/history/searchHistory", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			var result struct {
+				Code int    `json:"code"`
+				Msg  string `json:"msg"`
+			}
+			if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatalf("decode history response: %v", err)
+			}
+			if result.Code == 0 || result.Msg != "Field [page] must be a positive integer" {
+				t.Fatalf("history response = %#v, want positive-integer page error", result)
+			}
+		})
 	}
 }
 

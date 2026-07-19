@@ -58,7 +58,7 @@ func TestProtyleDocumentEventPayloadsCarryExplicitIdentity(t *testing.T) {
 
 func TestProtyleMoveDocumentPayloadCarriesSourceIdentity(t *testing.T) {
 	payload, err := json.Marshal(ProtyleMoveDocumentData{
-		ID:           "20990719000004-movedoc",
+		DocumentID:   "20990719000004-movedoc",
 		FromNotebook: "20990719000005-sourcebox",
 		FromPath:     "/source.sy",
 		ToNotebook:   "20990719000006-targetbox",
@@ -72,10 +72,13 @@ func TestProtyleMoveDocumentPayloadCarriesSourceIdentity(t *testing.T) {
 	if err = json.Unmarshal(payload, &data); err != nil {
 		t.Fatalf("decode move document payload: %v", err)
 	}
-	if data["id"] != "20990719000004-movedoc" || data["fromNotebook"] != "20990719000005-sourcebox" ||
+	if data["documentId"] != "20990719000004-movedoc" || data["fromNotebook"] != "20990719000005-sourcebox" ||
 		data["fromPath"] != "/source.sy" || data["toNotebook"] != "20990719000006-targetbox" ||
 		data["toPath"] != "/target.sy" || data["newPath"] != "/target" {
 		t.Fatalf("move document payload = %#v, want explicit source and destination fields", data)
+	}
+	if _, hasLegacyID := data["id"]; hasLegacyID {
+		t.Fatalf("move document payload retained legacy id: %#v", data)
 	}
 }
 

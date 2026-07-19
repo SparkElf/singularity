@@ -57,6 +57,8 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     perMessageDeflate: false,
   });
   #httpServer: HttpServer | undefined;
+  readonly #pendingUpgradeSockets = new Set<Duplex>();
+  #shuttingDown = false;
 
   constructor(
     private readonly access: KernelAccessService,
@@ -69,7 +71,7 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
   ) {}
 
   attach(server: HttpServer): void {
-    if (this.#httpServer !== undefined) {
+    if (this.#httpServer !== undefined || this.#shuttingDown) {
       throw new Error("Kernel WebSocket gateway is already attached");
     }
     this.#httpServer = server;
@@ -77,10 +79,19 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
   }
 
   onApplicationShutdown(): void {
+    if (this.#shuttingDown) {
+      return;
+    }
+    this.#shuttingDown = true;
     if (this.#httpServer !== undefined) {
       this.#httpServer.off("upgrade", this.#handleUpgrade);
       this.#httpServer = undefined;
     }
+    this.connections.closeAllByKernelLifecycle();
+    for (const socket of this.#pendingUpgradeSockets) {
+      socket.destroy();
+    }
+    this.#pendingUpgradeSockets.clear();
     for (const socket of this.#server.clients) {
       socket.close(1001, "server-shutdown");
     }
@@ -92,9 +103,17 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     socket: Duplex,
     head: Buffer,
   ): void => {
+    if (this.#shuttingDown || socket.destroyed) {
+      socket.destroy();
+      return;
+    }
     const requestId = randomUUID();
+    this.#pendingUpgradeSockets.add(socket);
     void this.#authorizeUpgrade(request, requestId)
       .then(({ session, target }) => {
+        if (this.#shuttingDown || socket.destroyed) {
+          return;
+        }
         this.#server.handleUpgrade(request, socket, head, (browser) => {
           this.#server.emit("connection", browser, request);
           let handle: SpaceConnectionHandle;
@@ -126,6 +145,9 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
         });
       })
       .catch((error: unknown) => {
+        if (this.#shuttingDown || socket.destroyed) {
+          return;
+        }
         const status =
           error instanceof KernelGatewayAdmissionError
             ? error.status
@@ -143,7 +165,8 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
                   ? "validation-failed"
                   : "service-unavailable";
         this.#rejectUpgrade(socket, status, code, requestId);
-      });
+      })
+      .finally(() => this.#pendingUpgradeSockets.delete(socket));
   };
 
   async #authorizeUpgrade(request: IncomingMessage, requestId: string) {
@@ -187,7 +210,10 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
       handle.reject(authorization.result);
       return;
     }
-    if (!handle.activate(authorization.expiresAt)) {
+    if (!handle.activate(
+      authorization.expiresAt,
+      authorization.target.deployment.kernelInstanceId,
+    )) {
       return;
     }
 
@@ -211,6 +237,7 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     this.#logger.log({
       connectionId: handle.connectionId,
       event: "kernel.route",
+      kernelInstanceId: authorization.target.deployment.kernelInstanceId,
       outcome: "websocket-active",
       requestId,
       spaceId: target.spaceId,
@@ -223,6 +250,9 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     code: string,
     requestId: string,
   ): void {
+    if (socket.destroyed || !socket.writable) {
+      return;
+    }
     const body = JSON.stringify({ code, requestId, status });
     socket.end(
       `HTTP/1.1 ${String(status)} ${statusText(status)}\r\n` +

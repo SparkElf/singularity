@@ -383,7 +383,8 @@ export class Graph extends Model {
                     }
                     break;
                 case "rename":
-                    if (this.type !== "global" && data.data.box === this.notebookId && this.rootId === data.data.id) {
+                    if (this.type !== "global" && data.data.notebookId === this.notebookId &&
+                        this.rootId === data.data.documentId) {
                         this.searchGraph(false);
                         if (this.type === "local") {
                             this.parent.updateTitle(getDocDisplayName(data.data.title, data.data.empty));

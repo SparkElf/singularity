@@ -1,8 +1,7 @@
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import { createSecretKey } from "node:crypto";
 
-import type { AuditConfiguration } from "./audit/audit-writer.service.js";
+export const DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS = 120_000;
 
 export class ApiConfigurationError extends Error {
   constructor() {
@@ -12,43 +11,25 @@ export class ApiConfigurationError extends Error {
 }
 
 export interface ApiConfiguration {
+  contentAuditIndeterminateAfterMilliseconds: number;
   oidcClientSecretFiles: Readonly<Record<string, string>>;
   publicOrigin: string;
   trustedProxyCidrs: readonly string[];
 }
 
-export interface AuditConfigurationEnvironment {
-  readonly SINGULARITY_AUDIT_HMAC_KEY?: string;
-  readonly SINGULARITY_AUDIT_KEY_VERSION?: string;
-}
-
-export function parseAuditConfiguration(
-  environment: AuditConfigurationEnvironment,
-): AuditConfiguration {
-  const encoded = environment.SINGULARITY_AUDIT_HMAC_KEY;
-  const keyVersion = environment.SINGULARITY_AUDIT_KEY_VERSION;
-  if (
-    encoded === undefined ||
-    !/^[A-Za-z0-9_-]+$/.test(encoded) ||
-    keyVersion === undefined ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(keyVersion)
-  ) {
+export function parseContentAuditIndeterminateAfterMilliseconds(
+  value: string | undefined,
+): number {
+  const text =
+    value ?? String(DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS);
+  if (!/^[1-9][0-9]*$/.test(text)) {
     throw new ApiConfigurationError();
   }
-  let key: Buffer;
-  try {
-    key = Buffer.from(encoded, "base64url");
-  } catch {
+  const parsed = Number(text);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new ApiConfigurationError();
   }
-  if (
-    key.byteLength < 32 ||
-    key.byteLength > 128 ||
-    key.toString("base64url") !== encoded
-  ) {
-    throw new ApiConfigurationError();
-  }
-  return { hmacKey: createSecretKey(key), keyVersion };
+  return parsed;
 }
 
 export function parseOidcClientSecretFiles(

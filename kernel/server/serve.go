@@ -223,13 +223,15 @@ func Serve(fastMode bool, cookieKey string) {
 	api.ServeAPI(ginServer)
 
 	var host string
-	if enterpriseServiceAuth != nil || model.Conf.System.NetworkServe || util.ContainerDocker == util.Container {
+	if enterpriseServiceAuth != nil {
+		host = enterpriseServiceAuth.ListenAddress()
+	} else if model.Conf.System.NetworkServe || util.ContainerDocker == util.Container {
 		host = "0.0.0.0"
 	} else {
 		host = "127.0.0.1"
 	}
 
-	ln, err := net.Listen("tcp", host+":"+util.ServerPort)
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, util.ServerPort))
 	if err != nil {
 		if !fastMode {
 			logging.LogErrorf("boot kernel failed: %s", err)
@@ -262,13 +264,17 @@ func Serve(fastMode bool, cookieKey string) {
 		}
 	}
 
-	if enterpriseServiceAuth != nil || "" != certPath {
-		util.ServerURL, err = url.Parse("https://127.0.0.1:" + port)
-	} else {
-		util.ServerURL, err = url.Parse("http://127.0.0.1:" + port)
+	serverURLHost := "127.0.0.1"
+	serverURLScheme := "http"
+	if enterpriseServiceAuth != nil {
+		serverURLHost = enterpriseServiceAuth.ListenAddress()
+		serverURLScheme = "https"
+	} else if "" != certPath {
+		serverURLScheme = "https"
 	}
-	if err != nil {
-		logging.LogErrorf("parse server url failed: %s", err)
+	util.ServerURL = &url.URL{
+		Host:   net.JoinHostPort(serverURLHost, port),
+		Scheme: serverURLScheme,
 	}
 
 	pid := fmt.Sprintf("%d", os.Getpid())
@@ -277,12 +283,13 @@ func Serve(fastMode bool, cookieKey string) {
 	}
 
 	useTLS := model.Conf.System.NetworkServeTLS && model.Conf.System.NetworkServe
+	listenAddress := net.JoinHostPort(host, port)
 	if useTLS {
-		logging.LogInfof("kernel [pid=%s] http server [%s] is booting (TLS will be enabled on fixed port proxy)", pid, host+":"+port)
+		logging.LogInfof("kernel [pid=%s] http server [%s] is booting (TLS will be enabled on fixed port proxy)", pid, listenAddress)
 	} else if "" != certPath {
-		logging.LogInfof("kernel [pid=%s] http server [%s] is booting (local HTTPS + HTTP/2 enabled)", pid, host+":"+port)
+		logging.LogInfof("kernel [pid=%s] http server [%s] is booting (local HTTPS + HTTP/2 enabled)", pid, listenAddress)
 	} else {
-		logging.LogInfof("kernel [pid=%s] http server [%s] is booting", pid, host+":"+port)
+		logging.LogInfof("kernel [pid=%s] http server [%s] is booting", pid, listenAddress)
 	}
 	util.HttpServing = true
 

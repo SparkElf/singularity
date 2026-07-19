@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   link,
   mkdir,
@@ -17,6 +18,9 @@ import { DatabaseRuntime } from "@singularity/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const processInspection = vi.hoisted(() => ({
+  commandLine: undefined as string | undefined,
+  environment: undefined as string | undefined,
+  overridePid: undefined as number | undefined,
   rootUnavailable: false,
   unreadablePid: undefined as number | undefined,
 }));
@@ -34,6 +38,25 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return original.opendir(...arguments_);
     },
     readFile: async (...arguments_: Parameters<typeof original.readFile>) => {
+      if (
+        processInspection.overridePid !== undefined &&
+        String(arguments_[0]).startsWith(
+          `/proc/${processInspection.overridePid}/`,
+        )
+      ) {
+        if (
+          String(arguments_[0]).endsWith("/cmdline") &&
+          processInspection.commandLine !== undefined
+        ) {
+          return processInspection.commandLine as never;
+        }
+        if (
+          String(arguments_[0]).endsWith("/environ") &&
+          processInspection.environment !== undefined
+        ) {
+          return processInspection.environment as never;
+        }
+      }
       if (
         processInspection.unreadablePid !== undefined &&
         String(arguments_[0]).startsWith(
@@ -103,6 +126,9 @@ function runtimeMetadata(job: RestoreSpaceJob) {
 }
 
 afterEach(async () => {
+  processInspection.commandLine = undefined;
+  processInspection.environment = undefined;
+  processInspection.overridePid = undefined;
   processInspection.rootUnavailable = false;
   processInspection.unreadablePid = undefined;
   await Promise.all(
@@ -179,14 +205,137 @@ describe("ProcessRestoreDeployment archive boundary", () => {
       new CapturingWorkerLogger(),
     );
     const job = restoreJob();
-    const { workspaceDirectory, workspaceDirectoryName } = targetPaths(root, job);
+    const { metadataPath, workspaceDirectory, workspaceDirectoryName } =
+      targetPaths(root, job);
     await mkdir(workspaceDirectory, { mode: 0o700 });
+    await writeFile(metadataPath, JSON.stringify(runtimeMetadata(job)), {
+      mode: 0o600,
+    });
     processInspection.rootUnavailable = true;
 
     await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
       Partial<RestoreDeploymentError>
     >({ code: "target-cleanup-failed" });
-    expect(await readdir(root)).toEqual([workspaceDirectoryName]);
+    expect((await readdir(root)).sort()).toEqual(
+      [`.${workspaceDirectoryName}.json`, workspaceDirectoryName].sort(),
+    );
+  });
+
+  it("terminates a matching process when the persisted PID is still null", async () => {
+    const root = await mkdtemp(join(tmpdir(), "restore-deployment-"));
+    roots.push(root);
+    const configuration = restoreDeploymentConfiguration(root);
+    const deployment = new ProcessRestoreDeployment(
+      configuration,
+      new DatabaseRuntime(undefined),
+      new RuntimeKernelDeploymentRegistry([]),
+      new CapturingWorkerLogger(),
+    );
+    const job = restoreJob();
+    const { metadataPath, workspaceDirectory } = targetPaths(root, job);
+    await mkdir(workspaceDirectory, { mode: 0o700 });
+    await writeFile(metadataPath, JSON.stringify(runtimeMetadata(job)), {
+      mode: 0o600,
+    });
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "setInterval(() => {}, 1000);",
+        "--workspace",
+        workspaceDirectory,
+        "--port",
+        "49152",
+      ],
+      {
+        env: {
+          ...process.env,
+          SINGULARITY_KERNEL_INSTANCE_ID: job.targetKernelInstanceId,
+          SINGULARITY_KERNEL_LISTEN_ADDRESS: "127.0.0.1",
+          SINGULARITY_KERNEL_SPACE_ID: job.targetSpaceId,
+        },
+        stdio: "ignore",
+      },
+    );
+    const childClosed = new Promise<void>((resolve, reject) => {
+      child.once("close", () => resolve());
+      child.once("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", () => resolve());
+      child.once("error", reject);
+    });
+    try {
+      await expect(deployment.destroyTarget(job)).resolves.toBeUndefined();
+      await childClosed;
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await childClosed.catch(() => undefined);
+    }
+  });
+
+  it("rejects duplicate process identity arguments and environment keys", async () => {
+    const root = await mkdtemp(join(tmpdir(), "restore-deployment-"));
+    roots.push(root);
+    const configuration = restoreDeploymentConfiguration(root);
+    const deployment = new ProcessRestoreDeployment(
+      configuration,
+      new DatabaseRuntime(undefined),
+      new RuntimeKernelDeploymentRegistry([]),
+      new CapturingWorkerLogger(),
+    );
+    const job = restoreJob();
+    const { metadataPath, workspaceDirectory, workspaceDirectoryName } =
+      targetPaths(root, job);
+    await mkdir(workspaceDirectory, { mode: 0o700 });
+    await writeFile(
+      metadataPath,
+      JSON.stringify({ ...runtimeMetadata(job), pid: process.pid }),
+      { mode: 0o600 },
+    );
+    processInspection.overridePid = process.pid;
+    processInspection.commandLine = [
+      configuration.kernelBinaryPath,
+      "serve",
+      "--workspace",
+      workspaceDirectory,
+      "--workspace",
+      workspaceDirectory,
+      "--port",
+      "49152",
+    ].join("\u0000");
+    processInspection.environment = [
+      `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
+      "SINGULARITY_KERNEL_LISTEN_ADDRESS=127.0.0.1",
+      `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
+    ].join("\u0000");
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
+      Partial<RestoreDeploymentError>
+    >({ code: "target-runtime-invalid" });
+
+    processInspection.commandLine = [
+      configuration.kernelBinaryPath,
+      "serve",
+      "--workspace",
+      workspaceDirectory,
+      "--port",
+      "49152",
+    ].join("\u0000");
+    processInspection.environment = [
+      `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
+      `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
+      "SINGULARITY_KERNEL_LISTEN_ADDRESS=127.0.0.1",
+      `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
+    ].join("\u0000");
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
+      Partial<RestoreDeploymentError>
+    >({ code: "target-runtime-invalid" });
+    expect((await readdir(root)).sort()).toEqual(
+      [`.${workspaceDirectoryName}.json`, workspaceDirectoryName].sort(),
+    );
   });
 
   it("preserves a known target when its persisted process identity cannot be read", async () => {

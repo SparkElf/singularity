@@ -383,6 +383,32 @@ test("L0 workflow gates the raw API, Worker, and Web SBOM production closure res
   assert.match(outcomeStep.run, /"\$PRODUCTION_SBOM_POLICY"/);
 });
 
+test("L0 image smoke waits for Docker health and gives API and Worker the same audit key", () => {
+  const steps = readSupplyChainSteps();
+  const smoke = normalizeRunCommand(
+    steps.find((candidate) => candidate.name === "Smoke enterprise images").run,
+  );
+
+  for (const container of [
+    "singularity-api-smoke",
+    "singularity-worker-smoke",
+    "singularity-web-smoke",
+  ]) {
+    assert.ok(smoke.includes("wait_for_health " + container), container);
+  }
+  const apiStart = smoke.indexOf("docker run --detach --name singularity-api-smoke");
+  const workerStart = smoke.indexOf("docker run --detach --name singularity-worker-smoke");
+  const webStart = smoke.indexOf("docker run --detach --name singularity-web-smoke");
+  assert.ok(apiStart >= 0 && apiStart < workerStart && workerStart < webStart);
+  for (const command of [
+    smoke.slice(apiStart, workerStart),
+    smoke.slice(workerStart, webStart),
+  ]) {
+    assert.ok(command.includes('--env SINGULARITY_AUDIT_HMAC_KEY="$audit_key"'));
+    assert.ok(command.includes('--env SINGULARITY_AUDIT_KEY_VERSION="ci-audit-v1"'));
+  }
+});
+
 test("L0 workflow enforces every independently continuing supply-chain outcome", () => {
   const steps = readSupplyChainSteps();
   const outcomeStep = steps.find((candidate) => candidate.name === "Enforce supply-chain outcomes");

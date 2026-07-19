@@ -30,7 +30,10 @@ interface ContentDirectoryTreeProps {
   readonly notebooks: readonly ContentDirectoryNotebook[];
   readonly onNotebookLocked: (notebookId: string, generation: number) => void;
   readonly onPageError: (error: unknown, generation: number) => void;
-  readonly onSelect: (document: ContentDirectoryDocument) => void;
+  readonly onSelect: (
+    document: ContentDirectoryDocument,
+    generation: number,
+  ) => void;
   readonly selection: ContentSelection | null;
 }
 
@@ -41,7 +44,10 @@ interface DocumentLevelProps {
   readonly identity: ContentDirectoryPageIdentity;
   readonly onNotebookLocked: (notebookId: string, generation: number) => void;
   readonly onPageError: (error: unknown, generation: number) => void;
-  readonly onSelect: (document: ContentDirectoryDocument) => void;
+  readonly onSelect: (
+    document: ContentDirectoryDocument,
+    generation: number,
+  ) => void;
   readonly onToggleDocument: (document: ContentDirectoryDocument) => void;
   readonly selection: ContentSelection | null;
 }
@@ -178,7 +184,7 @@ function DocumentPage({
               <button
                 aria-current={selected ? "page" : undefined}
                 className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                onClick={() => onSelect(document)}
+                onClick={() => onSelect(document, generation)}
                 type="button"
               >
                 <DirectoryIcon icon={document.icon} />

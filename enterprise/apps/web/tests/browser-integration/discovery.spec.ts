@@ -288,7 +288,7 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
       recordDocumentRequest();
       await fulfillJson(route, {
         code: 0,
-        data: [{ children: [], hPath: "第一文档 / 大纲节点", id: BLOCK_A, name: "大纲节点" }],
+        data: [{ children: [], id: BLOCK_A, name: "大纲节点" }],
         msg: "",
       });
       return;
@@ -375,7 +375,10 @@ test.describe("React discovery work panels", () => {
 
     await graphPanel.getByRole("button", { name: "第一文档" }).click();
     await expect(editor).toContainText("第一文档内容");
-    expect(boundary.graph.at(-1)?.body).toMatchObject({ id: DOCUMENT_B });
+    expect(boundary.graph.at(-1)?.body).toMatchObject({
+      conf: { type: { paragraph: true, tag: true } },
+      id: DOCUMENT_B,
+    });
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

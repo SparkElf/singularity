@@ -165,6 +165,7 @@ export class SpaceDiscoveryService {
     work: () => Promise<Result>,
   ): Promise<Result> {
     const startedAt = performance.now();
+    const queryLength = Array.from(input.body.query).length;
     try {
       const result = await work();
       this.#logger.log({
@@ -172,7 +173,7 @@ export class SpaceDiscoveryService {
         event: "content.discovery",
         operation,
         organizationId: input.organizationId,
-        queryLength: input.body.query.length,
+        queryLength,
         requestId: input.requestId,
         outcome: "succeeded",
         spaceId: input.spaceId,
@@ -184,7 +185,7 @@ export class SpaceDiscoveryService {
         event: "content.discovery",
         operation,
         organizationId: input.organizationId,
-        queryLength: input.body.query.length,
+        queryLength,
         requestId: input.requestId,
         outcome: "failed",
         spaceId: input.spaceId,

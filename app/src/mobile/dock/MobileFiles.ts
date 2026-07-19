@@ -708,14 +708,16 @@ export class MobileFiles extends Model {
     }
 
     private onMove(data: {
-        id: string,
+        documentId: string,
         fromNotebook: string,
         toNotebook: string,
         fromPath: string
         toPath: string
     }) {
-        this.documentNotebookIds.set(data.id, data.toNotebook);
-        const sourceElement = this.element.querySelector(`ul[data-url="${data.fromNotebook}"] li[data-path="${data.fromPath}"]`) as HTMLElement;
+        this.documentNotebookIds.set(data.documentId, data.toNotebook);
+        const sourceElement = this.element.querySelector(
+            `ul[data-url="${data.fromNotebook}"] li[data-node-id="${data.documentId}"][data-path="${data.fromPath}"]`,
+        ) as HTMLElement;
         if (sourceElement) {
             if (sourceElement.nextElementSibling && sourceElement.nextElementSibling.tagName === "UL") {
                 sourceElement.nextElementSibling.remove();
@@ -825,8 +827,10 @@ export class MobileFiles extends Model {
         }
     }
 
-    public onRename(data: { path: string, title: string, box: string }) {
-        const fileItemElement = this.element.querySelector(`ul[data-url="${data.box}"] li[data-path="${data.path}"]`);
+    public onRename(data: {notebookId: string, documentId: string, title: string}) {
+        const fileItemElement = this.element.querySelector(
+            `ul[data-url="${data.notebookId}"] li[data-node-id="${data.documentId}"]`,
+        );
         if (!fileItemElement) {
             return;
         }

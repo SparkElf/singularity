@@ -92,7 +92,7 @@ func SampleEnterpriseObservabilityNow() *EnterpriseObservationSample {
 		capacity.DataBytes = 0
 		capacity.FileCount = 0
 		capacity.ErrorCode = "capacity-scan-failed"
-		logging.LogWarnf("kernel.observation capacity sample failed: %s", err)
+		logging.LogWarnf("kernel.observation capacity sample failed [errorCode=%s]", capacity.ErrorCode)
 	}
 	sample := &EnterpriseObservationSample{Capacity: capacity, Health: health}
 	enterpriseObservation.Store(sample)

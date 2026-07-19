@@ -123,7 +123,6 @@ export type SharedAssetDescriptor = z.infer<
 export const sharedDocumentPayloadSchema = z
   .object({
     assets: z.array(sharedAssetDescriptorSchema),
-    documentId: contentIdSchema,
     html: z.string(),
     title: z.string(),
   })
@@ -205,7 +204,6 @@ export const SHARED_ASSET_DESCRIPTOR_OPENAPI_SCHEMA =
   });
 export const SHARED_DOCUMENT_PAYLOAD_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   assets: { type: "array", items: SHARED_ASSET_DESCRIPTOR_OPENAPI_SCHEMA },
-  documentId: CONTENT_ID_OPENAPI_SCHEMA,
   html: { type: "string" },
   title: { type: "string" },
 });

@@ -3,7 +3,7 @@ title: "ADR-022: 跨进程Kernel端点事实源"
 description: "让Worker恢复的Kernel端点在API进程重启和实时变更后仍可被同一声明式registry解析"
 author: "Codex"
 date: "2026-07-18"
-version: "1.1.0"
+version: "1.2.0"
 status: "accepted"
 tags: ["adr", "kernel", "deployment", "worker", "postgresql", "trust-boundary"]
 ---
@@ -24,10 +24,7 @@ API自己的registry解析阶段失败。把Worker内存、句柄前缀或首个
    `kernelInstanceId + spaceId`、`hostname`、`port`、`serverName`和显式
    `tlsProfile`；句柄和版本仍由`KernelInstance`拥有，私钥、证书内容、文件路径、
    工作区路径和正文不进入数据库。
-2. Worker在恢复完成的同一事务中写入Kernel状态、端点行和
-   `pg_notify(singularity_kernel_deployment_changed, event)`；失败清理在删除
-   Kernel实例前删除端点行并发布`remove`。通知只携带显式身份键和请求ID，API
-   仍以数据库行作为端点事实源，避免事件与持久化字段双写。
+2. Worker在恢复完成的同一事务中写入Kernel状态、端点行和`pg_notify(singularity_kernel_deployment_changed, event)`；失败清理在删除Kernel实例前删除端点行并发布`remove`。通知严格只携带`kernelInstanceId + spaceId + kind + requestId`；`deploymentHandle`只存在于`KernelInstance`、数据库端点组合对象和进程内registry，不进入事件。API仍以数据库行作为端点事实源，避免事件与持久化字段双写。
 3. API的`RuntimeKernelDeploymentRegistry`仍是本进程唯一解析owner。Nest
    `KernelDeploymentSynchronizer`以`@Injectable()`和模块metadata装配，启动时先
    LISTEN再hydrate持久化端点，随后串行消费事件；事件或数据库历史值在数据库

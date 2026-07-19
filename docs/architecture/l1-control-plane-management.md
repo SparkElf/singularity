@@ -20,16 +20,20 @@ tags: ["l1", "control-plane", "rbac", "organization"]
 
 Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidationPipe` 声明访问、同源写入和输入边界；领域状态转移只在对应 `@Injectable` service 的事务中执行。
 
+邀请令牌由 32 字节 CSPRNG 生成并以 canonical base64url 表示；接受邀请和 OIDC start 的外部 DTO 直接复用 `sessionTokenSchema` 作为唯一解析 owner，Service 的摘要函数只消费已解析 token，不再归一化或重复校验。
+
 | 能力 | 公共入口 | 权限事实 |
 | --- | --- | --- |
 | 成员与邀请 | `/api/v1/organizations/{organizationId}/members`、`/invitations` | 活跃组织 owner/admin；owner 转移单独授权 |
 | 用户组 | `/api/v1/organizations/{organizationId}/groups` | 活跃组织 owner/admin；组成员必须是同组织活跃成员 |
-| 空间生命周期 | `/api/v1/organizations/{organizationId}/spaces` | 组织 owner/admin，或该空间的有效 `admin` |
+| 空间生命周期 | `/api/v1/organizations/{organizationId}/spaces` | 仅活跃组织 owner/admin 可创建、重命名、归档或恢复空间 |
 | 空间成员/组授权 | `/.../spaces/{spaceId}/members`、`/groups` | 组织 manager 或空间 `admin`；目标用户/组必须属于同一组织 |
 | 委派候选读取 | `/.../spaces/{spaceId}/member-candidates`、`/group-candidates` | 与空间管理相同；只返回活跃组织用户/用户组 |
 | OIDC Provider | `/api/v1/organizations/{organizationId}/oidc-providers` | 仅活跃组织 owner；Provider 状态变化不向普通 admin 暴露管理入口 |
 
 管理摘要只投影调用方实际可达的组织能力：普通组织 admin 不包含 `oidc` 或 `ownership`；这两个能力分别要求 owner 权限。这样 React 菜单、深链重定向与服务端授权保持同一事实，不会显示必然返回 `403` 的 OIDC 页面。
+
+空间 `admin` 只获得管理摘要中为该空间声明的 `access`、`shares`、`audit`、`backups` 和 `observability` 能力，不获得组织级 `spaces` 能力；空间创建、重命名、归档和恢复始终由组织 owner/admin 执行。
 
 管理页面的 TanStack Query 键包含完整组织与空间身份。委派空间管理员使用候选读取入口，不访问需要组织管理能力的全量组织目录，因此新增授权不会因缺少组织级能力而退化为不可用状态。
 
@@ -39,7 +43,9 @@ Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidat
 
 空间管理写事务按 `User -> Organization -> OrganizationMembership -> Space -> SpaceMembership` 的稳定顺序锁定相关行。已有账号和 OIDC 邀请消费先以令牌或邀请 ID 取得显式组织身份，再按 `User -> Organization -> OrganizationMembership -> OrganizationInvitation` 锁定并在同一事务复验组织、期限、撤销和接受状态；本地新账号入口锁定邀请后创建唯一 User，不存在可被更早锁定的成员行。接受动作确实把既有活跃成员的角色改为新角色时，事务提交后发布一个带 `organization` 与 `user` selector 的 `close/forbidden` 事件。重复角色写入不发布重复撤权通知。
 
-权限变化写入组织审计链；事件发布和审计记录与业务状态同事务提交，消费者只依赖公开事件合同，不读取数据库模型或原始请求载荷。
+权限变化写入组织审计链；事件发布和审计记录与业务状态同事务提交，消费者只依赖公开事件合同，不读取数据库模型或原始请求载荷。受控运维入口沿已锁定事实或更新计数判定唯一状态转移；重复角色、重复撤销和重复禁用仍返回既有成功结果，但不发布 `AccessChanged` 或追加 `permission.change`。
+
+空间成员、空间用户组授权和用户组成员写入先在既定锁序内读取当前持久化事实；只有角色、状态或成员关系确实变化时才写审计并发布 `close/forbidden`。完全相同的重复写入保持 `204` 幂等语义，不重复关闭仍有权访问的在线编辑器。
 
 ## 前端消费
 
@@ -47,9 +53,10 @@ Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidat
 
 ## 永久证据
 
+- `enterprise/apps/api/test/access-operations.operations.test.ts`：受控组织初始化、唯一安装竞争、owner/空间管理员/starting Kernel 原子创建与回滚。
 - `enterprise/apps/api/test/organization-management.http.test.ts`：邀请、成员角色/状态、会话撤销、所有权转移、用户组和提交后撤权通知。
-- `enterprise/apps/api/test/spaces.http.test.ts`：空间生命周期、跨组织隐藏式 404、直接/用户组授权和委派候选读取。
-- `enterprise/apps/web/src/enterprise/SpaceAccessPage.test.tsx`：委派空间管理员只请求空间范围候选入口，不请求组织管理目录。
+- `enterprise/apps/api/test/spaces.http.test.ts`：空间生命周期、跨组织隐藏式 404、直接/用户组授权，以及委派空间管理员只能管理声明空间的访问权限。
+- `enterprise/apps/web/src/enterprise/MembersPage.test.tsx`、`GroupsPage.test.tsx`、`SpacesManagementPage.test.tsx`、`SpaceAccessPage.test.tsx`：成员、邀请、会话撤销、所有权、用户组、空间生命周期和空间授权的 React 工作流；委派空间管理员不请求组织管理目录。
 - `enterprise/packages/contracts/test/contracts.test.mjs`：角色、状态、路径和严格响应合同。
 
 实现阶段只编写合同与静态检查；整阶段代码评审通过后，统一运行 API HTTP/数据库、contracts、React component 和浏览器矩阵。

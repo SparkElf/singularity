@@ -11,6 +11,7 @@ import {writeText} from "../util/clipboard";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {hasClosestBlock, hasClosestByClassName, hasTopClosestByClassName} from "../util/hasClosest";
 import {removeInlineType} from "../util/inlineType";
+import {parseProtyleAssetTarget} from "../util/openLink";
 import {emitProtylePluginMenu} from "../util/plugin";
 import {focusByRange, focusByWbr} from "../util/selection";
 import {upDownHint} from "../util/upDownHint";
@@ -719,6 +720,8 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
     hideElements(["util", "toolbar", "hint"], protyle);
     let html = nodeElement.outerHTML;
     const linkAddress = linkElement.getAttribute("data-href");
+    const source = linkAddress ? Lute.UnEscapeHTMLStr(linkAddress).trim() : "";
+    const {assetPath, page} = parseProtyleAssetTarget(source);
     const owner = openInlineMenu(protyle, Constants.MENU_INLINE_A);
     const {menu} = owner;
     let inputElements!: NodeListOf<HTMLTextAreaElement>;
@@ -864,7 +867,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                 html = nodeElement.outerHTML;
             },
         });
-        if (protyle.settings.features.assetRename && linkAddress?.startsWith("assets/")) {
+        if (protyle.settings.features.assetRename && assetPath.startsWith("assets/")) {
             menu.addItem({
                 id: "rename",
                 label: protyle.localization.text("rename"),
@@ -876,7 +879,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                         notebookId: identity.notebookId,
                         documentId: identity.documentId,
                         blockId: nodeElement.getAttribute("data-node-id")!,
-                        assetPath: linkAddress,
+                        assetPath,
                     });
                 },
             });
@@ -930,11 +933,9 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
 
     if (linkAddress) {
         menu.addItem({id: "separator_2", type: "separator"});
-        const source = Lute.UnEscapeHTMLStr(linkAddress).trim();
         const submenu: IMenu[] = [];
         if (source.startsWith("assets/")) {
             const identity = protyleContentIdentity(protyle);
-            const page = new URLSearchParams(source.split("?", 2)[1] || "").get("page") || undefined;
             submenu.push({
                 id: "insertRight",
                 icon: "iconLayoutRight",
@@ -944,7 +945,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                     type: "open-asset",
                     documentId: identity.documentId,
                     notebookId: identity.notebookId,
-                    assetPath: source,
+                    assetPath,
                     page,
                     disposition: "split-right",
                 }),
@@ -957,7 +958,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                     type: "open-asset",
                     documentId: identity.documentId,
                     notebookId: identity.notebookId,
-                    assetPath: source,
+                    assetPath,
                     page,
                     disposition: "current",
                 }),
@@ -983,7 +984,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                 id: "export",
                 label: protyle.localization.text("export"),
                 icon: "iconUpload",
-                click: () => downloadExportFile(protyle.session!.runtime.resources.resolveAsset(identity, source)),
+                click: () => downloadExportFile(protyle.session!.runtime.resources.resolveAsset(identity, assetPath)),
             });
         }
     }

@@ -16,6 +16,15 @@ export const resolveProtyleAssetSource = (protyle: IProtyle, path: string): stri
     return thumbnailAssetSource(path);
 };
 
+export const resolveProtyleContentAssetSources = (protyle: IProtyle, root: ParentNode): void => {
+    root.querySelectorAll<HTMLImageElement>(".img img[data-src]").forEach((image) => {
+        const persistedSource = image.getAttribute("data-src");
+        if (persistedSource) {
+            image.setAttribute("src", resolveProtyleAssetSource(protyle, persistedSource));
+        }
+    });
+};
+
 export const resolveProtyleAssetBackground = (protyle: IProtyle, cssText: string): string => {
     const style = protyle.wysiwyg.element.ownerDocument.createElement("span").style;
     style.cssText = cssText;

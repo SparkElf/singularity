@@ -90,7 +90,6 @@ export const KERNEL_DEPLOYMENT_CHANGED_CHANNEL =
 
 export const kernelDeploymentChangedEventSchema = z
   .object({
-    deploymentHandle: kernelDeploymentHandleSchema,
     kernelInstanceId: kernelDeploymentInstanceIdSchema,
     kind: z.enum(["upsert", "remove"]),
     requestId: kernelDeploymentInstanceIdSchema,

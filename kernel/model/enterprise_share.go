@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -245,7 +246,7 @@ func rewriteEnterpriseSharedAssetNode(node *nethtml.Node, assetIDs map[string]st
 				attrs = append(attrs, attr)
 				continue
 			}
-			if !strings.HasPrefix(assetPath, "assets/") {
+			if attr.Key == "href" && enterpriseShareExternalLink(attr.Val) {
 				attrs = append(attrs, attr)
 			}
 		}
@@ -253,5 +254,23 @@ func rewriteEnterpriseSharedAssetNode(node *nethtml.Node, assetIDs map[string]st
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		rewriteEnterpriseSharedAssetNode(child, assetIDs)
+	}
+}
+
+func enterpriseShareExternalLink(value string) bool {
+	if strings.HasPrefix(value, "#") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return parsed.Host != "" && parsed.User == nil
+	case "mailto":
+		return parsed.Opaque != ""
+	default:
+		return false
 	}
 }

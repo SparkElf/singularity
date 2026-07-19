@@ -42,6 +42,12 @@ import {zoomOut} from "./util/zoom";
 import {setEditMode} from "./util/setEditMode";
 import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "./util/contentLoad";
 import {createProtyleReadOnlyState, isProtyleReadOnly, setHostReadOnly} from "./runtime/readOnly";
+import {
+    setProtyleDefRefCount,
+    setProtyleRefDynamicText,
+    type ProtyleDefRefCountData,
+    type ProtyleRefDynamicTextData
+} from "./runtime/referencePush";
 
 type ProtyleTransactionsMessage = IWebSocketData & {
     cmd: "transactions";
@@ -85,7 +91,7 @@ type ProtyleMoveDocumentMessage = IWebSocketData & {
     data: {
         fromNotebook: string;
         fromPath: string;
-        id: string;
+        documentId: string;
         newPath: string;
         toNotebook: string;
         toPath: string;
@@ -95,13 +101,22 @@ type ProtyleMoveDocumentMessage = IWebSocketData & {
 type ProtyleRenameMessage = IWebSocketData & {
     cmd: "rename";
     data: {
-        box: string;
+        notebookId: string;
+        documentId: string;
         empty: boolean;
-        id: string;
-        path: string;
         refText: string;
         title: string;
     };
+};
+
+type ProtyleRefDynamicTextMessage = IWebSocketData & {
+    cmd: "setRefDynamicText";
+    data: ProtyleRefDynamicTextData;
+};
+
+type ProtyleDefRefCountMessage = IWebSocketData & {
+    cmd: "setDefRefCount";
+    data: ProtyleDefRefCountData;
 };
 
 const isCurrentDocumentTarget = (protyle: IProtyle, target: ProtyleDocumentIdentity) =>
@@ -134,6 +149,7 @@ export class Protyle {
     public protyle: IProtyle;
     private contentOwnerMouseover?: (event: MouseEvent & { contentNotebookId?: string }) => void;
     private onBacklinkChange?: () => void;
+    private onContentUnavailable?: () => void;
     private subscription?: TProtyleSubscription;
     private readonly requestController = new AbortController();
     private removeOwnerAbortListener?: () => void;
@@ -159,6 +175,7 @@ export class Protyle {
                 lifecycle: TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle | TProtyleLocalOnlyLifecycle) {
         this.version = Constants.SIYUAN_VERSION;
         this.onBacklinkChange = "onBacklinkChange" in lifecycle ? lifecycle.onBacklinkChange : undefined;
+        this.onContentUnavailable = "onContentUnavailable" in lifecycle ? lifecycle.onContentUnavailable : undefined;
         if (!("settings" in application) || !application.settings) {
             throw new Error("[protyle.application] Core requires explicit application settings");
         }
@@ -383,6 +400,16 @@ export class Protyle {
                             }
                             break;
                         }
+                        case "setRefDynamicText": {
+                            const reference = data as ProtyleRefDynamicTextMessage;
+                            setProtyleRefDynamicText(this.protyle, reference.data);
+                            break;
+                        }
+                        case "setDefRefCount": {
+                            const reference = data as ProtyleDefRefCountMessage;
+                            setProtyleDefRefCount(this.protyle, reference.data);
+                            break;
+                        }
                         case "transactions":
                             this.onTransaction(data as ProtyleTransactionsMessage);
                             break;
@@ -417,8 +444,8 @@ export class Protyle {
                             break;
                         case "rename": {
                             const rename = data as ProtyleRenameMessage;
-                            const isCurrentNotebook = rename.data.box === this.protyle.notebookId;
-                            if (isCurrentNotebook && this.protyle.path === rename.data.path) {
+                            const isCurrentDocument = isCurrentDocumentTarget(this.protyle, rename.data);
+                            if (isCurrentDocument) {
                                 if (this.protyle.model) {
                                     this.protyle.model.parent.updateTitle(
                                         getProtyleDocumentDisplayName(rename.data.title, rename.data.empty),
@@ -432,7 +459,7 @@ export class Protyle {
                                     this.protyle.preview.render(this.protyle);
                                 }
                             }
-                            if (isCurrentNotebook && this.protyle.options.render.title && this.protyle.block.parentID === rename.data.id) {
+                            if (isCurrentDocument && this.protyle.options.render.title) {
                                 if (!document.body.classList.contains("body--blur") && getSelection().rangeCount > 0 &&
                                     this.protyle.title.editElement?.contains(getSelection().getRangeAt(0).startContainer)) {
                                     // 标题编辑中的不用更新 https://github.com/siyuan-note/siyuan/issues/6565
@@ -446,23 +473,23 @@ export class Protyle {
                                 }
                             }
                             // update ref
-                            this.protyle.wysiwyg.element.querySelectorAll(`[data-type~="block-ref"][data-id="${rename.data.id}"]`).forEach(item => {
+                            this.protyle.wysiwyg.element.querySelectorAll(`[data-type~="block-ref"][data-id="${rename.data.documentId}"]`).forEach(item => {
                                 if (item.getAttribute("data-subtype") === "d") {
-                                    if (item.getAttribute("data-notebook-id") !== rename.data.box ||
-                                        item.getAttribute("data-document-id") !== rename.data.id) {
+                                    if (item.getAttribute("data-notebook-id") !== rename.data.notebookId ||
+                                        item.getAttribute("data-document-id") !== rename.data.documentId) {
                                         return;
                                     }
                                     // 同 updateRef 一样处理 https://github.com/siyuan-note/siyuan/issues/10458
                                     item.innerHTML = rename.data.refText;
                                 }
                             });
-                            if (isCurrentNotebook && this.protyle.surface === "workspace" &&
+                            if (isCurrentDocument && this.protyle.surface === "workspace" &&
                                 this.protyle.content.mode === "bound" &&
-                                rename.data.id === this.protyle.options.blockId) {
+                                rename.data.documentId === this.protyle.block.rootID) {
                                 this.protyle.host.dispatch({
                                     type: "set-document-title",
-                                    notebookId: rename.data.box,
-                                    documentId: rename.data.id,
+                                    notebookId: rename.data.notebookId,
+                                    documentId: rename.data.documentId,
                                     title: getProtyleDocumentDisplayName(rename.data.title, rename.data.empty),
                                 });
                             }
@@ -471,7 +498,7 @@ export class Protyle {
                         case "moveDoc": {
                             const move = data as ProtyleMoveDocumentMessage;
                             if (move.data.fromNotebook === this.protyle.notebookId &&
-                                move.data.id === this.protyle.block.rootID &&
+                                move.data.documentId === this.protyle.block.rootID &&
                                 this.protyle.path === move.data.fromPath) {
                                 this.protyle.path = move.data.newPath;
                                 const identity = protyleContentIdentity(this.protyle);
@@ -493,26 +520,30 @@ export class Protyle {
                         case "closeBox":
                         case "removeBox":
                             if (this.protyle.notebookId === data.data.box) {
-                                if (this.protyle.model) {
+                                if (this.protyle.surface === "workspace") {
                                     this.protyle.host.dispatch({
                                         type: "close-document",
                                         notebookId: this.protyle.notebookId,
                                         documentId: this.protyle.block.rootID,
                                         reason: "notebook-closed",
                                     });
+                                } else {
+                                    this.onContentUnavailable?.();
                                 }
                             }
                             break;
                         case "removeDoc": {
                             const remove = data as ProtyleDocumentMessage;
                             if (isCurrentDocumentTarget(this.protyle, remove.data)) {
-                                if (this.protyle.model) {
+                                if (this.protyle.surface === "workspace") {
                                     this.protyle.host.dispatch({
                                         type: "close-document",
                                         notebookId: this.protyle.notebookId,
                                         documentId: this.protyle.block.rootID,
                                         reason: "deleted",
                                     });
+                                } else {
+                                    this.onContentUnavailable?.();
                                 }
                                 this.settings.localFilePosition.remove(protyleContentIdentity(this.protyle));
                                 this.settings.localFilePosition.persist();

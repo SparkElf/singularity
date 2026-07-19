@@ -9,6 +9,7 @@ export interface P5E2EStackState {
   readonly editor: {
     readonly loginIdentifier: string;
     readonly password: string;
+    readonly userId: string;
   };
   readonly kernelInstanceId: string;
   readonly kernelPort: number;
@@ -24,6 +25,7 @@ export interface P5E2EStackState {
   readonly viewer: {
     readonly loginIdentifier: string;
     readonly password: string;
+    readonly userId: string;
   };
   readonly webOrigin: string;
   readonly webPort: number;
@@ -64,6 +66,7 @@ function requiredCredentials(
       `${field}.loginIdentifier`,
     ),
     password: requiredString(credentials.password, `${field}.password`),
+    userId: requiredString(credentials.userId, `${field}.userId`),
   };
 }
 

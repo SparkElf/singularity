@@ -11,13 +11,12 @@ import type {
   SetKernelStateAccessOperation,
   SetSpaceMemberAccessOperation,
 } from "@singularity/contracts";
-import { DatabaseRuntime, Prisma } from "@singularity/database";
+import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 import {
   KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
   type KernelDeploymentChangedEvent,
 } from "@singularity/kernel-client";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
 import type { Clock } from "../identity/clock.js";
 import { IdentityService } from "../identity/identity.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
@@ -298,13 +297,11 @@ export class AccessOperationsService implements OnModuleInit {
         };
       }
       const endpointRows = await transaction.$queryRaw<
-        Array<{ deploymentHandle: string; kernelInstanceId: string; spaceId: string }>
+        Array<{ kernelInstanceId: string }>
       >(
         Prisma.sql`
           SELECT
-            kernel."deployment_handle" AS "deploymentHandle",
-            endpoint."kernel_instance_id" AS "kernelInstanceId",
-            endpoint."space_id" AS "spaceId"
+            endpoint."kernel_instance_id" AS "kernelInstanceId"
           FROM "kernel_runtime_endpoints" AS endpoint
           INNER JOIN "kernel_instances" AS kernel
             ON kernel."id" = endpoint."kernel_instance_id"
@@ -335,25 +332,17 @@ export class AccessOperationsService implements OnModuleInit {
                 version: command.version,
               },
       });
-      const endpoint = endpointRows[0];
       const previousDeploymentHandle = kernelInstance.deploymentHandle;
       const leavesReadyState =
         kernelInstance.status === "ready" &&
         (command.kernelState !== "ready" ||
           command.deploymentHandle !== previousDeploymentHandle);
-      const deploymentHandleToRemove =
-        endpoint?.deploymentHandle ??
-        (leavesReadyState ? previousDeploymentHandle : null);
-      if (
-        deploymentHandleToRemove !== null &&
-        deploymentHandleToRemove !== undefined
-      ) {
+      if (endpointRows.length > 0 || leavesReadyState) {
         await publishKernelDeploymentChange(transaction, {
-          deploymentHandle: deploymentHandleToRemove,
           kernelInstanceId: kernelInstance.id,
           kind: "remove",
           requestId: operationId,
-          spaceId: endpoint?.spaceId ?? command.spaceId,
+          spaceId: command.spaceId,
         });
       }
       await this.#appendPermissionChange(transaction, operationId, {
@@ -460,30 +449,34 @@ export class AccessOperationsService implements OnModuleInit {
         command.userId,
       );
       if (existing) {
-        await transaction.spaceMembership.update({
+        const changed = await transaction.spaceMembership.updateMany({
           where: {
-            spaceId_userId: {
-              spaceId: command.spaceId,
-              userId: command.userId,
-            },
+            spaceId: command.spaceId,
+            userId: command.userId,
+            OR: [
+              { role: { not: command.role } },
+              { status: { not: "active" } },
+            ],
           },
           data: { role: command.role, status: "active" },
         });
-        await this.accessChanges.publish(transaction, {
-          kind: "close",
-          reason: "forbidden",
-          requestId: operationId,
-          selectors: [
-            { kind: "space", value: command.spaceId },
-            { kind: "user", value: command.userId },
-          ],
-        });
-        await this.#appendPermissionChange(transaction, operationId, {
-          organizationId: ownership.organizationId,
-          spaceId: command.spaceId,
-          targetId: command.userId,
-          targetType: "membership",
-        });
+        if (changed.count > 0) {
+          await this.accessChanges.publish(transaction, {
+            kind: "close",
+            reason: "forbidden",
+            requestId: operationId,
+            selectors: [
+              { kind: "space", value: command.spaceId },
+              { kind: "user", value: command.userId },
+            ],
+          });
+          await this.#appendPermissionChange(transaction, operationId, {
+            organizationId: ownership.organizationId,
+            spaceId: command.spaceId,
+            targetId: command.userId,
+            targetType: "membership",
+          });
+        }
         return this.#result(operationId, "updated");
       }
       await transaction.spaceMembership.create({
@@ -546,7 +539,11 @@ export class AccessOperationsService implements OnModuleInit {
         command.userId,
       );
       const revoked = await transaction.spaceMembership.updateMany({
-        where: { spaceId: command.spaceId, userId: command.userId },
+        where: {
+          spaceId: command.spaceId,
+          status: "active",
+          userId: command.userId,
+        },
         data: { status: "inactive" },
       });
       if (revoked.count > 0) {
@@ -582,10 +579,13 @@ export class AccessOperationsService implements OnModuleInit {
       if (!(await this.#lockOrganization(transaction, command.organizationId))) {
         return this.#result(operationId, "not-found");
       }
-      await transaction.organization.update({
-        where: { id: command.organizationId },
+      const disabled = await transaction.organization.updateMany({
+        where: { id: command.organizationId, status: "active" },
         data: { status: "disabled" },
       });
+      if (disabled.count === 0) {
+        return this.#result(operationId, "updated");
+      }
       await this.accessChanges.publish(transaction, {
         kind: "close",
         reason: "forbidden",
@@ -618,10 +618,13 @@ export class AccessOperationsService implements OnModuleInit {
       if (space === null) {
         return this.#result(operationId, "not-found");
       }
-      await transaction.space.update({
-        where: { id: command.spaceId },
+      const disabled = await transaction.space.updateMany({
+        where: { id: command.spaceId, status: { not: "disabled" } },
         data: { status: "disabled" },
       });
+      if (disabled.count === 0) {
+        return this.#result(operationId, "updated");
+      }
       await this.accessChanges.publish(transaction, {
         kind: "close",
         reason: "forbidden",
@@ -696,18 +699,21 @@ export class AccessOperationsService implements OnModuleInit {
           FOR UPDATE
         `,
       );
-      await transaction.organizationMembership.update({
+      const revoked = await transaction.organizationMembership.updateMany({
         where: {
-          organizationId_userId: {
-            organizationId: command.organizationId,
-            userId: command.userId,
-          },
+          organizationId: command.organizationId,
+          status: "active",
+          userId: command.userId,
         },
         data: { status: "inactive" },
       });
+      if (revoked.count === 0) {
+        return this.#result(operationId, "revoked");
+      }
       await transaction.spaceMembership.updateMany({
         where: {
           organizationId: command.organizationId,
+          status: "active",
           userId: command.userId,
         },
         data: { status: "inactive" },
@@ -762,7 +768,10 @@ export class AccessOperationsService implements OnModuleInit {
           });
         }
       }
-      return this.#result(operationId, outcome);
+      return this.#result(
+        operationId,
+        outcome === "unchanged" ? "updated" : outcome,
+      );
     });
   }
 
@@ -797,7 +806,10 @@ export class AccessOperationsService implements OnModuleInit {
           });
         }
       }
-      return this.#result(operationId, outcome);
+      return this.#result(
+        operationId,
+        outcome === "unchanged" ? "revoked" : outcome,
+      );
     });
   }
 

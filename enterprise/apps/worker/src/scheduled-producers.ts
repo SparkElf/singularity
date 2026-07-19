@@ -7,7 +7,11 @@ import {
   type WorkerJobProducer,
 } from "./job-declarations.js";
 import { WORKER_CONFIGURATION } from "./tokens.js";
-import type { ArchiveAuditJob, SampleKernelJob } from "./worker.js";
+import type {
+  ArchiveAuditJob,
+  ReconcileContentAuditJob,
+  SampleKernelJob,
+} from "./worker.js";
 
 type SampleKernelProducerConfiguration = Pick<
   WorkerConfiguration,
@@ -16,6 +20,10 @@ type SampleKernelProducerConfiguration = Pick<
 type ArchiveAuditProducerConfiguration = Pick<
   WorkerConfiguration,
   "archiveAuditIntervalMilliseconds" | "maximumAuditArchiveEvents"
+>;
+type ContentAuditProducerConfiguration = Pick<
+  WorkerConfiguration,
+  "contentAuditReconciliationIntervalMilliseconds"
 >;
 
 async function acquireProducerLock(
@@ -161,6 +169,58 @@ export class ArchiveAuditJobProducer
             ),
             gen_random_uuid(), 0, ${now}, ${now}, ${now}
           FROM archive_ranges AS range
+        `,
+      );
+    });
+  }
+}
+
+@Injectable()
+@ProducesWorkerJob({ kind: "reconcile-content-audit" })
+export class ContentAuditJobProducer
+  implements WorkerJobProducer<ReconcileContentAuditJob>
+{
+  readonly intervalMilliseconds: number;
+  readonly kind = "reconcile-content-audit" as const;
+
+  constructor(
+    private readonly database: DatabaseRuntime,
+    @Inject(WORKER_CONFIGURATION)
+    configuration: ContentAuditProducerConfiguration,
+  ) {
+    this.intervalMilliseconds =
+      configuration.contentAuditReconciliationIntervalMilliseconds;
+  }
+
+  produce(now: Date): Promise<number> {
+    return this.database.client.$transaction(async (transaction) => {
+      await acquireProducerLock(
+        transaction,
+        "singularity.worker.reconcile-content-audit",
+      );
+      return transaction.$executeRaw(
+        Prisma.sql`
+          WITH ready_organizations AS (
+            SELECT DISTINCT intent."organization_id"
+            FROM "content_audit_intents" AS intent
+            WHERE intent."available_at" <= ${now}
+              AND NOT EXISTS (
+                SELECT 1
+                FROM "worker_jobs" AS pending
+                WHERE pending."organization_id" = intent."organization_id"
+                  AND pending."kind" = 'reconcile-content-audit'
+                  AND pending."status" IN ('queued', 'running')
+              )
+          )
+          INSERT INTO "worker_jobs" (
+            "id", "organization_id", "kind", "status", "payload",
+            "request_id", "attempt", "available_at", "created_at", "updated_at"
+          )
+          SELECT
+            gen_random_uuid(), ready."organization_id",
+            'reconcile-content-audit', 'queued', '{}'::jsonb,
+            gen_random_uuid(), 0, ${now}, ${now}, ${now}
+          FROM ready_organizations AS ready
         `,
       );
     });

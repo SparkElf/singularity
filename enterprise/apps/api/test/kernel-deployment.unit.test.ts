@@ -128,15 +128,20 @@ describe("Kernel deployment contract", () => {
     ).toThrow();
   });
 
-  test("parses deployment notifications at their event boundary", () => {
-    expect(
+  test("accepts only the minimal deployment notification identity at its event boundary", () => {
+    const event = {
+      kernelInstanceId: firstDescriptor.kernelInstanceId,
+      kind: "upsert" as const,
+      requestId: "33333333-3333-4333-8333-333333333333",
+      spaceId: firstDescriptor.spaceId,
+    };
+
+    expect(parseKernelDeploymentChangedEvent(event)).toEqual(event);
+    expect(() =>
       parseKernelDeploymentChangedEvent({
+        ...event,
         deploymentHandle: "restore-kernel",
-        kernelInstanceId: firstDescriptor.kernelInstanceId,
-        kind: "upsert",
-        requestId: "33333333-3333-4333-8333-333333333333",
-        spaceId: firstDescriptor.spaceId,
-      }).kind,
-    ).toBe("upsert");
+      }),
+    ).toThrow();
   });
 });

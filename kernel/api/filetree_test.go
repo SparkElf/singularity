@@ -75,7 +75,8 @@ func TestRenameDocReturnsPersistedCanonicalTitle(t *testing.T) {
 	}
 
 	result := rename("  Alpha/Beta 👩‍💻  ")
-	if result.Data.Title != "Alpha／Beta 👩‍💻" || result.Data.Empty {
+	if result.Data.NotebookID != boxID || result.Data.DocumentID != rootID ||
+		result.Data.Title != "Alpha／Beta 👩‍💻" || result.Data.Empty || result.Data.RefText == "" {
 		t.Fatalf("canonical rename result = %#v", result.Data)
 	}
 	persisted, err := model.LoadTreeByBlockID(rootID)

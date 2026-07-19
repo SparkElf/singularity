@@ -25,6 +25,7 @@ import (
 func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) {
 	setupEncryptedResponseTest(t, 0)
 	model.Conf.Graph = kernelconf.NewGraph()
+	model.Conf.Graph.Global.Paragraph = true
 	const (
 		notebookID = "20990719160000-dscbox1"
 		documentID = "20990719160001-dscdoc1"
@@ -88,7 +89,7 @@ func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) 
 	graph := serveEnterpriseDiscoveryRequest(
 		router,
 		"/internal/enterprise/discovery/graph",
-		map[string]any{"query": ""},
+		map[string]any{"query": "  Alpha  "},
 	)
 	if graph.Code != http.StatusOK {
 		t.Fatalf("graph status = %d, want 200: %s", graph.Code, graph.Body.String())
@@ -136,6 +137,112 @@ func TestEnterpriseDiscoveryRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestGetLocalGraphRejectsNullConfigurationSectionsAtHTTPBoundary(t *testing.T) {
+	router := enterpriseDiscoveryTestRouter(t)
+	for _, test := range []struct {
+		name string
+		conf map[string]any
+	}{
+		{name: "null type filter", conf: map[string]any{"type": nil}},
+		{name: "null d3 settings", conf: map[string]any{"d3": nil}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := serveEnterpriseDiscoveryRequest(
+				router,
+				"/api/graph/getLocalGraph",
+				map[string]any{
+					"conf": test.conf,
+					"id":   "20990719160001-dscdoc1",
+					"k":    "",
+				},
+			)
+			if response.Code != http.StatusOK {
+				t.Fatalf("HTTP status = %d, want 200", response.Code)
+			}
+			var result struct {
+				Code int    `json:"code"`
+				Msg  string `json:"msg"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatalf("decode local graph response: %v", err)
+			}
+			if result.Code != -1 || result.Msg == "" {
+				t.Fatalf("local graph response = %#v, want Kernel envelope rejection", result)
+			}
+		})
+	}
+}
+
+func TestEnterpriseDiscoveryCanonicalTextProjections(t *testing.T) {
+	const (
+		notebookID = "20990719160000-dscbox1"
+		documentID = "20990719160001-dscdoc1"
+		blockID    = "20990719160002-dscblk1"
+		childID    = "20990719160003-dscblk2"
+	)
+	blocks := enterpriseDiscoveryBlockProjections([]*model.Block{{
+		Box:     notebookID,
+		Content: "<mark>Alpha</mark> &amp; &lt;script&gt;",
+		ID:      blockID,
+		RootID:  documentID,
+	}})
+	if len(blocks) != 1 || blocks[0].Content != "Alpha & <script>" {
+		t.Fatalf("search projection = %#v, want plain text", blocks)
+	}
+
+	backlinks := enterpriseDiscoveryBacklinkProjections([]*model.Path{
+		{
+			Box:   notebookID,
+			HPath: "/unused-path",
+			ID:    documentID,
+			Name:  "<span>Named &amp; linked</span>",
+		},
+		{
+			Box:   notebookID,
+			HPath: "/must-not-be-used",
+			ID:    childID,
+		},
+	})
+	if len(backlinks) != 1 || backlinks[0].Title != "Named & linked" {
+		t.Fatalf("backlink projection = %#v, want only the explicit plain-text name", backlinks)
+	}
+
+	outline := enterpriseDiscoveryOutlineProjections([]*model.Path{{
+		Blocks: []*model.Block{{
+			Children: []*model.Block{{
+				Content: "<mark>Nested</mark>",
+				ID:      childID,
+			}},
+			Content: "Child &amp; heading",
+			ID:      blockID,
+		}},
+		ID:   documentID,
+		Name: "<span>Root&nbsp;heading</span>",
+	}})
+	if len(outline) != 1 || outline[0].Name != "Root\u00a0heading" ||
+		len(outline[0].Children) != 1 || outline[0].Children[0].Name != "Child & heading" ||
+		len(outline[0].Children[0].Children) != 1 || outline[0].Children[0].Children[0].Name != "Nested" {
+		t.Fatalf("outline projection = %#v, want canonical plain-text children", outline)
+	}
+
+	graph := enterpriseDiscoveryLocalGraphProjections([]*model.GraphNode{
+		{
+			Box:        notebookID,
+			DocumentID: documentID,
+			ID:         blockID,
+			Title:      "Paragraph & node",
+		},
+		{
+			Box:        notebookID,
+			DocumentID: documentID,
+			ID:         childID,
+		},
+	})
+	if len(graph) != 1 || graph[0].Label != "Paragraph & node" {
+		t.Fatalf("graph projection = %#v, want source display text without an ID fallback", graph)
+	}
+}
+
 func TestEnterpriseDiscoveryDocumentProjectionKeepsSourceIdentities(t *testing.T) {
 	contentNode := &model.GraphNode{
 		Box:        "20990719160000-dscbox1",
@@ -156,12 +263,20 @@ func TestEnterpriseDiscoveryDocumentProjectionKeepsSourceIdentities(t *testing.T
 	}
 
 	backlinks := enterpriseDiscoveryBacklinkProjections([]*model.Path{{
-		Box:   contentNode.Box,
-		HPath: "/Knowledge",
-		ID:    contentNode.DocumentID,
+		Box:  contentNode.Box,
+		ID:   contentNode.DocumentID,
+		Name: "Knowledge",
 	}})
 	if len(backlinks) != 1 || backlinks[0].DocumentID != contentNode.DocumentID || backlinks[0].NotebookID != contentNode.Box {
 		t.Fatalf("backlink projection = %#v, want source identities", backlinks)
+	}
+
+	links := enterpriseDiscoveryGraphLinkProjections([]*model.GraphLink{
+		{From: contentNode.ID, To: tagNode.ID},
+		{From: tagNode.ID, To: "missing-node"},
+	}, projected)
+	if len(links) != 1 || links[0].From != contentNode.ID || links[0].To != tagNode.ID {
+		t.Fatalf("graph links = %#v, want only links between projected nodes", links)
 	}
 }
 
@@ -173,6 +288,7 @@ func enterpriseDiscoveryTestRouter(t *testing.T) *gin.Engine {
 	router := gin.New()
 	router.POST("/internal/enterprise/discovery/search", EnterpriseSearchSpace)
 	router.POST("/internal/enterprise/discovery/graph", EnterpriseReadSpaceGraph)
+	router.POST("/api/graph/getLocalGraph", getLocalGraph)
 	return router
 }
 

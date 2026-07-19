@@ -7,11 +7,16 @@ import {
 } from "./openapi.js";
 import { uuidSchema } from "./spaces.js";
 
-export const auditActions = [
-  "authentication.login",
+export const contentAuditActions = [
   "content.delete",
   "content.edit",
   "content.export",
+] as const;
+export type ContentAuditAction = (typeof contentAuditActions)[number];
+
+export const auditActions = [
+  "authentication.login",
+  ...contentAuditActions,
   "permission.change",
   "share.create",
   "share.password-change",
@@ -23,7 +28,12 @@ export const auditActions = [
 export const auditActionSchema = z.enum(auditActions);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 
-export const auditOutcomes = ["denied", "failed", "succeeded"] as const;
+export const auditOutcomes = [
+  "denied",
+  "failed",
+  "indeterminate",
+  "succeeded",
+] as const;
 export const auditOutcomeSchema = z.enum(auditOutcomes);
 export type AuditOutcome = z.infer<typeof auditOutcomeSchema>;
 

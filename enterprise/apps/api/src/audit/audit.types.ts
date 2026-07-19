@@ -8,18 +8,6 @@ import type {
 export { auditActions } from "@singularity/contracts";
 export type { AuditAction, AuditEventView, AuditOutcome };
 
-export interface AppendAuditEvent {
-  action: AuditAction;
-  actorUserId: string | null;
-  occurredAt: Date;
-  organizationId: string;
-  outcome: AuditOutcome;
-  requestId: string;
-  spaceId: string | null;
-  targetId: string;
-  targetType: AuditTargetType;
-}
-
 export interface AuditEventRow {
   action: AuditAction;
   actorUserId: string | null;

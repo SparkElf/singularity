@@ -78,6 +78,7 @@ describe("ADR-017 PostgreSQL audit ACL deployment", () => {
       ),
     });
     const auditEvents = `${escapeIdentifier(isolated.schemaName)}.${escapeIdentifier("audit_events")}`;
+    const contentAuditIntents = `${escapeIdentifier(isolated.schemaName)}.${escapeIdentifier("content_audit_intents")}`;
     const auditSequences = `${escapeIdentifier(isolated.schemaName)}.${escapeIdentifier("organization_audit_sequences")}`;
     let readerRoleCreated = false;
     let writerRoleCreated = false;
@@ -228,7 +229,57 @@ describe("ADR-017 PostgreSQL audit ACL deployment", () => {
         writer.query(`TRUNCATE TABLE ${auditEvents}`),
       ).rejects.toMatchObject({ code: "42501" });
       await expect(
+        writer.query(
+          `
+            INSERT INTO ${auditEvents} (
+              "id", "organization_id", "sequence", "actor_user_id", "action",
+              "target_type", "target_id", "outcome", "occurred_at", "request_id",
+              "previous_mac", "mac", "key_version"
+            ) VALUES (
+              $1::uuid, $2::uuid, 2, $3::uuid, 'permission.change',
+              'raw-request', $3, 'succeeded', now(), $4::uuid, $5, $6, 'audit-v1'
+            )
+          `,
+          [
+            randomUUID(),
+            organization.id,
+            actor.id,
+            randomUUID(),
+            mac,
+            "b".repeat(64),
+          ],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        writer.query(
+          `
+            INSERT INTO ${auditEvents} (
+              "id", "organization_id", "sequence", "actor_user_id", "action",
+              "target_type", "target_id", "outcome", "occurred_at", "request_id",
+              "previous_mac", "mac", "key_version"
+            ) VALUES (
+              $1::uuid, $2::uuid, 2, $3::uuid, 'permission.change',
+              'organization', ' ', 'succeeded', now(), $4::uuid, $5, $6, 'audit-v1'
+            )
+          `,
+          [
+            randomUUID(),
+            organization.id,
+            actor.id,
+            randomUUID(),
+            mac,
+            "b".repeat(64),
+          ],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
         reader.query(`SELECT "organization_id" FROM ${auditSequences} LIMIT 1`),
+      ).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        reader.query(`SELECT "request_id" FROM ${contentAuditIntents} LIMIT 1`),
+      ).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        writer.query(`SELECT "request_id" FROM ${contentAuditIntents} LIMIT 1`),
       ).rejects.toMatchObject({ code: "42501" });
       await expect(
         reader.query(

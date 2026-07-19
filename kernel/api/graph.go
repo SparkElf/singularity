@@ -144,6 +144,11 @@ func getLocalGraph(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
+	if local.TypeFilter == nil || local.D3 == nil {
+		ret.Code = -1
+		ret.Msg = "graph configuration is unavailable"
+		return
+	}
 
 	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "id")
 	if enterprise && !identityOK {
@@ -168,13 +173,14 @@ func getLocalGraph(c *gin.Context) {
 	var nodes []*model.GraphNode
 	var links []*model.GraphLink
 	if enterprise {
-		boxID, nodes, links = model.BuildTreeGraphInBox(
+		boxID, nodes, links = model.BuildTreeGraphInBoxWithConfig(
 			documentScope.DocumentID,
 			keyword,
 			documentScope.NotebookID,
+			local,
 		)
 	} else {
-		boxID, nodes, links = model.BuildTreeGraph(id, keyword)
+		boxID, nodes, links = model.BuildTreeGraphInBoxWithConfig(id, keyword, "", local)
 	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
@@ -182,9 +188,10 @@ func getLocalGraph(c *gin.Context) {
 		nodes, links = model.FilterGraphByPublishIgnore(publishIgnore, nodes, links)
 	}
 	if enterprise {
+		projectedNodes := enterpriseDiscoveryLocalGraphProjections(nodes)
 		ret.Data = map[string]any{
-			"links": enterpriseDiscoveryGraphLinkProjections(links),
-			"nodes": enterpriseDiscoveryLocalGraphProjections(nodes),
+			"links": enterpriseDiscoveryGraphLinkProjections(links, projectedNodes),
+			"nodes": projectedNodes,
 		}
 		return
 	}

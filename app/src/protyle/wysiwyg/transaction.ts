@@ -17,9 +17,19 @@ import {resize} from "../util/resize";
 import {processClonePHElement} from "../render/util";
 import {scrollCenter} from "../util/highlightById";
 import {setFold} from "../util/blockFold";
-import {setDocumentReadOnlyFromResponse} from "../runtime/readOnly";
+import {canWriteProtyleContent, setDocumentReadOnlyFromResponse} from "../runtime/readOnly";
 import {getBlockRefContentTarget, syncBlockRefContentIdentities} from "../util/blockRefIdentity";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {resolveProtyleContentAssetSources} from "../util/assetSource";
+
+const carriesContentAssetSource = (operation: IOperation) =>
+    [operation.data, operation.retData].some((value) => typeof value === "string" && value.includes("data-src"));
+
+const resolveTransactionContentAssetSources = (protyle: IProtyle, operations: IOperation[]) => {
+    if (operations.some(carriesContentAssetSource)) {
+        resolveProtyleContentAssetSources(protyle, protyle.wysiwyg.element);
+    }
+};
 
 const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
     // 移动到其他文档中，该块需移除
@@ -301,6 +311,7 @@ const promiseTransaction = (options: {
             // 不能撤销，否则就无限循环了
             focusByWbr(emptyElement, range);
         }
+        resolveTransactionContentAssetSources(protyle, options.doOperations);
     }
     const identity = protyleContentIdentity(protyle);
     void protyle.session!.runtime.transport.request<IWebSocketData>("/api/transactions", {
@@ -334,6 +345,7 @@ const promiseTransaction = (options: {
                     return;
                 }
             });
+            resolveTransactionContentAssetSources(protyle, response.data[0].doOperations);
         }
         // 事务提交后再渲染嵌入块，避免其查询请求早于写入到达内核而拿到旧数据
         pendingEmbedElements.forEach(item => {
@@ -417,6 +429,7 @@ const updateBlock = (updateElements: Element[], protyle: IProtyle, operation: IO
             item.getAttribute("data-subtype") === "echarts" ? protyle.lute.SpinBlockDOM(operation.data) : operation.data);
         item = item.nextElementSibling;
         item.previousElementSibling.remove();
+        resolveProtyleContentAssetSources(protyle, item);
 
         const wbrElement = item.querySelector("wbr");
         if (isRangeBlock && isUndo) {
@@ -756,9 +769,12 @@ export const onTransaction = (
                     if (protyle.destroyed || protyle.requestSignal.aborted) {
                         return;
                     }
+                    const displayContent = document.createElement("template");
+                    displayContent.innerHTML = response.data.dom;
+                    resolveProtyleContentAssetSources(protyle, displayContent.content);
                     protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${response.data.id}"]`).forEach(item => {
                         if (item.getAttribute("data-protyle-id") === protyle.id) {
-                            item.outerHTML = response.data.dom;
+                            item.outerHTML = displayContent.innerHTML;
                         }
                     });
                 }).catch((error) => {
@@ -1034,6 +1050,7 @@ export const onTransaction = (
             return;
         }
     });
+    resolveTransactionContentAssetSources(protyle, operations);
 };
 
 export const turnsIntoOneTransaction = async (options: {
@@ -1516,6 +1533,9 @@ export const transaction = (protyle: IProtyle, doOperations: IOperation[], undoO
     }
     if (!protyle) {
         throw new Error("[protyle.transaction] a bound Protyle is required");
+    }
+    if (!canWriteProtyleContent(protyle.readonlyState)) {
+        return;
     }
     if (undoOperations) {
         protyle.updated = true;

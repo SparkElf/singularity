@@ -52,7 +52,14 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
     response.ok(),
   );
   await editableParagraph.fill(persistedText);
-  await transactionResponse;
+  const committedResponse = await transactionResponse;
+  const auditRequestId = committedResponse.headers()["x-request-id"];
+  if (auditRequestId === undefined) {
+    throw new Error("Committed content response omitted its request identity");
+  }
+  expect(auditRequestId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
   await expect.poll(() => transactionRequests.length).toBeGreaterThan(0);
   const committedRequest = transactionRequests.at(-1)!;
   expect(committedRequest.headers()["x-singularity-notebook-id"]).toBe(
@@ -66,6 +73,38 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
   await page.reload();
   const reloadedEditor = page.getByTestId("protyle-host");
   await expect(reloadedEditor).toContainText(persistedText, { timeout: 30_000 });
+
+  await page.goto(
+    `/organizations/${state.organizationId}/settings/spaces/${state.spaceId}/audit`,
+  );
+  const refreshAudit = page.getByRole("button", {
+    name: "刷新审计事件",
+  });
+  const requestMarker = page.getByTitle(auditRequestId, { exact: true });
+  await expect.poll(
+    async () => {
+      await expect(refreshAudit).toBeEnabled();
+      const count = await requestMarker.count();
+      if (count > 0) {
+        return count;
+      }
+      const refreshed = page.waitForResponse((response) =>
+        response.ok() &&
+        new URL(response.url()).pathname.endsWith(
+          `/spaces/${state.spaceId}/audit-events`,
+        ),
+      );
+      await refreshAudit.click();
+      await refreshed;
+      await expect(refreshAudit).toBeEnabled();
+      return requestMarker.count();
+    },
+    { timeout: 30_000 },
+  ).toBe(1);
+  const auditRow = requestMarker.locator("xpath=ancestor::tr");
+  await expect(auditRow).toContainText("编辑内容");
+  await expect(auditRow).toContainText(state.documentId);
+  await expect(auditRow).toContainText("成功");
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
 });

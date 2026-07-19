@@ -2,6 +2,7 @@ import {hasClosestByAttribute} from "../util/hasClosest";
 import {combineAbortSignals} from "../util/abortSignal";
 import {processRender} from "../util/processCode";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {resolveProtyleContentAssetSources} from "../util/assetSource";
 import {genBreadcrumb, improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
 import {avRender} from "./av/render";
 import {genEmbedRenderFrame} from "./embedFrame";
@@ -197,6 +198,7 @@ ${popover}${breadcrumbHTML}${blocksItem.block.content}
     });
     if (blocks.length > 0) {
         item.firstElementChild.insertAdjacentHTML("afterend", html);
+        resolveProtyleContentAssetSources(protyle, item);
         improveBreadcrumbAppearance(item.querySelector(".protyle-wysiwyg__embed"));
     } else {
         const emptyElement = document.createElement("div");

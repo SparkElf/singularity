@@ -6,24 +6,24 @@ import type {
 import { basename } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import type { KernelAuditMode } from "@singularity/authorization";
-import type { AuditAction } from "@singularity/contracts";
-import { DatabaseRuntime } from "@singularity/database";
+import type { ContentAuditAction } from "@singularity/contracts";
 import {
   KernelPrivateClient,
   KernelTransportError,
 } from "@singularity/kernel-client";
 
-import { AuditWriter } from "../audit/audit-writer.service.js";
-import type { Clock } from "../identity/clock.js";
+import {
+  ContentAuditIntentService,
+  type ObservedContentAuditOutcome,
+} from "../audit/content-audit-intent.service.js";
 import {
   ApiProblemError,
   conflict,
   notFound,
   validationFailed,
 } from "../problem.js";
-import { CLOCK } from "../tokens.js";
 import type { KernelGatewayTarget } from "./gateway-path.js";
 import { KERNEL_JSON_MAXIMUM_BODY_BYTES } from "./install-http-boundary.js";
 import { KernelAccessService } from "./kernel-access.service.js";
@@ -121,7 +121,7 @@ function transactionDeletesContent(body: unknown): boolean {
 function auditAction(
   mode: KernelAuditMode | undefined,
   body: unknown,
-): AuditAction | null {
+): ContentAuditAction | null {
   if (mode === undefined) {
     return null;
   }
@@ -224,16 +224,23 @@ function upstreamProblem(status: number): ApiProblemError | null {
   return null;
 }
 
+function isExplicitKernelHttpRejection(status: number): boolean {
+  return (
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 403
+  );
+}
+
 @Injectable()
 export class KernelGatewayService {
   readonly #logger = new Logger("KernelGateway");
 
   constructor(
     private readonly access: KernelAccessService,
-    private readonly audit: AuditWriter,
     private readonly client: KernelPrivateClient,
-    @Inject(CLOCK) private readonly clock: Clock,
-    private readonly database: DatabaseRuntime,
+    private readonly contentAudit: ContentAuditIntentService,
   ) {}
 
   async proxy(
@@ -250,6 +257,13 @@ export class KernelGatewayService {
     });
 
     const body = serializedBody(input.body);
+    const contentAuditAction = auditAction(
+      input.target.policy.audit,
+      input.body,
+    );
+    if (contentAuditAction !== null) {
+      await this.#prepareContentAudit(input, contentAuditAction, startedAt);
+    }
     let upstream;
     try {
       upstream = await this.client.request({
@@ -267,14 +281,47 @@ export class KernelGatewayService {
         error instanceof KernelTransportError && error.failure === "timeout"
           ? 504
           : 502;
-      this.#log(input, "upstream-unavailable", status, startedAt);
+      this.#log(
+        input,
+        "upstream-unavailable",
+        status,
+        startedAt,
+        authorized.deployment.kernelInstanceId,
+      );
+      this.#deferContentAudit(
+        input,
+        contentAuditAction,
+        "kernel-result-indeterminate",
+        startedAt,
+      );
       throw new ApiProblemError("service-unavailable", status);
     }
 
     const problem = upstreamProblem(upstream.status);
     if (problem !== null) {
       upstream.message.resume();
-      this.#log(input, "upstream-rejected", problem.status, startedAt);
+      this.#log(
+        input,
+        "upstream-rejected",
+        problem.status,
+        startedAt,
+        authorized.deployment.kernelInstanceId,
+      );
+      if (isExplicitKernelHttpRejection(upstream.status)) {
+        await this.#resolveContentAudit(
+          input,
+          contentAuditAction,
+          "failed",
+          startedAt,
+        );
+      } else {
+        this.#deferContentAudit(
+          input,
+          contentAuditAction,
+          "kernel-result-indeterminate",
+          startedAt,
+        );
+      }
       throw problem;
     }
     if (
@@ -283,14 +330,21 @@ export class KernelGatewayService {
       normalizedContentType(upstream.headers) !== "application/json"
     ) {
       upstream.message.resume();
-      this.#log(input, "upstream-rejected", 502, startedAt);
+      this.#log(
+        input,
+        "upstream-rejected",
+        502,
+        startedAt,
+        authorized.deployment.kernelInstanceId,
+      );
+      this.#deferContentAudit(
+        input,
+        contentAuditAction,
+        "kernel-response-invalid",
+        startedAt,
+      );
       throw new ApiProblemError("service-unavailable", 502);
     }
-
-    const contentAuditAction = auditAction(
-      input.target.policy.audit,
-      input.body,
-    );
     if (
       (input.target.surface === "api" || input.target.surface === "upload") &&
       upstream.status !== 204
@@ -299,22 +353,53 @@ export class KernelGatewayService {
       try {
         result = await readKernelJsonResult(upstream.message);
       } catch (error) {
-        this.#log(input, "upstream-rejected", 502, startedAt);
+        this.#log(
+          input,
+          "upstream-rejected",
+          502,
+          startedAt,
+          authorized.deployment.kernelInstanceId,
+        );
+        this.#deferContentAudit(
+          input,
+          contentAuditAction,
+          "kernel-response-invalid",
+          startedAt,
+        );
         throw error;
       }
       const resultProblem = kernelResultProblem(result.code);
       if (resultProblem !== null) {
-        this.#log(input, "upstream-rejected", resultProblem.status, startedAt);
+        this.#log(
+          input,
+          "upstream-rejected",
+          resultProblem.status,
+          startedAt,
+          authorized.deployment.kernelInstanceId,
+        );
+        if (result.code >= 500) {
+          this.#deferContentAudit(
+            input,
+            contentAuditAction,
+            "kernel-result-indeterminate",
+            startedAt,
+          );
+        } else {
+          await this.#resolveContentAudit(
+            input,
+            contentAuditAction,
+            "failed",
+            startedAt,
+          );
+        }
         throw resultProblem;
       }
-      if (contentAuditAction !== null) {
-        try {
-          await this.#appendContentAudit(input, contentAuditAction, startedAt);
-        } catch (error) {
-          upstream.message.destroy();
-          throw error;
-        }
-      }
+      await this.#resolveContentAudit(
+        input,
+        contentAuditAction,
+        "succeeded",
+        startedAt,
+      );
       this.#sendBufferedResponse(
         input,
         reply,
@@ -322,17 +407,16 @@ export class KernelGatewayService {
         upstream.status,
         result.body,
         startedAt,
+        authorized.deployment.kernelInstanceId,
       );
       return;
     }
-    if (contentAuditAction !== null) {
-      try {
-        await this.#appendContentAudit(input, contentAuditAction, startedAt);
-      } catch (error) {
-        upstream.message.destroy();
-        throw error;
-      }
-    }
+    await this.#resolveContentAudit(
+      input,
+      contentAuditAction,
+      "succeeded",
+      startedAt,
+    );
 
     reply.hijack();
     const response = reply.raw;
@@ -346,40 +430,86 @@ export class KernelGatewayService {
     upstream.message.once("error", () => response.destroy());
     response.once("close", () => upstream.message.destroy());
     upstream.message.pipe(response);
-    this.#log(input, "proxied", upstream.status, startedAt);
+    this.#log(
+      input,
+      "proxied",
+      upstream.status,
+      startedAt,
+      authorized.deployment.kernelInstanceId,
+    );
   }
 
-  async #appendContentAudit(
+  async #prepareContentAudit(
     input: KernelGatewayProxyRequest,
-    action: AuditAction,
+    action: ContentAuditAction,
     startedAt: number,
   ): Promise<void> {
     try {
-      await this.database.client.$transaction((transaction) =>
-        this.audit.append(transaction, {
-          action,
-          actorUserId: input.userId,
-          occurredAt: this.clock.now(),
-          organizationId: input.target.organizationId,
-          outcome: "succeeded",
-          requestId: input.requestId,
-          spaceId: input.target.spaceId,
-          targetId: input.target.identity.documentId,
-          targetType: "document",
-        }),
-      );
+      await this.contentAudit.prepare({
+        action,
+        actorUserId: input.userId,
+        documentId: input.target.identity.documentId,
+        organizationId: input.target.organizationId,
+        requestId: input.requestId,
+        spaceId: input.target.spaceId,
+      });
     } catch {
       this.#logger.error({
         action,
         canonicalRoute: input.target.policy.path,
         durationMilliseconds: performance.now() - startedAt,
-        event: "kernel.route",
-        outcome: "audit-unavailable",
+        event: "content.audit-intent",
+        outcome: "unavailable",
         requestId: input.requestId,
         spaceId: input.target.spaceId,
       });
       throw new ApiProblemError("service-unavailable", 503);
     }
+  }
+
+  async #resolveContentAudit(
+    input: KernelGatewayProxyRequest,
+    action: ContentAuditAction | null,
+    outcome: ObservedContentAuditOutcome,
+    startedAt: number,
+  ): Promise<void> {
+    if (action === null) {
+      return;
+    }
+    try {
+      await this.contentAudit.resolve({ outcome, requestId: input.requestId });
+    } catch {
+      this.#logger.error({
+        action,
+        canonicalRoute: input.target.policy.path,
+        durationMilliseconds: performance.now() - startedAt,
+        event: "content.audit-resolution",
+        outcome: "deferred",
+        requestId: input.requestId,
+        spaceId: input.target.spaceId,
+      });
+    }
+  }
+
+  #deferContentAudit(
+    input: KernelGatewayProxyRequest,
+    action: ContentAuditAction | null,
+    reason: "kernel-response-invalid" | "kernel-result-indeterminate",
+    startedAt: number,
+  ): void {
+    if (action === null) {
+      return;
+    }
+    this.#logger.warn({
+      action,
+      canonicalRoute: input.target.policy.path,
+      durationMilliseconds: performance.now() - startedAt,
+      event: "content.audit-resolution",
+      outcome: "deferred",
+      reason,
+      requestId: input.requestId,
+      spaceId: input.target.spaceId,
+    });
   }
 
   #sendBufferedResponse(
@@ -389,6 +519,7 @@ export class KernelGatewayService {
     status: number,
     body: Buffer,
     startedAt: number,
+    kernelInstanceId: string,
   ): void {
     reply.hijack();
     const response = reply.raw;
@@ -400,7 +531,7 @@ export class KernelGatewayService {
       input.requestId,
     );
     response.end(body);
-    this.#log(input, "proxied", status, startedAt);
+    this.#log(input, "proxied", status, startedAt, kernelInstanceId);
   }
 
   #applyResponseHeaders(
@@ -426,6 +557,7 @@ export class KernelGatewayService {
     const mediaType = normalizedContentType(headers);
     const inline =
       target.surface === "asset" &&
+      !target.forceDownload &&
       mediaType !== null &&
       INLINE_CONTENT_TYPES.has(mediaType);
     if (inline) {
@@ -456,11 +588,13 @@ export class KernelGatewayService {
     outcome: "proxied" | "upstream-rejected" | "upstream-unavailable",
     status: number,
     startedAt: number,
+    kernelInstanceId: string,
   ): void {
     const context = {
       canonicalRoute: input.target.policy.path,
       durationMilliseconds: performance.now() - startedAt,
       event: "kernel.route",
+      kernelInstanceId,
       outcome,
       requestId: input.requestId,
       spaceId: input.target.spaceId,
