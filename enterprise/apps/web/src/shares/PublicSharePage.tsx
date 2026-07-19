@@ -41,17 +41,28 @@ import {
 
 const BLOCKED_ELEMENTS = new Set([
   "base",
+  "button",
+  "canvas",
   "embed",
+  "frame",
+  "frameset",
   "form",
+  "head",
+  "html",
   "iframe",
   "input",
   "link",
+  "math",
   "meta",
   "object",
+  "portal",
   "script",
   "select",
   "style",
+  "svg",
   "textarea",
+  "template",
+  "title",
 ]);
 
 const ALLOWED_ATTRIBUTES = new Set([
@@ -98,8 +109,17 @@ function isSafeExternalUrl(value: string): boolean {
     return true;
   }
   try {
-    return SAFE_EXTERNAL_PROTOCOLS.has(
-      new URL(value, window.location.origin).protocol,
+    const url = new URL(value, window.location.origin);
+    if (!SAFE_EXTERNAL_PROTOCOLS.has(url.protocol)) {
+      return false;
+    }
+    if (url.protocol === "mailto:") {
+      return true;
+    }
+    return (
+      url.origin !== window.location.origin &&
+      url.username.length === 0 &&
+      url.password.length === 0
     );
   } catch {
     return false;
@@ -159,8 +179,7 @@ function sanitizeSharedElement(
     }
     if (
       !ALLOWED_ATTRIBUTES.has(name) &&
-      !name.startsWith("aria-") &&
-      !name.startsWith("data-")
+      !name.startsWith("aria-")
     ) {
       element.removeAttribute(attribute.name);
     }
@@ -410,9 +429,12 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
   const queryClient = useQueryClient();
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const shareQuery = useQuery({
+    gcTime: 0,
     enabled: shareToken !== null,
     queryKey: publicShareQueryKey(shareToken ?? ""),
     queryFn: ({ signal }) => getPublicShare(shareToken as string, signal),
+    refetchOnMount: "always",
+    staleTime: 0,
   });
   const challengeMutation = useMutation({
     mutationFn: (password: string) =>
@@ -450,7 +472,7 @@ function PublicSharePageContent({ routeToken }: { routeToken: string }) {
     );
   }
 
-  if (shareQuery.isPending) {
+  if (shareQuery.isPending || shareQuery.isFetching) {
     return (
       <ShareState
         description="正在验证分享状态并读取文档。"

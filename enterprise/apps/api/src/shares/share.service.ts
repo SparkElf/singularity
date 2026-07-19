@@ -209,6 +209,11 @@ export class ShareService {
     shareId: string;
     spaceId: string;
   }): Promise<void> {
+    await this.spaces.requireSpaceManager(
+      input.actorUserId,
+      input.organizationId,
+      input.spaceId,
+    );
     const passwordDigest =
       input.password === null
         ? null

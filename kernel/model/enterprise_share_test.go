@@ -3,6 +3,8 @@ package model
 import (
 	"strings"
 	"testing"
+
+	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 func TestEnterpriseShareAssetLinksExposeOnlyDocumentAssets(t *testing.T) {
@@ -55,5 +57,23 @@ func TestEnterpriseShareAssetIdentityAndDispositionAreStable(t *testing.T) {
 		if enterpriseShareInlineMediaType(mediaType) {
 			t.Fatalf("%s was allowed inline", mediaType)
 		}
+	}
+}
+
+func TestEnterpriseShareProjectionDropsIdentityAndActiveContentMarkup(t *testing.T) {
+	rendered, err := rewriteEnterpriseSharedAssetLinks(
+		util.SanitizeHTML(
+			`<div data-node-id="20260718010101-private"><svg><script>alert(1)</script></svg><p>正文</p></div>`,
+		),
+		map[string]string{},
+	)
+	if err != nil {
+		t.Fatalf("sanitize shared projection: %v", err)
+	}
+	if strings.Contains(rendered, "data-node-id") || strings.Contains(rendered, "<svg") || strings.Contains(rendered, "script") {
+		t.Fatalf("shared projection retained private or active markup: %s", rendered)
+	}
+	if !strings.Contains(rendered, "正文") {
+		t.Fatalf("shared projection lost document text: %s", rendered)
 	}
 }

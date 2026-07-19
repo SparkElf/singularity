@@ -47,9 +47,12 @@ async function readJson(message: IncomingMessage): Promise<unknown> {
   }
 }
 
-function sharedDocument(value: unknown): SharedDocumentPayload {
+function sharedDocument(
+  value: unknown,
+  expectedDocumentId: string,
+): SharedDocumentPayload {
   const parsed = sharedDocumentPayloadSchema.safeParse(value);
-  if (!parsed.success) {
+  if (!parsed.success || parsed.data.documentId !== expectedDocumentId) {
     throw serviceUnavailable();
   }
   return parsed.data;
@@ -96,7 +99,7 @@ export class ShareKernelClient implements ShareKernelPort {
       response.message.resume();
       throw serviceUnavailable();
     }
-    return sharedDocument(await readJson(response.message));
+    return sharedDocument(await readJson(response.message), input.documentId);
   }
 
   async readAsset(input: {

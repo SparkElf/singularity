@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { passwordSchema } from "./identity.js";
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  passwordSchema,
+} from "./identity.js";
 import {
   strictObjectOpenApiSchema,
   UUID_OPENAPI_SCHEMA,
@@ -148,6 +152,8 @@ const SHARE_ASSET_ID_OPENAPI_SCHEMA: OpenApiSchema = {
 };
 const NULLABLE_PASSWORD_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
+  minLength: PASSWORD_MIN_LENGTH,
+  maxLength: PASSWORD_MAX_LENGTH,
   nullable: true,
 };
 
@@ -164,7 +170,13 @@ export const CREATE_DOCUMENT_SHARE_REQUEST_OPENAPI_SCHEMA =
 export const CHANGE_DOCUMENT_SHARE_PASSWORD_REQUEST_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({ password: NULLABLE_PASSWORD_OPENAPI_SCHEMA });
 export const CREATE_SHARE_CHALLENGE_REQUEST_OPENAPI_SCHEMA =
-  strictObjectOpenApiSchema({ password: { type: "string" } });
+  strictObjectOpenApiSchema({
+    password: {
+      type: "string",
+      minLength: PASSWORD_MIN_LENGTH,
+      maxLength: PASSWORD_MAX_LENGTH,
+    },
+  });
 export const MANAGED_DOCUMENT_SHARE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   createdAt: DATE_TIME_OPENAPI_SCHEMA,
   documentId: CONTENT_ID_OPENAPI_SCHEMA,
