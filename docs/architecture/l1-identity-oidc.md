@@ -59,6 +59,8 @@ AuthSession 具有 30 分钟 idle 期限和 12 小时 absolute 期限。`Clock` 
 
 主动退出只撤销当前会话。受控运维可撤销用户全部会话或停用用户；后续 HTTP 认证统一返回 `unauthenticated`，React 清除 QueryClient 与 CSRF 状态并回到登录页。会话 token、摘要和密码不会进入日志。
 
+`SpacesPage`、`SpacePage` 与企业管理壳统一消费 `useLogout`。退出成功或服务端返回 `unauthenticated` 时，该 hook 在替换路由前调用唯一的 `clearClientSession(queryClient)`，同步清除内存 CSRF 和全部 Query 数据；其他错误保留当前状态并显示可重试失败，不把网络故障推断为会话结束。
+
 ## 4. OIDC协议
 
 Provider 管理在组织 owner HTTP 路由完成。名称及 `(organizationId, issuer, clientId)` 的数据库唯一冲突统一返回 409，更新和创建保持相同错误合同。Provider secret 只保存引用，不由 API 或浏览器回显 secret 内容。
@@ -84,6 +86,7 @@ Provider 管理在组织 owner HTTP 路由完成。名称及 `(organizationId, i
 | 本地登录、Cookie、CSRF、限流、期限、撤销 | `enterprise/apps/api/test/identity.http.test.ts` | HTTP contract |
 | OIDC Provider CRUD、PKCE、state/nonce、JWKS、邀请 | `enterprise/apps/api/test/identity.http.test.ts` | HTTP contract |
 | 登录页 OIDC provider 加载与启动错误 | `enterprise/apps/web/src/app/App.test.tsx` | React component |
+| 主动退出成功或 401 后的 Query/CSRF 清理 | `enterprise/apps/web/src/auth/use-logout.test.tsx` | React hook/component |
 | Provider 更新 schema 错误可见 | `enterprise/apps/web/src/enterprise/OidcPage.test.tsx` | React component |
 | 登录失效后的缓存与路由清理 | `enterprise/apps/web/tests/browser-integration/runtime-session.spec.ts` | Browser integration |
 
