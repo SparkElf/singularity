@@ -75,19 +75,22 @@ export interface KernelObservationPort {
     job: SampleKernelJob,
     signal: AbortSignal,
   ): Promise<{
-    capacity: {
-      assetBytes: string;
-      dataBytes: string;
-      errorCode?: string | undefined;
-      fileCount: string;
-      sampleDurationMilliseconds: number;
-      sampledAt: string;
-    };
-    health: {
-      errorCode?: string | undefined;
-      kernelVersion: string;
-      sampledAt: string;
-      status: "ready" | "unavailable";
+    deploymentHandle: string;
+    sample: {
+      capacity: {
+        assetBytes: string;
+        dataBytes: string;
+        errorCode?: string | undefined;
+        fileCount: string;
+        sampleDurationMilliseconds: number;
+        sampledAt: string;
+      };
+      health: {
+        errorCode?: string | undefined;
+        kernelVersion: string;
+        sampledAt: string;
+        status: "ready" | "unavailable";
+      };
     };
   }>;
 }
@@ -1059,27 +1062,47 @@ export class SampleKernelHandler implements WorkerJobHandler<SampleKernelJob> {
   }
 
   async execute(job: SampleKernelJob, signal: AbortSignal): Promise<void> {
-    const sample = await this.observations.read(job, signal);
+    const observation = await this.observations.read(job, signal);
+    const sample = observation.sample;
     signal.throwIfAborted();
     await this.database.client.$transaction(async (transaction) => {
-      const active = await transaction.$queryRaw<Array<{ allowed: boolean }>>(
+      const organizations = await transaction.$queryRaw<Array<{ id: string }>>(
         Prisma.sql`
-          SELECT EXISTS (
-            SELECT 1
-            FROM "kernel_instances" AS kernel
-            INNER JOIN "spaces" AS space
-              ON space."id" = kernel."space_id"
-              AND space."organization_id" = ${job.organizationId}::uuid
-            INNER JOIN "organizations" AS organization
-              ON organization."id" = space."organization_id"
-            WHERE kernel."id" = ${job.kernelInstanceId}::uuid
-              AND kernel."space_id" = ${job.spaceId}::uuid
-              AND organization."status" = 'active'
-              AND space."status" IN ('active', 'archived')
-          ) AS "allowed"
+          SELECT "id"
+          FROM "organizations"
+          WHERE "id" = ${job.organizationId}::uuid
+            AND "status" = 'active'
+          FOR UPDATE
         `,
       );
-      if (active[0]?.allowed !== true) {
+      if (organizations.length !== 1) {
+        throw new WorkerJobError("observation-state-conflict", null);
+      }
+      const spaces = await transaction.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT "id"
+          FROM "spaces"
+          WHERE "id" = ${job.spaceId}::uuid
+            AND "organization_id" = ${job.organizationId}::uuid
+            AND "status" IN ('active', 'archived')
+          FOR UPDATE
+        `,
+      );
+      if (spaces.length !== 1) {
+        throw new WorkerJobError("observation-state-conflict", null);
+      }
+      const kernels = await transaction.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT "id"
+          FROM "kernel_instances"
+          WHERE "id" = ${job.kernelInstanceId}::uuid
+            AND "space_id" = ${job.spaceId}::uuid
+            AND "status" = 'ready'
+            AND "deployment_handle" = ${observation.deploymentHandle}
+          FOR UPDATE
+        `,
+      );
+      if (kernels.length !== 1) {
         throw new WorkerJobError("observation-state-conflict", null);
       }
       await transaction.$executeRaw(
@@ -1234,6 +1257,7 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
         maximumBytes: this.maximumArchiveBytes,
         source: jsonLines(),
       });
+      signal.throwIfAborted();
       await this.database.client.$executeRaw(
         Prisma.sql`
           INSERT INTO "audit_archives" (
