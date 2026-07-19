@@ -142,6 +142,7 @@ const PROTYLE_CONTENT_EDIT_ROUTES = [
   "/api/av/duplicateAttributeViewBlock",
   "/api/av/setAttributeViewBlockAttr",
   "/api/av/setAttrViewGroup",
+  "/api/block/swapBlockRef",
   "/api/block/updateTaskListItemMarker",
   "/api/filetree/createDoc",
   "/api/filetree/createDocWithMd",
@@ -149,6 +150,7 @@ const PROTYLE_CONTENT_EDIT_ROUTES = [
   "/api/format/autoSpace",
   "/api/format/netAssets2LocalAssets",
   "/api/format/netImg2LocalAssets",
+  "/api/tag/renameTag",
   "/api/transactions/redo",
   "/api/transactions/undo",
 ] as const;

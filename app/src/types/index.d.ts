@@ -353,14 +353,6 @@ interface ILocalFiles {
     size: number
 }
 
-interface IClipboardData {
-    textHTML?: string,
-    textPlain?: string,
-    siyuanHTML?: string,
-    files?: File[],
-    localFiles?: ILocalFiles[],
-}
-
 interface IRefDefs {
     refID: string,
     defIDs?: string[]

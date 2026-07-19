@@ -8,7 +8,7 @@ import {genEmbedRenderFrame} from "./embedFrame";
 import {highlightRender} from "./highlightRender";
 
 interface EmbedBlockResult {
-    readonly block: IBlock & {readonly box: string; readonly id: string};
+    readonly block: IBlock & {readonly box: string; readonly id: string; readonly rootID: string};
     readonly blockPaths: IBreadcrumb[];
 }
 
@@ -185,12 +185,13 @@ const renderEmbed = (
         const breadcrumbHTML = blocksItem.blockPaths.length === 0 ? "" : genBreadcrumb(blocksItem.blockPaths, true);
         let popover = "";
         if (index !== 0) {
-            popover = `<div class="protyle-icons"><span data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}" data-action="openFloat" aria-label="${protyle.localization.text("refPopover")}" data-position="4north" class="ariaLabel protyle-icon protyle-icon--last protyle-icon--first"><svg><use xlink:href="#iconPictureInPicture"></use></svg></span></div>`;
+            popover = `<div class="protyle-icons"><span data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}" data-document-id="${blocksItem.block.rootID}" data-action="openFloat" aria-label="${protyle.localization.text("refPopover")}" data-position="4north" class="ariaLabel protyle-icon protyle-icon--last protyle-icon--first"><svg><use xlink:href="#iconPictureInPicture"></use></svg></span></div>`;
         } else {
             item.querySelectorAll(".protyle-icon")[2]?.setAttribute("data-id", blocksItem.block.id);
             item.querySelectorAll(".protyle-icon")[2]?.setAttribute("data-notebook-id", blocksItem.block.box);
+            item.querySelectorAll(".protyle-icon")[2]?.setAttribute("data-document-id", blocksItem.block.rootID);
         }
-        html += `<div class="protyle-wysiwyg__embed" data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}">
+        html += `<div class="protyle-wysiwyg__embed" data-id="${blocksItem.block.id}" data-notebook-id="${blocksItem.block.box}" data-document-id="${blocksItem.block.rootID}">
 ${popover}${breadcrumbHTML}${blocksItem.block.content}
 </div>`;
     });

@@ -7,9 +7,8 @@ import {scrollCenter} from "./highlightById";
 import {insertEmptyBlock} from "../wysiwyg/blockActions";
 import {removeBlock} from "../wysiwyg/remove";
 import {hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
+import {openProtyleDialog} from "../wysiwyg/dialogOwner";
 import * as dayjs from "dayjs";
-import {Dialog} from "../../dialog";
-import {isMobile} from "../../util/functions";
 
 const scrollToView = (nodeElement: Element, rowElement: HTMLElement, protyle: IProtyle) => {
     if (nodeElement.getAttribute("custom-pinthead") === "true") {
@@ -371,7 +370,12 @@ export const moveColumnToRight = (protyle: IProtyle, range: Range, cellElement: 
     focusByWbr(nodeElement, range);
 };
 
-export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) => {
+export const fixTable = (
+    protyle: IProtyle,
+    event: KeyboardEvent,
+    range: Range,
+    tableHotkeys: IProtyle["settings"]["hotkeys"]["editor"]["table"],
+) => {
     const cellElement = (hasClosestByTag(range.startContainer, "TD") || hasClosestByTag(range.startContainer, "TH")) as HTMLTableCellElement;
     const nodeElement = hasClosestBlock(range.startContainer) as HTMLTableElement;
     if (!cellElement || !nodeElement) {
@@ -594,19 +598,19 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
         }
 
         // 居左
-        if (matchHotKey(window.siyuan.config.keymap.editor.general.alignLeft.custom, event)) {
+        if (matchHotKey(protyle.settings.hotkeys.editor.general.alignLeft, event)) {
             setTableAlign(protyle, [cellElement], nodeElement, "left", range);
             event.preventDefault();
             return true;
         }
         // 居中
-        if (matchHotKey(window.siyuan.config.keymap.editor.general.alignCenter.custom, event)) {
+        if (matchHotKey(protyle.settings.hotkeys.editor.general.alignCenter, event)) {
             setTableAlign(protyle, [cellElement], nodeElement, "center", range);
             event.preventDefault();
             return true;
         }
         // 居右
-        if (matchHotKey(window.siyuan.config.keymap.editor.general.alignRight.custom, event)) {
+        if (matchHotKey(protyle.settings.hotkeys.editor.general.alignRight, event)) {
             setTableAlign(protyle, [cellElement], nodeElement, "right", range);
             event.preventDefault();
             return true;
@@ -686,7 +690,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
             return true;
         }
     });
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.moveToUp.custom, event)) {
+    if (matchHotKey(tableHotkeys.moveToUp, event)) {
         if ((!hasNone || (hasNone && !hasRowSpan && hasColSpan)) &&
             (!previousHasNone || (previousHasNone && !previousHasRowSpan && previousHasColSpan))) {
             moveRowToUp(protyle, range, cellElement, nodeElement);
@@ -695,7 +699,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.moveToDown.custom, event)) {
+    if (matchHotKey(tableHotkeys.moveToDown, event)) {
         if ((!hasNone || (hasNone && !hasRowSpan && hasColSpan)) &&
             (!nextHasNone || (nextHasNone && !nextHasRowSpan && nextHasColSpan))) {
             moveRowToDown(protyle, range, cellElement, nodeElement);
@@ -704,7 +708,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.moveToLeft.custom, event)) {
+    if (matchHotKey(tableHotkeys.moveToLeft, event)) {
         if (colIsPure && previousColIsPure) {
             moveColumnToLeft(protyle, range, cellElement, nodeElement);
         }
@@ -712,7 +716,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
         return true;
     }
 
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.moveToRight.custom, event)) {
+    if (matchHotKey(tableHotkeys.moveToRight, event)) {
         if (colIsPure && nextColIsPure) {
             moveColumnToRight(protyle, range, cellElement, nodeElement);
         }
@@ -721,7 +725,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 上方新添加一行
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.insertRowAbove.custom, event)) {
+    if (matchHotKey(tableHotkeys.insertRowAbove, event)) {
         insertRowAbove(protyle, range, cellElement, nodeElement);
         event.preventDefault();
         event.stopPropagation();
@@ -729,7 +733,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 下方新添加一行 https://github.com/Vanessa219/vditor/issues/46
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.insertRowBelow.custom, event)) {
+    if (matchHotKey(tableHotkeys.insertRowBelow, event)) {
         if (!nextHasNone || (nextHasNone && !nextHasRowSpan && nextHasColSpan)) {
             insertRow(protyle, range, cellElement, nodeElement);
         }
@@ -738,7 +742,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 左方新添加一列
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.insertColumnLeft.custom, event)) {
+    if (matchHotKey(tableHotkeys.insertColumnLeft, event)) {
         if (colIsPure || previousColIsPure) {
             insertColumn(protyle, nodeElement, cellElement, "beforebegin", range);
         }
@@ -747,7 +751,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 后方新添加一列
-    if (matchHotKey(window.siyuan.config.keymap.editor.table.insertColumnRight.custom, event)) {
+    if (matchHotKey(tableHotkeys.insertColumnRight, event)) {
         if (colIsPure || nextColIsPure) {
             insertColumn(protyle, nodeElement, cellElement, "afterend", range);
         }
@@ -756,7 +760,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 删除当前行
-    if (matchHotKey(window.siyuan.config.keymap.editor.table["delete-row"].custom, event)) {
+    if (matchHotKey(tableHotkeys["delete-row"], event)) {
         if ((!hasNone && !hasRowSpan) || //https://github.com/siyuan-note/siyuan/issues/5045
             (hasNone && !hasRowSpan && hasColSpan)) {
             deleteRow(protyle, range, cellElement, nodeElement);
@@ -767,7 +771,7 @@ export const fixTable = (protyle: IProtyle, event: KeyboardEvent, range: Range) 
     }
 
     // 删除当前列
-    if (matchHotKey(window.siyuan.config.keymap.editor.table["delete-column"].custom, event)) {
+    if (matchHotKey(tableHotkeys["delete-column"], event)) {
         if (colIsPure) {
             deleteColumn(protyle, range, nodeElement, cellElement);
         }
@@ -827,44 +831,58 @@ export const clearTableCell = (protyle: IProtyle, tableBlockElement: HTMLElement
 
 export const updateTableTitle = (protyle: IProtyle, nodeElement: Element) => {
     const captionElement = nodeElement.querySelector("caption");
-    window.siyuan.menus.menu.remove();
-    const dialog = new Dialog({
-        title: window.siyuan.languages.table,
-        width: isMobile() ? "92vw" : "520px",
-        content: `<div class="b3-dialog__content">
-    <label>
-        <div>${window.siyuan.languages.title}</div>
-        <div class="fn__hr"></div>
-        <input class="b3-text-field fn__block">
-    </label>
-    <div class="fn__hr--b"></div>
-    <label>
-        <div>${window.siyuan.languages.position}</div>
-        <div class="fn__hr"></div>
-        <select class="b3-select fn__block">
-            <option value="top">${window.siyuan.languages.up}</option>
-            <option value="bottom" ${captionElement?.style.captionSide === "bottom" ? "selected" : ""}>${window.siyuan.languages.down}</option>
-        </select>
-    </label>
-</div>
-<div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${window.siyuan.languages.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${window.siyuan.languages.confirm}</button>
-</div>
-<div>`,
-    });
+    const localization = protyle.localization;
+    const dialog = openProtyleDialog({protyle, title: localization.text("table")});
+    const content = document.createElement("div");
+    content.className = "b3-dialog__content";
+    const titleLabel = document.createElement("label");
+    const titleText = document.createElement("div");
+    titleText.textContent = localization.text("title");
+    const titleDivider = document.createElement("div");
+    titleDivider.className = "fn__hr";
+    const inputElement = document.createElement("input");
+    inputElement.className = "b3-text-field fn__block";
+    titleLabel.append(titleText, titleDivider, inputElement);
+    const sectionDivider = document.createElement("div");
+    sectionDivider.className = "fn__hr--b";
+    const positionLabel = document.createElement("label");
+    const positionText = document.createElement("div");
+    positionText.textContent = localization.text("position");
+    const positionDivider = document.createElement("div");
+    positionDivider.className = "fn__hr";
+    const positionSelect = document.createElement("select");
+    positionSelect.className = "b3-select fn__block";
+    const topOption = document.createElement("option");
+    topOption.value = "top";
+    topOption.textContent = localization.text("up");
+    const bottomOption = document.createElement("option");
+    bottomOption.value = "bottom";
+    bottomOption.textContent = localization.text("down");
+    bottomOption.selected = captionElement?.style.captionSide === "bottom";
+    positionSelect.append(topOption, bottomOption);
+    positionLabel.append(positionText, positionDivider, positionSelect);
+    content.append(titleLabel, sectionDivider, positionLabel);
+
+    const actions = document.createElement("div");
+    actions.className = "b3-dialog__action";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "b3-button b3-button--cancel";
+    cancelButton.textContent = localization.text("cancel");
+    const spacer = document.createElement("div");
+    spacer.className = "fn__space";
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.className = "b3-button b3-button--text";
+    confirmButton.textContent = localization.text("confirm");
+    actions.append(cancelButton, spacer, confirmButton);
+    dialog.bodyElement.append(content, actions);
+
     const html = nodeElement.outerHTML;
-    const inputElement = dialog.element.querySelector(".b3-text-field") as HTMLInputElement;
-    const btnsElement = dialog.element.querySelectorAll(".b3-button");
-    dialog.bindInput(inputElement, () => {
-        (btnsElement[1] as HTMLButtonElement).click();
-    });
-    btnsElement[0].addEventListener("click", () => {
-        dialog.destroy();
-    });
-    btnsElement[1].addEventListener("click", () => {
+    cancelButton.addEventListener("click", dialog.close, {signal: dialog.signal});
+    confirmButton.addEventListener("click", () => {
         const title = inputElement.value.trim();
-        const location = (dialog.element.querySelector("select") as HTMLSelectElement).value;
+        const location = positionSelect.value;
         if (title) {
             const html = `<caption contenteditable="false" ${location === "bottom" ? 'style="caption-side: bottom;"' : ""}>${Lute.EscapeHTMLStr(title)}</caption>`;
             if (captionElement) {
@@ -880,8 +898,16 @@ export const updateTableTitle = (protyle: IProtyle, nodeElement: Element) => {
             nodeElement.removeAttribute("caption");
         }
         updateTransaction(protyle, nodeElement, html);
-        dialog.destroy();
-    });
+        dialog.close();
+    }, {signal: dialog.signal});
+    inputElement.addEventListener("keydown", (event) => {
+        if (!event.isComposing && !event.repeat && event.key === "Enter" &&
+            !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+            confirmButton.click();
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    }, {signal: dialog.signal});
     inputElement.value = captionElement?.textContent || "";
     inputElement.focus();
     inputElement.select();

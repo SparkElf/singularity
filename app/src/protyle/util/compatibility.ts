@@ -9,6 +9,7 @@ import {
     readText as readBrowserText,
     writeText as writeBrowserText,
 } from "./clipboard";
+import type {ProtyleClipboardData} from "./clipboard";
 import {downloadExportFile} from "./download";
 import {getViewportWidth} from "./browserPlatform";
 
@@ -93,13 +94,14 @@ export const readText = async () => {
 
 
 export const readClipboard = async () => {
-    const text: IClipboardData = {textPlain: "", textHTML: "", siyuanHTML: ""};
+    const text: ProtyleClipboardData = {textPlain: "", textHTML: "", siyuanHTML: ""};
     if (isInAndroid()) {
         text.textPlain = window.JSAndroid.readClipboard();
         text.textHTML = window.JSAndroid.readHTMLClipboard();
         const textObj = getTextSiyuanFromTextHTML(text.textHTML);
         text.textHTML = textObj.textHtml;
         text.siyuanHTML = textObj.textSiyuan;
+        text.sourceIdentity = textObj.sourceIdentity;
         if (!text.siyuanHTML) {
             text.siyuanHTML = window.JSAndroid.readSiYuanHTMLClipboard();
         }
@@ -111,6 +113,7 @@ export const readClipboard = async () => {
         const textObj = getTextSiyuanFromTextHTML(text.textHTML);
         text.textHTML = textObj.textHtml;
         text.siyuanHTML = textObj.textSiyuan;
+        text.sourceIdentity = textObj.sourceIdentity;
         if (!text.siyuanHTML) {
             text.siyuanHTML = window.JSHarmony.readSiYuanHTMLClipboard();
         }

@@ -1,9 +1,8 @@
 import {unicodeToEmoji} from "../../hint/emoji";
 import {getColIconByType} from "./col";
 import {escapeHtml} from "../../../util/escape";
-import {setPosition} from "../../../util/setPosition";
+import {setToolbarPosition} from "../../toolbar/position";
 import {getFieldsByData} from "./view";
-import {objEquals} from "../../../util/functions";
 import {Constants} from "../../../constants";
 import {protyleContentIdentity} from "../../util/contentLoad";
 import {openAVMenu} from "./menu";
@@ -75,7 +74,7 @@ export const setGroupMethod = async (options: {
         data: options.data
     });
     const tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
-    setPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
+    setToolbarPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
 };
 
 export const getGroupsMethodHTML = (
@@ -193,7 +192,9 @@ export const bindGroupsNumber = (options: {
             numEnd: inputElements[1].value ? parseFloat(inputElements[1].value) : options.data.view.group.range.numEnd,
             numStep: inputElements[2].value ? parseFloat(inputElements[2].value) : options.data.view.group.range.numStep
         };
-        if (objEquals(options.data.view.group.range, range)) {
+        const currentRange = options.data.view.group.range;
+        if (currentRange.numStart === range.numStart && currentRange.numEnd === range.numEnd &&
+            currentRange.numStep === range.numStep) {
             return;
         }
         Object.assign(options.data.view.group.range, range);
@@ -321,7 +322,7 @@ export const bindGroupsEvent = (options: {
             data: options.data
         });
         const tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
-        setPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
+        setToolbarPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
     });
 };
 
@@ -362,7 +363,7 @@ export const goGroupsDate = (options: {
                     data: options.data
                 });
                 const tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
-                setPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
+                setToolbarPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
             }
         });
     });
@@ -414,7 +415,7 @@ export const goGroupsSort = (options: {
                     data: options.data
                 });
                 const tabRect = options.blockElement.querySelector(".av__views").getBoundingClientRect();
-                setPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
+                setToolbarPosition(options.menuElement, tabRect.right - options.menuElement.clientWidth, tabRect.bottom, tabRect.height, 0, true);
             }
         });
     });

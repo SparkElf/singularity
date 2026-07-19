@@ -1,4 +1,4 @@
-import {encodeBase64} from "../util/clipboard";
+import {createSiyuanClipboardHTML} from "../util/clipboard";
 import {updateHotkeyTip} from "../util/keyboard";
 import {Constants} from "../../constants";
 import {emitProtylePluginMenu} from "../util/plugin";
@@ -96,7 +96,11 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                         }),
                     ]);
 
-                    const textHTML = `<!--data-siyuan='${encodeBase64(responseHTML.data.dom)}'-->${removeZWJ(responseHTML.data.dom)}`;
+                    const textHTML = createSiyuanClipboardHTML(responseHTML.data.dom, {
+                        spaceId: protyle.session!.spaceId,
+                        notebookId: identity.notebookId,
+                        documentId: identity.documentId,
+                    }, removeZWJ(responseHTML.data.dom));
                     await navigator.clipboard.write([
                         new ClipboardItem({
                             "text/plain": new Blob([responseText.data.content], {type: "text/plain"}),
@@ -337,8 +341,9 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                 click() {
                     protyle.host.dispatch({
                         type: "open-document",
-                        notebookId: protyle.notebookId,
-                        documentId: protyle.block.id,
+                        notebookId: identity.notebookId,
+                        documentId: identity.documentId,
+                        blockId: protyle.block.id,
                         disposition: "current",
                         scope: protyle.block.rootID !== protyle.block.id ? "subtree" : "context",
                         attention: protyle.block.rootID !== protyle.block.id ? "focus" : "none",

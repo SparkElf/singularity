@@ -8,7 +8,6 @@ import {disabledForeverProtyle, setReadonlyByConfig} from "../util/onGet";
 import {avRender} from "../render/av/render";
 import {hasClosestByAttribute} from "../util/hasClosest";
 import {combineAbortSignals} from "../util/abortSignal";
-import {protyleContentIdentity} from "../util/contentLoad";
 
 interface BacklinkDocumentResponse {
     readonly data: {
@@ -22,12 +21,13 @@ const breadcrumbLoads = new WeakMap<HTMLElement, {controller: AbortController}>(
 export const renderBacklink = (protyle: IProtyle, backlinkData: {
     blockPaths: IBreadcrumb[],
     dom: string,
-    expand: boolean
+    expand: boolean,
+    target: TProtyleContentTarget,
 }[]) => {
     protyle.block.showAll = true;
     let html = "";
     backlinkData.forEach((item, index) => {
-        html += genBreadcrumb(item.blockPaths, false, index) + setBacklinkFold(item.dom, item.expand);
+        html += genBreadcrumb(item.blockPaths, false, index) + setBacklinkFold(item.dom, item.expand, item.target);
     });
     protyle.wysiwyg.element.innerHTML = html;
     improveBreadcrumbAppearance(protyle.wysiwyg.element);
@@ -63,9 +63,13 @@ export const foldPassiveType = (expand: boolean, element: HTMLElement | Document
     }
 };
 
-const setBacklinkFold = (html: string, expand: boolean) => {
+const setBacklinkFold = (html: string, expand: boolean, target: TProtyleContentTarget) => {
     const tempDom = document.createElement("template");
     tempDom.innerHTML = html;
+    tempDom.content.querySelectorAll<HTMLElement>("[data-node-id]").forEach((element) => {
+        element.dataset.notebookId = target.notebookId;
+        element.dataset.documentId = target.documentId;
+    });
     foldPassiveType(expand, tempDom.content);
     return tempDom.innerHTML;
 };
@@ -81,11 +85,16 @@ export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
         !protyle.destroyed &&
         protyle.element.contains(element);
     const runtime = protyle.session!.runtime as TProtyleRuntime;
+    const target: TProtyleContentTarget = {
+        blockId: element.dataset.id!,
+        notebookId: element.dataset.notebookId!,
+        documentId: element.dataset.documentId!,
+    };
     void runtime.transport.request<BacklinkDocumentResponse>("/api/filetree/getDoc", {
-        id: element.getAttribute("data-id"),
+        id: target.blockId,
         size: Constants.SIZE_GET_MAX,
     }, {
-        identity: protyleContentIdentity(protyle),
+        identity: target,
         intent: "read",
         signal,
     }).then((response) => {
@@ -100,7 +109,7 @@ export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
             nextElement = nextElement.nextElementSibling;
             tempElement.remove();
         }
-        breadcrumb.insertAdjacentHTML("afterend", setBacklinkFold(response.data.content, true));
+        breadcrumb.insertAdjacentHTML("afterend", setBacklinkFold(response.data.content, true, target));
         processRender(breadcrumb.parentElement, protyle);
         avRender(breadcrumb.parentElement, protyle);
         blockRender(protyle, breadcrumb.parentElement);
@@ -112,7 +121,7 @@ export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
     }).catch((error) => {
         if (isCurrent()) {
             console.error("[protyle.transport] backlink breadcrumb request failed", {
-                documentId: protyleContentIdentity(protyle).documentId,
+                documentId: target.documentId,
                 error,
             });
         }
@@ -138,8 +147,8 @@ export const genBreadcrumb = (blockPaths: IBreadcrumb[], renderFirst: boolean, p
         if (index === 0 && !renderFirst) {
             return;
         }
-        html += `<span class="protyle-breadcrumb__item${index === blockPaths.length - 1 ? " protyle-breadcrumb__item--active" : ""}" data-id="${item.id}">
-    <svg class="popover__block" data-id="${item.id}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
+        html += `<span class="protyle-breadcrumb__item${index === blockPaths.length - 1 ? " protyle-breadcrumb__item--active" : ""}" data-id="${item.blockId}" data-notebook-id="${item.notebookId}" data-document-id="${item.documentId}">
+    <svg class="popover__block" data-id="${item.blockId}"><use xlink:href="#${getIconByType(item.type, item.subType)}"></use></svg>
     ${item.name ? `<span class="protyle-breadcrumb__text" title="${item.name}">${item.name}</span>` : ""}
 </span>`;
         if (index !== blockPaths.length - 1) {

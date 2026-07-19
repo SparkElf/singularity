@@ -1,5 +1,4 @@
 import {insertHTML} from "../util/insertHTML";
-import {hideMessage, showMessage} from "../../dialog/message";
 import {Constants} from "../../constants";
 import {getEditorRange} from "../util/selection";
 import {createAssetBlockDOM} from "../util/assetBlockDOM";
@@ -7,10 +6,11 @@ import {hasClosestBlock, hasClosestByClassName} from "../util/hasClosest";
 import {getContenteditableElement} from "../wysiwyg/getBlock";
 import {getTypeByCellElement, updateCellsValue} from "../render/av/cell";
 import {scrollCenter} from "../util/highlightById";
-import {confirmDialog} from "../../dialog/confirmDialog";
 import {filesize} from "filesize";
 import {transaction} from "../wysiwyg/transaction";
 import * as dayjs from "dayjs";
+import {protyleContentIdentity} from "../util/contentLoad";
+import {openProtyleConfirm} from "../wysiwyg/dialogOwner";
 
 interface UploadResponse extends Omit<IWebSocketData, "data"> {
     data: {
@@ -27,6 +27,12 @@ const isAbort = (error: unknown) =>
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : String(error);
+
+const notifyUpload = (
+    protyle: IProtyle,
+    level: "error" | "info",
+    message: string,
+) => protyle.host.dispatch({type: "notify", level, message});
 
 const getFileExtension = (filename: string) => {
     const lastIndex = filename.lastIndexOf(".");
@@ -46,20 +52,20 @@ export class Upload {
 
 const validateFile = (protyle: IProtyle, files: File[]) => {
     const uploadFileList = [];
-    let errorTip = "";
-    let uploadingStr = "";
+    const errors: string[] = [];
+    const uploading: string[] = [];
 
     for (let iMax = files.length, i = 0; i < iMax; i++) {
         const file = files[i];
         let validate = true;
 
         if (!file.name) {
-            errorTip += `<li>${protyle.localization.text("nameEmpty")}</li>`;
+            errors.push(protyle.localization.text("nameEmpty"));
             validate = false;
         }
 
         if (file.size > protyle.options.upload.max) {
-            errorTip += `<li>${file.name} ${protyle.localization.text("over")} ${protyle.options.upload.max / 1024 / 1024}M</li>`;
+            errors.push(`${file.name} ${protyle.localization.text("over")} ${protyle.options.upload.max / 1024 / 1024}M`);
             validate = false;
         }
 
@@ -83,46 +89,42 @@ const validateFile = (protyle: IProtyle, files: File[]) => {
             });
 
             if (!isAccept) {
-                errorTip += `<li>${file.name} ${protyle.localization.text("fileTypeError")}</li>`;
+                errors.push(`${file.name} ${protyle.localization.text("fileTypeError")}`);
                 validate = false;
             }
         }
 
         if (validate) {
             uploadFileList.push(file);
-            uploadingStr += `<li>${filename} ${protyle.localization.text("uploading")}</li>`;
+            uploading.push(`${filename} ${protyle.localization.text("uploading")}`);
         }
     }
-    let msgId;
-    if (errorTip !== "" || uploadingStr !== "") {
-        msgId = showMessage(`<ul>${errorTip}${uploadingStr}</ul>`, -1);
+    if (errors.length > 0) {
+        notifyUpload(protyle, "error", errors.join("\n"));
     }
-
-    return {files: uploadFileList, msgId};
+    return {files: uploadFileList, statusMessages: uploading};
 };
 
 const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => {
     if (!isUploadCurrent(protyle)) {
         return;
     }
-    let errorTip = "";
+    const errors: string[] = [];
 
     if (response.code === 1) {
-        errorTip = `${response.msg}`;
+        errors.push(response.msg);
     }
 
     if (response.data.errFiles && response.data.errFiles.length > 0) {
-        errorTip = `<ul><li>${errorTip}</li>`;
         response.data.errFiles.forEach((data: string) => {
             const lastIndex = data.lastIndexOf(".");
             const filename = lastIndex === -1 ? data : (protyle.options.upload.filename(data.substr(0, lastIndex)) + data.substr(lastIndex));
-            errorTip += `<li>${filename} ${protyle.localization.text("uploadError")}</li>`;
+            errors.push(`${filename} ${protyle.localization.text("uploadError")}`);
         });
-        errorTip += "</ul>";
     }
 
-    if (errorTip) {
-        showMessage(errorTip);
+    if (errors.length > 0) {
+        notifyUpload(protyle, "error", errors.join("\n"));
     }
     let insertBlock = true;
     const range = getEditorRange(protyle.wysiwyg.element);
@@ -311,14 +313,14 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
     if (protyle.options.upload.validate) {
         const isValidate = protyle.options.upload.validate(fileList);
         if (typeof isValidate === "string") {
-            showMessage(isValidate);
+            notifyUpload(protyle, "error", isValidate);
             return;
         }
     }
     const editorElement = protyle.wysiwyg.element;
 
-    const validateResult = validateFile(protyle, fileList);
-    if (validateResult.files.length === 0) {
+    const validated = validateFile(protyle, fileList);
+    if (validated.files.length === 0) {
         if (element) {
             element.value = "";
         }
@@ -331,27 +333,25 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
     for (const key of Object.keys(extraData)) {
         formData.append(key, extraData[key]);
     }
-    let msg = "";
-    for (let i = 0, iMax = validateResult.files.length; i < iMax; i++) {
-        formData.append(protyle.options.upload.fieldName, validateResult.files[i]);
-        if (Constants.SIZE_UPLOAD_TIP_SIZE <= validateResult.files[i].size) {
-            msg += protyle.localization.text("uploadFileTooLarge")
-                .replace("${x}", validateResult.files[i].name)
-                .replace("${y}", filesize(validateResult.files[i].size, {standard: "iec"})) + "<br>";
+    const warnings: string[] = [];
+    for (let i = 0, iMax = validated.files.length; i < iMax; i++) {
+        formData.append(protyle.options.upload.fieldName, validated.files[i]);
+        if (Constants.SIZE_UPLOAD_TIP_SIZE <= validated.files[i].size) {
+            warnings.push(protyle.localization.text("uploadFileTooLarge")
+                .replace("${x}", validated.files[i].name)
+                .replace("${y}", filesize(validated.files[i].size, {standard: "iec"})));
         }
     }
     formData.set("id", protyle.options.blockId!);
     formData.set("notebook", protyle.notebookId);
-    confirmDialog(msg ? protyle.localization.text("upload") : "", msg, () => {
+    const upload = () => {
         if (!isUploadCurrent(protyle)) {
             return;
         }
+        notifyUpload(protyle, "info", validated.statusMessages.join("\n"));
         protyle.upload.isUploading = true;
-        void protyle.transport!.upload<UploadResponse>(formData, {
-            identity: {
-                notebookId: protyle.notebookId,
-                documentId: protyle.options.blockId!,
-            },
+        void protyle.session!.runtime.transport.upload<UploadResponse>(formData, {
+            identity: protyleContentIdentity(protyle),
             signal: protyle.requestSignal,
             onProgress: ({loadedBytes, totalBytes}) => {
                 if (!isUploadCurrent(protyle) || totalBytes === undefined) {
@@ -387,12 +387,11 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
                 if (protyle.options.upload.error) {
                     protyle.options.upload.error(message);
                 } else {
-                    showMessage(protyle.localization.kernelText(28));
+                    notifyUpload(protyle, "error", protyle.localization.kernelText(28));
                 }
             }
         }).finally(() => {
             protyle.upload.isUploading = false;
-            hideMessage(validateResult.msgId);
             if (isUploadCurrent(protyle)) {
                 if (element) {
                     element.value = "";
@@ -402,10 +401,18 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
         }).catch((error) => {
             if (isUploadCurrent(protyle)) {
                 console.error("[protyle.upload] uploaded asset handling failed", error);
-                showMessage(protyle.localization.text("uploadError"));
+                notifyUpload(protyle, "error", protyle.localization.text("uploadError"));
             }
         });
-    }, () => {
-        hideMessage(validateResult.msgId);
-    }, false, protyle.requestSignal);
+    };
+    if (warnings.length > 0) {
+        openProtyleConfirm({
+            message: warnings.join("\n"),
+            onConfirm: upload,
+            protyle,
+            title: protyle.localization.text("upload"),
+        });
+    } else {
+        upload();
+    }
 };

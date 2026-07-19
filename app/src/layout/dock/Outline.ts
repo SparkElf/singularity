@@ -629,7 +629,7 @@ export class Outline extends Model {
                 fetchPost("/api/block/getBlockBreadcrumb", breadcrumbParam, (response) => {
                     response.data.reverse().find((item: IBreadcrumb) => {
                         if (item.type === "NodeHeading") {
-                            this.setCurrentById(item.id);
+                            this.setCurrentById(item.blockId);
                             return true;
                         }
                     });

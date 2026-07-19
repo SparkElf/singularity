@@ -52,11 +52,11 @@ import {addSubList, listIndent, listOutdent, toggleTaskListItem} from "./list";
 import {insertEmptyBlock, jumpToParent} from "./blockActions";
 import {cancelSB} from "./superBlock";
 import {alignImgCenter, alignImgLeft, commonHotkey, downSelect, getStartEndElement, upSelect} from "./commonHotkey";
-import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../../menus/protyle";
+import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../ui/inlineMenu";
 import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
 import {Constants} from "../../constants";
 import {scrollCenter} from "../util/highlightById";
-import {BlockPanel} from "../../block/Panel";
+import {closeContainingBlockPanel, openBlockPanel} from "../BlockPanel";
 import * as dayjs from "dayjs";
 import {highlightRender} from "../render/highlightRender";
 import {countBlockStatistics} from "../util/statistics";
@@ -65,6 +65,7 @@ import {beforePaste, pasteAsPlainText} from "../util/paste";
 import {preventScroll} from "../scroll/preventScroll";
 import {removeSearchMark} from "../util/searchMark";
 import {avKeydown} from "../render/av/keydown";
+import {currentAVOverlay} from "../render/av/overlay";
 import {requestBlockFold} from "../util/blockFoldRequest";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {updateCalloutType} from "./callout";
@@ -81,19 +82,23 @@ const navigateByEnterHotkey = (protyle: IProtyle, nodeElement: HTMLElement) => {
         targetElement.previousElementSibling.classList.contains("protyle-action")) {
         targetElement = targetElement.parentElement;
     }
-    const documentId = targetElement.getAttribute("data-node-id")!;
+    const blockId = targetElement.getAttribute("data-node-id")!;
     if (!protyle.options.backlinkData) {
-        void zoomOut({protyle, id: documentId});
+        void zoomOut({protyle, id: blockId});
         return;
     }
+    const targetNotebookId = targetElement.getAttribute("data-notebook-id")!;
+    const targetDocumentId = targetElement.getAttribute("data-document-id")!;
     void requestBlockFold(protyle, {
-        notebookId: protyle.notebookId,
-        documentId,
+        notebookId: targetNotebookId,
+        documentId: targetDocumentId,
+        blockId,
     }).then(({zoomIn, isRoot}) => {
         protyle.host.dispatch({
             type: "open-document",
-            notebookId: protyle.notebookId,
-            documentId,
+            notebookId: targetNotebookId,
+            documentId: targetDocumentId,
+            blockId,
             disposition: "current",
             scope: zoomIn ? "subtree" : "context",
             attention: isRoot ? "focus" : "focus-and-highlight",
@@ -108,26 +113,28 @@ const navigateByEnterHotkey = (protyle: IProtyle, nodeElement: HTMLElement) => {
     });
 };
 
-const navigateByEnterBackHotkey = (protyle: IProtyle, nodeElement: HTMLElement) => {
-    const documentId = nodeElement.getAttribute("data-node-id")!;
+export const navigateBackFromFocusedBlock = (protyle: IProtyle, nodeElement: HTMLElement) => {
+    const focusedBlockId = nodeElement.getAttribute("data-node-id")!;
     if (protyle.block.showAll) {
-        void zoomOut({protyle, id: protyle.block.parent2ID!, focusId: documentId});
+        void zoomOut({protyle, id: protyle.block.parent2ID!, focusId: focusedBlockId});
         return;
     }
-    const pathIds = protyle.path!.split("/");
-    if (pathIds.length > 2) {
-        protyle.host.dispatch({
-            type: "open-document",
-            notebookId: protyle.notebookId,
-            documentId: pathIds[pathIds.length - 2],
-            disposition: "current",
-            scope: "target",
-            attention: "focus",
-            scroll: "auto",
-            restoreScroll: "always",
-            zoom: false,
-        });
+    const parentDocument = protyle.block.parentDocument;
+    if (!parentDocument) {
+        return;
     }
+    protyle.host.dispatch({
+        type: "open-document",
+        notebookId: parentDocument.notebookId,
+        documentId: parentDocument.documentId,
+        blockId: parentDocument.blockId,
+        disposition: "current",
+        scope: "target",
+        attention: "focus",
+        scroll: "auto",
+        restoreScroll: "always",
+        zoom: false,
+    });
 };
 
 const findViewportCenterBlock = (protyle: IProtyle) => {
@@ -210,7 +217,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             event.preventDefault();
             return;
         }
-        if (document.querySelector(".av__panel")) {
+        if (currentAVOverlay(protyle, "panel")) {
             return;
         }
         if (avKeydown(event, nodeElement, protyle)) {
@@ -270,15 +277,6 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             event.key !== "Process") {
             setInsertWbrHTML(nodeElement, range, protyle);
             protyle.wysiwyg.preventKeyup = true;
-        }
-
-        if (!window.siyuan.menus.menu.element.classList.contains("fn__none") &&
-            (["←", "↑", "→", "↓"].includes(Constants.KEYCODELIST[event.keyCode]) || Constants.KEYCODELIST[event.keyCode] === "↩") &&
-            !event.altKey && !event.shiftKey && isNotCtrl(event)) {
-            event.preventDefault();
-            return;
-        } else if (event.key !== "Escape") {
-            window.siyuan.menus.menu.remove();
         }
 
         if (!["Alt", "Meta", "Shift", "Control", "CapsLock", "Escape"].includes(event.key) && protyle.options.render.breadcrumb) {
@@ -561,7 +559,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         }
 
         if (matchHotKey(hotkeys.general.enterBack, event)) {
-            navigateByEnterBackHotkey(protyle, nodeElement);
+            navigateBackFromFocusedBlock(protyle, nodeElement);
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -681,7 +679,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
             return;
         }
 
-        if (fixTable(protyle, event, range)) {
+        if (fixTable(protyle, event, range, protyle.settings.hotkeys.editor.table)) {
             event.preventDefault();
             return;
         }
@@ -1414,9 +1412,6 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     !protyle.toolbar.subElement.classList.contains("fn__none")) {
                     hideElements(["toolbar", "hint", "util"], protyle);
                     protyle.hint.enableExtend = false;
-                } else if (!window.siyuan.menus.menu.element.classList.contains("fn__none")) {
-                    // 防止 ESC 时选中当前块
-                    window.siyuan.menus.menu.remove(true);
                 } else if (nodeElement.classList.contains("protyle-wysiwyg--select")) {
                     hideElements(["select"], protyle);
                     countBlockStatistics(protyle, []);
@@ -1908,20 +1903,17 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         if (!event.repeat && matchHotKey(generalHotkeys.openInNewTab, event)) {
             event.preventDefault();
             event.stopPropagation();
-            const blockPanel = window.siyuan.blockPanels.find(item => {
-                if (item.element.contains(nodeElement)) {
-                    return true;
-                }
-            });
-            const id = nodeElement.getAttribute("data-node-id");
+            const id = nodeElement.getAttribute("data-node-id")!;
+            const identity = protyleContentIdentity(protyle);
             void requestBlockFold(protyle, {
-                notebookId: protyle.notebookId,
-                documentId: id,
+                ...identity,
+                blockId: id,
             }).then(({zoomIn}) => {
                 protyle.host.dispatch({
                     type: "open-document",
-                    notebookId: protyle.notebookId,
-                    documentId: id,
+                    notebookId: identity.notebookId,
+                    documentId: identity.documentId,
+                    blockId: id,
                     disposition: "duplicate-tab",
                     scope: zoomIn ? "subtree" : "context",
                     attention: "focus",
@@ -1929,7 +1921,7 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                     restoreScroll: zoomIn ? "never" : "if-document",
                     zoom: zoomIn,
                 });
-                blockPanel.destroy();
+                closeContainingBlockPanel(nodeElement);
             }).catch((error) => {
                 if (!protyle.requestSignal.aborted) {
                     console.error("[protyle.transport] block fold request failed", error);
@@ -1969,19 +1961,22 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
         if (refElement) {
             const id = refElement.getAttribute("data-id");
             const notebookId = refElement.getAttribute("data-notebook-id");
+            const documentId = refElement.getAttribute("data-document-id");
             const openReference = (disposition: "background-tab" | "current" | "split-bottom" | "split-right") => {
-                if (!id || !notebookId) {
-                    console.error("[Singularity/ProtyleIdentity] block reference target has no notebook", {blockId: id});
+                if (!id || !notebookId || !documentId) {
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity", {blockId: id});
                     return;
                 }
                 void requestBlockFold(protyle, {
+                    blockId: id,
                     notebookId,
-                    documentId: id,
+                    documentId,
                 }).then(({zoomIn, isRoot}) => {
                     protyle.host.dispatch({
                         type: "open-document",
                         notebookId,
-                        documentId: id,
+                        documentId,
+                        blockId: id,
                         disposition,
                         scope: zoomIn ? "subtree" : "context",
                         attention: disposition === "background-tab" ? "highlight" :
@@ -2019,16 +2014,19 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return true;
             } else if (matchHotKey(generalHotkeys.refPopover, event)) {
                 // open popover
-                if (id && notebookId) {
-                    window.siyuan.blockPanels.push(new BlockPanel({
-                        app: protyle.app,
+                if (id && notebookId && documentId) {
+                    openBlockPanel({
+                        sourceProtyle: protyle,
                         isBacklink: false,
-                        notebookId,
+                        references: [{
+                            blockId: id,
+                            notebookId,
+                            documentId,
+                        }],
                         targetElement: refElement,
-                        refDefs: [{refID: id}]
-                    }));
+                    });
                 } else {
-                    console.error("[Singularity/ProtyleIdentity] block reference target has no notebook", {blockId: id});
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity", {blockId: id});
                 }
                 event.preventDefault();
                 event.stopPropagation();

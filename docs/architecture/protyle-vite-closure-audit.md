@@ -3,7 +3,7 @@ title: "Protyle Vite 生产闭包审计"
 description: "记录奇点企业唯一 Vite 入口与真实 Protyle Core 生产闭包的静态依赖审计合同"
 author: "Codex"
 date: "2026-07-18"
-version: "1.1.0"
+version: "1.2.0"
 status: "implementation"
 tags: ["singularity", "protyle", "vite", "boundary"]
 ---
@@ -36,9 +36,9 @@ node --test enterprise/scripts/protyle-vite-closure-audit.test.mjs
 
 ## 当前证据
 
-2026-07-18 实现状态：`main.tsx` 已按授权 `spaceId` 创建 `ProtyleApplicationPort`，经专用公共子入口创建真实 Core，再交给公共 Factory；`space-session.ts` 中的临时未接线函数和错误码已删除。连接后的残余旧应用边界、全局状态、旧 transport 或未批准共享模块依赖会直接记为生产违规。本段是实现状态，不替代 L1 完成后的集中 verification 结果。
+2026-07-19 实现状态：`main.tsx` 已按授权 `spaceId` 创建`ProtyleApplicationPort`，经专用公共子入口创建真实Core，再交给公共Factory；`space-session.ts`中的临时未接线函数和错误码已删除。当前允许的实现期source scan从真实入口遍历273个生产文件并报告0项边界违规；本快照只证明静态依赖方向，不替代L1完成后的集中typecheck、测试、Vite build、浏览器和E2E证据。
 
-生产闭包中的剩余阻塞继续在 `app/src/protyle/index.ts` 及其直接子图收口：菜单、布局、编辑器工具、对话框、旧请求函数和全局配置必须进入显式 `ProtyleApplicationPort`、Session Runtime Transport、Host/Plugin/Menu/Resource 端口或退出生产图；不得通过 App shim、全局 fallback、扩大 allowlist 或第二条生产路径绕过审计。
+本轮最后一条扩散根是`Title -> util/pathName`；Title改为消费Core自有纯显示名能力后，`pathName`及其旧全局、transport和平台依赖全部退出生产图。旧壳文件没有迁入Core，allowlist没有扩大，也没有增加App shim、全局fallback或第二条生产路径。后续代码变化继续由同一门禁拒绝回流。
 
 ## 入口生命周期
 

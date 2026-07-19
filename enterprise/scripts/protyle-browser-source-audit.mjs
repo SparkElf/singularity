@@ -31,9 +31,14 @@ const contentScopedHostEvents = new Set([
   "set-document-title",
   "set-document-icon",
   "activate-document",
+  "record-navigation-location",
   "toggle-document-fullscreen",
   "persist-workspace-layout",
   "update-document-statistics",
+]);
+const blockScopedHostEvents = new Set([
+  "open-document",
+  "record-navigation-location",
 ]);
 
 function withoutSourceExtension(file) {
@@ -218,6 +223,13 @@ export function auditNotebookScopedHostEventsAst(sourceFile) {
             ruleId: "document-scope-missing",
             line: sourceFile.getLineAndCharacterOfPosition(event.getStart(sourceFile)).line + 1,
             message: `${type} must carry the source Protyle documentId`,
+          });
+        }
+        if (blockScopedHostEvents.has(type) && !getObjectProperty(event, "blockId")) {
+          violations.push({
+            ruleId: "target-block-missing",
+            line: sourceFile.getLineAndCharacterOfPosition(event.getStart(sourceFile)).line + 1,
+            message: `${type} must carry its target blockId separately from documentId`,
           });
         }
       }

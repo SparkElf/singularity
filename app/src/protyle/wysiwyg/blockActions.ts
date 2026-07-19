@@ -8,6 +8,7 @@ import {type BlockSibling, requestBlockSibling} from "./blockSibling";
 import {getTopAloneElement} from "./getBlock";
 import {genListItemElement, updateListOrder} from "./list";
 import {transaction, turnsIntoOneTransaction, updateTransaction} from "./transaction";
+import {protyleContentIdentity} from "../util/contentLoad";
 
 export const insertEmptyBlock = async (
     protyle: IProtyle,
@@ -104,10 +105,12 @@ export const jumpToParent = async (
     if (!targetId) {
         return;
     }
+    const identity = protyleContentIdentity(protyle);
     protyle.host.dispatch({
         type: "open-document",
-        notebookId: protyle.notebookId,
-        documentId: targetId,
+        notebookId: identity.notebookId,
+        documentId: identity.documentId,
+        blockId: targetId,
         disposition: "current",
         scope: targetId !== protyle.block.rootID && protyle.block.showAll ? "subtree" : "target",
         attention: "focus",
@@ -118,24 +121,29 @@ export const jumpToParent = async (
 };
 
 export const navigateBack = async (protyle: IProtyle, focusId: string) => {
+    if (!protyle.block.showAll) {
+        const parentDocument = protyle.block.parentDocument;
+        if (!parentDocument) {
+            return;
+        }
+        protyle.host.dispatch({
+            type: "open-document",
+            notebookId: parentDocument.notebookId,
+            documentId: parentDocument.documentId,
+            blockId: parentDocument.blockId,
+            disposition: "current",
+            scope: "target",
+            attention: "focus",
+            scroll: "auto",
+            restoreScroll: "always",
+            zoom: false,
+        });
+        return;
+    }
     const response = await requestBlockSibling(protyle, protyle.block.rootID!);
     const parentId = response.data.parent;
     if (!parentId) {
         return;
     }
-    if (protyle.block.showAll) {
-        await zoomOut({protyle, id: parentId, focusId});
-        return;
-    }
-    protyle.host.dispatch({
-        type: "open-document",
-        notebookId: protyle.notebookId,
-        documentId: parentId,
-        disposition: "current",
-        scope: "target",
-        attention: "focus",
-        scroll: "auto",
-        restoreScroll: "always",
-        zoom: false,
-    });
+    await zoomOut({protyle, id: parentId, focusId});
 };

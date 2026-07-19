@@ -1,4 +1,4 @@
-import {preserveBlockRefNotebookIDs} from "../util/blockRefIdentity";
+import {preserveBlockRefContentIdentities} from "../util/blockRefIdentity";
 
 export const getLute = (options: IProtyleLuteOptions, settings: TProtyleApplicationSettingsPort): Lute =>
     setLute(options, settings);
@@ -81,7 +81,7 @@ export const getAgentLute = (options: ILuteOptions): Lute => {
 const setLute = (options: IProtyleLuteOptions, settings: TProtyleApplicationSettingsPort) => {
     const lute: Lute = Lute.New();
     const spinBlockDOM = lute.SpinBlockDOM.bind(lute);
-    lute.SpinBlockDOM = (html: string) => preserveBlockRefNotebookIDs(html, spinBlockDOM(html));
+    lute.SpinBlockDOM = (html: string) => preserveBlockRefContentIdentities(html, spinBlockDOM(html));
     lute.SetSpellcheck(settings.editor.spellcheck);
     lute.SetProtyleMarkNetImg(settings.editor.displayNetImgMark);
     lute.SetFileAnnotationRef(true);

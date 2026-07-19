@@ -521,8 +521,14 @@ func GetBlocksIndexesInBox(ids []string, boxID string) (ret map[string]int) {
 	return
 }
 
+type ContentTarget struct {
+	BlockID    string `json:"blockId"`
+	NotebookID string `json:"notebookId"`
+	DocumentID string `json:"documentId"`
+}
+
 type BlockPath struct {
-	ID       string       `json:"id"`
+	ContentTarget
 	Name     string       `json:"name"`
 	Type     string       `json:"type"`
 	SubType  string       `json:"subType"`
@@ -546,11 +552,11 @@ func BuildBlockBreadcrumbInBox(id string, excludeTypes []string, boxID string) (
 		return
 	}
 
-	ret = buildBlockBreadcrumb(node, excludeTypes, false)
+	ret = buildBlockBreadcrumb(node, excludeTypes, false, tree.Box, tree.Root.ID)
 	return
 }
 
-func buildBlockBreadcrumb(node *ast.Node, excludeTypes []string, isEmbedBlock bool, headingMode ...int) (ret []*BlockPath) {
+func buildBlockBreadcrumb(node *ast.Node, excludeTypes []string, isEmbedBlock bool, notebookID, documentID string, headingMode ...int) (ret []*BlockPath) {
 	ret = []*BlockPath{}
 	if nil == node {
 		return
@@ -637,7 +643,11 @@ func buildBlockBreadcrumb(node *ast.Node, excludeTypes []string, isEmbedBlock bo
 
 		if add {
 			ret = append([]*BlockPath{{
-				ID:      id,
+				ContentTarget: ContentTarget{
+					BlockID:    id,
+					NotebookID: notebookID,
+					DocumentID: documentID,
+				},
 				Name:    name,
 				Type:    parent.Type.String(),
 				SubType: treenode.SubTypeAbbr(parent),
@@ -671,7 +681,11 @@ func buildBlockBreadcrumb(node *ast.Node, excludeTypes []string, isEmbedBlock bo
 				name = util.UnescapeHTML(name)
 				name = util.EscapeHTML(name)
 				ret = append([]*BlockPath{{
-					ID:      b.ID,
+					ContentTarget: ContentTarget{
+						BlockID:    b.ID,
+						NotebookID: notebookID,
+						DocumentID: documentID,
+					},
 					Name:    name,
 					Type:    b.Type.String(),
 					SubType: treenode.SubTypeAbbr(b),

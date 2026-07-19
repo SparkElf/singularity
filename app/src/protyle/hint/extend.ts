@@ -496,15 +496,15 @@ export const hintRef = (key: string, protyle: IProtyle, source: THintSource): IH
         }
         const dataList: IHintData[] = [];
         response.data.blocks.forEach((item) => {
-            let value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="d">${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
+            let value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-document-id="${item.rootID}" data-subtype="d">${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
             if (source === "search") {
-                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${key}${Constants.ZWSP}${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
+                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-document-id="${item.rootID}" data-subtype="s">${key}${Constants.ZWSP}${item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "")}</span>`;
             } else if (source === "av") {
                 let refText = item.name || item.refText.replace(new RegExp(Constants.ZWSP, "g"), "");
                 if (nodeElement) {
                     refText = item.ial["custom-sy-av-s-text-" + nodeElement.getAttribute("data-av-id")] || refText;
                 }
-                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-subtype="s">${refText}</span>`;
+                value = `<span data-type="block-ref" data-id="${item.id}" data-notebook-id="${item.box}" data-document-id="${item.rootID}" data-subtype="s">${refText}</span>`;
             }
             dataList.push({
                 avBlockTarget: source === "av" ? registerAVBlockTarget(protyle, {

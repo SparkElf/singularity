@@ -18,7 +18,8 @@ import {processClonePHElement} from "../render/util";
 import {scrollCenter} from "../util/highlightById";
 import {setFold} from "../util/blockFold";
 import {setDocumentReadOnlyFromResponse} from "../runtime/readOnly";
-import {syncBlockRefNotebookIDs} from "../util/blockRefIdentity";
+import {syncBlockRefContentIdentities} from "../util/blockRefIdentity";
+import {protyleContentIdentity} from "../util/contentLoad";
 
 const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
     // 移动到其他文档中，该块需移除
@@ -301,30 +302,28 @@ const promiseTransaction = (options: {
             focusByWbr(emptyElement, range);
         }
     }
-    void protyle.transport!.request<IWebSocketData>("/api/transactions", {
+    const identity = protyleContentIdentity(protyle);
+    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/transactions", {
         reqId: Date.now(),
         session: protyle.id,
         app: Constants.SIYUAN_APPID,
         transactions: [{
-            notebook: protyle.notebookId,
+            notebook: identity.notebookId,
             doOperations: options.doOperations,
             undoOperations: options.undoOperations,// 目前用于 ws 推送更新大纲
         }]
     }, {
-        identity: {
-            notebookId: protyle.notebookId,
-            documentId: protyle.options.blockId!,
-        },
+        identity,
         intent: "write",
-        signal: protyle.ownerSignal,
+        signal: protyle.requestSignal,
     }).then((response) => {
-        if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+        if (protyle.destroyed || protyle.requestSignal.aborted) {
             return;
         }
         response.data[0].doOperations.forEach((operation: IOperation) => {
             if (operation.id && typeof operation.data === "string") {
                 protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${operation.id}"]`).forEach((item) => {
-                    syncBlockRefNotebookIDs(item, operation.data);
+                    syncBlockRefContentIdentities(item, operation.data);
                 });
             }
         });
@@ -338,13 +337,13 @@ const promiseTransaction = (options: {
         }
         // 事务提交后再渲染嵌入块，避免其查询请求早于写入到达内核而拿到旧数据
         pendingEmbedElements.forEach(item => {
-            if (item.isConnected) {
+            if (protyle.wysiwyg.element.contains(item)) {
                 item.removeAttribute("data-render");
                 blockRender(protyle, item);
             }
         });
     }).catch((error) => {
-        if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+        if (!protyle.destroyed && !protyle.requestSignal.aborted) {
             console.error("[protyle.transport] transaction request failed", error);
         }
     });
@@ -444,7 +443,12 @@ const updateBlock = (updateElements: Element[], protyle: IProtyle, operation: IO
 };
 
 // 用于推送和撤销
-export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUndo: boolean) => {
+export const onTransaction = (
+    protyle: IProtyle,
+    operations: IOperation[],
+    isUndo: boolean,
+    sourceEditorId: string,
+) => {
     if (protyle.wysiwyg.element.firstElementChild?.classList.contains("protyle-password")) {
         return;
     }
@@ -664,10 +668,11 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                     protyle.background.render(protyle.background.ial, protyle.block.rootID);
                 }
                 if (data.new.icon !== data.old.icon && protyle.surface === "workspace") {
+                    const identity = protyleContentIdentity(protyle);
                     protyle.host.dispatch({
                         type: "set-document-icon",
-                        notebookId: protyle.notebookId,
-                        documentId: protyle.block.rootID,
+                        notebookId: identity.notebookId,
+                        documentId: identity.documentId,
                         icon: data.new.icon,
                     });
                 }
@@ -728,12 +733,9 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                 return;
             }
             if (updateElements.length === 0) {
-                // 打开两个相同的文档 A、A1，从 A 拖拽块 B 到 A1，在后续 ws 处理中，无法获取到拖拽出去的 B
-                let updateCloneElement: Element;
-                protyle.editors.find(editor => {
-                    updateCloneElement = editor.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`);
-                    return Boolean(updateCloneElement);
-                });
+                // Kernel 将 transaction.session 原样回传为 sid；同文档多实例只复用该来源实例的 DOM。
+                const sourceEditor = protyle.editors.find(editor => editor.id === sourceEditorId);
+                const updateCloneElement = sourceEditor?.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`);
                 if (updateCloneElement) {
                     updateElements.push(updateCloneElement.cloneNode(true) as Element);
                 }
@@ -742,29 +744,25 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
             if (updateElements.length === 0) {
                 const tempEl = document.createElement("div");
                 tempEl.setAttribute("data-node-id", operation.id);
-                tempEl.setAttribute("data-protyle-id", protyle.element.getAttribute("data-id"));
+                tempEl.setAttribute("data-protyle-id", protyle.id);
                 updateElements.push(tempEl);
-                void protyle.transport!.request<IWebSocketData>("/api/block/getBlockDOM", {
+                void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
                     id: operation.id,
                 }, {
-                    identity: {
-                        notebookId: protyle.notebookId,
-                        documentId: protyle.options.blockId!,
-                    },
+                    identity: protyleContentIdentity(protyle),
                     intent: "read",
-                    signal: protyle.ownerSignal,
+                    signal: protyle.requestSignal,
                 }).then((response) => {
-                    if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+                    if (protyle.destroyed || protyle.requestSignal.aborted) {
                         return;
                     }
-                    document.querySelectorAll(`.protyle-wysiwyg [data-node-id="${response.data.id}"]`).forEach(item => {
-                        if (item.getAttribute("data-protyle-id")) {
+                    protyle.wysiwyg.element.querySelectorAll(`[data-node-id="${response.data.id}"]`).forEach(item => {
+                        if (item.getAttribute("data-protyle-id") === protyle.id) {
                             item.outerHTML = response.data.dom;
-                            item.removeAttribute("data-protyle-id");
                         }
                     });
                 }).catch((error) => {
-                    if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                    if (!protyle.destroyed && !protyle.requestSignal.aborted) {
                         console.error("[protyle.transport] block DOM request failed", error);
                     }
                 });
@@ -853,7 +851,7 @@ export const onTransaction = (protyle: IProtyle, operations: IOperation[], isUnd
                             return true;
                         }
                     });
-                    document.querySelectorAll("wbr").forEach(item => {
+                    protyle.wysiwyg.element.querySelectorAll("wbr").forEach(item => {
                         item.remove();
                     });
                 } else {
@@ -1377,6 +1375,7 @@ export const turnsOneInto = async (options: {
     type: string,
     level?: number
 }) => {
+    const identity = protyleContentIdentity(options.protyle);
     if (!options.nodeElement.querySelector("wbr")) {
         getContenteditableElement(options.nodeElement)?.insertAdjacentHTML("afterbegin", "<wbr>");
     }
@@ -1384,12 +1383,12 @@ export const turnsOneInto = async (options: {
         for (const item of options.nodeElement.querySelectorAll('[data-type="NodeHeading"][fold="1"]')) {
             const itemId = item.getAttribute("data-node-id");
             item.removeAttribute("fold");
-            const response = await options.protyle.transport!.request<IWebSocketData>("/api/transactions", {
+            const response = await options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/transactions", {
                 reqId: Date.now(),
                 session: options.protyle.id,
                 app: Constants.SIYUAN_APPID,
                 transactions: [{
-                    notebook: options.protyle.notebookId,
+                    notebook: identity.notebookId,
                     doOperations: [{
                         action: "unfoldHeading",
                         id: itemId,
@@ -1400,14 +1399,12 @@ export const turnsOneInto = async (options: {
                     }],
                 }]
             }, {
-                identity: {
-                    notebookId: options.protyle.notebookId,
-                    documentId: options.protyle.options.blockId!,
-                },
+                identity,
                 intent: "write",
-                signal: options.protyle.ownerSignal,
+                signal: options.protyle.requestSignal,
             });
-            if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted) {
+            if (options.protyle.destroyed || options.protyle.requestSignal.aborted ||
+                !options.protyle.wysiwyg.element.contains(item)) {
                 return;
             }
             options.protyle.undo.add([{
@@ -1423,17 +1420,15 @@ export const turnsOneInto = async (options: {
     const oldHTML = options.nodeElement.outerHTML;
     let previousId = options.nodeElement.previousElementSibling?.getAttribute("data-node-id");
     if (!options.nodeElement.previousElementSibling && options.protyle.block.showAll) {
-        const response = await options.protyle.transport!.request<IWebSocketData>("/api/block/getBlockRelevantIDs", {
+        const response = await options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockRelevantIDs", {
             id: options.id,
         }, {
-            identity: {
-                notebookId: options.protyle.notebookId,
-                documentId: options.protyle.options.blockId!,
-            },
+            identity,
             intent: "read",
-            signal: options.protyle.ownerSignal,
+            signal: options.protyle.requestSignal,
         });
-        if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted) {
+        if (options.protyle.destroyed || options.protyle.requestSignal.aborted ||
+            !options.protyle.wysiwyg.element.contains(options.nodeElement)) {
             return;
         }
         previousId = response.data.previousID;
@@ -1482,22 +1477,20 @@ export const turnsOneInto = async (options: {
     focusByWbr(options.protyle.wysiwyg.element, getEditorRange(options.protyle.wysiwyg.element));
     options.protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]').forEach(item => {
         if (item.textContent === "") {
-            void options.protyle.transport!.request<IWebSocketData>("/api/block/getRefText", {
+            void options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                 id: item.getAttribute("data-id"),
             }, {
-                identity: {
-                    notebookId: options.protyle.notebookId,
-                    documentId: options.protyle.options.blockId!,
-                },
+                identity,
                 intent: "read",
-                signal: options.protyle.ownerSignal,
+                signal: options.protyle.requestSignal,
             }).then((response) => {
-                if (options.protyle.destroyed || options.protyle.ownerSignal?.aborted || !item.isConnected) {
+                if (options.protyle.destroyed || options.protyle.requestSignal.aborted ||
+                    !options.protyle.wysiwyg.element.contains(item)) {
                     return;
                 }
                 item.innerHTML = response.data;
             }).catch((error) => {
-                if (!options.protyle.destroyed && !options.protyle.ownerSignal?.aborted) {
+                if (!options.protyle.destroyed && !options.protyle.requestSignal.aborted) {
                     console.error("[protyle.transport] block reference request failed", error);
                 }
             });
@@ -1608,15 +1601,12 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
                 mode: 2,
                 size: (protyle.application as ProtyleApplicationPort).settings.editor.dynamicLoadBlocks,
             };
-            void protyle.transport!.request<IWebSocketData>("/api/filetree/getDoc", getDocParam, {
-                identity: {
-                    notebookId: protyle.notebookId,
-                    documentId: protyle.options.blockId!,
-                },
+            void protyle.session!.runtime.transport.request<IWebSocketData>("/api/filetree/getDoc", getDocParam, {
+                identity: protyleContentIdentity(protyle),
                 intent: "read",
-                signal: protyle.ownerSignal,
+                signal: protyle.requestSignal,
             }).then((getResponse) => {
-                if (protyle.destroyed || protyle.ownerSignal?.aborted) {
+                if (protyle.destroyed || protyle.requestSignal.aborted) {
                     return;
                 }
                 onGet({
@@ -1625,7 +1615,7 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
                     action: [Constants.CB_GET_APPEND, Constants.CB_GET_UNCHANGEID],
                 });
             }).catch((error) => {
-                if (!protyle.destroyed && !protyle.ownerSignal?.aborted) {
+                if (!protyle.destroyed && !protyle.requestSignal.aborted) {
                     console.error("[protyle.transport] document append request failed", error);
                 }
             });

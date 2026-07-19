@@ -303,7 +303,7 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
                             if (!attributeProtyle) {
                                 throw new Error("[protyle.content] attribute preview requires a source notebookId");
                             }
-                            renderAVAttribute(item, attrs.id, attributeProtyle);
+                            renderAVAttribute(item, attrs.id, attributeProtyle, undefined, () => dialog.destroy());
                         }
                         item.classList.remove("fn__none");
                     } else {

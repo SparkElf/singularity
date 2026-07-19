@@ -52,11 +52,11 @@ export const copyBlockText = async (
                 break;
             }
             case "protocol":
-                text += buildSiYuanBlockUri(id, identity.notebookId);
+                text += buildSiYuanBlockUri(id, identity.notebookId, identity.documentId);
                 break;
             case "protocolMd": {
                 const response = await requestRefText(protyle, id);
-                text += `[${response.data.replace("[", "\\[").replace("]", "\\]")}](${buildSiYuanBlockUri(id, identity.notebookId)})`;
+                text += `[${response.data.replace("[", "\\[").replace("]", "\\]")}](${buildSiYuanBlockUri(id, identity.notebookId, identity.documentId)})`;
                 break;
             }
             case "ref": {

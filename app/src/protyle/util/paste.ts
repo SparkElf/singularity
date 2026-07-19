@@ -1,13 +1,16 @@
 import {Constants} from "../../constants";
 import {uploadFiles} from "../upload";
 import {processPasteCode, processRender} from "./processCode";
-import {getTextSiyuanFromTextHTML, readText} from "./clipboard";
+import {
+    getTextSiyuanFromTextHTML,
+    readText,
+    type ProtyleClipboardData,
+    type ProtyleClipboardSourceIdentity,
+} from "./clipboard";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName} from "./hasClosest";
 import {getEditorRange, getSelectionOffset} from "./selection";
 import {blockRender} from "../render/blockRender";
 import {highlightRender} from "../render/highlightRender";
-import {fetchPost, fetchSyncPost} from "../../util/fetch";
-import {isDynamicRef, isFileAnnotation} from "../../util/functions";
 import {insertHTML} from "./insertHTML";
 import {scrollCenter} from "./highlightById";
 import {hideElements} from "../ui/hideElements";
@@ -16,8 +19,56 @@ import {cellScrollIntoView, getCellText} from "../render/av/cell";
 import {getCalloutInfo, getContenteditableElement} from "../wysiwyg/getBlock";
 import {clearBlockElement} from "./clear";
 import {removeZWJ} from "./normalizeText";
-import {base64ToURL} from "../../util/image";
 import {resolveLinkDest} from "../toolbar/config";
+import {protyleContentIdentity} from "./contentLoad";
+import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
+
+interface PasteImageUploadResponse extends Omit<IWebSocketData, "data"> {
+    data: {
+        succMap: Record<string, string>;
+    };
+}
+
+const isDynamicRef = (text: string) => /^\(\(\d{14}-\w{7} '.*'\)\)$/.test(text);
+
+const isFileAnnotation = (text: string) => /^<<assets\/.+\/\d{14}-\w{7} ".+">>$/.test(text);
+
+const dataImageFile = async (source: string, signal: AbortSignal) => {
+    const blob = await fetch(source, {signal}).then((response) => response.blob());
+    const subtype = blob.type.split("/", 2)[1] || "png";
+    const extension = subtype === "jpeg" ? "jpg" : subtype === "svg+xml" ? "svg" : subtype;
+    return new File(
+        [blob],
+        `base64image-${Lute.NewNodeID()}.${extension}`,
+        {type: blob.type},
+    );
+};
+
+const uploadDataImages = async (protyle: IProtyle, sources: string[]) => {
+    const identity = protyleContentIdentity(protyle);
+    const formData = new FormData();
+    try {
+        const files = await Promise.all(sources.map((source) => dataImageFile(source, protyle.requestSignal)));
+        files.forEach((file) => formData.append("file[]", file));
+        formData.set("id", identity.documentId);
+        formData.set("notebook", identity.notebookId);
+        const response = await protyle.session!.runtime.transport.upload<PasteImageUploadResponse>(formData, {
+            identity,
+            signal: protyle.requestSignal,
+        });
+        return files.map((file) => response.data.succMap[file.name]);
+    } catch (error) {
+        if (!protyle.requestSignal.aborted) {
+            console.error("[protyle.paste] data image upload failed", error);
+            protyle.host.dispatch({
+                type: "notify",
+                level: "error",
+                message: protyle.localization.text("uploadError"),
+            });
+        }
+        throw error;
+    }
+};
 
 export const beforePaste = (protyle: IProtyle, blockElement: HTMLElement) => {
     // 链接，备注，样式，引用，pdf标注粘贴 https://github.com/siyuan-note/siyuan/issues/11572
@@ -41,7 +92,12 @@ export const beforePaste = (protyle: IProtyle, blockElement: HTMLElement) => {
     }
 };
 
-export const getTextStar = (blockElement: HTMLElement, contentOnly = false) => {
+export const getTextStar = (
+    blockElement: HTMLElement,
+    localization: IProtyle["localization"],
+    identity: ProtyleContentIdentity,
+    contentOnly = false,
+) => {
     const dataType = blockElement.dataset.type;
     let refText = "";
     if (["NodeHeading", "NodeParagraph"].includes(dataType)) {
@@ -49,17 +105,17 @@ export const getTextStar = (blockElement: HTMLElement, contentOnly = false) => {
     } else if ("NodeHTMLBlock" === dataType) {
         refText = "HTML";
     } else if ("NodeAttributeView" === dataType) {
-        refText = blockElement.querySelector(".av__title").textContent || window.siyuan.languages.database;
+        refText = blockElement.querySelector(".av__title").textContent || localization.text("database");
     } else if ("NodeThematicBreak" === dataType) {
-        refText = window.siyuan.languages.line;
+        refText = localization.text("line");
     } else if ("NodeIFrame" === dataType) {
         refText = "IFrame";
     } else if ("NodeWidget" === dataType) {
-        refText = window.siyuan.languages.widget;
+        refText = localization.text("widget");
     } else if ("NodeVideo" === dataType) {
-        refText = window.siyuan.languages.video;
+        refText = localization.text("video");
     } else if ("NodeAudio" === dataType) {
-        refText = window.siyuan.languages.audio;
+        refText = localization.text("audio");
     } else if (["NodeCodeBlock", "NodeTable"].includes(dataType)) {
         refText = getPlainText(blockElement);
     } else if (blockElement.classList.contains("render-node")) {
@@ -69,7 +125,7 @@ export const getTextStar = (blockElement: HTMLElement, contentOnly = false) => {
         Array.from(blockElement.querySelectorAll("[data-node-id]")).find((item: HTMLElement) => {
             if (!["NodeBlockquote", "NodeList", "NodeSuperBlock", "NodeListItem"].includes(item.getAttribute("data-type"))) {
                 // 获取子块内容，使用容器块本身的 ID
-                refText = getTextStar(item, true);
+                refText = getTextStar(item, localization, identity, true);
                 return true;
             }
         });
@@ -79,7 +135,7 @@ export const getTextStar = (blockElement: HTMLElement, contentOnly = false) => {
     if (contentOnly) {
         return refText;
     }
-    return refText + ` <span data-type="block-ref" data-subtype="s" data-id="${blockElement.getAttribute("data-node-id")}">*</span>`;
+    return refText + ` <span data-type="block-ref" data-subtype="s" data-id="${blockElement.getAttribute("data-node-id")}" data-notebook-id="${identity.notebookId}" data-document-id="${identity.documentId}">*</span>`;
 };
 
 export const getPlainText = (blockElement: HTMLElement, isNested = false) => {
@@ -254,7 +310,7 @@ const readLocalFile = async (protyle: IProtyle, localFiles: ILocalFiles[]) => {
     }
 };
 
-export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEvent | IClipboardData) & {
+export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEvent | ProtyleClipboardData) & {
     target: HTMLElement
 }) => {
     if ("clipboardData" in event || "dataTransfer" in event) {
@@ -264,13 +320,17 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
     let textHTML: string;
     let textPlain: string;
     let siyuanHTML: string;
+    let sourceIdentity: ProtyleClipboardSourceIdentity | undefined;
+    let parseHTMLClipboardPayload = false;
     let files: FileList | DataTransferItemList | File[];
     if ("clipboardData" in event) {
+        parseHTMLClipboardPayload = true;
         textHTML = event.clipboardData.getData("text/html");
         textPlain = event.clipboardData.getData("text/plain");
         siyuanHTML = event.clipboardData.getData("text/siyuan");
         files = event.clipboardData.files;
     } else if ("dataTransfer" in event) {
+        parseHTMLClipboardPayload = true;
         textHTML = event.dataTransfer.getData("text/html");
         textPlain = event.dataTransfer.getData("text/plain");
         siyuanHTML = event.dataTransfer.getData("text/siyuan");
@@ -285,13 +345,25 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
         textHTML = event.textHTML;
         textPlain = event.textPlain;
         siyuanHTML = event.siyuanHTML;
+        sourceIdentity = event.sourceIdentity;
         files = event.files;
+    }
+
+    const originalTextHTML = textHTML;
+    if (parseHTMLClipboardPayload && textHTML) {
+        const parsed = getTextSiyuanFromTextHTML(textHTML);
+        textHTML = parsed.textHtml;
+        if (!siyuanHTML) {
+            siyuanHTML = parsed.textSiyuan;
+        }
+        if (parsed.sourceIdentity && parsed.textSiyuan === siyuanHTML) {
+            sourceIdentity = parsed.sourceIdentity;
+        }
     }
 
     // Improve the pasting of selected text in PDF rectangular annotation https://github.com/siyuan-note/siyuan/issues/11629
     textPlain = textPlain.replace(/\r\n|\r|\u2028|\u2029/g, "\n");
 
-    const originalTextHTML = textHTML;
     // 浏览器地址栏拷贝处理
     if (textHTML.replace(/&amp;/g, "&").replace(/<(|\/)(html|body|meta)[^>]*?>/ig, "").trim() ===
         `<a href="${textPlain}">${textPlain}</a>` ||
@@ -302,12 +374,6 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
     // 复制标题及其下方块使用 writeText，需将 textPlain 转换为 textHTML
     if (textPlain.endsWith(Constants.ZWSP) && !textHTML && !siyuanHTML) {
         siyuanHTML = textPlain.substr(0, textPlain.length - 1);
-    }
-    // 复制/剪切折叠标题需获取 siyuanHTML
-    if (textHTML && textPlain && !siyuanHTML) {
-        const textObj = getTextSiyuanFromTextHTML(textHTML);
-        siyuanHTML = textObj.textSiyuan;
-        textHTML = textObj.textHtml;
     }
     // 剪切复制中首位包含空格或仅有空格 https://github.com/siyuan-note/siyuan/issues/5667
     if (!siyuanHTML) {
@@ -323,6 +389,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
         textHTML = Lute.Sanitize(textHTML);
     }
 
+    const sourceSiyuanHTML = siyuanHTML;
     const transformed = await protyle.plugins.transformPaste(protyle, {
         textHTML,
         textPlain,
@@ -333,6 +400,9 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
     textPlain = transformed.textPlain;
     siyuanHTML = transformed.siyuanHTML;
     files = transformed.files;
+    if (sourceIdentity && siyuanHTML !== sourceSiyuanHTML) {
+        sourceIdentity = undefined;
+    }
 
 
     let nodeElement = hasClosestBlock(event.target);
@@ -445,10 +515,23 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             pastedBlockElements.forEach((e) => {
                 oldIds.push(e.getAttribute("data-node-id"));
             });
-            const existResponse = await fetchSyncPost("/api/block/checkBlocksExist", {ids: oldIds});
+            let existingBlocks: Record<string, boolean> | undefined;
+            if (sourceIdentity && sourceIdentity.spaceId === protyle.session!.spaceId) {
+                const existResponse = await protyle.session!.runtime.transport.request<{
+                    data: Record<string, boolean>;
+                }>("/api/block/checkBlocksExist", {
+                    ids: oldIds,
+                    notebook: sourceIdentity.notebookId,
+                }, {
+                    identity: sourceIdentity,
+                    intent: "read",
+                    signal: protyle.requestSignal,
+                });
+                existingBlocks = existResponse.data;
+            }
             pastedBlockElements.forEach((e) => {
                 const originalId = e.getAttribute("data-node-id");
-                const isCutPaste = existResponse.data[originalId] === false; // 剪切来的（原块已删）
+                const isCutPaste = existingBlocks?.[originalId] === false; // 同空间剪切且来源块已删除
                 if (!isCutPaste) {
                     // 复制粘贴：生成新 ID
                     e.setAttribute("data-node-id", Lute.NewNodeID());
@@ -584,24 +667,34 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                 }
                 return;
             }
-            fetchPost("/api/lute/html2BlockDOM", {
+            const identity = protyleContentIdentity(protyle);
+            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/lute/html2BlockDOM", {
                 dom: tempElement.innerHTML,
-                notebook: protyle.notebookId,
-            }, (response) => {
-                insertHTML(response.data, protyle, false, false, true);
-                protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]').forEach(item => {
-                    if (item.textContent === "") {
-                        fetchPost("/api/block/getRefText", {id: item.getAttribute("data-id")}, (response) => {
-                            item.innerHTML = response.data;
-                        });
-                    }
-                });
-                blockRender(protyle, protyle.wysiwyg.element);
-                processRender(protyle.wysiwyg.element, protyle);
-                highlightRender(protyle.wysiwyg.element, protyle);
-                avRender(protyle.wysiwyg.element, protyle);
-                scrollCenter(protyle, undefined, "nearest", "smooth");
+                notebook: identity.notebookId,
+            }, {
+                identity,
+                intent: "read",
+                signal: protyle.requestSignal,
             });
+            insertHTML(response.data, protyle, false, false, true);
+            const emptyReferences = Array.from(protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]'))
+                .filter(item => item.textContent === "");
+            await Promise.all(emptyReferences.map(async (item) => {
+                const refResponse = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+                    id: item.getAttribute("data-id"),
+                    notebook: identity.notebookId,
+                }, {
+                    identity,
+                    intent: "read",
+                    signal: protyle.requestSignal,
+                });
+                item.innerHTML = refResponse.data;
+            }));
+            blockRender(protyle, protyle.wysiwyg.element);
+            processRender(protyle.wysiwyg.element, protyle);
+            highlightRender(protyle.wysiwyg.element, protyle);
+            avRender(protyle.wysiwyg.element, protyle);
+            scrollCenter(protyle, undefined, "nearest", "smooth");
             return;
         } else if (files && files.length > 0) {
             uploadFiles(protyle, files);
@@ -640,7 +733,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             let textPlainDom: string;
 
             // Auto-convert pasted URL to link format https://github.com/siyuan-note/siyuan/issues/17337
-            if (window.siyuan.config.editor.pasteURLAutoConvert) {
+            if (protyle.settings.editor.pasteURLAutoConvert) {
                 textPlainDom = protyle.lute.Md2BlockDOMWithAutoLink(textPlain);
             } else {
                 textPlainDom = protyle.lute.Md2BlockDOM(textPlain);
@@ -648,17 +741,15 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             if (textPlainDom && textPlainDom.indexOf("data:image/") > -1) {
                 const tempElement = document.createElement("template");
                 tempElement.innerHTML = textPlainDom;
-                const imgSrcList: string[] = [];
-                const imageElements = tempElement.content.querySelectorAll("img");
-                imageElements.forEach((item) => {
-                    if (item.getAttribute("data-src").startsWith("data:image/")) {
-                        imgSrcList.push(item.getAttribute("data-src"));
-                    }
-                });
-                const base64SrcList = await base64ToURL(imgSrcList);
-                base64SrcList.forEach((item, index) => {
-                    imageElements[index].setAttribute("src", item);
-                    imageElements[index].setAttribute("data-src", item);
+                const imageElements = Array.from(tempElement.content.querySelectorAll("img"))
+                    .filter((item) => item.getAttribute("data-src").startsWith("data:image/"));
+                const assetURLs = await uploadDataImages(
+                    protyle,
+                    imageElements.map((item) => item.getAttribute("data-src")),
+                );
+                assetURLs.forEach((url, index) => {
+                    imageElements[index].setAttribute("src", url);
+                    imageElements[index].setAttribute("data-src", url);
                     imageElements[index].parentElement.querySelector(".img__net")?.remove();
                 });
                 textPlainDom = tempElement.innerHTML;

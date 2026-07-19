@@ -1,6 +1,5 @@
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {transaction} from "../../wysiwyg/transaction";
-import {openFileAttr} from "../../../menus/commonMenuItem";
 import {
     addDragFill,
     cellValueIsEmpty,
@@ -416,16 +415,18 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
     });
     if (blockTargets.length === 1 && blockTargets[0]) {
         const blockTarget = blockTargets[0]!;
-        const {blockId, notebookId} = blockTarget;
+        const {blockId, documentId, notebookId} = blockTarget;
         const openDocument = (disposition: "new-tab" | "split-right" | "split-bottom") => {
             void requestBlockFold(protyle, {
+                blockId,
                 notebookId,
-                documentId: blockId,
+                documentId,
             }).then(({zoomIn}) => {
                 protyle.host.dispatch({
                     type: "open-document",
                     notebookId,
-                    documentId: blockId,
+                    documentId,
+                    blockId,
                     disposition,
                     scope: zoomIn ? "subtree" : "context",
                     attention: "focus",
@@ -460,28 +461,21 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                 click: () => openDocument("new-tab"),
             });
         }
-        openSubmenus.push({id: "separator_3", type: "separator"});
-        openSubmenus.push({
-            id: "attr",
-            icon: "iconAttr",
-            label: localization.text("attr"),
-            click: () => {
-                void protyle.transport!.request<IWebSocketData>("/api/attr/getBlockAttrs", {id: blockId}, {
-                    identity: {documentId: blockTarget.documentId, notebookId},
-                    intent: "read",
-                    signal: protyle.requestSignal,
-                }).then((response) => {
-                    if (protyle.requestSignal.aborted || protyle.destroyed) {
-                        return;
-                    }
-                    openFileAttr(response.data, "av", protyle);
-                }).catch((error) => {
-                    if (!protyle.requestSignal.aborted) {
-                        console.error("[protyle.transport] AV block attributes request failed", error);
-                    }
-                });
-            }
-        });
+        if (protyle.settings.features.blockAttributes) {
+            openSubmenus.push({id: "separator_3", type: "separator"});
+            openSubmenus.push({
+                id: "attr",
+                icon: "iconAttr",
+                label: localization.text("attr"),
+                click: () => protyle.host.dispatch({
+                    type: "open-block-attributes",
+                    notebookId,
+                    documentId: blockTarget.documentId,
+                    blockId,
+                    focus: "av",
+                }),
+            });
+        }
         menu.addItem({
             id: "openBy",
             label: localization.text("openBy"),
@@ -569,7 +563,11 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (!blockTarget) {
                         text += cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        text += buildSiYuanBlockUri(blockTarget.blockId, blockTarget.notebookId);
+                        text += buildSiYuanBlockUri(
+                            blockTarget.blockId,
+                            blockTarget.notebookId,
+                            blockTarget.documentId,
+                        );
                     }
                     if (blockTargets.length > 1 && index !== blockTargets.length - 1) {
                         text += "\n";
@@ -589,7 +587,11 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (!blockTarget) {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](${buildSiYuanBlockUri(blockTarget.blockId, blockTarget.notebookId)})`;
+                        content = `[${cellElement.querySelector(".av__celltext").textContent.replace(/[\n]+/g, " ")}](${buildSiYuanBlockUri(
+                            blockTarget.blockId,
+                            blockTarget.notebookId,
+                            blockTarget.documentId,
+                        )})`;
                     }
                     if (blockTargets.length > 1) {
                         text += "- ";

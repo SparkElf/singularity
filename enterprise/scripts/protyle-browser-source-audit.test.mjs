@@ -83,21 +83,28 @@ describe("Protyle notebook-scoped HostEvent boundary", () => {
 
   test("rejects a document event without notebook identity", () => {
     assert.deepEqual(
-      violationIds('protyle.host.dispatch({type: "open-document", documentId: "doc"});'),
+      violationIds('protyle.host.dispatch({type: "open-document", documentId: "doc", blockId: "block"});'),
       ["notebook-scope-missing"],
     );
   });
 
   test("rejects a document event without document identity", () => {
     assert.deepEqual(
-      violationIds('protyle.host.dispatch({type: "open-document", notebookId: "notebook"});'),
+      violationIds('protyle.host.dispatch({type: "open-document", notebookId: "notebook", blockId: "block"});'),
       ["document-scope-missing"],
     );
   });
 
-  test("accepts a document event with notebook identity", () => {
+  test("rejects a document navigation event without a separate target block", () => {
     assert.deepEqual(
-      violationIds('protyle.host.dispatch({type: "open-document", notebookId: protyle.notebookId, documentId: "doc"});'),
+      violationIds('protyle.host.dispatch({type: "open-document", notebookId: "notebook", documentId: "doc"});'),
+      ["target-block-missing"],
+    );
+  });
+
+  test("accepts a document event with complete content and target identity", () => {
+    assert.deepEqual(
+      violationIds('protyle.host.dispatch({type: "open-document", notebookId: protyle.notebookId, documentId: "doc", blockId: "block"});'),
       [],
     );
   });

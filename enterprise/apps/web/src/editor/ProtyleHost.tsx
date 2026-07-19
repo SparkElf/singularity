@@ -1,15 +1,23 @@
 import type {
   ProtyleController,
+  ProtyleDocumentNavigation,
   ProtyleFactory,
   ProtyleSession,
 } from "@singularity/protyle-browser";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+export interface ProtyleHostNavigationCommand {
+  readonly navigation: ProtyleDocumentNavigation;
+  readonly sequence: number;
+}
+
 interface ProtyleHostProps<TRuntime> {
   documentId: string;
   factory: ProtyleFactory<TRuntime>;
+  navigationCommand?: ProtyleHostNavigationCommand | null;
   notebookId: string;
   onError?: (error: unknown) => void;
+  onNavigationCommandComplete?: (sequence: number) => void;
   readOnly: boolean;
   session: ProtyleSession<TRuntime>;
 }
@@ -19,13 +27,16 @@ type ProtyleHostStatus = "error" | "loading" | "ready";
 export function ProtyleHost<TRuntime>({
   documentId,
   factory,
+  navigationCommand,
   notebookId,
   onError,
+  onNavigationCommandComplete,
   readOnly,
   session,
 }: ProtyleHostProps<TRuntime>) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<ProtyleController>(null);
+  const consumedNavigationSequenceRef = useRef<number | null>(null);
   const [status, setStatus] = useState<ProtyleHostStatus>("loading");
   const getCurrentReadOnly = useEffectEvent(() => readOnly);
   const applyLatestReadOnly = useEffectEvent((controller: ProtyleController, initialReadOnly: boolean) => {
@@ -35,6 +46,27 @@ export function ProtyleHost<TRuntime>({
   });
   const reportError = useEffectEvent((error: unknown) => {
     onError?.(error);
+  });
+  const consumeNavigationCommand = useEffectEvent((controller: ProtyleController) => {
+    const command = navigationCommand;
+    if (
+      !command ||
+      consumedNavigationSequenceRef.current === command.sequence ||
+      command.navigation.notebookId !== notebookId ||
+      command.navigation.documentId !== documentId
+    ) {
+      return;
+    }
+
+    consumedNavigationSequenceRef.current = command.sequence;
+    void controller.navigateDocument(command.navigation).then(() => {
+      if (
+        controllerRef.current === controller &&
+        consumedNavigationSequenceRef.current === command.sequence
+      ) {
+        onNavigationCommandComplete?.(command.sequence);
+      }
+    }).catch(reportError);
   });
 
   useEffect(() => {
@@ -65,6 +97,7 @@ export function ProtyleHost<TRuntime>({
       controllerRef.current = createdController;
       applyLatestReadOnly(createdController, initialReadOnly);
       setStatus("ready");
+      consumeNavigationCommand(createdController);
     }).catch((error: unknown) => {
       if (abortController.signal.aborted) {
         return;
@@ -87,6 +120,13 @@ export function ProtyleHost<TRuntime>({
   useEffect(() => {
     controllerRef.current?.setHostReadOnly(readOnly);
   }, [readOnly]);
+
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (controller) {
+      consumeNavigationCommand(controller);
+    }
+  }, [navigationCommand]);
 
   return (
     <div className="relative h-full min-h-0" data-protyle-state={status}>

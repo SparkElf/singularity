@@ -189,6 +189,49 @@ func TestCheckBlocksExistRequiresExplicitNotebook(t *testing.T) {
 	}
 }
 
+func TestGetBlockBreadcrumbCarriesExplicitTargetIdentity(t *testing.T) {
+	boxID := setupEncryptedResponseTest(t, 1)[0]
+	const documentID = "20990719120001-bread01"
+	createEnterpriseDirectoryTree(t, boxID, documentID, "/"+documentID+".sy", "/Breadcrumb", "Breadcrumb")
+
+	previousMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(previousMode) })
+	router := gin.New()
+	router.Use(ContentResponseLifecycle)
+	router.POST("/api/block/getBlockBreadcrumb", getBlockBreadcrumb)
+	body, err := json.Marshal(map[string]any{
+		"excludeTypes": []string{},
+		"id":           documentID,
+		"notebook":     boxID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/block/getBlockBreadcrumb", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	var result struct {
+		Code int              `json:"code"`
+		Data []map[string]any `json:"data"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode breadcrumb response: %v", err)
+	}
+	if response.Code != http.StatusOK || result.Code != 0 || len(result.Data) != 1 {
+		t.Fatalf("breadcrumb response = status %d, %#v", response.Code, result)
+	}
+	target := result.Data[0]
+	if target["blockId"] != documentID || target["notebookId"] != boxID || target["documentId"] != documentID {
+		t.Fatalf("breadcrumb target identity = %#v", target)
+	}
+	if _, exists := target["id"]; exists {
+		t.Fatalf("breadcrumb target retained ambiguous id field: %#v", target)
+	}
+}
+
 // TestFoldQueriesRejectInvalidNotebook 验证折叠状态与展开父级查询都通过真实 HTTP handler 返回明确错误。
 func TestFoldQueriesRejectInvalidNotebook(t *testing.T) {
 	_, encryptedID, missingID := setupNotebookArgTest(t)

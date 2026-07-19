@@ -2,7 +2,7 @@ import {transaction} from "../../wysiwyg/transaction";
 import {hasClosestBlock, hasClosestByClassName} from "../../util/hasClosest";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";
-import {Dialog} from "../../../dialog";
+import {openProtyleDialog} from "../../wysiwyg/dialogOwner";
 import {escapeAttr} from "../../../util/escape";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {type AVMenuSurface, openAVMenu} from "./menu";
@@ -519,29 +519,35 @@ export const openCalcMenu = async (protyle: IProtyle, calcElement: HTMLElement, 
         label: getNameByOperator("Template", !!panelData?.data, localization),
         click() {
             menuHandle.close();
-            const dialog = new Dialog({
+            const dialog = openProtyleDialog({
+                protyle,
                 title: localization.text("calcOperatorTemplate"),
-                content: `<div class="b3-dialog__content">
-    <textarea spellcheck="false" class="fn__block b3-text-field" placeholder="${escapeAttr(localization.text("rollupTemplateTip"))}" rows="8" style="resize: vertical;font-family: var(--b3-font-family-code);">${currentTemplate}</textarea>
+                width: "520px",
+            });
+            dialog.bodyElement.innerHTML = `<div class="b3-dialog__content">
+    <textarea spellcheck="false" class="fn__block b3-text-field" placeholder="${escapeAttr(localization.text("rollupTemplateTip"))}" rows="8" style="resize: vertical;font-family: var(--b3-font-family-code);"></textarea>
 </div>
 <div class="b3-dialog__action">
     <button class="b3-button b3-button--cancel">${localization.text("cancel")}</button><div class="fn__space"></div>
     <button class="b3-button b3-button--text">${localization.text("confirm")}</button>
-</div>`,
-                width: "520px",
-            });
-            const textarea = dialog.element.querySelector("textarea") as HTMLTextAreaElement;
-            const confirmBtn = dialog.element.querySelector(".b3-button--text") as HTMLButtonElement;
-            const cancelBtn = dialog.element.querySelector(".b3-button--cancel") as HTMLButtonElement;
+</div>`;
+            const textarea = dialog.bodyElement.querySelector("textarea") as HTMLTextAreaElement;
+            const confirmBtn = dialog.bodyElement.querySelector(".b3-button--text") as HTMLButtonElement;
+            const cancelBtn = dialog.bodyElement.querySelector(".b3-button--cancel") as HTMLButtonElement;
+            textarea.value = currentTemplate;
             const confirm = () => {
                 submitTemplate(textarea.value);
-                dialog.destroy();
+                dialog.close();
             };
-            confirmBtn.addEventListener("click", confirm);
-            cancelBtn.addEventListener("click", () => {
-                dialog.destroy();
-            });
-            dialog.bindInput(textarea, confirm);
+            confirmBtn.addEventListener("click", confirm, {signal: dialog.signal});
+            cancelBtn.addEventListener("click", dialog.close, {signal: dialog.signal});
+            textarea.addEventListener("keydown", (event) => {
+                if (!event.isComposing && !event.shiftKey && event.key === "Enter" && !event.repeat) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    confirm();
+                }
+            }, {signal: dialog.signal});
             textarea.focus();
         }
     });

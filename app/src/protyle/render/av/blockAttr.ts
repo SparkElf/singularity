@@ -7,18 +7,41 @@ import {unicodeToEmoji} from "../../hint/emoji";
 import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
 import {transaction} from "../../wysiwyg/transaction";
 import {openMenuPanel} from "./openMenuPanel";
-import {uploadFiles} from "../../upload";
-import {openLink} from "../../../editor/openLink";
-import {editAssetItem} from "./asset";
+import {openProtyleLink} from "../../util/openLink";
+import {editAssetItem, uploadAVFiles} from "./asset";
 import {previewImages} from "../../preview/image";
 import {Constants} from "../../../constants";
-import {removeCompressURL} from "../../../util/image";
 import {beginAVDrag, currentAVDrag, endAVDrag} from "./dragState";
 import {beginAVRenderLoad, reportAVLoadFailure, requestAVRender} from "./load";
 import {closeAVOverlay, currentAVOverlay} from "./overlay";
 import {touchDragOwner} from "../../ui/touchDragState";
 import {resolveProtyleAssetSource} from "../../util/assetSource";
 import {registerAVBlockValueTarget, resolveAVBlockTarget, setAVBlockIcon} from "./blockTarget";
+
+interface AttributeViewOwner {
+    readonly element: WeakRef<HTMLElement>;
+}
+
+const attributeViewOwners = new WeakMap<IProtyle, Set<AttributeViewOwner>>();
+const registeredAttributeElements = new WeakSet<HTMLElement>();
+const attributeEmptyCallbacks = new WeakMap<HTMLElement, () => void>();
+
+const registerAttributeViewOwner = (protyle: IProtyle, element: HTMLElement, onEmpty?: () => void) => {
+    if (onEmpty) {
+        attributeEmptyCallbacks.set(element, onEmpty);
+    }
+    if (registeredAttributeElements.has(element)) {
+        return;
+    }
+    registeredAttributeElements.add(element);
+    let owners = attributeViewOwners.get(protyle);
+    if (!owners) {
+        owners = new Set();
+        attributeViewOwners.set(protyle, owners);
+        protyle.requestSignal.addEventListener("abort", () => owners!.clear(), {once: true});
+    }
+    owners.add({element: new WeakRef(element)});
+};
 
 const genAVRollupHTML = (value: IAVCellValue, localization: IProtyle["localization"]) => {
     let html = "";
@@ -28,7 +51,7 @@ const genAVRollupHTML = (value: IAVCellValue, localization: IProtyle["localizati
             if (value?.isDetached) {
                 html = `<span>${escapeHtml(value.block?.content || localization.text("untitled"))}</span>`;
             } else {
-                html = `<span data-type="block-ref" data-id="${value.block.id}" data-subtype="s" class="av__celltext--ref">${escapeHtml(value.block?.content || localization.text("untitled"))}</span>`;
+                html = `<span data-type="block-ref" data-id="${value.block.id}" data-notebook-id="${escapeAttr(value.block.notebookId!)}" data-document-id="${escapeAttr(value.block.documentId!)}" data-subtype="s" class="av__celltext--ref">${escapeHtml(value.block?.content || localization.text("untitled"))}</span>`;
             }
             break;
         case "text":
@@ -149,7 +172,7 @@ export const genAVValueHTML = (
                     } else {
                         // data-block-id 用于更新 emoji
                         const targetReference = registerAVBlockValueTarget(protyle, item.block);
-                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
+                        html += `<span data-row-id="${rowID}" class="av__cell--relation" data-block-id="${item.block.id}"><span class="b3-menu__avemoji" data-type="block-icon" data-av-block-target="${targetReference}" data-unicode="${item.block.icon || ""}">${unicodeToEmoji(protyle, item.block.icon || fileIcon)}</span><span data-type="block-ref" data-id="${item.block.id}" data-notebook-id="${escapeAttr(item.block.notebookId!)}" data-document-id="${escapeAttr(item.block.documentId!)}" data-subtype="s" class="av__celltext av__celltext--ref">${Lute.EscapeHTMLStr(item.block.content || localization.text("untitled"))}</span></span>`;
                     }
                 }
             });
@@ -172,7 +195,15 @@ export const genAVValueHTML = (
     return html;
 };
 
-export const renderAVAttribute = (element: HTMLElement, id: string, protyle: IProtyle, cb?: (element: HTMLElement) => void) => {
+export const renderAVAttribute = (
+    element: HTMLElement,
+    id: string,
+    protyle: IProtyle,
+    cb?: (element: HTMLElement) => void,
+    onEmpty?: () => void,
+) => {
+    registerAttributeViewOwner(protyle, element, onEmpty);
+    const closeWhenEmpty = onEmpty ?? attributeEmptyCallbacks.get(element);
     const {localization} = protyle;
     const load = beginAVRenderLoad(protyle, element);
     void requestAVRender<IWebSocketData>(protyle, load, "/api/av/getAttributeViewKeys", {id}).then((response) => {
@@ -348,13 +379,31 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
             element.addEventListener("paste", (event) => {
                 const files = event.clipboardData.files;
                 if (currentAVOverlay(protyle, "panel")?.querySelector(".b3-form__upload")) {
+                    const target = event.target as HTMLElement;
+                    const blockElement = hasClosestBlock(target);
+                    const cellsElement = hasClosestByAttribute(target, "data-type", "mAsset");
                     if (files && files.length > 0) {
-                        uploadFiles(protyle, files);
+                        if (blockElement && cellsElement) {
+                            uploadAVFiles({
+                                files,
+                                onUploaded: (assets) => {
+                                    void updateCellsValue(
+                                        protyle,
+                                        blockElement as HTMLElement,
+                                        assets,
+                                        [cellsElement],
+                                    ).then(() => closeAVOverlay(protyle, "panel")).catch((error) => {
+                                        if (!protyle.requestSignal.aborted) {
+                                            console.error("[protyle.av.asset] pasted file update failed", error);
+                                        }
+                                    });
+                                },
+                                owner: cellsElement,
+                                protyle,
+                            });
+                        }
                     } else {
                         const textPlain = event.clipboardData.getData("text/plain");
-                        const target = event.target as HTMLElement;
-                        const blockElement = hasClosestBlock(target);
-                        const cellsElement = hasClosestByAttribute(target, "data-type", "mAsset");
                         if (blockElement && cellsElement && textPlain) {
                             updateCellsValue(protyle, blockElement as HTMLElement, textPlain, [cellsElement], undefined, protyle.lute.Md2BlockDOM(textPlain));
                             closeAVOverlay(protyle, "panel");
@@ -378,12 +427,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                         }]);
                         blockElement.remove();
                         if (!element.innerHTML) {
-                            window.siyuan.dialogs.find(item => {
-                                if (item.element.getAttribute("data-key") === Constants.DIALOG_ATTR) {
-                                    item.destroy();
-                                    return true;
-                                }
-                            });
+                            closeWhenEmpty?.();
                         }
                     }
                     event.stopPropagation();
@@ -471,6 +515,32 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
     });
 };
 
+export const refreshAVAttribute = (protyle: IProtyle, avID: string) => {
+    const owners = attributeViewOwners.get(protyle);
+    if (!owners) {
+        return;
+    }
+    owners.forEach((owner) => {
+        const element = owner.element.deref();
+        if (!element?.isConnected) {
+            owners.delete(owner);
+            return;
+        }
+        const attributeView = element.querySelector<HTMLElement>(`[data-av-id="${avID}"]`);
+        if (!attributeView) {
+            return;
+        }
+        attributeView.removeAttribute("data-rendering");
+        renderAVAttribute(
+            element,
+            attributeView.dataset.nodeId!,
+            protyle,
+            undefined,
+            attributeEmptyCallbacks.get(element),
+        );
+    });
+};
+
 const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) => {
     let target = event.target as HTMLElement;
     const blockElement = hasClosestBlock(target);
@@ -523,9 +593,9 @@ const openEdit = (protyle: IProtyle, element: HTMLElement, event: MouseEvent) =>
                 });
             } else {
                 if (target.tagName === "IMG") {
-                    previewImages([removeCompressURL(target.getAttribute("src"))]);
+                    previewImages([target.getAttribute("src").replace(/\?style=thumb$/, "")]);
                 } else {
-                    openLink(protyle, target.dataset.url, event, event.ctrlKey || event.metaKey);
+                    openProtyleLink(protyle, target.dataset.url);
                 }
             }
             event.stopPropagation();

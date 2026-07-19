@@ -1,9 +1,7 @@
 import {hasClosestByClassName} from "../util/hasClosest";
-import {getRandom, isMobile} from "../../util/functions";
 import {hideElements} from "../ui/hideElements";
 import {uploadFiles} from "../upload";
 import {upDownHint} from "../util/upDownHint";
-import {Dialog} from "../../dialog";
 import {Constants} from "../../constants";
 import {openAssetMenu} from "../ui/assetMenu";
 import {previewImages} from "../preview/image";
@@ -14,6 +12,8 @@ import {isOnlyMeta} from "../util/keyboard";
 import {resolveProtyleAssetSource} from "../util/assetSource";
 import {unicodeToEmoji} from "../hint/emoji";
 import {openProtyleEmojiMenu} from "../ui/emojiMenu";
+import {isNarrowViewport} from "../util/browserPlatform";
+import {openProtyleDialog} from "../wysiwyg/dialogOwner";
 
 type BackgroundMenuHandle = ReturnType<NonNullable<IProtyle["runtime"]>["menu"]["open"]>;
 
@@ -391,34 +391,32 @@ export class Background {
                     event.stopPropagation();
                     break;
                 } else if (type === "show-random" && !protyle.disabled) {
-                    const dialog = new Dialog({
+                    const dialog = openProtyleDialog({
+                        protyle,
                         title: this.localization.text("builtIn"),
-                        content: '<div class="b3-cards" style="padding:16px;justify-content:center;align-items:center;min-height:200px"></div>',
-                        width: isMobile() ? "92vw" : "912px",
-                        height: isMobile() ? "80vh" : "70vh",
+                        width: isNarrowViewport() ? "92vw" : "912px",
                     });
                     dialog.element.setAttribute("data-key", Constants.DIALOG_BACKGROUNDRANDOM);
+                    dialog.element.querySelector<HTMLElement>(".b3-dialog__container")!.style.height =
+                        isNarrowViewport() ? "80vh" : "70vh";
 
-                    const renderCSSPatterns = (d: Dialog) => {
+                    const renderCSSPatterns = () => {
                         let html = "";
                         bgs.forEach((item: string, index: number) => {
                             html += `<div data-index="${index}" style="height: 128px;${item}" class="b3-card"></div>`;
                         });
-                        const bodyEl = d.element.querySelector(".b3-dialog__body");
-                        if (bodyEl) {
-                            bodyEl.innerHTML = `<div class="b3-cards" style="padding: 16px">${html}</div>`;
-                        }
-                        d.element.addEventListener("click", (event) => {
+                        dialog.bodyElement.innerHTML = `<div class="b3-cards" style="padding: 16px">${html}</div>`;
+                        dialog.element.addEventListener("click", (event) => {
                             const target = event.target as HTMLElement;
                             if (target.classList.contains("b3-card")) {
                                 this.updateTitleImage(protyle, bgs[parseInt(target.dataset.index!)]);
-                                d.destroy();
+                                dialog.close();
                             }
-                        });
+                        }, {signal: dialog.signal});
                     };
 
                     if (this.coverData.allCovers.length === 0) {
-                        renderCSSPatterns(dialog);
+                        renderCSSPatterns();
                     } else {
                         const buildCards = (category: string): string => {
                             const covers = category === "all" ?
@@ -435,7 +433,7 @@ export class Background {
                         };
 
                         let activeCategory = "all";
-                        const bodyElement = dialog.element.querySelector<HTMLElement>(".b3-dialog__body")!;
+                        const bodyElement = dialog.bodyElement;
                         const renderContent = () => {
                             bodyElement.innerHTML = `${buildTabs(activeCategory)}
         <div class="b3-cards b3-cover__cards" style="padding:16px">${buildCards(activeCategory)}</div>`;
@@ -454,9 +452,9 @@ export class Background {
                             const card = target.closest<HTMLElement>(".b3-cover__card");
                             if (card) {
                                 this.insertCover(protyle, card.dataset.name!);
-                                dialog.destroy();
+                                dialog.close();
                             }
-                        });
+                        }, {signal: dialog.signal});
                     }
 
                     event.preventDefault();
@@ -464,10 +462,12 @@ export class Background {
                     break;
                 } else if (type === "random" && !protyle.disabled) {
                     if (this.coverData.allCovers.length > 0) {
-                        const randomCover = this.coverData.allCovers[getRandom(0, this.coverData.allCovers.length - 1)];
+                        const randomCover = this.coverData.allCovers[
+                            Math.floor(Math.random() * this.coverData.allCovers.length)
+                        ];
                         this.insertCover(protyle, randomCover.file);
                     } else {
-                        this.updateTitleImage(protyle, bgs[getRandom(0, bgs.length - 1)]);
+                        this.updateTitleImage(protyle, bgs[Math.floor(Math.random() * bgs.length)]);
                     }
                     event.preventDefault();
                     event.stopPropagation();
@@ -515,28 +515,29 @@ export class Background {
                     event.stopPropagation();
                     break;
                 } else if (type === "link" && !protyle.disabled) {
-                    const dialog = new Dialog({
+                    const dialog = openProtyleDialog({
+                        protyle,
                         title: this.localization.text("link"),
-                        width: isMobile() ? "92vw" : "520px",
-                        content: `<div class="b3-dialog__content">
+                        width: isNarrowViewport() ? "92vw" : "520px",
+                    });
+                    dialog.bodyElement.innerHTML = `<div class="b3-dialog__content">
         <input class="b3-text-field fn__block" value="${this.imgElement.src.startsWith("data:") ? "" : escapeAttr(this.imgElement.dataset.source!)}">
 </div>
 <div class="b3-dialog__action">
     <button class="b3-button b3-button--cancel">${this.localization.text("cancel")}</button><div class="fn__space"></div>
     <button class="b3-button b3-button--text">${this.localization.text("confirm")}</button>
-</div>`,
-                    });
+</div>`;
                     dialog.element.setAttribute("data-key", Constants.DIALOG_BACKGROUNDLINK);
-                    const btnsElement = dialog.element.querySelectorAll(".b3-button");
+                    const btnsElement = dialog.bodyElement.querySelectorAll(".b3-button");
                     btnsElement[0].addEventListener("click", () => {
-                        dialog.destroy();
-                    });
+                        dialog.close();
+                    }, {signal: dialog.signal});
                     btnsElement[1].addEventListener("click", () => {
-                        const value = dialog.element.querySelector<HTMLInputElement>("input")!.value;
+                        const value = dialog.bodyElement.querySelector<HTMLInputElement>("input")!.value;
                         this.updateTitleImage(protyle, `background-image:url("${value}");`);
-                        dialog.destroy();
-                    });
-                    dialog.element.querySelector("input").focus();
+                        dialog.close();
+                    }, {signal: dialog.signal});
+                    dialog.bodyElement.querySelector<HTMLInputElement>("input")!.focus();
                     event.preventDefault();
                     event.stopPropagation();
                     break;

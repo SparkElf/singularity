@@ -14,9 +14,8 @@ import {highlightRender} from "../render/highlightRender";
 import {Constants} from "../../constants";
 import {scrollCenter} from "../util/highlightById";
 import {hideElements} from "../ui/hideElements";
-import {isIPad} from "../util/browserPlatform";
+import {isIPad, isNarrowViewport} from "../util/browserPlatform";
 import {mathRender} from "../render/mathRender";
-import {isMobile} from "../../util/functions";
 import {processRender} from "../util/processCode";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
 import {blockRender} from "../render/blockRender";
@@ -657,7 +656,7 @@ export const softEnter = (range: Range, nodeElement: HTMLElement, protyle: IProt
         addNewLineToEnd(range, nodeElement, protyle, startElement);
         return true;
     }
-    if (isIPad() || isMobile()) {
+    if (isIPad() || isNarrowViewport()) {
         // iPad shift+enter 无效
         startElement = range.startContainer as HTMLElement;
         const nextSibling = hasNextSibling(startElement);

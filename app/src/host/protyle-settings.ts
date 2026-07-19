@@ -57,8 +57,10 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
             fontSizeScrollZoom: editor.fontSizeScrollZoom,
             fullWidth: editor.fullWidth,
             headingEmbedMode: editor.headingEmbedMode,
+            listItemDotNumberClickFocus: editor.listItemDotNumberClickFocus,
             katexMacros: editor.katexMacros,
             listLogicalOutdent: editor.listLogicalOutdent,
+            pasteURLAutoConvert: editor.pasteURLAutoConvert,
             plantUMLServePath: editor.plantUMLServePath,
             get readOnly() {
                 return editor.readOnly;
@@ -86,6 +88,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
                 window.siyuan.config.editor = response.data;
             },
             spellcheck: editor.spellcheck,
+            suppressBlockLinkPopoverOnMenu: editor.floatWindowMode === 0,
         };
     },
     cover: {
@@ -117,6 +120,7 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
             documentMove: true,
             flashcardDeck: window.siyuan.config.flashcard.deck,
             fullscreen: true,
+            navigationHistory: true,
             quickFlashcard: true,
             tableMenu: true,
             webBlockLink: true,
@@ -216,6 +220,18 @@ export const createAppProtyleApplicationSettings = (): TProtyleApplicationSettin
                     checkToggle: keymap.editor.list.checkToggle.custom,
                     indent: keymap.editor.list.indent.custom,
                     outdent: keymap.editor.list.outdent.custom,
+                },
+                table: {
+                    "delete-column": keymap.editor.table["delete-column"].custom,
+                    "delete-row": keymap.editor.table["delete-row"].custom,
+                    insertColumnLeft: keymap.editor.table.insertColumnLeft.custom,
+                    insertColumnRight: keymap.editor.table.insertColumnRight.custom,
+                    insertRowAbove: keymap.editor.table.insertRowAbove.custom,
+                    insertRowBelow: keymap.editor.table.insertRowBelow.custom,
+                    moveToDown: keymap.editor.table.moveToDown.custom,
+                    moveToLeft: keymap.editor.table.moveToLeft.custom,
+                    moveToRight: keymap.editor.table.moveToRight.custom,
+                    moveToUp: keymap.editor.table.moveToUp.custom,
                 },
             },
         };

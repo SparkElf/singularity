@@ -55,7 +55,7 @@ export class Undo implements IUndo {
                 break;
             }
         }
-        onTransaction(protyle, operations, true);
+        onTransaction(protyle, operations, true, protyle.id);
         document.querySelector(".av__panel")?.remove();
         preventScroll(protyle);
         // 同步 toolbar range，避免 undo/redo 替换 DOM 后 range 变为 detached，
@@ -135,7 +135,7 @@ export class LocalUndo implements IUndo {
                     break;
                 }
             }
-            onTransaction(protyle, state.undoOperations, true);
+            onTransaction(protyle, state.undoOperations, true, protyle.id);
             transaction(protyle, state.undoOperations, undefined, {skipSync: true});
         } else {
             for (let i = state.doOperations.length - 1; i >= 0; i--) {
@@ -148,7 +148,7 @@ export class LocalUndo implements IUndo {
                     break;
                 }
             }
-            onTransaction(protyle, state.doOperations, true);
+            onTransaction(protyle, state.doOperations, true, protyle.id);
             transaction(protyle, state.doOperations, undefined, {skipSync: true});
         }
         document.querySelector(".av__panel")?.remove();

@@ -165,6 +165,7 @@ export const afterRenderGallery = (options: ITableOptions) => {
     }
     bindAvSearch({
         blockElement: options.blockElement,
+        clearLabel: options.protyle.localization.text("clear"),
         query: options.resetData.query,
         isSearching: options.resetData.isSearching,
         onChange: () => updateSearch(options.blockElement, options.protyle),
