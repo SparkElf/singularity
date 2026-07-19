@@ -366,7 +366,7 @@ export class Backlink extends Model {
                     }
                     break;
                 case "removeDoc":
-                    if (data.data.ids.includes(this.rootId) && this.type === "local") {
+                    if (data.data.notebookId === this.notebookId && data.data.documentId === this.rootId && this.type === "local") {
                         this.parent.parent.removeTab(this.parent.id);
                     }
                     break;

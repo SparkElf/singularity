@@ -21,6 +21,7 @@ import {clearBlockElement} from "./clear";
 import {removeZWJ} from "./normalizeText";
 import {resolveLinkDest} from "../toolbar/config";
 import {protyleContentIdentity} from "./contentLoad";
+import {getBlockRefContentTarget} from "./blockRefIdentity";
 import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
 
 interface PasteImageUploadResponse extends Omit<IWebSocketData, "data"> {
@@ -488,11 +489,18 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             }
 
             if (types.includes("block-ref")) {
+                const blockRefTarget = linkElement ? getBlockRefContentTarget(linkElement) : undefined;
+                if (!blockRefTarget) {
+                    insertHTML(Lute.EscapeHTMLStr(linkElement?.textContent || range.toString()), protyle);
+                    return;
+                }
                 const refElement = protyle.toolbar.setInlineMark(protyle, "block-ref", "range", {
                     type: "id",
-                    color: `${linkElement.dataset.id}${Constants.ZWSP}s${Constants.ZWSP}${range.toString()}`
+                    notebookId: blockRefTarget.notebookId,
+                    color: `${blockRefTarget.blockId}${Constants.ZWSP}s${Constants.ZWSP}${range.toString()}`
                 });
                 if (refElement[0]) {
+                    refElement[0].setAttribute("data-document-id", blockRefTarget.documentId);
                     protyle.toolbar.range.selectNodeContents(refElement[0]);
                 }
                 return;
@@ -678,13 +686,16 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             });
             insertHTML(response.data, protyle, false, false, true);
             const emptyReferences = Array.from(protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]'))
-                .filter(item => item.textContent === "");
-            await Promise.all(emptyReferences.map(async (item) => {
+                .flatMap((item) => {
+                    const target = getBlockRefContentTarget(item);
+                    return item.textContent === "" && target ? [{item, target}] : [];
+                });
+            await Promise.all(emptyReferences.map(async ({item, target}) => {
                 const refResponse = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
-                    id: item.getAttribute("data-id"),
-                    notebook: identity.notebookId,
+                    id: target.blockId,
+                    notebook: target.notebookId,
                 }, {
-                    identity,
+                    identity: target,
                     intent: "read",
                     signal: protyle.requestSignal,
                 });
@@ -703,14 +714,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
             if (range.toString() !== "") {
                 const firstLine = textPlain.split("\n")[0];
                 if (isDynamicRef(textPlain)) {
-                    const refElement = protyle.toolbar.setInlineMark(protyle, "block-ref", "range", {
-                        type: "id",
-                        // range 不能 escape，否则 https://github.com/siyuan-note/siyuan/issues/8359
-                        color: `${textPlain.substring(2, 22 + 2)}${Constants.ZWSP}s${Constants.ZWSP}${range.toString()}`
-                    });
-                    if (refElement[0]) {
-                        protyle.toolbar.range.selectNodeContents(refElement[0]);
-                    }
+                    // 纯文本动态引用没有目标笔记本和文档身份，保留原文而不伪造引用。
+                    insertHTML(textPlain, protyle);
                     return;
                 } else if (isFileAnnotation(firstLine)) {
                     protyle.toolbar.setInlineMark(protyle, "file-annotation-ref", "range", {

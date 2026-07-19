@@ -424,6 +424,10 @@ func blockMove(args map[string]any, contentStore string) (CallToolResult, error)
 }
 
 func broadcastBlockTransactions(transactions []*model.Transaction) {
+	for _, transaction := range transactions {
+		transaction.WaitForCommit()
+		transaction.PopulateContentTargets("", "")
+	}
 	event := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)
 	event.Data = transactions
 	util.PushEvent(event)

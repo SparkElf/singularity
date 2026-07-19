@@ -117,7 +117,7 @@ func dailynoteAppend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-	util.PushReloadProtyle(parentID, model.TransactionNotebookForBox(notebook))
+	util.PushReloadProtyle(notebook, parentID, model.TransactionNotebookForBox(notebook))
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("block appended to daily note: %s", parentID)}}}, nil
 }
 
@@ -156,6 +156,6 @@ func dailynotePrepend(args map[string]any) (CallToolResult, error) {
 
 	model.PerformTransactions(&transactions)
 	model.FlushTxQueue()
-	util.PushReloadProtyle(parentID, model.TransactionNotebookForBox(notebook))
+	util.PushReloadProtyle(notebook, parentID, model.TransactionNotebookForBox(notebook))
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("block prepended to daily note: %s", parentID)}}}, nil
 }

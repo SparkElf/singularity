@@ -413,7 +413,7 @@ func RollbackDocHistory(historyPath, notebook string) (err error) {
 		return
 	}
 	ReloadFiletree()
-	ReloadProtyle(rootID, TransactionNotebookForBox(boxID))
+	ReloadProtyle(boxID, rootID, TransactionNotebookForBox(boxID))
 
 	msg := fmt.Sprintf(Conf.Language(286), path.Join(box.Name, tree.HPath))
 	util.PushMsg(msg, 7000)
@@ -435,7 +435,7 @@ func RollbackDocHistory(historyPath, notebook string) (err error) {
 			return
 		}
 
-		ReloadProtyle(rootID, TransactionNotebookForBox(boxID))
+		ReloadProtyle(boxID, rootID, TransactionNotebookForBox(boxID))
 
 		// 刷新页签名
 		refText := getNodeRefText(tree.Root)

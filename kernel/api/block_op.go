@@ -1289,6 +1289,10 @@ func deleteBlock(c *gin.Context) {
 }
 
 func broadcastTransactions(transactions []*model.Transaction) {
+	for _, transaction := range transactions {
+		transaction.WaitForCommit()
+		transaction.PopulateContentTargets("", "")
+	}
 	evt := util.NewCmdResult("transactions", 0, util.PushModeBroadcast)
 	evt.Data = transactions
 	util.PushEvent(evt)

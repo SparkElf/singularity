@@ -106,11 +106,11 @@ func (tx *Transaction) doUnfoldHeading(operation *Operation) (ret *TxErr) {
 		}
 		parentFoldedHeading.RemoveIALAttr("fold")
 		parentFoldedHeading.RemoveIALAttr("heading-fold")
-		notebook := tx.Notebook
-		go func(notebook string) {
+		notebookID, documentID, contentStore := tree.Box, tree.ID, tx.Notebook
+		go func(notebookID, documentID, contentStore string) {
 			tx.WaitForCommit()
-			ReloadProtyle(tree.ID, notebook)
-		}(notebook)
+			ReloadProtyle(notebookID, documentID, contentStore)
+		}(notebookID, documentID, contentStore)
 	}
 
 	children := treenode.HeadingChildren(heading)
@@ -294,11 +294,7 @@ func Doc2Heading(srcID, targetID string, after bool) (srcTreeBox, srcTreePath st
 		logging.LogWarnf("remove tree [%s] failed: %s", srcTree.Path, removeErr)
 	}
 	box.removeSort([]string{srcTree.ID})
-	evt := util.NewCmdResult("removeDoc", 0, util.PushModeBroadcast)
-	evt.Data = map[string]any{
-		"ids": []string{srcTree.ID},
-	}
-	util.PushEvent(evt)
+	util.PushProtyleRemoveDoc(srcTree.Box, srcTree.ID)
 
 	srcTreeBox, srcTreePath = srcTree.Box, srcTree.Path // 返回旧的文档块位置，前端后续会删除旧的文档块
 	targetTree.Root.SetIALAttr("updated", util.CurrentTimeSecondsStr())

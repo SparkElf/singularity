@@ -67,13 +67,24 @@ const requestEditorEvent = <TResponse>(
 const renderDocumentReferences = (
     protyle: IProtyle,
     markdown: string,
-    targets: readonly {readonly blockId: string; readonly notebookId: string}[],
+    targets: readonly {
+        readonly blockId: string;
+        readonly documentId: string;
+        readonly notebookId: string;
+    }[],
 ) => {
-    const targetNotebooks = new Map(targets.map((target) => [target.blockId, target.notebookId]));
+    const targetIdentities = new Map<string, Array<{readonly documentId: string; readonly notebookId: string}>>();
+    targets.forEach((target) => {
+        const identities = targetIdentities.get(target.blockId) ?? [];
+        identities.push({documentId: target.documentId, notebookId: target.notebookId});
+        targetIdentities.set(target.blockId, identities);
+    });
     const container = document.createElement("div");
     container.innerHTML = protyle.lute.Md2BlockDOM(markdown);
     container.querySelectorAll<HTMLElement>('[data-type~="block-ref"][data-id]').forEach((element) => {
-        element.dataset.notebookId = targetNotebooks.get(element.dataset.id!)!;
+        const identity = targetIdentities.get(element.dataset.id!)!.shift()!;
+        element.dataset.documentId = identity.documentId;
+        element.dataset.notebookId = identity.notebookId;
     });
     return container.innerHTML;
 };
@@ -942,6 +953,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 let html = "";
                 const referenceTargets = selectedIds.map((blockId) => ({
                     blockId,
+                    documentId: drag.identity.documentId,
                     notebookId: drag.identity.notebookId,
                 }));
                 for (let i = 0; i < selectedIds.length; i++) {
@@ -1419,6 +1431,7 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 }
                 insertHTML(renderDocumentReferences(protyle, html, documentTargets.map((target) => ({
                     blockId: target.documentId,
+                    documentId: target.documentId,
                     notebookId: target.notebookId,
                 }))), protyle);
             } else if (targetElement && !protyle.options.backlinkData && targetElement.className.indexOf("dragover__") > -1) {

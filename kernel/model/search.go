@@ -595,7 +595,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
 
 	luteEngine := util.NewLute()
-	var reloadTreeIDs []string
+	reloadTargets := map[util.ProtyleDocumentIdentity]struct{}{}
 	updateNodes := map[string]*ast.Node{}
 	for i, id := range ids {
 		bt := treenode.GetBlockTree(id)
@@ -613,7 +613,7 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 			continue
 		}
 
-		reloadTreeIDs = append(reloadTreeIDs, tree.ID)
+		reloadTargets[util.ProtyleDocumentIdentity{NotebookID: tree.Box, DocumentID: tree.ID}] = struct{}{}
 		if ast.NodeDocument == node.Type {
 			if !replaceTypes["docTitle"] {
 				continue
@@ -1006,9 +1006,8 @@ func FindReplace(keyword, replacement string, replaceTypes map[string]bool, ids 
 		return
 	}
 
-	reloadTreeIDs = gulu.Str.RemoveDuplicatedElem(reloadTreeIDs)
-	for _, id := range reloadTreeIDs {
-		ReloadProtyle(id, "")
+	for target := range reloadTargets {
+		ReloadProtyle(target.NotebookID, target.DocumentID, TransactionNotebookForBox(target.NotebookID))
 	}
 
 	updateAttributeViewBlockText(updateNodes)

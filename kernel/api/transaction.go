@@ -25,6 +25,7 @@ import (
 	"github.com/88250/gulu"
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -108,6 +109,10 @@ func performTransactions(c *gin.Context) {
 		return
 	}
 	model.FillTransactionBlockRefContentIdentities(transactions)
+	contentIdentity, _ := serviceauth.RequestContentIdentity(c.Request)
+	for _, transaction := range transactions {
+		transaction.PopulateContentTargets(contentIdentity.NotebookID, contentIdentity.DocumentID)
+	}
 
 	ret.Data = transactions
 
@@ -301,6 +306,8 @@ func performUndo(c *gin.Context) {
 
 	tx := replay.Transaction
 	model.FillTransactionBlockRefContentIdentities([]*model.Transaction{tx})
+	contentIdentity, _ := serviceauth.RequestContentIdentity(c.Request)
+	tx.PopulateContentTargets(contentIdentity.NotebookID, contentIdentity.DocumentID)
 	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 
@@ -358,6 +365,8 @@ func performRedo(c *gin.Context) {
 
 	tx := replay.Transaction
 	model.FillTransactionBlockRefContentIdentities([]*model.Transaction{tx})
+	contentIdentity, _ := serviceauth.RequestContentIdentity(c.Request)
+	tx.PopulateContentTargets(contentIdentity.NotebookID, contentIdentity.DocumentID)
 	crossDoc := len(replay.MutatedRootIDs) > 1
 	pushUndoTransactions(app, session, []*model.Transaction{tx}, true, crossDoc)
 

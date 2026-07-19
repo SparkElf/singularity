@@ -47,6 +47,55 @@ func TestTransactionJSONCarriesNotebookIdentity(t *testing.T) {
 	}
 }
 
+func TestTransactionJSONCarriesExplicitContentTargets(t *testing.T) {
+	const (
+		notebookID = "20260716000000-targetbox"
+		documentID = "20260716000001-targetdoc"
+	)
+	data, err := json.Marshal(&Transaction{
+		Notebook: notebookID,
+		ContentTargets: []TransactionContentTarget{{
+			NotebookID: notebookID,
+			DocumentID: documentID,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal transaction content target: %v", err)
+	}
+	var payload struct {
+		Notebook       string                     `json:"notebook"`
+		ContentTargets []TransactionContentTarget `json:"contentTargets"`
+	}
+	if err = json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal transaction content target: %v", err)
+	}
+	if payload.Notebook != notebookID || len(payload.ContentTargets) != 1 ||
+		payload.ContentTargets[0].NotebookID != notebookID || payload.ContentTargets[0].DocumentID != documentID {
+		t.Fatalf("transaction content target payload = %#v, want explicit notebook/document identity", payload)
+	}
+}
+
+func TestPopulateContentTargetsUsesRequestAndLoadedTreeIdentities(t *testing.T) {
+	const (
+		requestNotebook = "20990716000000-requestbox"
+		requestDocument = "20990716000001-requestdoc"
+		treeNotebook    = "20990716000002-treebox"
+		treeDocument    = "20990716000003-treedoc"
+	)
+	tx := &Transaction{
+		trees: map[string]*parse.Tree{
+			treeDocument: &parse.Tree{ID: treeDocument, Box: treeNotebook},
+		},
+	}
+	tx.PopulateContentTargets(requestNotebook, requestDocument)
+	if !reflect.DeepEqual(tx.ContentTargets, []TransactionContentTarget{
+		{NotebookID: requestNotebook, DocumentID: requestDocument},
+		{NotebookID: treeNotebook, DocumentID: treeDocument},
+	}) {
+		t.Fatalf("content targets = %#v, want request and loaded-tree identities", tx.ContentTargets)
+	}
+}
+
 func TestTransactionNotebookForBoxUsesCanonicalContentStoreIdentity(t *testing.T) {
 	originalDataDir := util.DataDir
 	util.DataDir = t.TempDir()

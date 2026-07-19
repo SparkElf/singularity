@@ -359,7 +359,7 @@ export class Outline extends Model {
                     }
                     break;
                 case "removeDoc":
-                    if (data.data.ids.includes(this.blockId) && this.type === "local") {
+                    if (data.data.notebookId === this.notebookId && data.data.documentId === this.blockId && this.type === "local") {
                         this.parent.parent.removeTab(this.parent.id);
                     }
                     break;

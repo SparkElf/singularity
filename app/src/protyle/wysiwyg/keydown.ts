@@ -67,6 +67,7 @@ import {removeSearchMark} from "../util/searchMark";
 import {avKeydown} from "../render/av/keydown";
 import {currentAVOverlay} from "../render/av/overlay";
 import {requestBlockFold} from "../util/blockFoldRequest";
+import {getBlockRefContentTarget} from "../util/blockRefIdentity";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {updateCalloutType} from "./callout";
 import {tabCodeBlock} from "./codeBlock";
@@ -1959,24 +1960,18 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
 
         const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
         if (refElement) {
-            const id = refElement.getAttribute("data-id");
-            const notebookId = refElement.getAttribute("data-notebook-id");
-            const documentId = refElement.getAttribute("data-document-id");
+            const target = getBlockRefContentTarget(refElement);
             const openReference = (disposition: "background-tab" | "current" | "split-bottom" | "split-right") => {
-                if (!id || !notebookId || !documentId) {
-                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity", {blockId: id});
+                if (!target) {
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity");
                     return;
                 }
-                void requestBlockFold(protyle, {
-                    blockId: id,
-                    notebookId,
-                    documentId,
-                }).then(({zoomIn, isRoot}) => {
+                void requestBlockFold(protyle, target).then(({zoomIn, isRoot}) => {
                     protyle.host.dispatch({
                         type: "open-document",
-                        notebookId,
-                        documentId,
-                        blockId: id,
+                        notebookId: target.notebookId,
+                        documentId: target.documentId,
+                        blockId: target.blockId,
                         disposition,
                         scope: zoomIn ? "subtree" : "context",
                         attention: disposition === "background-tab" ? "highlight" :
@@ -2014,19 +2009,15 @@ export const keydown = (protyle: IProtyle, editorElement: HTMLElement) => {
                 return true;
             } else if (matchHotKey(generalHotkeys.refPopover, event)) {
                 // open popover
-                if (id && notebookId && documentId) {
+                if (target) {
                     openBlockPanel({
                         sourceProtyle: protyle,
                         isBacklink: false,
-                        references: [{
-                            blockId: id,
-                            notebookId,
-                            documentId,
-                        }],
+                        references: [target],
                         targetElement: refElement,
                     });
                 } else {
-                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity", {blockId: id});
+                    console.error("[Singularity/ProtyleIdentity] block reference target has no content identity");
                 }
                 event.preventDefault();
                 event.stopPropagation();

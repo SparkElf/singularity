@@ -183,12 +183,14 @@ func ReloadTag() {
 	task.AppendAsyncTaskWithDelay(task.ReloadTag, 200*time.Millisecond, util.PushReloadTag)
 }
 
-func ReloadProtyle(rootID, notebook string) {
+// ReloadProtyle uses contentStore for kernel lookups while notebookID and
+// documentID remain the browser-visible content identity.
+func ReloadProtyle(notebookID, documentID, contentStore string) {
 	// 刷新关联的引用
-	defTree, _ := loadTreeByBlockIDInBox(rootID, notebook)
+	defTree, _ := loadTreeByBlockIDInBox(documentID, contentStore)
 	if nil != defTree {
 		var defIDs []string
-		for _, ref := range sql.QueryRefsByDefIDInBox(rootID, true, notebook) {
+		for _, ref := range sql.QueryRefsByDefIDInBox(documentID, true, contentStore) {
 			defIDs = append(defIDs, ref.DefBlockID)
 		}
 		defIDs = gulu.Str.RemoveDuplicatedElem(defIDs)
@@ -214,18 +216,25 @@ func ReloadProtyle(rootID, notebook string) {
 	}
 
 	// 刷新关联的嵌入块
-	refIDs := sql.QueryRefIDsByDefIDInBox(rootID, true, notebook)
-	var rootIDs []string
-	bts := treenode.GetBlockTreesInBox(refIDs, notebook)
+	refIDs := sql.QueryRefIDsByDefIDInBox(documentID, true, contentStore)
+	targets := make([]util.ProtyleDocumentIdentity, 0)
+	seen := map[util.ProtyleDocumentIdentity]struct{}{}
+	bts := treenode.GetBlockTreesInBox(refIDs, contentStore)
 	for _, bt := range bts {
-		rootIDs = append(rootIDs, bt.RootID)
+		target := util.ProtyleDocumentIdentity{NotebookID: bt.BoxID, DocumentID: bt.RootID}
+		if _, exists := seen[target]; exists {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
 	}
-	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
-	for _, id := range rootIDs {
-		task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, id, notebook)
+	for _, target := range targets {
+		task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle,
+			target.NotebookID, target.DocumentID, contentStore)
 	}
 
-	task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle, rootID, notebook)
+	task.AppendAsyncTaskWithDelay(task.ReloadProtyle, 200*time.Millisecond, util.PushReloadProtyle,
+		notebookID, documentID, contentStore)
 }
 
 // refreshRefCount 用于刷新定义块处的引用计数。

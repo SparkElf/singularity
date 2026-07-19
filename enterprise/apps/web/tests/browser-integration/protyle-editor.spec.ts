@@ -419,6 +419,7 @@ test.describe("real Protyle browser integration", () => {
       code: 0,
       context: { rootIDs: [DOCUMENT_A] },
       data: [{
+        contentTargets: [{ documentId: DOCUMENT_A, notebookId: NOTEBOOK_A }],
         doOperations: [{
           action: "update",
           data: paragraphBlock(BLOCK_A, "服务推送已应用"),
@@ -480,6 +481,7 @@ test.describe("real Protyle browser integration", () => {
       cmd: "transactions",
       code: 0,
       data: [{
+        contentTargets: [{ documentId: DOCUMENT_B, notebookId: NOTEBOOK_A }],
         doOperations: [{
           action: "update",
           data: paragraphBlock(EMBEDDED_BLOCK, "迟到结果"),

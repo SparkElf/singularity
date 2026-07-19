@@ -222,7 +222,7 @@ func MoveLocalShorthands(boxID string) (retIDs []string, err error) {
 					logging.LogErrorf("upsert shorthand merged tree failed: %s", err)
 					return
 				}
-				util.PushReloadProtyle(tree.ID, TransactionNotebookForBox(tree.Box))
+				util.PushReloadProtyle(tree.Box, tree.ID, TransactionNotebookForBox(tree.Box))
 			}
 		}
 	}

@@ -18,7 +18,7 @@ import {processClonePHElement} from "../render/util";
 import {scrollCenter} from "../util/highlightById";
 import {setFold} from "../util/blockFold";
 import {setDocumentReadOnlyFromResponse} from "../runtime/readOnly";
-import {syncBlockRefContentIdentities} from "../util/blockRefIdentity";
+import {getBlockRefContentTarget, syncBlockRefContentIdentities} from "../util/blockRefIdentity";
 import {protyleContentIdentity} from "../util/contentLoad";
 
 const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
@@ -1477,10 +1477,15 @@ export const turnsOneInto = async (options: {
     focusByWbr(options.protyle.wysiwyg.element, getEditorRange(options.protyle.wysiwyg.element));
     options.protyle.wysiwyg.element.querySelectorAll('[data-type~="block-ref"]').forEach(item => {
         if (item.textContent === "") {
+            const target = getBlockRefContentTarget(item);
+            if (!target) {
+                return;
+            }
             void options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
-                id: item.getAttribute("data-id"),
+                id: target.blockId,
+                notebook: target.notebookId,
             }, {
-                identity,
+                identity: target,
                 intent: "read",
                 signal: options.protyle.requestSignal,
             }).then((response) => {

@@ -580,6 +580,7 @@ ${genHintItemHTML(item, protyle)}
             });
             if (refElement[0]) {
                 refElement[0].setAttribute("data-notebook-id", tempElement.getAttribute("data-notebook-id")!);
+                refElement[0].setAttribute("data-document-id", tempElement.getAttribute("data-document-id")!);
                 protyle.toolbar.range.setEnd(refElement[0].lastChild, refElement[0].lastChild.textContent.length);
             }
             protyle.toolbar.range.collapse(false);

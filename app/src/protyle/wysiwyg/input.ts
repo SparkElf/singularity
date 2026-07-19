@@ -12,7 +12,7 @@ import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
 import {headingTurnIntoList, turnIntoTaskList} from "./turnIntoList";
 import {updateAVName} from "../render/av/action";
 import {setFold} from "../util/blockFold";
-import {protyleContentIdentity} from "../util/contentLoad";
+import {getBlockRefContentTarget} from "../util/blockRefIdentity";
 
 export const input = async (protyle: IProtyle, blockElement: HTMLElement, range: Range, needRender = true, event?: InputEvent) => {
     if (!blockElement.parentElement) {
@@ -141,18 +141,22 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
 
     const refElement = hasClosestByAttribute(range.startContainer, "data-type", "block-ref");
     if (refElement && refElement.getAttribute("data-subtype") === "d") {
-        const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
-            id: refElement.getAttribute("data-id"),
-        }, {
-            identity: protyleContentIdentity(protyle),
-            intent: "read",
-            signal: protyle.requestSignal,
-        });
-        if (protyle.destroyed || protyle.requestSignal.aborted || !protyle.wysiwyg.element.contains(refElement)) {
-            return;
-        }
-        if (response.data !== refElement.innerHTML.replace("<wbr>", "")) {
-            refElement.setAttribute("data-subtype", "s");
+        const target = getBlockRefContentTarget(refElement);
+        if (target) {
+            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+                id: target.blockId,
+                notebook: target.notebookId,
+            }, {
+                identity: target,
+                intent: "read",
+                signal: protyle.requestSignal,
+            });
+            if (protyle.destroyed || protyle.requestSignal.aborted || !protyle.wysiwyg.element.contains(refElement)) {
+                return;
+            }
+            if (response.data !== refElement.innerHTML.replace("<wbr>", "")) {
+                refElement.setAttribute("data-subtype", "s");
+            }
         }
     }
     // 相邻标签之间插入空格区隔，避免 SpinBlockDOM 解析时合并为一个标签 https://github.com/siyuan-note/siyuan/issues/18191
@@ -296,10 +300,15 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
                 // https://github.com/siyuan-note/siyuan/issues/6087
                 realElement.querySelectorAll('[data-type~="block-ref"][data-subtype="d"]').forEach(refItem => {
                     if (refItem.textContent === "") {
+                        const target = getBlockRefContentTarget(refItem);
+                        if (!target) {
+                            return;
+                        }
                         void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
-                            id: refItem.getAttribute("data-id"),
+                            id: target.blockId,
+                            notebook: target.notebookId,
                         }, {
-                            identity: protyleContentIdentity(protyle),
+                            identity: target,
                             intent: "read",
                             signal: protyle.requestSignal,
                         }).then((response) => {
