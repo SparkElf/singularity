@@ -97,6 +97,10 @@ export const CONTENT_DIRECTORY_ROOT_DOCUMENTS_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/content-directory/notebooks/{notebookId}/documents";
 export const CONTENT_DIRECTORY_CHILD_DOCUMENTS_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/content-directory/notebooks/{notebookId}/documents/{documentId}/children";
+export const ORGANIZATION_SPACE_DISCOVERY_SEARCH_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/discovery/search";
+export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/discovery/graph";
 
 function toControllerPath(template: string): string {
   return template.replace(/\{([^}]+)\}/g, ":$1");
@@ -112,6 +116,10 @@ export const CONTENT_DIRECTORY_ROOT_DOCUMENTS_CONTROLLER_PATH =
   toControllerPath(CONTENT_DIRECTORY_ROOT_DOCUMENTS_PATH_TEMPLATE);
 export const CONTENT_DIRECTORY_CHILD_DOCUMENTS_CONTROLLER_PATH =
   toControllerPath(CONTENT_DIRECTORY_CHILD_DOCUMENTS_PATH_TEMPLATE);
+export const ORGANIZATION_SPACE_DISCOVERY_SEARCH_CONTROLLER_PATH =
+  toControllerPath(ORGANIZATION_SPACE_DISCOVERY_SEARCH_PATH_TEMPLATE);
+export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_CONTROLLER_PATH =
+  toControllerPath(ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE);
 export const ORGANIZATION_MEMBERS_CONTROLLER_PATH = toControllerPath(
   ORGANIZATION_MEMBERS_PATH_TEMPLATE,
 );
@@ -259,4 +267,34 @@ export function buildContentDirectoryChildDocumentsPath(
     .replace("{notebookId}", encodeURIComponent(parameters.notebookId))
     .replace("{documentId}", encodeURIComponent(parameters.documentId));
   return `${path}?${new URLSearchParams({ offset: String(parameters.offset) })}`;
+}
+
+function buildSpaceDiscoveryPath(
+  template: string,
+  parameters: SpaceRuntimePathParameters,
+): string {
+  return template
+    .replace(
+      "{organizationId}",
+      encodeURIComponent(parameters.organizationId),
+    )
+    .replace("{spaceId}", encodeURIComponent(parameters.spaceId));
+}
+
+export function buildSpaceDiscoverySearchPath(
+  parameters: SpaceRuntimePathParameters,
+): string {
+  return buildSpaceDiscoveryPath(
+    ORGANIZATION_SPACE_DISCOVERY_SEARCH_PATH_TEMPLATE,
+    parameters,
+  );
+}
+
+export function buildSpaceDiscoveryGraphPath(
+  parameters: SpaceRuntimePathParameters,
+): string {
+  return buildSpaceDiscoveryPath(
+    ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE,
+    parameters,
+  );
 }

@@ -19,6 +19,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/88250/gulu"
 	"github.com/gin-gonic/gin"
@@ -158,23 +159,49 @@ func getBacklink2(c *gin.Context) {
 	if val, ok := arg["containChildren"]; ok {
 		containChildren = val.(bool)
 	}
-	boxID, err := encryptedNotebookForResponse(c, arg)
-	if err != nil {
-		ret.Code = -1
-		ret.Msg = err.Error()
-		return
-	}
 	var backlinks, backmentions []*model.Path
 	var linkRefsCount, mentionsCount int
-	if boxID != "" {
-		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2InBox(id, keyword, mentionKeyword, sort, mentionSort, containChildren, boxID)
+	var boxID string
+	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "id")
+	if enterprise {
+		if !identityOK {
+			ret.Code = -1
+			ret.Msg = "document identity is unavailable"
+			return
+		}
+		if utf8.RuneCountInString(keyword) > enterpriseDiscoveryQueryMaxRunes || utf8.RuneCountInString(mentionKeyword) > enterpriseDiscoveryQueryMaxRunes {
+			ret.Code = -1
+			ret.Msg = "discovery query is too long"
+			return
+		}
+		contentBoxID := enterpriseDiscoveryBoxID(documentScope.NotebookID)
+		_, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2InBox(documentScope.DocumentID, keyword, mentionKeyword, sort, mentionSort, containChildren, contentBoxID)
+		boxID = documentScope.NotebookID
 	} else {
-		boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2(id, keyword, mentionKeyword, sort, mentionSort, containChildren)
+		var err error
+		boxID, err = encryptedNotebookForResponse(c, arg)
+		if err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
+		if boxID != "" {
+			boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2InBox(id, keyword, mentionKeyword, sort, mentionSort, containChildren, boxID)
+		} else {
+			boxID, backlinks, backmentions, linkRefsCount, mentionsCount = model.GetBacklink2(id, keyword, mentionKeyword, sort, mentionSort, containChildren)
+		}
 	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		backlinks = model.FilterPathsByPublishAccess(c, publishAccess, backlinks)
 		backmentions = model.FilterPathsByPublishAccess(c, publishAccess, backmentions)
+	}
+	if enterprise {
+		ret.Data = map[string]any{
+			"backlinks":    enterpriseDiscoveryBacklinkProjections(backlinks),
+			"backmentions": enterpriseDiscoveryBacklinkProjections(backmentions),
+		}
+		return
 	}
 	ret.Data = map[string]any{
 		"backlinks":     backlinks,

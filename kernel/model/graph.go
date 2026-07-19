@@ -33,15 +33,16 @@ import (
 )
 
 type GraphNode struct {
-	ID    string  `json:"id"`
-	Box   string  `json:"box"`
-	Path  string  `json:"path"`
-	Size  float64 `json:"size"`
-	Title string  `json:"title,omitempty"`
-	Label string  `json:"label"`
-	Type  string  `json:"type"`
-	Refs  int     `json:"refs"`
-	Defs  int     `json:"defs"`
+	ID         string  `json:"id"`
+	Box        string  `json:"box"`
+	DocumentID string  `json:"documentId,omitempty"`
+	Path       string  `json:"path"`
+	Size       float64 `json:"size"`
+	Title      string  `json:"title,omitempty"`
+	Label      string  `json:"label"`
+	Type       string  `json:"type"`
+	Refs       int     `json:"refs"`
+	Defs       int     `json:"defs"`
 }
 
 type GraphLink struct {
@@ -60,10 +61,20 @@ type GraphArrowsTo struct {
 }
 
 func BuildTreeGraph(id, query string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+	return buildTreeGraphInBox(id, query, "")
+}
+
+// BuildTreeGraphInBox从显式选择的内容库解析图谱根节点；每个可导航节点仍携带自身源Box和DocumentID，
+// 不把根节点身份复制到关联节点。
+func BuildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+	return buildTreeGraphInBox(id, query, notebookID)
+}
+
+func buildTreeGraphInBox(id, query, notebookID string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
 	nodes = []*GraphNode{}
 	links = []*GraphLink{}
 
-	tree, err := LoadTreeByBlockID(id)
+	tree, err := LoadTreeByBlockIDInBox(id, notebookID)
 	if err != nil {
 		return
 	}
@@ -318,11 +329,12 @@ func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode
 
 					for _, refDef := range defs {
 						defNode := &GraphNode{
-							ID:   refDef.ID,
-							Box:  refDef.Box,
-							Path: refDef.Path,
-							Size: Conf.Graph.Local.NodeSize,
-							Type: refDef.Type,
+							ID:         refDef.ID,
+							Box:        refDef.Box,
+							DocumentID: refDef.RootID,
+							Path:       refDef.Path,
+							Size:       Conf.Graph.Local.NodeSize,
+							Type:       refDef.Type,
 						}
 						nodeTitleLabel(defNode, nodeContentByBlock(refDef))
 						*forwardGeneration = append(*forwardGeneration, defNode)
@@ -343,11 +355,12 @@ func growLinkedNodes(forwardlinks, backlinks *[]*Block, nodes, all *[]*GraphNode
 						}
 
 						refNode := &GraphNode{
-							ID:   ref.ID,
-							Box:  ref.Box,
-							Path: ref.Path,
-							Size: Conf.Graph.Local.NodeSize,
-							Type: ref.Type,
+							ID:         ref.ID,
+							Box:        ref.Box,
+							DocumentID: ref.RootID,
+							Path:       ref.Path,
+							Size:       Conf.Graph.Local.NodeSize,
+							Type:       ref.Type,
 						}
 						nodeTitleLabel(refNode, nodeContentByBlock(ref))
 						*backGeneration = append(*backGeneration, refNode)
@@ -405,11 +418,12 @@ func genTreeNodes(blocks []*Block, nodes *[]*GraphNode, links *[]*GraphLink, loc
 
 	for _, block := range blocks {
 		node := &GraphNode{
-			ID:   block.ID,
-			Box:  block.Box,
-			Path: block.Path,
-			Type: block.Type,
-			Size: nodeSize,
+			ID:         block.ID,
+			Box:        block.Box,
+			DocumentID: block.RootID,
+			Path:       block.Path,
+			Type:       block.Type,
+			Size:       nodeSize,
 		}
 		nodeTitleLabel(node, nodeContentByBlock(block))
 		*nodes = append(*nodes, node)

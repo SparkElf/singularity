@@ -19,6 +19,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/88250/gulu"
 	"github.com/gin-gonic/gin"
@@ -480,13 +481,6 @@ func fullTextSearchBlock(c *gin.Context) {
 	if !ok {
 		return
 	}
-	boxID, err := encryptedNotebookForResponse(c, arg)
-	if err != nil {
-		ret.Code = -1
-		ret.Msg = err.Error()
-		return
-	}
-
 	page, pageSize, query, paths, boxes, types, subTypes, method, orderBy, groupBy := parseSearchBlockArgs(arg)
 
 	// SQL mode requires admin privileges, consistent with /api/query/sql
@@ -499,14 +493,55 @@ func fullTextSearchBlock(c *gin.Context) {
 	var blocks []*model.Block
 	var matchedBlockCount, matchedRootCount, pageCount int
 	var docMode bool
-	if boxID != "" {
-		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlockInBox(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize, boxID)
+	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "")
+	if enterprise {
+		if !identityOK {
+			ret.Code = -1
+			ret.Msg = "document identity is unavailable"
+			return
+		}
+		if utf8.RuneCountInString(query) > enterpriseDiscoveryQueryMaxRunes {
+			ret.Code = -1
+			ret.Msg = "discovery query is too long"
+			return
+		}
+		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlockInBox(
+			query,
+			[]string{documentScope.NotebookID},
+			[]string{documentScope.Path},
+			types,
+			subTypes,
+			0,
+			7,
+			0,
+			1,
+			enterpriseDiscoveryPageSize,
+			enterpriseDiscoveryBoxID(documentScope.NotebookID),
+		)
 	} else {
-		blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlock(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize)
+		boxID, err := encryptedNotebookForResponse(c, arg)
+		if err != nil {
+			ret.Code = -1
+			ret.Msg = err.Error()
+			return
+		}
+		if boxID != "" {
+			blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlockInBox(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize, boxID)
+		} else {
+			blocks, matchedBlockCount, matchedRootCount, pageCount, docMode = model.FullTextSearchBlock(query, boxes, paths, types, subTypes, method, orderBy, groupBy, page, pageSize)
+		}
 	}
 	if model.IsReadOnlyRoleContext(c) {
 		publishAccess := model.GetPublishAccess()
 		blocks = model.FilterBlocksByPublishAccess(c, publishAccess, blocks)
+	}
+	if enterprise {
+		ret.Data = enterpriseDiscoverySearchResponse{
+			Blocks:            enterpriseDiscoveryBlockProjections(blocks),
+			MatchedBlockCount: matchedBlockCount,
+			PageCount:         pageCount,
+		}
+		return
 	}
 	ret.Data = map[string]any{
 		"blocks":            blocks,

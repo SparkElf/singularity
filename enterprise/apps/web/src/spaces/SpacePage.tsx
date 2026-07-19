@@ -18,14 +18,20 @@ import {
   ArrowLeftIcon,
   BookOpenIcon,
   CircleOffIcon,
+  GitForkIcon,
   LogOutIcon,
   OrbitIcon,
+  SearchIcon,
   SearchXIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { Link, Navigate, useLocation, useParams } from "react-router";
 
 import { NetworkFailureError, isApiProblem } from "@/api/http.ts";
+import {
+  AssetPreviewSurface,
+  type AssetPreviewSurfaceRequest,
+} from "@/assets/AssetPreviewSurface.tsx";
 import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
 import { SPACES_PATH, locationTarget } from "@/auth/return-to.ts";
 import { clearClientSession } from "@/auth/session-state.ts";
@@ -64,6 +70,11 @@ import {
 } from "@/components/ui/sidebar.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip.tsx";
+import {
   getSpaceRuntime,
   authorizedSpacesQueryKey,
   spaceRuntimeQueryKey,
@@ -87,6 +98,7 @@ import type {
   ReadySpaceRuntimeBootstrap,
   SpaceProtyleMenuSurfaceFactory,
   SpaceProtyleRuntime,
+  SpaceSessionComposition,
 } from "@/spaces/space-session.ts";
 import {
   ProtyleHost,
@@ -95,12 +107,14 @@ import {
 import type {
   ProtyleDocumentNavigation,
   ProtyleFactory,
-  ProtyleSession,
 } from "@singularity/protyle-browser";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 import { contentDirectorySpaceQueryKey } from "@/spaces/content-directory-api.ts";
-import { createSpaceGatewayResourcePort } from "@/spaces/gateway-paths.ts";
+import {
+  DiscoveryPanel,
+  type DiscoveryNavigationTarget,
+} from "@/spaces/DiscoveryPanel.tsx";
+import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -124,28 +138,51 @@ function isReadySpaceRuntime(
   return runtime?.kernelState === "ready";
 }
 
+function isCurrentSpaceComposition(
+  composition: SpaceSessionComposition | null,
+  identity: SpaceRuntimePathParameters,
+): composition is SpaceSessionComposition {
+  return composition !== null &&
+    composition.bootstrap.organizationId === identity.organizationId &&
+    composition.bootstrap.spaceId === identity.spaceId;
+}
+
+function isActiveSpaceComposition(
+  composition: SpaceSessionComposition | null,
+  identity: SpaceRuntimePathParameters,
+): composition is SpaceSessionComposition {
+  return isCurrentSpaceComposition(composition, identity) &&
+    composition.session !== null;
+}
+
 function createSpaceHostMediator(
   queryClient: ReturnType<typeof useQueryClient>,
-  selectDocument: (selection: {
-    readonly documentId: string;
-    readonly notebookId: string;
-    readonly spaceId: string;
-  }) => void,
-  clearSelection: () => void,
+  composition: SpaceSessionComposition | null,
   queueNavigation: (
     spaceId: string,
     navigation: ProtyleDocumentNavigation,
   ) => void,
+  openAssetPreview: (request: AssetPreviewSurfaceRequest) => void,
   event: ProtyleMediatorEvent,
   bootstrap: ReadySpaceRuntimeBootstrap,
 ): void {
+  if (!isActiveSpaceComposition(composition, bootstrap)) {
+    console.warn("[protyle.host]", {
+      eventType: event.type,
+      phase: "mediator",
+      result: "stale-composition-rejected",
+      spaceId: bootstrap.spaceId,
+    });
+    return;
+  }
   switch (event.type) {
     case "open-document":
-      selectDocument({
+      if (!composition.selectDocument({
         documentId: event.documentId,
         notebookId: event.notebookId,
-        spaceId: bootstrap.spaceId,
-      });
+      })) {
+        return;
+      }
       queueNavigation(bootstrap.spaceId, {
         attention: event.attention,
         blockId: event.blockId,
@@ -158,18 +195,37 @@ function createSpaceHostMediator(
       });
       return;
     case "close-document": {
-      const selection = useContentSelectionStore.getState().selection;
+      const selection = composition.selection;
       if (
         selection?.spaceId === bootstrap.spaceId &&
         selection.notebookId === event.notebookId &&
         selection.documentId === event.documentId
       ) {
-        clearSelection();
+        composition.clearSelection();
       }
+      useDiscoveryStore.getState().closeDocumentPanel({
+        documentId: event.documentId,
+        notebookId: event.notebookId,
+        spaceId: bootstrap.spaceId,
+      });
       return;
     }
     case "refresh-outline":
+      useDiscoveryStore.getState().refreshDocumentPanel({
+        documentId: event.documentId,
+        kind: "outline",
+        notebookId: event.notebookId,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
     case "refresh-backlinks":
+      useDiscoveryStore.getState().refreshDocumentPanel({
+        documentId: event.documentId,
+        kind: "backlinks",
+        notebookId: event.notebookId,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
     case "set-document-title":
     case "set-document-icon":
       void queryClient.invalidateQueries({
@@ -180,20 +236,77 @@ function createSpaceHostMediator(
       });
       return;
     case "open-asset": {
-      const resources = createSpaceGatewayResourcePort({
+      openAssetPreview({
+        assetPath: event.assetPath,
+        documentId: event.documentId,
+        ...(event.page === undefined ? {} : { initialPage: event.page }),
+        notebookId: event.notebookId,
         organizationId: bootstrap.organizationId,
         spaceId: bootstrap.spaceId,
+        title: event.assetPath,
       });
-      const url = resources.resolveAsset(
-        {
-          documentId: event.documentId,
-          notebookId: event.notebookId,
-        },
-        event.assetPath,
-      );
-      window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
+    case "open-search":
+      useDiscoveryStore.getState().openSpaceSearch({
+        method: event.method,
+        query: event.query,
+        queryMode: event.queryMode,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "open-document-search":
+      useDiscoveryStore.getState().open({
+        documentId: event.documentId,
+        kind: "document-search",
+        notebookId: event.notebookId,
+        query: "",
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "open-outline":
+      useDiscoveryStore.getState().open({
+        documentId: event.documentId,
+        kind: "outline",
+        notebookId: event.notebookId,
+        preview: event.preview,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "open-backlinks":
+      useDiscoveryStore.getState().open({
+        documentId: event.documentId,
+        kind: "backlinks",
+        notebookId: event.notebookId,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "open-document-history":
+      useDiscoveryStore.getState().open({
+        documentId: event.documentId,
+        kind: "document-history",
+        notebookId: event.notebookId,
+        page: 1,
+        spaceId: bootstrap.spaceId,
+      });
+      return;
+    case "open-graph":
+      useDiscoveryStore.getState().open(
+        event.scope === "space"
+          ? {
+              kind: "space-graph",
+              query: "",
+              spaceId: bootstrap.spaceId,
+            }
+          : {
+              documentId: event.documentId,
+              kind: "document-graph",
+              notebookId: event.notebookId,
+              query: "",
+              spaceId: bootstrap.spaceId,
+            },
+      );
+      return;
     case "open-external":
       window.open(event.url, "_blank", "noopener,noreferrer");
       return;
@@ -215,7 +328,6 @@ function createSpaceHostMediator(
     case "toggle-document-fullscreen":
     case "upload-cloud-assets":
     case "update-document-statistics":
-    case "open-graph":
     case "notify":
       return;
     default:
@@ -278,6 +390,8 @@ interface WorkspaceFrameProps {
   currentSpace: AuthorizedSpaceSummary | null;
   logoutError: boolean;
   logoutPending: boolean;
+  onOpenSpaceGraph: (() => void) | null;
+  onOpenSpaceSearch: (() => void) | null;
   onLogout: () => void;
   role: AuthorizedSpaceSummary["role"] | null;
   spaces: AuthorizedSpaceSummary[];
@@ -289,31 +403,31 @@ interface WorkspaceSpaceLinkProps {
 }
 
 interface ReadyWorkspaceProps {
+  readonly composition: SpaceSessionComposition;
   readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
   readonly identity: SpaceRuntimePathParameters;
   readonly navigationCommand: ProtyleHostNavigationCommand | null;
   readonly onDirectoryAccessLost: (category: ContentDirectoryAccessLoss) => void;
   readonly onDirectoryStatusChange: (status: ContentDirectoryStatus) => void;
+  readonly onDiscoveryNavigate: (target: DiscoveryNavigationTarget) => void;
   readonly onNavigationCommandComplete: (sequence: number) => void;
   readonly readOnly: boolean;
-  readonly session: ProtyleSession<SpaceProtyleRuntime> | null;
   readonly status: ContentDirectoryStatus;
 }
 
 function ReadyWorkspace({
+  composition,
   createProtyleFactoryForSpace,
   identity,
   navigationCommand,
   onDirectoryAccessLost,
   onDirectoryStatusChange,
+  onDiscoveryNavigate,
   onNavigationCommandComplete,
   readOnly,
-  session,
   status,
 }: ReadyWorkspaceProps) {
-  const selection = useContentSelectionStore((state) =>
-    state.selection?.spaceId === identity.spaceId ? state.selection : null,
-  );
+  const { selection, session } = composition;
   const previousSessionRef = useRef(session);
   const factory = useMemo(
     () => createProtyleFactoryForSpace(identity.spaceId),
@@ -366,9 +480,9 @@ function ReadyWorkspace({
       data-content-directory-status={status}
     >
       <ContentDirectory
-        identity={identity}
         onAccessLost={onDirectoryAccessLost}
         onStatusChange={onDirectoryStatusChange}
+        scope={composition.scope}
       />
       <main className="min-h-0 min-w-0 flex-1" data-content-workspace>
         {session && selection ? (
@@ -402,6 +516,14 @@ function ReadyWorkspace({
           />
         )}
       </main>
+      {session ? (
+        <DiscoveryPanel
+          onNavigate={onDiscoveryNavigate}
+          organizationId={identity.organizationId}
+          session={session}
+          spaceId={identity.spaceId}
+        />
+      ) : null}
     </div>
   );
 }
@@ -438,6 +560,8 @@ function WorkspaceFrame({
   currentSpace,
   logoutError,
   logoutPending,
+  onOpenSpaceGraph,
+  onOpenSpaceSearch,
   onLogout,
   role,
   spaces,
@@ -519,6 +643,34 @@ function WorkspaceFrame({
                 {currentSpace?.spaceName ?? "正在加载"}
               </span>
             </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  aria-label="搜索当前空间"
+                  disabled={onOpenSpaceSearch === null}
+                  onClick={onOpenSpaceSearch ?? undefined}
+                  size="icon-sm"
+                  variant="ghost"
+                >
+                  <SearchIcon aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>搜索当前空间</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  aria-label="打开空间关系图"
+                  disabled={onOpenSpaceGraph === null}
+                  onClick={onOpenSpaceGraph ?? undefined}
+                  size="icon-sm"
+                  variant="ghost"
+                >
+                  <GitForkIcon aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>打开空间关系图</TooltipContent>
+            </Tooltip>
             {role ? (
               <Badge className="shrink-0" variant={roleBadgeVariant(role)}>
                 {roleLabel(role)}
@@ -554,8 +706,7 @@ export function SpacePage({
   const spaceId = params.spaceId ?? "";
   const identity: SpaceRuntimePathParameters = { organizationId, spaceId };
   const queryClient = useQueryClient();
-  const selectDocument = useContentSelectionStore((state) => state.selectDocument);
-  const clearSelection = useContentSelectionStore((state) => state.clearSelection);
+  const compositionRef = useRef<SpaceSessionComposition | null>(null);
   const navigationSequenceRef = useRef(0);
   const [navigationCommand, setNavigationCommand] = useState<SpaceNavigationCommand | null>(null);
   const spacesQuery = useAuthorizedSpaces();
@@ -587,9 +738,16 @@ export function SpacePage({
     readonly routeKey: string;
   } | null>(null);
   const [directoryStatus, setDirectoryStatus] = useState<ContentDirectoryStatus>("loading");
+  const [assetPreviewRequest, setAssetPreviewRequest] = useState<
+    AssetPreviewSurfaceRequest | null
+  >(null);
 
   useEffect(() => {
     setNavigationCommand(null);
+    setAssetPreviewRequest(null);
+    setDirectoryStatus("loading");
+    compositionRef.current = null;
+    useDiscoveryStore.getState().reset();
   }, [routeKey]);
 
   const currentSessionFailure = sessionFailure?.routeKey === routeKey
@@ -606,7 +764,12 @@ export function SpacePage({
     const category = event.category === "unauthenticated"
       ? "unauthenticated"
       : "forbidden";
+    compositionRef.current = null;
     setSessionFailure({ category, routeKey: failedRouteKey });
+    setAssetPreviewRequest((current) =>
+      current?.spaceId === failedBootstrap.spaceId ? null : current
+    );
+    useDiscoveryStore.getState().close(failedBootstrap.spaceId);
     if (category === "unauthenticated") {
       clearClientSession(queryClient);
       return;
@@ -625,7 +788,14 @@ export function SpacePage({
   const handleDirectoryAccessLost = useCallback(async (
     category: ContentDirectoryAccessLoss,
   ) => {
+    const composition = compositionRef.current;
+    if (isCurrentSpaceComposition(composition, identity)) {
+      composition.clearSelection();
+    }
+    compositionRef.current = null;
     setSessionFailure({ category, routeKey });
+    setAssetPreviewRequest(null);
+    useDiscoveryStore.getState().close(spaceId);
     if (category === "unauthenticated") {
       clearClientSession(queryClient);
       return;
@@ -656,18 +826,85 @@ export function SpacePage({
       current?.sequence === sequence ? null : current,
     );
   }, []);
+  const handleDiscoveryNavigate = useCallback((target: DiscoveryNavigationTarget) => {
+    const composition = compositionRef.current;
+    if (
+      !isReadySpaceRuntime(runtime) ||
+      runtime.organizationId !== organizationId ||
+      runtime.spaceId !== spaceId ||
+      currentSessionFailure !== null ||
+      !isActiveSpaceComposition(composition, identity)
+    ) {
+      console.warn("[discovery.panel]", {
+        phase: "navigation",
+        result: "stale-composition-rejected",
+        spaceId,
+      });
+      return;
+    }
+    if (!composition.selectDocument({
+      documentId: target.documentId,
+      notebookId: target.notebookId,
+    })) {
+      return;
+    }
+    queueNavigation(runtime.spaceId, {
+      attention: "focus",
+      blockId: target.blockId,
+      documentId: target.documentId,
+      notebookId: target.notebookId,
+      restoreScroll: "if-document",
+      scope: "target",
+      scroll: "auto",
+      zoom: false,
+    });
+  }, [currentSessionFailure, identity, organizationId, queueNavigation, runtime, spaceId]);
+  const openSpaceSearch = useCallback(() => {
+    if (
+      !isReadySpaceRuntime(runtime) ||
+      runtime.organizationId !== organizationId ||
+      runtime.spaceId !== spaceId ||
+      currentSessionFailure !== null
+    ) {
+      return;
+    }
+    useDiscoveryStore.getState().openSpaceSearch({
+      method: "preferred",
+      query: "",
+      queryMode: "replace",
+      spaceId: runtime.spaceId,
+    });
+  }, [currentSessionFailure, organizationId, runtime, spaceId]);
+  const openSpaceGraph = useCallback(() => {
+    if (
+      !isReadySpaceRuntime(runtime) ||
+      runtime.organizationId !== organizationId ||
+      runtime.spaceId !== spaceId ||
+      currentSessionFailure !== null
+    ) {
+      return;
+    }
+    useDiscoveryStore.getState().open({
+      kind: "space-graph",
+      query: "",
+      spaceId: runtime.spaceId,
+    });
+  }, [currentSessionFailure, organizationId, runtime, spaceId]);
+  const handleAssetPreview = useCallback((request: AssetPreviewSurfaceRequest) => {
+    setAssetPreviewRequest(request);
+  }, []);
   const handleHostEvent = useCallback(
     (event: ProtyleMediatorEvent, bootstrap: ReadySpaceRuntimeBootstrap) => {
       createSpaceHostMediator(
         queryClient,
-        selectDocument,
-        clearSelection,
+        compositionRef.current,
         queueNavigation,
+        handleAssetPreview,
         event,
         bootstrap,
       );
     },
-    [clearSelection, queryClient, queueNavigation, selectDocument],
+    [handleAssetPreview, queryClient, queueNavigation],
   );
   const pollAttempts =
     pollState.routeKey === routeKey ? pollState.attempts : 0;
@@ -950,6 +1187,8 @@ export function SpacePage({
         !isApiProblem(logoutMutation.error, "unauthenticated")
       }
       logoutPending={logoutMutation.isPending}
+      onOpenSpaceGraph={readyBootstrap ? openSpaceGraph : null}
+      onOpenSpaceSearch={readyBootstrap ? openSpaceSearch : null}
       onLogout={() => logoutMutation.mutate()}
       role={role}
       spaces={spaces}
@@ -961,9 +1200,23 @@ export function SpacePage({
         onHostEvent={handleHostEvent}
         retryRuntime={retrySessionRuntime}
       >
-        {(session) =>
-          readyBootstrap ? (
+        {(composition) => {
+          compositionRef.current = composition;
+          if (!readyBootstrap) {
+            return content;
+          }
+          if (!isCurrentSpaceComposition(composition, readyBootstrap)) {
+            return (
+              <WorkspaceState
+                description="正在准备当前空间的内容会话。"
+                media={<Spinner aria-label="正在准备内容会话" />}
+                title="正在准备内容会话"
+              />
+            );
+          }
+          return (
             <ReadyWorkspace
+              composition={composition}
               createProtyleFactoryForSpace={createProtyleFactoryForSpace}
               identity={readyBootstrap}
               navigationCommand={
@@ -973,13 +1226,23 @@ export function SpacePage({
               }
               onDirectoryAccessLost={handleDirectoryAccessLost}
               onDirectoryStatusChange={setDirectoryStatus}
+              onDiscoveryNavigate={handleDiscoveryNavigate}
               onNavigationCommandComplete={completeNavigationCommand}
               readOnly={readyBootstrap.role === "viewer"}
-              session={session}
               status={directoryStatus}
             />
-          ) : content}
+          );
+        }}
       </SpaceSessionRoot>
+      <AssetPreviewSurface
+        onClose={() => setAssetPreviewRequest(null)}
+        request={
+          assetPreviewRequest?.organizationId === organizationId &&
+            assetPreviewRequest.spaceId === spaceId
+            ? assetPreviewRequest
+            : null
+        }
+      />
     </WorkspaceFrame>
   );
 }
