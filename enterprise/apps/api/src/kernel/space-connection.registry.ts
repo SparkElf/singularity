@@ -122,6 +122,26 @@ export class SpaceConnectionRegistry {
     }
   }
 
+  /**
+   * 端点离开 ready 或被替换时，先终止该空间的上游订阅，再通知浏览器显式重试。
+   * 该路径不改变用户授权状态，因而使用 kernel-unavailable 而不是 forbidden。
+   */
+  closeByKernelLifecycle(spaceId: string): void {
+    const connectionIds = [...(this.#bySpace.get(spaceId) ?? [])];
+    for (const connectionId of connectionIds) {
+      const record = this.#connections.get(connectionId);
+      if (record !== undefined) {
+        this.#close(record, "kernel-unavailable", true);
+      }
+    }
+  }
+
+  closeAllByKernelLifecycle(): void {
+    for (const record of [...this.#connections.values()]) {
+      this.#close(record, "kernel-unavailable", true);
+    }
+  }
+
   refreshSessionExpiry(authSessionId: string, expiresAt: Date): void {
     for (const connectionId of this.#byAuthSession.get(authSessionId) ?? []) {
       const record = this.#connections.get(connectionId);

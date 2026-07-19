@@ -3,7 +3,7 @@ title: "ADR-022: 跨进程Kernel端点事实源"
 description: "让Worker恢复的Kernel端点在API进程重启和实时变更后仍可被同一声明式registry解析"
 author: "Codex"
 date: "2026-07-18"
-version: "1.0.0"
+version: "1.1.0"
 status: "accepted"
 tags: ["adr", "kernel", "deployment", "worker", "postgresql", "trust-boundary"]
 ---
@@ -52,6 +52,7 @@ API自己的registry解析阶段失败。把Worker内存、句柄前缀或首个
    身份不一致或进程已退出的目标不注册。启动时回收无metadata的确定性恢复工作区
    和暂存归档；ready-for-activation目标的孤儿端点会在同一事务中标记恢复失败、
    删除隔离目标并发布remove通知，已激活空间只撤销运行时端点并保留内容。
+9. 已提交的端点`remove/upsert`在registry变更前先以`kernel-unavailable`关闭该空间全部`pending/active`连接，关闭顺序仍是先中止上游、再通知浏览器。受控运维使Kernel离开`ready`或替换`deploymentHandle`时，即使静态部署没有`KernelRuntimeEndpoint`行，也必须发布同一个`remove`事件；同步器仍回读数据库决定端点安装/删除，不把事件载荷升级为事实源。部署通知解析、读取或LISTEN失败时关闭全部Kernel连接并清空动态端点，旧Kernel不能在三态或端点变化后继续推送。
 
 ## Alternatives
 
@@ -73,6 +74,7 @@ API自己的registry解析阶段失败。把Worker内存、句柄前缀或首个
   单一registry和可审计的端点生命周期。
 - endpoint host必须是Worker到API可达的配置值；`127.0.0.1`只保留为Worker
   到本地Kernel readiness的地址。
+- `starting/unavailable`状态和端点替换会立即终止旧推送链，但不改写用户授权；浏览器保留已渲染内容并按现有`kernel-unavailable`合同显式重试，不自动切换地址或重复写入。
 
 ## References
 

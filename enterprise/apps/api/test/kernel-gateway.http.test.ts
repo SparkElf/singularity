@@ -34,6 +34,9 @@ const KERNEL_ENVELOPE_UNAVAILABLE_PATH = "/api/block/getBlockIndex";
 const KERNEL_ENVELOPE_SUCCESS_PATH = "/api/block/getRefText";
 const KERNEL_TRANSACTION_PATH = "/api/transactions";
 const KERNEL_EXPORT_PATH = "/export/code/report.txt?download=true";
+const KERNEL_IMAGE_ASSET_PATH = `/assets/inline.png?box=${NOTEBOOK_ID}`;
+const KERNEL_HTML_ASSET_PATH = `/assets/active.html?box=${NOTEBOOK_ID}`;
+const KERNEL_PDF_ASSET_PATH = `/assets/document.pdf?box=${NOTEBOOK_ID}`;
 
 interface AuthenticatedGraph {
   readonly cookie: string;
@@ -72,6 +75,27 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
   beforeAll(async () => {
     kernel = await startTestKernelGateway({
       handler: (request) => {
+        if (request.path === KERNEL_IMAGE_ASSET_PATH) {
+          return {
+            body: Buffer.from("png-bytes"),
+            headers: { "content-type": "image/png" },
+            status: 200,
+          };
+        }
+        if (request.path === KERNEL_HTML_ASSET_PATH) {
+          return {
+            body: "<script>document.body.textContent = 'active'</script>",
+            headers: { "content-type": "text/html" },
+            status: 200,
+          };
+        }
+        if (request.path === KERNEL_PDF_ASSET_PATH) {
+          return {
+            body: Buffer.from("pdf-bytes"),
+            headers: { "content-type": "application/pdf" },
+            status: 200,
+          };
+        }
         if (request.path === KERNEL_EXPORT_PATH) {
           return {
             body: "exported content",
@@ -270,6 +294,21 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     });
   }
 
+  function requestAsset(graph: AuthenticatedGraph, assetPath: string): Promise<Response> {
+    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}${assetPath}`;
+    const parameters = new URLSearchParams({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+    });
+    return fetch(`${testApi.baseUrl}${path}?${parameters.toString()}`, {
+      headers: {
+        Cookie: graph.cookie,
+        Origin: TEST_PUBLIC_ORIGIN,
+      },
+      method: "GET",
+    });
+  }
+
   test("marks a hidden authorization 404 as terminal runtime access loss", async () => {
     const graph = await createAuthenticatedGraph();
     const revoked = await operations.execute({
@@ -415,6 +454,32 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
         targetType: "document",
       },
     ]);
+  });
+
+  test("keeps inert image assets inline while preserving the safety header", async () => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestAsset(graph, "/assets/inline.png");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test.each([
+    { assetPath: "/assets/active.html", contentType: "application/octet-stream" },
+    { assetPath: "/assets/document.pdf", contentType: "application/pdf" },
+  ])("forces active $assetPath assets into a download response", async ({ assetPath, contentType }) => {
+    const graph = await createAuthenticatedGraph();
+
+    const response = await requestAsset(graph, assetPath);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toMatch(/^attachment;/);
+    expect(response.headers.get("content-type")).toBe(contentType);
+    expect(response.headers.get("content-security-policy")).toContain("sandbox");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   test.each([
