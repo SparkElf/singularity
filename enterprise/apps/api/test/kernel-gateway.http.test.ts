@@ -32,6 +32,7 @@ const KERNEL_ENVELOPE_NOT_FOUND_PATH = "/api/block/getBlockDOM";
 const KERNEL_ENVELOPE_VALIDATION_PATH = "/api/block/checkBlockExist";
 const KERNEL_ENVELOPE_UNAVAILABLE_PATH = "/api/block/getBlockIndex";
 const KERNEL_ENVELOPE_SUCCESS_PATH = "/api/block/getRefText";
+const KERNEL_TRANSACTION_PATH = "/api/transactions";
 const KERNEL_EXPORT_PATH = "/export/code/report.txt?download=true";
 
 interface AuthenticatedGraph {
@@ -40,6 +41,16 @@ interface AuthenticatedGraph {
   readonly organizationId: string;
   readonly spaceId: string;
   readonly userId: string;
+}
+
+interface ContentAuditRow {
+  action: string;
+  actorUserId: string | null;
+  organizationId: string;
+  outcome: string;
+  spaceId: string | null;
+  targetId: string;
+  targetType: string;
 }
 
 function cookiePair(response: Response): string {
@@ -65,6 +76,13 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
           return {
             body: "exported content",
             headers: { "content-type": "text/plain" },
+            status: 200,
+          };
+        }
+        if (request.path === KERNEL_TRANSACTION_PATH) {
+          return {
+            body: JSON.stringify({ code: 0, data: null, msg: "" }),
+            headers: { "content-type": "application/json" },
             status: 200,
           };
         }
@@ -196,10 +214,11 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
   function requestContent(
     graph: AuthenticatedGraph,
     kernelPath = "/api/block/getBlockInfo",
+    body: unknown = { id: DOCUMENT_ID },
   ): Promise<Response> {
     const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel/api${kernelPath}`;
     return fetch(`${testApi.baseUrl}${path}`, {
-      body: JSON.stringify({ id: DOCUMENT_ID }),
+      body: JSON.stringify(body),
       headers: {
         [CSRF_HEADER_NAME]: graph.csrfToken,
         "Content-Type": "application/json",
@@ -210,6 +229,26 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
       },
       method: "POST",
     });
+  }
+
+  function contentAuditRows(
+    graph: AuthenticatedGraph,
+  ): Promise<ContentAuditRow[]> {
+    return database.$queryRaw<ContentAuditRow[]>`
+      SELECT
+        "action"::text AS "action",
+        "actor_user_id" AS "actorUserId",
+        "organization_id" AS "organizationId",
+        "outcome"::text AS "outcome",
+        "space_id" AS "spaceId",
+        "target_id" AS "targetId",
+        "target_type" AS "targetType"
+      FROM "audit_events"
+      WHERE "organization_id" = ${graph.organizationId}::uuid
+        AND "target_type" = 'document'
+        AND "target_id" = ${DOCUMENT_ID}
+      ORDER BY "sequence"
+    `;
   }
 
   function requestExport(
@@ -316,7 +355,42 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     });
   });
 
-  test("proxies an explicitly identified export as a download", async () => {
+  test.each([
+    { expectedAction: "content.edit", operationAction: "update" },
+    { expectedAction: "content.delete", operationAction: "delete" },
+  ])(
+    "records $expectedAction only after a successful Kernel transaction",
+    async ({ expectedAction, operationAction }) => {
+      const graph = await createAuthenticatedGraph();
+
+      const response = await requestContent(graph, KERNEL_TRANSACTION_PATH, {
+        reqId: Date.now(),
+        transactions: [
+          {
+            doOperations: [{ action: operationAction, id: DOCUMENT_ID }],
+            notebook: NOTEBOOK_ID,
+            undoOperations: [],
+          },
+        ],
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ code: 0, data: null, msg: "" });
+      await expect(contentAuditRows(graph)).resolves.toEqual([
+        {
+          action: expectedAction,
+          actorUserId: graph.userId,
+          organizationId: graph.organizationId,
+          outcome: "succeeded",
+          spaceId: graph.spaceId,
+          targetId: DOCUMENT_ID,
+          targetType: "document",
+        },
+      ]);
+    },
+  );
+
+  test("proxies an explicitly identified export and records its document audit", async () => {
     const graph = await createAuthenticatedGraph();
     const requestCount = kernel.requests.length;
 
@@ -330,6 +404,17 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     expect(await response.text()).toBe("exported content");
     expect(kernel.requests).toHaveLength(requestCount + 1);
     expect(kernel.requests.at(-1)?.path).toBe(KERNEL_EXPORT_PATH);
+    await expect(contentAuditRows(graph)).resolves.toEqual([
+      {
+        action: "content.export",
+        actorUserId: graph.userId,
+        organizationId: graph.organizationId,
+        outcome: "succeeded",
+        spaceId: graph.spaceId,
+        targetId: DOCUMENT_ID,
+        targetType: "document",
+      },
+    ]);
   });
 
   test.each([

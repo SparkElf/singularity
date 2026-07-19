@@ -1,6 +1,7 @@
 import "reflect-metadata";
 
 import { randomUUID } from "node:crypto";
+import type { ServerOptions as HttpsServerOptions } from "node:https";
 
 import type { LoggerService } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
@@ -36,6 +37,7 @@ export interface CreateApiApplicationOptions {
   auditConfiguration: AuditConfiguration;
   clock?: Clock;
   databaseUrl: string | undefined;
+  https?: HttpsServerOptions;
   kernelGateway: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
   oidcClientSecretFiles?: string | undefined;
@@ -57,6 +59,7 @@ export async function createApiApplication(
     bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
     genReqId: () => randomUUID(),
     requestIdHeader: false,
+    ...(options.https === undefined ? {} : { https: options.https }),
     ...(configuration.trustedProxyCidrs.length === 0
       ? {}
       : { trustProxy: [...configuration.trustedProxyCidrs] }),

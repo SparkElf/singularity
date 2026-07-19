@@ -57,11 +57,11 @@ HTTP或独立运维进程
 
 ## Implementation Checklist
 
-- [ ] `DatabaseRuntime`增加专用通知订阅生命周期，应用关闭时释放连接。
-- [ ] 新增`AccessChangeService`，负责事件schema、事务内发布和监听分发。
-- [ ] 新增`SpaceConnectionRegistry`三态与四索引，监听异常失败关闭。
-- [ ] Identity、Organization、Group、Space及Operations所有相关提交路径发布唯一事件。
-- [ ] Gateway升级在监听就绪后登记`pending`、复验、激活并设置会话到期计时器。
+- [x] `DatabaseRuntime`增加专用通知订阅生命周期，应用关闭时释放连接。
+- [x] `AccessChangedPublisher`与`AccessChangedListener`负责事件schema、事务内发布和监听分发。
+- [x] `SpaceConnectionRegistry`提供三态与四索引，监听异常失败关闭。
+- [x] Identity、Organization、Group、Space及Operations所有相关提交路径发布唯一事件。
+- [x] Gateway升级在监听就绪后登记`pending`、复验、激活并设置会话到期计时器。
 - [ ] 集中评审完成后批量验证真实PostgreSQL跨进程撤权与零迟到推送。
 
 ## Verification

@@ -211,6 +211,9 @@ jobs:
       API_IMAGE: singularity-api:${{ github.sha }}
       WORKER_IMAGE: singularity-worker:${{ github.sha }}
       WEB_IMAGE: singularity-web:${{ github.sha }}
+      SINGULARITY_DB_SCHEMA: public
+      SINGULARITY_AUDIT_WRITER_ROLE: singularity_audit_writer
+      SINGULARITY_AUDIT_READER_ROLE: singularity_audit_reader
     services:
       postgres:
         image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -291,10 +294,27 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: enterprise
 
-      - name: Apply enterprise migrations for container smoke
+      - name: Provision audit capability roles for migration deploy
         env:
           DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
-        run: pnpm --filter @singularity/database exec prisma migrate deploy --config prisma.config.ts
+        run: |
+          psql --no-psqlrc --set=ON_ERROR_STOP=1 "$DATABASE_URL" <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'singularity_audit_writer') THEN
+              CREATE ROLE singularity_audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'singularity_audit_reader') THEN
+              CREATE ROLE singularity_audit_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+          END
+          $$;
+          SQL
+
+      - name: Apply enterprise migrations and audit ACL
+        env:
+          DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
+        run: pnpm --filter @singularity/database deploy
         working-directory: enterprise
 
       - name: Smoke enterprise images
