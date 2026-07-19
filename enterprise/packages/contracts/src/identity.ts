@@ -196,7 +196,8 @@ export const oidcCallbackQuerySchema = z
     session_state: z.string().max(4_096).optional(),
     state: sessionTokenSchema,
   })
-  .strict();
+  // OIDC 提供方可以附加协议参数；回调控制器只消费传给服务的 code 与 state。
+  .strip();
 export type OidcCallbackQuery = z.infer<typeof oidcCallbackQuerySchema>;
 
 export const oidcProviderPathParametersSchema = z

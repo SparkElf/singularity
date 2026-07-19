@@ -51,6 +51,7 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
   const [secretAction, setSecretAction] = useState<"keep" | "remove" | "replace">(
     "keep",
   );
+  const [validationError, setValidationError] = useState(false);
   const formId = `oidc-provider-${provider.providerId}`;
   return (
     <TableRow>
@@ -58,6 +59,7 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
         <form
           id={formId}
           key={`${provider.providerId}:${provider.name}:${provider.issuer}:${provider.clientId}:${provider.status}`}
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             const formData = new FormData(event.currentTarget);
@@ -73,9 +75,12 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
               name: formData.get("name"),
               status: formData.get("status"),
             });
-            if (request.success) {
-              onSubmit(provider.providerId, request.data);
+            if (!request.success) {
+              setValidationError(true);
+              return;
             }
+            setValidationError(false);
+            onSubmit(provider.providerId, request.data);
           }}
         >
           <label className="sr-only" htmlFor={`${formId}-name`}>
@@ -87,7 +92,14 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
             id={`${formId}-name`}
             name="name"
             required
+            aria-invalid={validationError || undefined}
+            onInput={() => setValidationError(false)}
           />
+          {validationError ? (
+            <p className="mt-1 text-xs text-destructive" role="alert">
+              Provider 配置不符合公开合同，请检查各字段。
+            </p>
+          ) : null}
         </form>
       </TableCell>
       <TableCell>
@@ -102,6 +114,8 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
           name="issuer"
           required
           type="url"
+          aria-invalid={validationError || undefined}
+          onInput={() => setValidationError(false)}
         />
       </TableCell>
       <TableCell>
@@ -115,6 +129,8 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
           id={`${formId}-client-id`}
           name="clientId"
           required
+          aria-invalid={validationError || undefined}
+          onInput={() => setValidationError(false)}
         />
       </TableCell>
       <TableCell>
@@ -127,7 +143,9 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
             onChange={(event) =>
               setSecretAction(event.currentTarget.value as typeof secretAction)
             }
+            onInput={() => setValidationError(false)}
             value={secretAction}
+            aria-invalid={validationError || undefined}
           >
             <option value="keep">保持</option>
             <option value="replace">替换</option>
@@ -144,6 +162,8 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
                 id={`${formId}-secret-reference`}
                 name="clientSecretReference"
                 required
+                aria-invalid={validationError || undefined}
+                onInput={() => setValidationError(false)}
               />
             </>
           ) : (
@@ -162,6 +182,8 @@ function ProviderRow({ onSubmit, pending, provider }: ProviderRowProps) {
           form={formId}
           id={`${formId}-status`}
           name="status"
+          aria-invalid={validationError || undefined}
+          onInput={() => setValidationError(false)}
         >
           <option value="active">活跃</option>
           <option value="disabled">停用</option>
@@ -307,7 +329,14 @@ export function OidcPage() {
             ) : (
               providers.map((provider) => (
                 <ProviderRow
-                  key={`${provider.providerId}:${provider.name}:${provider.issuer}:${provider.clientId}:${provider.clientSecretReference ?? ""}:${provider.status}`}
+                  key={[
+                    provider.providerId,
+                    provider.name,
+                    provider.issuer,
+                    provider.clientId,
+                    provider.clientSecretReference ?? "",
+                    provider.status,
+                  ].join(":")}
                   onSubmit={(providerId, request) =>
                     updateProviderMutation.mutate({ providerId, request })
                   }

@@ -203,6 +203,50 @@ describe("S1 identity and space routes", () => {
     expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
   });
 
+  it("loads OIDC providers and starts the selected same-origin login flow", async () => {
+    const providerId = "33333333-3333-4333-8333-333333333333";
+    const returnTo = spacePath(ORGANIZATION_A, SPACE_A);
+    let startRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input, init) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({
+            providers: [{ name: "Corporate SSO", providerId }],
+          });
+        }
+        if (path === "/api/v1/auth/oidc/start") {
+          startRequests += 1;
+          expect(init?.method).toBe("POST");
+          expect(JSON.parse(requestBodyText(init?.body))).toEqual({
+            providerId,
+            returnTo,
+          });
+          return jsonResponse(
+            {
+              code: "service-unavailable",
+              requestId: REQUEST_ID,
+              status: 503,
+            },
+            503,
+          );
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Corporate SSO" }),
+    );
+
+    expect(
+      await screen.findByText("Provider 未接受登录请求，请重试。"),
+    ).toBeVisible();
+    expect(startRequests).toBe(1);
+  });
+
   it("rejects an external returnTo and shows the authorized empty state", async () => {
     vi.stubGlobal(
       "fetch",
