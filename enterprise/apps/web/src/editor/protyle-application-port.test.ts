@@ -61,6 +61,9 @@ describe("createProtyleApplicationPort", () => {
       widget: false,
     });
     expect(restored.settings.hotkeys.editor.general.insertRight).toBe("⌥.");
+    expect(restored.settings.hotkeys.editor.general.backlinks).toBe("⌥⌘B");
+    expect(restored.settings.hotkeys.editor.general.graphView).toBe("⌥⌘G");
+    expect(restored.settings.hotkeys.editor.general.outline).toBe("⌥⌘O");
     expect(restored.settings.hotkeys.editor.table.moveToUp).toBe("⌥⌘T");
     expect(restored.settings.editor.listItemDotNumberClickFocus).toBe(true);
     expect(restored.settings.editor.pasteURLAutoConvert).toBe(true);
