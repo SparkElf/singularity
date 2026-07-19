@@ -3,6 +3,7 @@ package model
 import (
 	"archive/zip"
 	"crypto/sha256"
+	stdsql "database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -78,14 +79,14 @@ func writeEnterpriseBackupTestArchive(
 func validEnterpriseBackupTestManifest(data []byte, path string) *EnterpriseBackupManifest {
 	digest := sha256.Sum256(data)
 	return &EnterpriseBackupManifest{
-		CreatedAt:     time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC),
-		Entries:       []*EnterpriseBackupEntry{{
+		CreatedAt: time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC),
+		Entries: []*EnterpriseBackupEntry{{
 			Path: path, SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)), Type: "file",
 		}},
-		FileCount:     1,
-		FormatVersion: EnterpriseBackupFormatVersion,
-		KernelVersion: util.Ver,
-		SourceSpaceID: "space-contract",
+		FileCount:      1,
+		FormatVersion:  EnterpriseBackupFormatVersion,
+		KernelVersion:  util.Ver,
+		SourceSpaceID:  "space-contract",
 		TotalSizeBytes: int64(len(data)),
 	}
 }
@@ -189,5 +190,179 @@ func TestEnterpriseBackupArchiveRejectsPathSymlinkAndDigestViolations(t *testing
 	}
 	if digest == "" {
 		t.Fatal("test archive digest is empty")
+	}
+}
+
+func restoredWorkspaceLimits() EnterpriseRestoreLimits {
+	return EnterpriseRestoreLimits{
+		MaximumArchiveBytes: 1 << 20,
+		MaximumEntryBytes:   1 << 20,
+		MaximumFiles:        10,
+		MaximumTotalBytes:   1 << 20,
+	}
+}
+
+func restoredTreeJSON(t *testing.T, rootID, referenceID string, includeReference bool) []byte {
+	t.Helper()
+	children := []any{}
+	if includeReference {
+		children = append(children, map[string]any{
+			"Children": []any{
+				map[string]any{
+					"TextMarkBlockRefID":  referenceID,
+					"TextMarkTextContent": "reference",
+					"TextMarkType":        "block-ref",
+					"Type":                "NodeTextMark",
+				},
+			},
+			"ID":         "20260719000001-child01",
+			"Properties": map[string]any{"id": "20260719000001-child01"},
+			"Type":       "NodeParagraph",
+		})
+	}
+	data, err := json.Marshal(map[string]any{
+		"Children": children,
+		"ID":       rootID,
+		"Properties": map[string]any{
+			"id":    rootID,
+			"title": "Restore contract",
+		},
+		"Spec": "2",
+		"Type": "NodeDocument",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func writeRestoredWorkspaceFile(t *testing.T, workspaceRoot, relative string, data []byte) {
+	t.Helper()
+	absolute := filepath.Join(workspaceRoot, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absolute, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateEnterpriseRestoredWorkspacePreservesEncryptedSYBoundary(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	boxID := "20260719000003-box0001"
+	rootID := "20260719000000-restor1"
+	writeRestoredWorkspaceFile(t, workspaceRoot, "data/"+boxID+"/.siyuan/conf.json", []byte(`{"encrypted":true}`))
+	ciphertext, err := util.EncryptWithAAD(
+		make([]byte, 32),
+		[]byte("this is not JSON"),
+		[]byte("restore-test"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRestoredWorkspaceFile(t, workspaceRoot, "data/"+boxID+"/"+rootID+".sy", ciphertext)
+
+	if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
+		t.Fatalf("validate encrypted restore workspace: %v", err)
+	}
+}
+
+func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruption(t *testing.T) {
+	t.Run("root ID mismatch", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		boxID := "20260719000003-box0001"
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+boxID+"/20260719000000-restor1.sy",
+			restoredTreeJSON(t, "20260719000002-target1", "", false),
+		)
+		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+			t.Fatal("root ID mismatch was accepted")
+		}
+	})
+
+	t.Run("missing reference target", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		boxID := "20260719000003-box0001"
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+boxID+"/20260719000000-restor1.sy",
+			restoredTreeJSON(t, "20260719000000-restor1", "20260719000002-target1", true),
+		)
+		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+			t.Fatal("missing reference target was accepted")
+		}
+	})
+
+	t.Run("degraded cross-boundary reference text", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		boxID := "20260719000003-box0001"
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+boxID+"/20260719000000-restor1.sy",
+			restoredTreeJSON(t, "20260719000000-restor1", "", true),
+		)
+		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
+			t.Fatalf("validate degraded cross-boundary reference text: %v", err)
+		}
+	})
+
+	t.Run("plaintext reference beside encrypted notebook", func(t *testing.T) {
+		workspaceRoot := t.TempDir()
+		plainBoxID := "20260719000003-box0001"
+		encryptedBoxID := "20260719000004-box0002"
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+plainBoxID+"/20260719000000-restor1.sy",
+			restoredTreeJSON(t, "20260719000000-restor1", "20260719000002-target1", true),
+		)
+		writeRestoredWorkspaceFile(t, workspaceRoot, "data/"+encryptedBoxID+"/.siyuan/conf.json", []byte(`{"encrypted":true}`))
+		ciphertext, err := util.EncryptWithAAD(make([]byte, 32), []byte("encrypted document"), []byte("restore-test"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRestoredWorkspaceFile(
+			t,
+			workspaceRoot,
+			"data/"+encryptedBoxID+"/20260719000005-encrypt.sy",
+			ciphertext,
+		)
+		if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+			t.Fatal("plaintext reference validation was skipped by an encrypted notebook")
+		}
+	})
+}
+
+func TestValidateEnterpriseRestoredWorkspaceChecksSQLiteIntegrity(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "temp"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(workspaceRoot, "temp", "siyuan.db")
+	database, err := stdsql.Open("sqlite3_extended", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec("CREATE TABLE blocks (id, box)"); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if _, err = database.Exec("CREATE TABLE refs (def_block_id, box)"); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if _, err = database.Exec("INSERT INTO refs (def_block_id, box) VALUES ('20260719000002-target1', '20260719000003-box0001')"); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
+		t.Fatal("orphan SQLite reference was accepted")
 	}
 }

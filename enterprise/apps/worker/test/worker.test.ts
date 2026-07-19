@@ -232,6 +232,50 @@ describe("BoundedJobWorker lease contract", () => {
     expect(fail).not.toHaveBeenCalled();
   });
 
+  it("does not settle a lease when a handler ignores shutdown cancellation", async () => {
+    const abort = new AbortController();
+    let claimed = false;
+    let started = (): void => {
+      throw new Error("Handler start resolver is unavailable");
+    };
+    const handlerStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let releaseExecution = (): void => {
+      throw new Error("Execution resolver is unavailable");
+    };
+    const execution = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const complete = vi.fn(async () => true);
+    const fail = vi.fn(async () => true);
+    const run = worker(
+      repository({
+        async claimBatch() {
+          if (claimed) {
+            return [];
+          }
+          claimed = true;
+          return [record];
+        },
+        complete,
+        fail,
+      }),
+      handler(async () => {
+        started();
+        await execution;
+      }),
+    ).run(abort.signal);
+
+    await handlerStarted;
+    abort.abort(new Error("worker shutdown"));
+    releaseExecution();
+    await run;
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
+  });
+
   it("persists the declared retry time for a handler failure", async () => {
     const abort = new AbortController();
     const retryAt = new Date("2026-07-18T00:01:00.000Z");

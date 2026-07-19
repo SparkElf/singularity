@@ -100,7 +100,8 @@ func EnterpriseCreateBackupHandler(sourceSpaceID string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		archive, err := model.CreateEnterpriseBackupArchive(sourceSpaceID)
 		if err != nil {
-			logging.LogErrorf("backup.job create archive failed: %s", err)
+			requestID := c.GetHeader(serviceauth.RequestIDHeader)
+			logging.LogErrorf("backup.job create archive failed [requestId=%s, operation=backup.create]", requestID)
 			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}

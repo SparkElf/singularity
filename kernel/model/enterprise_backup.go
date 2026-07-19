@@ -11,12 +11,14 @@ package model
 import (
 	"archive/zip"
 	"crypto/sha256"
+	stdsql "database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,7 +26,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/88250/lute/ast"
+	"github.com/siyuan-note/dataparser"
+	"github.com/siyuan-note/siyuan/kernel/conf"
+	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"github.com/siyuan-note/siyuan/kernel/sql"
+	"github.com/siyuan-note/siyuan/kernel/treenode"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -200,7 +207,253 @@ func ExtractEnterpriseBackupArchive(
 			return nil, err
 		}
 	}
+	if err = ValidateEnterpriseRestoredWorkspace(destinationRoot, limits); err != nil {
+		return nil, err
+	}
 	return manifest, nil
+}
+
+type enterpriseRestoredReference struct {
+	boxID   string
+	blockID string
+}
+
+// ValidateEnterpriseRestoredWorkspace 校验解包后的文件结构；加密 .sy 只验信封，不尝试按 JSON 解密。
+func ValidateEnterpriseRestoredWorkspace(
+	workspaceRoot string,
+	limits EnterpriseRestoreLimits,
+) error {
+	workspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("%w: resolve restored workspace: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	dataRoot := filepath.Join(workspaceRoot, "data")
+	dataInfo, err := os.Lstat(dataRoot)
+	if err != nil || dataInfo.Mode()&fs.ModeSymlink != 0 || !dataInfo.IsDir() {
+		return fmt.Errorf("%w: restored data directory is invalid", ErrEnterpriseBackupInvalid)
+	}
+	if limits.MaximumEntryBytes < 1 {
+		return fmt.Errorf("%w: restore entry limit is invalid", ErrEnterpriseBackupInvalid)
+	}
+
+	encryptedBoxes, err := restoredEncryptedBoxes(dataRoot)
+	if err != nil {
+		return err
+	}
+	blockIDs := make(map[string]string)
+	var references []enterpriseRestoredReference
+	luteEngine := util.NewLute()
+	err = filepath.WalkDir(dataRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("%w: walk restored data: %v", ErrEnterpriseBackupInvalid, walkErr)
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%w: restored data contains a symbolic link", ErrEnterpriseBackupInvalid)
+		}
+		if entry.IsDir() || !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".sy") {
+			return nil
+		}
+		relative, relativeErr := filepath.Rel(dataRoot, filePath)
+		if relativeErr != nil {
+			return fmt.Errorf("%w: resolve restored document path: %v", ErrEnterpriseBackupInvalid, relativeErr)
+		}
+		relative = filepath.ToSlash(relative)
+		parts := strings.Split(relative, "/")
+		if len(parts) < 2 {
+			return fmt.Errorf("%w: restored document is outside a notebook", ErrEnterpriseBackupInvalid)
+		}
+		boxID := parts[0]
+		if !ast.IsNodeIDPattern(boxID) {
+			return fmt.Errorf("%w: restored notebook ID is invalid", ErrEnterpriseBackupInvalid)
+		}
+		if _, syErr := filesys.SyObjectBase(strings.Join(parts[1:], "/")); syErr != nil {
+			return fmt.Errorf("%w: restored .sy filename is invalid: %v", ErrEnterpriseBackupInvalid, syErr)
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.Size() > limits.MaximumEntryBytes {
+			return fmt.Errorf("%w: restored .sy file is too large or unreadable", ErrEnterpriseBackupInvalid)
+		}
+		data, readErr := os.ReadFile(filePath)
+		if readErr != nil {
+			return fmt.Errorf("%w: read restored .sy file: %v", ErrEnterpriseBackupInvalid, readErr)
+		}
+		if encryptedBoxes[boxID] {
+			if _, nonceErr := util.EncryptionNonce(data); nonceErr != nil {
+				return fmt.Errorf("%w: encrypted .sy envelope is invalid", ErrEnterpriseBackupInvalid)
+			}
+			return nil
+		}
+		tree, parseErr := dataparser.ParseJSONWithoutFix(data, luteEngine.ParseOptions)
+		if parseErr != nil || tree == nil || tree.Root == nil {
+			return fmt.Errorf("%w: restored .sy JSON is invalid", ErrEnterpriseBackupInvalid)
+		}
+		if specErr := treenode.CheckSpec(tree); errors.Is(specErr, treenode.ErrSpecTooNew) {
+			return fmt.Errorf("%w: restored .sy spec is too new", ErrEnterpriseBackupInvalid)
+		}
+		stem := strings.TrimSuffix(path.Base(relative), ".sy")
+		if tree.Root.ID != stem {
+			return fmt.Errorf("%w: restored .sy root ID does not match filename", ErrEnterpriseBackupInvalid)
+		}
+		ast.Walk(tree.Root, func(node *ast.Node, entering bool) ast.WalkStatus {
+			if !entering {
+				return ast.WalkContinue
+			}
+			if node.IsBlock() && node.ID != "" {
+				if previous, exists := blockIDs[node.ID]; exists {
+					parseErr = fmt.Errorf("duplicate block ID [%s] in [%s] and [%s]", node.ID, previous, filePath)
+					return ast.WalkStop
+				}
+				blockIDs[node.ID] = filePath
+			}
+			if treenode.IsBlockRef(node) {
+				defID, _, _ := treenode.GetBlockRef(node)
+				if defID == "" && node.Type == ast.NodeTextMark {
+					return ast.WalkContinue
+				}
+				if !ast.IsNodeIDPattern(defID) {
+					parseErr = fmt.Errorf("invalid block reference ID [%s]", defID)
+					return ast.WalkStop
+				}
+				references = append(references, enterpriseRestoredReference{boxID: boxID, blockID: defID})
+			} else if treenode.IsEmbedBlockRef(node) {
+				defID := treenode.GetEmbedBlockRef(node)
+				if !ast.IsNodeIDPattern(defID) {
+					parseErr = fmt.Errorf("invalid embed reference ID [%s]", defID)
+					return ast.WalkStop
+				}
+				references = append(references, enterpriseRestoredReference{boxID: boxID, blockID: defID})
+			}
+			return ast.WalkContinue
+		})
+		if parseErr != nil {
+			return fmt.Errorf("%w: restored .sy structure is invalid: %v", ErrEnterpriseBackupInvalid, parseErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, reference := range references {
+		if encryptedBoxes[reference.boxID] {
+			continue
+		}
+		if _, exists := blockIDs[reference.blockID]; !exists {
+			return fmt.Errorf("%w: restored reference target [%s] is missing", ErrEnterpriseBackupInvalid, reference.blockID)
+		}
+	}
+	if err = validateEnterpriseRestoredSQLite(workspaceRoot); err != nil {
+		return err
+	}
+	return nil
+}
+
+func restoredEncryptedBoxes(dataRoot string) (map[string]bool, error) {
+	encrypted := make(map[string]bool)
+	entries, err := os.ReadDir(dataRoot)
+	if err != nil {
+		return nil, fmt.Errorf("%w: list restored notebooks: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !ast.IsNodeIDPattern(entry.Name()) {
+			continue
+		}
+		confPath := filepath.Join(dataRoot, entry.Name(), ".siyuan", "conf.json")
+		confInfo, statErr := os.Lstat(confPath)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil || confInfo.Mode()&fs.ModeSymlink != 0 || !confInfo.Mode().IsRegular() {
+			return nil, fmt.Errorf("%w: restored notebook configuration is invalid", ErrEnterpriseBackupInvalid)
+		}
+		confData, readErr := os.ReadFile(confPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: read restored notebook configuration: %v", ErrEnterpriseBackupInvalid, readErr)
+		}
+		boxConf := &conf.BoxConf{}
+		if unmarshalErr := json.Unmarshal(confData, boxConf); unmarshalErr != nil {
+			return nil, fmt.Errorf("%w: parse restored notebook configuration: %v", ErrEnterpriseBackupInvalid, unmarshalErr)
+		}
+		if boxConf.Encrypted {
+			encrypted[entry.Name] = true
+		}
+	}
+	return encrypted, nil
+}
+
+func validateEnterpriseRestoredSQLite(workspaceRoot string) error {
+	tempRoot := filepath.Join(workspaceRoot, "temp")
+	entries, err := os.ReadDir(tempRoot)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: list restored SQLite directory: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	for _, entry := range entries {
+		if !enterpriseSQLiteFilename(entry.Name()) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || entry.Type()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("%w: restored SQLite file type is invalid", ErrEnterpriseBackupInvalid)
+		}
+		filePath := filepath.Join(tempRoot, entry.Name())
+		if strings.HasPrefix(entry.Name(), "siyuan-encrypted-") {
+			if info.Size() == 0 {
+				return fmt.Errorf("%w: encrypted SQLite file is empty", ErrEnterpriseBackupInvalid)
+			}
+			continue
+		}
+		if err = validateEnterpriseSQLiteFile(filePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func enterpriseSQLiteFilename(name string) bool {
+	return name == "siyuan.db" || name == "history.db" || name == "asset_content.db" || name == "blocktree.db" ||
+		(strings.HasPrefix(name, "siyuan-encrypted-") && strings.HasSuffix(name, ".db"))
+}
+
+func validateEnterpriseSQLiteFile(filePath string) error {
+	databaseURL := &url.URL{Scheme: "file", Path: filePath}
+	databaseURL.RawQuery = url.Values{"mode": {"ro"}}.Encode()
+	database, err := stdsql.Open("sqlite3_extended", databaseURL.String())
+	if err != nil {
+		return fmt.Errorf("%w: open restored SQLite file: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	defer database.Close()
+	if err = database.Ping(); err != nil {
+		return fmt.Errorf("%w: restored SQLite file is unreadable", ErrEnterpriseBackupInvalid)
+	}
+	var integrity string
+	if err = database.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		return fmt.Errorf("%w: restored SQLite integrity check failed", ErrEnterpriseBackupInvalid)
+	}
+	var refsTable, blocksTable int
+	if err = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'refs'").Scan(&refsTable); err != nil {
+		return fmt.Errorf("%w: inspect restored SQLite reference table: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	if err = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'blocks'").Scan(&blocksTable); err != nil {
+		return fmt.Errorf("%w: inspect restored SQLite block table: %v", ErrEnterpriseBackupInvalid, err)
+	}
+	if refsTable == 1 && blocksTable == 1 {
+		var orphanRefs int
+		if err = database.QueryRow(`
+			SELECT COUNT(*)
+			FROM refs AS refs
+			LEFT JOIN blocks AS blocks
+			  ON blocks.id = refs.def_block_id AND blocks.box = refs.box
+			WHERE blocks.id IS NULL
+		`).Scan(&orphanRefs); err != nil {
+			return fmt.Errorf("%w: inspect restored SQLite references: %v", ErrEnterpriseBackupInvalid, err)
+		}
+		if orphanRefs != 0 {
+			return fmt.Errorf("%w: restored SQLite contains orphan references", ErrEnterpriseBackupInvalid)
+		}
+	}
+	return nil
 }
 
 func buildEnterpriseBackupManifest(sourceSpaceID string) (*EnterpriseBackupManifest, error) {

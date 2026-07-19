@@ -20,6 +20,7 @@ const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SOURCE_SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TARGET_SPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const BACKUP_ID = "22222222-2222-4222-8222-222222222222";
+const SECOND_BACKUP_ID = "22222222-2222-4222-8222-222222222223";
 const RESTORE_ID = "33333333-3333-4333-8333-333333333333";
 const CSRF_TOKEN = "A".repeat(43);
 const BACKUPS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SOURCE_SPACE_ID}/backups`;
@@ -39,7 +40,9 @@ const backup = {
   status: "succeeded" as const,
 };
 
-function restore(status: "activated" | "ready-for-activation") {
+function restore(
+  status: "activated" | "failed" | "queued" | "ready-for-activation" | "restoring",
+) {
   return {
     activatedAt:
       status === "activated" ? "2026-07-19T00:01:00.000Z" : null,
@@ -178,5 +181,100 @@ describe("BackupsPage restore discovery", () => {
       { csrf: CSRF_TOKEN, path: ACTIVATION_PATH },
     ]);
     expect(screen.queryByRole("button", { name: "激活空间" })).not.toBeInTheDocument();
+  });
+
+  it("fences every restore form while one create mutation is pending", async () => {
+    let resolveCreate!: (response: Response) => void;
+    const createResponse = new Promise<Response>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const secondBackup = { ...backup, backupId: SECOND_BACKUP_ID };
+    let createRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const path = requestPath(input);
+        if (path === BACKUPS_PATH) {
+          return Promise.resolve(
+            jsonResponse({ backups: [backup, secondBackup] }),
+          );
+        }
+        if (path === RESTORES_PATH) {
+          return Promise.resolve(jsonResponse({ restores: [] }));
+        }
+        if (
+          path.endsWith(`/backups/${BACKUP_ID}/restores`) ||
+          path.endsWith(`/backups/${SECOND_BACKUP_ID}/restores`)
+        ) {
+          expect(init?.method).toBe("POST");
+          createRequests += 1;
+          return createResponse;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+
+    renderBackupsPage();
+
+    const startButtons = await screen.findAllByRole("button", {
+      name: "开始恢复",
+    });
+    fireEvent.click(startButtons[0]!);
+    await waitFor(() => expect(createRequests).toBe(1));
+    expect(
+      screen
+        .getAllByRole("button", { name: "开始恢复" })
+        .every((button) => (button as HTMLButtonElement).disabled),
+    ).toBe(true);
+
+    await act(async () => {
+      resolveCreate(jsonResponse(restore("queued")));
+      await createResponse;
+    });
+    expect(createRequests).toBe(1);
+  });
+
+  it("rediscovers a committed restore when the create response is lost", async () => {
+    let restoreStatus: "queued" | "ready-for-activation" = "queued";
+    let createRequests = 0;
+    let restoreReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const path = requestPath(input);
+        if (path === BACKUPS_PATH) {
+          return Promise.resolve(jsonResponse({ backups: [backup] }));
+        }
+        if (path === RESTORES_PATH) {
+          restoreReads += 1;
+          return Promise.resolve(
+            jsonResponse({
+              restores: restoreReads > 1 ? [restore(restoreStatus)] : [],
+            }),
+          );
+        }
+        if (path.endsWith(`/backups/${BACKUP_ID}/restores`)) {
+          expect(init?.method).toBe("POST");
+          createRequests += 1;
+          restoreStatus = "queued";
+          return Promise.reject(new Error("connection lost after commit"));
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+
+    renderBackupsPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "开始恢复" }),
+    );
+    await waitFor(() => expect(createRequests).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByText("请先完成当前恢复任务")).toBeVisible(),
+    );
+    expect(screen.queryByRole("button", { name: "开始恢复" })).not.toBeInTheDocument();
+    expect(restoreReads).toBeGreaterThanOrEqual(2);
   });
 });

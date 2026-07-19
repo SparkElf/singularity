@@ -328,6 +328,13 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
       targetSpaceId: restore.targetSpaceId,
     });
 
+    const duplicateResponse = await fetch(`${testApi.baseUrl}${path}`, {
+      body: JSON.stringify({ targetSpaceName: "Second restored copy" }),
+      headers: mutationHeaders(graph),
+      method: "POST",
+    });
+    expect(duplicateResponse.status).toBe(409);
+
     const listed = await fetch(
       `${testApi.baseUrl}${buildPath(ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE, {
         organizationId: graph.organizationId,
@@ -338,6 +345,23 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
     expect(listed.status).toBe(200);
     expect(spaceRestoresResponseSchema.parse(await listed.json())).toEqual({
       restores: [restore],
+    });
+    const audit = await database.$queryRaw<
+      Array<{ action: string; spaceId: string; targetId: string; targetType: string }>
+    >(
+      Prisma.sql`
+        SELECT "action", "space_id" AS "spaceId", "target_id" AS "targetId", "target_type" AS "targetType"
+        FROM "audit_events"
+        WHERE "organization_id" = ${graph.organizationId}::uuid
+        ORDER BY "sequence" DESC
+        LIMIT 1
+      `,
+    );
+    expect(audit[0]).toEqual({
+      action: "restore.create",
+      spaceId: graph.spaceId,
+      targetId: restore.restoreId,
+      targetType: "restore",
     });
   });
 

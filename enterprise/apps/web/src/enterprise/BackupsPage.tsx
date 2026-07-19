@@ -161,7 +161,7 @@ function BackupsPageContent({
         input.backupId,
         input.request,
       ),
-    onSuccess: async () => {
+    onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: spaceRestoresQueryKey(organizationId, sourceSpaceId),
@@ -210,10 +210,12 @@ function BackupsPageContent({
 
   const backups = backupsQuery.data?.backups ?? [];
   const restores = restoresQuery.data?.restores ?? [];
-  const hasCurrentRestores =
+  const restoreCollectionReady =
     restoresQuery.isSuccess &&
     !restoresQuery.isFetching &&
     !restoresQuery.isPaused;
+  const restoreSubmissionAvailable =
+    restoreCollectionReady && !restoreIsRunning(restores);
   const mutationError =
     createBackupMutation.error ??
     createRestoreMutation.error ??
@@ -404,8 +406,7 @@ function BackupsPageContent({
                     </TableCell>
                     <TableCell>
                       {backup.status === "succeeded" &&
-                      hasCurrentRestores &&
-                      !restoreIsRunning(restores) ? (
+                      restoreSubmissionAvailable ? (
                         <form
                           className="flex min-w-[360px] items-center justify-end gap-2"
                           onInput={() => setRestoreFormError(null)}
@@ -433,12 +434,18 @@ function BackupsPageContent({
                               restoreFormError === backup.backupId || undefined
                             }
                             className="w-52"
+                            disabled={createRestoreMutation.isPending}
                             id={`restore-name-${backup.backupId}`}
                             name="targetSpaceName"
                             placeholder="恢复空间名称"
                             required
                           />
-                          <Button disabled={restoring} size="sm" type="submit" variant="outline">
+                          <Button
+                            disabled={createRestoreMutation.isPending}
+                            size="sm"
+                            type="submit"
+                            variant="outline"
+                          >
                             {restoring ? (
                               <Spinner data-icon="inline-start" aria-label="正在创建恢复任务" />
                             ) : (
@@ -450,9 +457,9 @@ function BackupsPageContent({
                       ) : (
                         <span className="block text-right text-xs text-muted-foreground">
                           {backup.status === "succeeded"
-                            ? hasCurrentRestores
-                              ? "请先完成当前恢复任务"
-                              : "正在确认恢复任务"
+                            ? !restoreCollectionReady
+                              ? "正在确认恢复任务"
+                              : "请先完成当前恢复任务"
                             : "备份完成后可恢复"}
                         </span>
                       )}
