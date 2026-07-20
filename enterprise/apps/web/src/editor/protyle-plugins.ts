@@ -25,15 +25,52 @@ type ReactProtylePlugin = ProtylePluginContribution<
   ProtyleController
 >;
 
-function focusBlock(element: Element): void {
-  element.classList.add("protyle-wysiwyg--hl");
+const focusedBlockIds = new Map<HTMLElement, string>();
+const focusObservers = new Map<HTMLElement, MutationObserver>();
+
+/** 在事务重建块 DOM 后恢复会话态焦点 class，展示状态不进入持久化 HTML。 */
+function restoreFocusedBlock(editorRoot: HTMLElement): void {
+  const blockId = focusedBlockIds.get(editorRoot);
+  if (!blockId) {
+    return;
+  }
+  const block = Array.from(editorRoot.querySelectorAll<HTMLElement>("[data-node-id]")).find(
+    (candidate) => candidate.getAttribute("data-node-id") === blockId,
+  );
+  block?.classList.add("protyle-wysiwyg--hl");
 }
 
+/** 聚焦块并按编辑器根隔离状态，避免不同内容会话共享插件展示态。 */
+function focusBlock(element: Element): void {
+  const block = element.closest<HTMLElement>("[data-node-id]") ?? element;
+  const editorRoot = block.closest<HTMLElement>(".protyle-wysiwyg");
+  if (!editorRoot) {
+    block.classList.add("protyle-wysiwyg--hl");
+    return;
+  }
+  const blockId = block.getAttribute("data-node-id");
+  if (!blockId) {
+    return;
+  }
+  focusedBlockIds.set(editorRoot, blockId);
+  block.classList.add("protyle-wysiwyg--hl");
+  if (!focusObservers.has(editorRoot)) {
+    const observer = new MutationObserver(() => restoreFocusedBlock(editorRoot));
+    observer.observe(editorRoot, {childList: true, subtree: true});
+    focusObservers.set(editorRoot, observer);
+  }
+}
+
+/** 键盘命令聚焦当前选区所属块；事件目标可能是编辑器根容器，不能只查其祖先。 */
 function focusBlockFromKeyboard(event: KeyboardEvent): void {
   if (!(event.target instanceof Element)) {
     return;
   }
-  const block = event.target.closest("[data-node-id]");
+  const anchor = window.getSelection()?.anchorNode;
+  const selectionBlock = anchor instanceof Element
+    ? anchor.closest("[data-node-id]")
+    : anchor?.parentElement?.closest("[data-node-id]");
+  const block = event.target.closest("[data-node-id]") ?? selectionBlock;
   if (block) {
     focusBlock(block);
   }
@@ -88,6 +125,11 @@ function createReactProtylePlugin(): ReactProtylePlugin {
         run: (_editor, nodeElement) => focusBlock(nodeElement),
       },
     ],
+    dispose: () => {
+      focusObservers.forEach((observer) => observer.disconnect());
+      focusObservers.clear();
+      focusedBlockIds.clear();
+    },
     transformPaste,
   };
 }
