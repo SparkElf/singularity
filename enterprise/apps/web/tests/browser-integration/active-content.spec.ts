@@ -45,6 +45,7 @@ interface ObservedOcrRequest {
 
 interface ActiveContentBoundary {
   readonly assetRequests: ObservedAssetRequest[];
+  readonly downloadUrls: string[];
   readonly ocrRequests: ObservedOcrRequest[];
 }
 
@@ -182,6 +183,7 @@ async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary
   );
   const boundary: ActiveContentBoundary = {
     assetRequests: [],
+    downloadUrls: [],
     ocrRequests: [],
   };
 
@@ -302,7 +304,21 @@ async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary
       return;
     }
     if (kernelPath === "/api/block/getDocInfo") {
-      await fulfillJson(route, { code: 0, data: { ial: { title: "" } }, msg: "" });
+      await fulfillJson(route, {
+        code: 0,
+        data: {
+          attrViews: [],
+          ial: { id: DOCUMENT_ID, title: "", updated: "20260719000000" },
+          icon: "",
+          id: DOCUMENT_ID,
+          name: "主动内容安全样例",
+          refCount: 0,
+          refIDs: [],
+          rootID: DOCUMENT_ID,
+          subFileCount: 0,
+        },
+        msg: "",
+      });
       return;
     }
     if (kernelPath === "/api/block/getBlockBreadcrumb") {
@@ -498,6 +514,7 @@ test.describe("active content and PDF preview", () => {
       const downloadPromise = page.waitForEvent("download");
       await editor.getByText(asset.label).click();
       const download = await downloadPromise;
+      boundary.downloadUrls.push(download.url());
       expect(download.suggestedFilename()).toBe(asset.fileName);
       await download.path();
       const preview = page.locator("[data-asset-preview]");
@@ -511,11 +528,35 @@ test.describe("active content and PDF preview", () => {
     for (const asset of ACTIVE_ASSETS) {
       expect(boundary.assetRequests).toContainEqual({
         documentId: DOCUMENT_ID,
-        download: true,
+        download: false,
         notebookId: NOTEBOOK_ID,
         path: asset.path,
       });
     }
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expect(boundary.downloadUrls.map((downloadUrl) => {
+      const url = new URL(downloadUrl);
+      return {
+        documentId: url.searchParams.get("documentId"),
+        download: url.searchParams.get("download") === "true",
+        notebookId: url.searchParams.get("notebookId"),
+        path: url.pathname.slice(`${GATEWAY_BASE_PATH}/`.length),
+      };
+    })).toEqual(ACTIVE_ASSETS.map((asset) => ({
+      documentId: DOCUMENT_ID,
+      download: true,
+      notebookId: NOTEBOOK_ID,
+      path: asset.path,
+    })));
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      // 浏览器把已交给下载管理器的附件请求标记为 ERR_ABORTED，不代表 Gateway 失败。
+      unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
+        const url = new URL(request.url());
+        const isActiveAsset = ACTIVE_ASSETS.some((asset) => url.pathname.endsWith(`/${asset.path}`));
+        return request.failure()?.errorText !== "net::ERR_ABORTED" ||
+          !isActiveAsset ||
+          url.searchParams.get("documentId") !== DOCUMENT_ID ||
+          url.searchParams.get("notebookId") !== NOTEBOOK_ID;
+      }),
+    });
   });
 });

@@ -48,7 +48,7 @@ interface PdfJsReadyEvent extends Event {
 }
 
 const PDF_RUNTIME_READY_EVENT = "singularity:pdfjs-ready";
-const PDF_BRIDGE_URL = new URL("./pdf-runtime-bridge.mjs", import.meta.url).href;
+const PDF_BRIDGE_URL = new URL("./pdf-runtime-bridge.mjs?no-inline", import.meta.url).href;
 let runtimePromise: Promise<PdfJsRuntime> | null = null;
 
 function abortReason(signal: AbortSignal): Error {

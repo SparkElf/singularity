@@ -2673,8 +2673,10 @@ export class WYSIWYG {
                 inlineMathMenu(protyle, inlineMathElement);
                 return false;
             }
-            if (target.tagName === "IMG" && hasClosestByClassName(target, "img")) {
-                this.showImageMenu(protyle, protyle.toolbar.range, target.parentElement.parentElement, {
+            // 右键命中图片容器时仍沿同一图片菜单链路，避免非编辑容器把事件目标从 IMG 重定向为 SPAN。
+            const imageElement = hasClosestByAttribute(target, "data-type", "img");
+            if (imageElement && imageElement.querySelector("img")) {
+                this.showImageMenu(protyle, protyle.toolbar.range, imageElement, {
                     clientX: x + 4,
                     clientY: y
                 });

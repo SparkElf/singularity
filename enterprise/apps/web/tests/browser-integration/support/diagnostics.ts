@@ -26,6 +26,7 @@ interface BrowserHealthEvidence {
   unexpectedConsoleMessages?: readonly ConsoleMessage[];
   unexpectedErrorResponses?: readonly Response[];
   unexpectedRequestFailures?: readonly Request[];
+  expectedPendingRequests?: readonly Request[];
 }
 
 export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
@@ -97,13 +98,20 @@ export function expectBrowserHealthy(
   expect(
     evidence.unexpectedRequestFailures ?? diagnostics.requestFailures,
   ).toEqual([]);
-  expect([...diagnostics.pendingRequests]).toEqual([]);
+  // 允许调用方明确列出仍在等待终态的已取消请求，其他请求仍必须完成。
+  const expectedPendingRequests = new Set(evidence.expectedPendingRequests ?? []);
+  expect(
+    [...diagnostics.pendingRequests].filter((request) => !expectedPendingRequests.has(request)),
+  ).toEqual([]);
 
   const terminalRequests = new Set([
     ...diagnostics.responses.map((response) => response.request()),
     ...diagnostics.requestFailures,
   ]);
   for (const request of diagnostics.requests) {
+    if (expectedPendingRequests.has(request)) {
+      continue;
+    }
     const timing = diagnostics.requestTimings.get(request);
     expect(timing).toBeDefined();
     expect(timing?.finishedAt).not.toBeNull();

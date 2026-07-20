@@ -215,7 +215,21 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
       return;
     }
     if (kernelPath === "/api/block/getDocInfo") {
-      await fulfillJson(route, { code: 0, data: { ial: { title: "" } }, msg: "" });
+      await fulfillJson(route, {
+        code: 0,
+        data: {
+          attrViews: [],
+          ial: { id: identity.documentId, title: "", updated: "20260719000000" },
+          icon: "",
+          id: identity.documentId,
+          name: identity.documentId === DOCUMENT_A ? "第一文档" : "第二文档",
+          refCount: 0,
+          refIDs: [],
+          rootID: identity.documentId,
+          subFileCount: 0,
+        },
+        msg: "",
+      });
       return;
     }
     if (kernelPath === "/api/block/getBlockBreadcrumb") {
@@ -394,7 +408,22 @@ test.describe("React discovery work panels", () => {
       conf: { type: { paragraph: true, tag: true } },
       id: DOCUMENT_B,
     });
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      // 文档切换时主动取消的旧 getDoc 属于迟到响应隔离合同，不是失败请求。
+      unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
+        const failure = request.failure();
+        const url = new URL(request.url());
+        const isCancelledDocumentRequest = url.pathname.includes("/kernel/api/api/filetree/getDoc") ||
+          url.pathname.includes("/kernel/api/api/block/getBlockBreadcrumb");
+        return failure?.errorText !== "net::ERR_ABORTED" || !isCancelledDocumentRequest;
+      }),
+      // 并行浏览器运行时，已取消的旧文档请求可能没有及时发出终态事件；仅放行这两个请求。
+      expectedPendingRequests: [...diagnostics.pendingRequests].filter((request) => {
+        const url = new URL(request.url());
+        return url.pathname.includes("/kernel/api/api/filetree/getDoc") ||
+          url.pathname.includes("/kernel/api/api/block/getBlockBreadcrumb");
+      }),
+    });
   });
 
   test("opens document search, outline, backlinks and history from the current editor identity", async ({ page }, testInfo) => {
