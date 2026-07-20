@@ -25,6 +25,9 @@ func TestEnterpriseObservationSamplerStopsOnCancellationAndPublishesSnapshot(t *
 	if sample.Health.KernelVersion == "" || sample.Capacity.SampledAt.IsZero() {
 		t.Fatalf("observation snapshot is incomplete: %#v", sample)
 	}
+	if !sample.Health.SampledAt.Equal(sample.Capacity.SampledAt) {
+		t.Fatalf("observation snapshot timestamps diverged: health=%s capacity=%s", sample.Health.SampledAt, sample.Capacity.SampledAt)
+	}
 
 	sample.Health.KernelVersion = "mutated"
 	copy := GetEnterpriseObservationSample()

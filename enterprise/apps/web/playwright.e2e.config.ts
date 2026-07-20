@@ -4,12 +4,13 @@ import { resolve } from "node:path";
 
 const apiPort = process.env.SINGULARITY_E2E_API_PORT ?? "3012";
 const webPort = process.env.SINGULARITY_E2E_WEB_PORT ?? "4174";
-const runtimeRoot = resolve(
-  tmpdir(),
-  `singularity-p5-e2e-runtime-${String(process.pid)}`,
-);
-const stateFile = resolve(runtimeRoot, "stack-state.json");
-const schema = `singularity_p5_e2e_${String(process.pid)}`;
+const runtimeRoot =
+  process.env.SINGULARITY_E2E_RUNTIME_ROOT ??
+  resolve(tmpdir(), `singularity-p5-e2e-runtime-${String(process.pid)}`);
+const stateFile =
+  process.env.SINGULARITY_E2E_STATE_FILE ?? resolve(runtimeRoot, "stack-state.json");
+const schema =
+  process.env.SINGULARITY_E2E_SCHEMA ?? `singularity_p5_e2e_${String(process.pid)}`;
 
 process.env.SINGULARITY_E2E_API_PORT = apiPort;
 process.env.SINGULARITY_E2E_RUNTIME_ROOT = runtimeRoot;

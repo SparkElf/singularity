@@ -67,11 +67,13 @@ func StartEnterpriseObservationSampler(ctx context.Context, interval time.Durati
 	}
 }
 
+// SampleEnterpriseObservabilityNow 采集一次健康与容量快照，两个子结果共享同一采样时间。
 func SampleEnterpriseObservabilityNow() *EnterpriseObservationSample {
 	startedAt := time.Now()
+	sampledAt := startedAt.UTC()
 	health := EnterpriseHealthSample{
 		KernelVersion: util.Ver,
-		SampledAt:     startedAt.UTC(),
+		SampledAt:     sampledAt,
 		Status:        "ready",
 	}
 	if !util.IsBooted() {
@@ -85,7 +87,7 @@ func SampleEnterpriseObservabilityNow() *EnterpriseObservationSample {
 		DataBytes:                  dataBytes,
 		FileCount:                  fileCount,
 		SampleDurationMilliseconds: time.Since(startedAt).Milliseconds(),
-		SampledAt:                  time.Now().UTC(),
+		SampledAt:                  sampledAt,
 	}
 	if err != nil {
 		capacity.AssetBytes = 0
