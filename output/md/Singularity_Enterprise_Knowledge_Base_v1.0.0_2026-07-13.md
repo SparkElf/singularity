@@ -3,7 +3,7 @@ title: "奇点企业知识库完整方案"
 description: "定义奇点云端企业知识库的产品边界、目标架构、长期路线与本期交付计划"
 author: "Codex"
 date: "2026-07-21"
-version: "1.5.10"
+version: "1.6.0"
 status: "approved"
 tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 ---
@@ -46,6 +46,7 @@ tags: ["singularity", "knowledge-base", "architecture", "roadmap"]
 | 1.5.8 | 2026-07-20 | Codex | 记录Kernel全量验证通过、Discovery默认类型合同修复及剩余环境阻塞 |
 | 1.5.9 | 2026-07-21 | Codex | 闭合供应链许可证证据、固定验证矩阵与Node 24 watchdog目录锁修复 |
 | 1.5.10 | 2026-07-21 | Codex | 按第9.3节逐项收口L1验收并同步交接、P5与恢复计划状态 |
+| 1.6.0 | 2026-07-21 | Codex | 建立L2异步协作PRD、架构、ADR与可恢复实施计划，保留L3实时协作门禁 |
 
 ## Table of Contents
 
@@ -308,13 +309,15 @@ Kernel Gateway承担真实边界职责：
 |------|------|----------|
 | L0 | 建立可持续二开基础 | Fork、品牌、React/Vite基座、CI/CD、上游同步、许可证 |
 | L1 | 建立企业基础版 | 组织、用户组、空间、RBAC、分享、审计 |
-| L2 | 完善异步协作 | 评论、@提及、通知、版本历史、文档权限 |
+| L2 | 完善异步协作 | 评论、@提及、通知、版本历史、文档权限（[PRD](../../docs/product/l2-async-collaboration.md)、[架构](../../docs/architecture/l2-async-collaboration.md)） |
 | L3 | 验证并交付实时协作 | CRDT、在线状态、光标、冲突合并 |
 | L4 | 建立知识治理 | 审批、归档、密级、水印、保留策略 |
 | L5 | 支持规模化部署 | 调度、扩缩容、跨空间搜索、灾备 |
 | L6 | 建立智能知识库 | 权限感知检索、问答、摘要、知识关联 |
 
 L3必须先通过普通块、块引用、嵌入块、属性视图、历史和撤销语义的无损原型验证。未通过时不得进入生产实现。
+
+L2方案当前为`proposed`：先审阅[产品需求](../../docs/product/l2-async-collaboration.md)、[架构方案](../../docs/architecture/l2-async-collaboration.md)、[ADR-029](../../docs/adr/0029-l2-async-collaboration-boundary.md)和[实施计划](../../plans/2026-07-21-l2-async-collaboration.md)，批准后才进入L2 implementation。
 
 ## 8. L0基础工程
 
@@ -534,6 +537,9 @@ L0完成须满足第8.3节全部验收，且代码评审、测试和许可证审
 5. [NestJS documentation](https://docs.nestjs.com/)
 6. [Prisma documentation](https://www.prisma.io/docs/)
 7. [Vite documentation](https://vite.dev/)
+8. [L2异步协作产品需求](../../docs/product/l2-async-collaboration.md)
+9. [L2异步协作架构方案](../../docs/architecture/l2-async-collaboration.md)
+10. [ADR-029：L2异步协作控制面边界](../../docs/adr/0029-l2-async-collaboration-boundary.md)
 8. [Tailwind CSS documentation](https://tailwindcss.com/docs)
 9. [奇点设计系统](./Singularity_Design_System_v1.0.0_2026-07-13.md)
 10. [企业空间Session组合根与Kernel Gateway启动方案](../../docs/architecture/space-session-composition-root.md)
