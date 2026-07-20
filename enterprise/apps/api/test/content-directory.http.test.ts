@@ -95,7 +95,7 @@ function directoryKernelResponse(request: TestKernelRequest): TestKernelResponse
   }
   if (notebookId === MALFORMED_JSON_NOTEBOOK_ID) {
     return {
-      body: "directory-stack-sentinel",
+      body: "directory-secret-sentinel",
       headers: { "content-type": "application/json" },
       status: 200,
     };
@@ -427,6 +427,7 @@ describe("Content directory HTTP contract", () => {
     expect(logger.output).toContain("SyntaxError");
     expect(logger.output).toContain("at JSON.parse");
     expect(logger.output).toContain("at readDirectoryJson");
+    expect(logger.output).not.toContain("directory-secret-sentinel");
   });
 
   test("rejects an out-of-range offset before contacting the Kernel directory", async () => {
