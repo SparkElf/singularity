@@ -56,7 +56,7 @@ export async function captureAccessChanges<T>(
       requestId: barrierRequestId,
       selectors: [{ kind: "user", value: randomUUID() }],
     });
-    await database.client.$queryRaw(
+    await database.client.$executeRaw(
       Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${barrierEvent})`,
     );
     await Promise.race([

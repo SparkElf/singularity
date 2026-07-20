@@ -526,13 +526,18 @@ export class FetchOidcProviderClient implements OidcProviderClient {
       throw oidcUnavailable("OIDC JWKS response is invalid");
     }
     const matchingKeys = jwksValue.keys.filter(
-      (candidate): candidate is Record<string, unknown> =>
-        typeof candidate === "object" &&
-        candidate !== null &&
-        candidate.kid === keyId &&
-        (candidate.alg === undefined || candidate.alg === algorithm) &&
-        (candidate.use === undefined || candidate.use === "sig") &&
-        keyMatchesAlgorithm(candidate, algorithm),
+      (candidate): candidate is Record<string, unknown> => {
+        if (typeof candidate !== "object" || candidate === null) {
+          return false;
+        }
+        const key = candidate as Record<string, unknown>;
+        return (
+          key.kid === keyId &&
+          (key.alg === undefined || key.alg === algorithm) &&
+          (key.use === undefined || key.use === "sig") &&
+          keyMatchesAlgorithm(key, algorithm)
+        );
+      },
     );
     if (matchingKeys.length !== 1) {
       throw oidcRejected("OIDC signing key selection is ambiguous or invalid");

@@ -148,7 +148,6 @@ interface RuntimeEndpointRow {
   hostname: string;
   kernelInstanceId: string;
   port: number;
-  runtimeOwner: string;
   serverName: string;
   spaceId: string;
   tlsProfile: string;
@@ -187,7 +186,7 @@ interface PersistedProcessIdentity {
 
 function diagnosticText(value: string): string | undefined {
   const normalized = value
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/[\p{Cc}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (normalized.length === 0) {
@@ -462,7 +461,7 @@ export class ProcessRestoreDeployment
     ) {
       throw new RestoreDeploymentError("target-runtime-invalid");
     }
-    await this.#withTargetLifecycle(target, async () => {
+    await this.#withTargetLifecycle(target, () => {
       if (target.removed || target.state !== "ready" || !target.registered) {
         throw new RestoreDeploymentError("target-runtime-invalid");
       }
@@ -780,8 +779,8 @@ export class ProcessRestoreDeployment
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    let interrupt = (_reason: "abort" | "output-limit" | "timeout"): void => {
-      return;
+    let interrupt = (reason: "abort" | "output-limit" | "timeout"): void => {
+      void reason;
     };
     const interrupted = new Promise<
       "abort" | "output-limit" | "timeout"
@@ -1106,7 +1105,11 @@ export class ProcessRestoreDeployment
       let responseEnded = false;
       let responseReceived = false;
       let abort = (): void => undefined;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+      // readiness 请求的定时器只赋值一次，settle 闭包负责释放它。
+      const timeout = setTimeout(
+        () => request.destroy(new Error("timeout")),
+        timeoutMilliseconds,
+      );
       const settle = (callback: () => void): void => {
         if (settled) {
           return;
@@ -1122,7 +1125,15 @@ export class ProcessRestoreDeployment
         settle(() => resolveReady(value));
       };
       const reject = (error: unknown): void => {
-        settle(() => rejectReady(error));
+        const reason =
+          error instanceof Error
+            ? error
+            : new RestoreDeploymentError(
+                "kernel-readiness-failed",
+                undefined,
+                errorCause(error),
+              );
+        settle(() => rejectReady(reason));
       };
       const request = requestHttps(
         {
@@ -1202,10 +1213,6 @@ export class ProcessRestoreDeployment
           reject(new RestoreDeploymentError("kernel-readiness-failed"));
         }
       });
-      timeout = setTimeout(
-        () => request.destroy(new Error("timeout")),
-        timeoutMilliseconds,
-      );
       timeout.unref();
       abort = (): void => {
         request.destroy(
@@ -1321,7 +1328,7 @@ export class ProcessRestoreDeployment
   /** 串行化同一目标的启动、提交和清理，防止并发状态转换交叉执行。 */
   async #withTargetLifecycle<T>(
     target: TargetRuntime,
-    operation: () => Promise<T>,
+    operation: () => T | Promise<T>,
   ): Promise<T> {
     const predecessor = target.lifecyclePromise;
     let release!: () => void;
@@ -1480,7 +1487,6 @@ export class ProcessRestoreDeployment
           endpoint."hostname",
           endpoint."kernel_instance_id" AS "kernelInstanceId",
           endpoint."port",
-          endpoint."runtime_owner" AS "runtimeOwner",
           endpoint."server_name" AS "serverName",
           endpoint."space_id" AS "spaceId",
           endpoint."tls_profile" AS "tlsProfile"
@@ -1493,7 +1499,7 @@ export class ProcessRestoreDeployment
           AND endpoint."runtime_owner" = ${this.#configuration.runtimeOwner}
       `,
     );
-    const endpoints = rows.map(({ runtimeOwner: _runtimeOwner, ...row }) =>
+    const endpoints = rows.map((row) =>
       kernelRuntimeEndpointSchema.parse(row),
     );
     const byKernel = new Map(

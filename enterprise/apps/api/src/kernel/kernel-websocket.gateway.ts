@@ -121,6 +121,12 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
       return;
     }
     const requestId = randomUUID();
+    this.#logger.debug({
+      event: "kernel.route",
+      outcome: "websocket-upgrade-received",
+      requestId,
+      url: request.url,
+    });
     this.#pendingUpgradeSockets.add(socket);
     void this.#authorizeUpgrade(request, requestId)
       .then(({ session, target }) => {
@@ -320,6 +326,8 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
   #closeWebSocketServer(): Promise<void> {
     return new Promise((resolve) => {
       let settled = false;
+      // 关闭超时由 finish 闭包读取，先声明再赋值以覆盖同步 close 回调。
+      // eslint-disable-next-line prefer-const
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const finish = (error?: Error): void => {
         if (settled) {

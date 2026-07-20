@@ -210,7 +210,9 @@ export class FileObjectStore {
   async read(key: ObjectKey, maximumBytes: number): Promise<Buffer> {
     const chunks: Buffer[] = [];
     for await (const chunk of await this.openReadStream(key, maximumBytes)) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      chunks.push(
+        (Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)) as Buffer<ArrayBufferLike>,
+      );
     }
     return Buffer.concat(chunks);
   }

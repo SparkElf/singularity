@@ -122,6 +122,8 @@ function retainShareResponseScope(
   body?: Readable,
 ): void {
   let disposed = false;
+  // 响应结束前需要由 dispose 清理该定时器，保留一次延迟赋值。
+  // eslint-disable-next-line prefer-const
   let timeout: NodeJS.Timeout | undefined;
   const dispose = (): void => {
     if (disposed) {
@@ -296,7 +298,7 @@ export class PublicShareController {
       retainShareResponseScope(
         abortScope,
         reply.raw,
-        lease.release,
+        lease.release.bind(lease),
         lease.terminateAtMilliseconds,
       );
       retained = true;
@@ -372,7 +374,7 @@ export class PublicShareController {
       retainShareResponseScope(
         abortScope,
         reply.raw,
-        lease.release,
+        lease.release.bind(lease),
         lease.terminateAtMilliseconds,
         asset.body,
       );

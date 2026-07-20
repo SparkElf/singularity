@@ -24,7 +24,7 @@ describe("Kernel error logging context", () => {
 
   test("does not label a message fallback as a missing stack", () => {
     const error = new Error("stack-unavailable");
-    error.stack = undefined;
+    delete error.stack;
 
     const context = kernelErrorContext(error, "Kernel callback failed");
 

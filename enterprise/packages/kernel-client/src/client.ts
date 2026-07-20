@@ -163,7 +163,7 @@ export class KernelPrivateClient {
    */
   request(input: KernelPrivateRequest): Promise<KernelPrivateResponse> {
     if (input.signal?.aborted) {
-      const reason = input.signal.reason;
+      const reason: unknown = input.signal.reason;
       return Promise.reject(
         new KernelTransportError("unavailable", {
           cause: reason,
@@ -189,8 +189,12 @@ export class KernelPrivateClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let response: IncomingMessage | undefined;
+      // 请求与监听器在 cleanup 闭包创建后一次绑定，确保同步失败也能统一释放。
+      // eslint-disable-next-line prefer-const
       let request: ReturnType<typeof requestHttps>;
+      // eslint-disable-next-line prefer-const
       let onRequestError: ((error: Error) => void) | undefined;
+      // eslint-disable-next-line prefer-const
       let onRequestTimeout: (() => void) | undefined;
       let onAbort: (() => void) | undefined;
       let onBodyError: ((error: Error) => void) | undefined;
@@ -289,7 +293,7 @@ export class KernelPrivateClient {
       request.once("timeout", onRequestTimeout);
       if (input.signal) {
         onAbort = (): void => {
-          const reason = input.signal?.reason;
+          const reason: unknown = input.signal?.reason;
           const abortError =
             reason instanceof Error
               ? reason

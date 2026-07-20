@@ -8,15 +8,15 @@
 
 \if :{?singularity_schema}
 \else
-  \error 'singularity_schema is required (the migrated PostgreSQL schema)'
+  DO $$ BEGIN RAISE EXCEPTION 'singularity_schema is required (the migrated PostgreSQL schema)'; END $$;
 \endif
 \if :{?audit_writer_role}
 \else
-  \error 'audit_writer_role is required (a pre-created non-owner role)'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_writer_role is required (a pre-created non-owner role)'; END $$;
 \endif
 \if :{?audit_reader_role}
 \else
-  \error 'audit_reader_role is required (a pre-created non-owner role)'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_reader_role is required (a pre-created non-owner role)'; END $$;
 \endif
 
 SELECT EXISTS (
@@ -28,7 +28,7 @@ SELECT EXISTS (
 \gset
 \if :singularity_schema_exists
 \else
-  \error 'singularity_schema does not name an application schema'
+  DO $$ BEGIN RAISE EXCEPTION 'singularity_schema does not name an application schema'; END $$;
 \endif
 
 SELECT EXISTS (
@@ -39,7 +39,7 @@ SELECT EXISTS (
 \gset
 \if :audit_writer_exists
 \else
-  \error 'audit_writer_role does not exist; provision roles before running this file'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_writer_role does not exist; provision roles before running this file'; END $$;
 \endif
 
 SELECT EXISTS (
@@ -50,14 +50,14 @@ SELECT EXISTS (
 \gset
 \if :audit_reader_exists
 \else
-  \error 'audit_reader_role does not exist; provision roles before running this file'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_reader_role does not exist; provision roles before running this file'; END $$;
 \endif
 
 SELECT :'audit_writer_role' <> :'audit_reader_role' AS audit_roles_are_distinct;
 \gset
 \if :audit_roles_are_distinct
 \else
-  \error 'audit_writer_role and audit_reader_role must be distinct roles'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_writer_role and audit_reader_role must be distinct roles'; END $$;
 \endif
 
 SELECT
@@ -70,7 +70,7 @@ SELECT
 \gset
 \if :audit_roles_are_restricted
 \else
-  \error 'audit roles must not be superusers or BYPASSRLS roles'
+  DO $$ BEGIN RAISE EXCEPTION 'audit roles must not be superusers or BYPASSRLS roles'; END $$;
 \endif
 
 SELECT
@@ -92,7 +92,7 @@ SELECT
 \gset
 \if :audit_roles_are_not_table_owners
 \else
-  \error 'audit roles must not own audit tables; use a separate migration owner'
+  DO $$ BEGIN RAISE EXCEPTION 'audit roles must not own audit tables; use a separate migration owner'; END $$;
 \endif
 
 SELECT
@@ -107,15 +107,15 @@ SELECT
 \gset
 \if :audit_events_exists
 \else
-  \error 'audit_events is missing; apply the L1 Prisma migration first'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_events is missing; apply the L1 Prisma migration first'; END $$;
 \endif
 \if :audit_sequences_exists
 \else
-  \error 'organization_audit_sequences is missing; apply the L1 Prisma migration first'
+  DO $$ BEGIN RAISE EXCEPTION 'organization_audit_sequences is missing; apply the L1 Prisma migration first'; END $$;
 \endif
 \if :content_audit_intents_exists
 \else
-  \error 'content_audit_intents is missing; apply the ADR-027 Prisma migration first'
+  DO $$ BEGIN RAISE EXCEPTION 'content_audit_intents is missing; apply the ADR-027 Prisma migration first'; END $$;
 \endif
 
 SELECT
@@ -146,11 +146,11 @@ SELECT
 \gset
 \if :audit_chain_trigger_exists
 \else
-  \error 'audit_events_chain_insert_trigger is missing; refuse incomplete audit protection'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_events_chain_insert_trigger is missing; refuse incomplete audit protection'; END $$;
 \endif
 \if :audit_immutable_trigger_exists
 \else
-  \error 'audit_events_immutable_trigger is missing; refuse incomplete audit protection'
+  DO $$ BEGIN RAISE EXCEPTION 'audit_events_immutable_trigger is missing; refuse incomplete audit protection'; END $$;
 \endif
 
 -- Trigger functions use an explicit schema so a caller-provided search_path
@@ -294,11 +294,11 @@ SELECT
 \gset
 \if :audit_writer_privileges_valid
 \else
-  \error 'effective audit writer privileges do not match the append-only contract'
+  DO $$ BEGIN RAISE EXCEPTION 'effective audit writer privileges do not match the append-only contract'; END $$;
 \endif
 \if :audit_reader_privileges_valid
 \else
-  \error 'effective audit reader privileges do not match the query-only contract'
+  DO $$ BEGIN RAISE EXCEPTION 'effective audit reader privileges do not match the query-only contract'; END $$;
 \endif
 
 SELECT

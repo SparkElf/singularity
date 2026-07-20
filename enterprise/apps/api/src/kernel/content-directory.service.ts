@@ -67,7 +67,7 @@ async function readDirectoryJson(message: IncomingMessage): Promise<unknown> {
         message.destroy();
         throw serviceUnavailable();
       }
-      chunks.push(bytes);
+      chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch (error) {
@@ -119,7 +119,7 @@ export class ContentDirectoryService {
       });
       const value = await this.#requestJson(
         input,
-        `${DIRECTORY_DOCUMENTS_PATH}?${query}`,
+        `${DIRECTORY_DOCUMENTS_PATH}?${query.toString()}`,
       );
       const parsed = contentDirectoryDocumentsResponseSchema.safeParse(value);
       if (!parsed.success) {

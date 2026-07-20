@@ -1,6 +1,5 @@
 import {
   Injectable,
-  type ArgumentMetadata,
   type PipeTransform,
 } from "@nestjs/common";
 import { z, type ZodTypeAny } from "zod";
@@ -13,11 +12,11 @@ export class ZodValidationPipe<Schema extends ZodTypeAny>
 {
   constructor(private readonly schema: Schema) {}
 
-  transform(value: unknown, _metadata: ArgumentMetadata): z.infer<Schema> {
+  transform(value: unknown): z.infer<Schema> {
     const parsed = this.schema.safeParse(value);
     if (!parsed.success) {
       throw validationFailed();
     }
-    return parsed.data;
+    return parsed.data as z.infer<Schema>;
   }
 }

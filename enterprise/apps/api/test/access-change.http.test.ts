@@ -717,7 +717,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     });
     logger.clear();
 
-    await database.$queryRaw(
+    await database.$executeRaw(
       Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${invalidPayload})`,
     );
 
@@ -741,7 +741,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     const malformedPayload = '{"kind":';
     logger.clear();
 
-    await database.$queryRaw(
+    await database.$executeRaw(
       Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${malformedPayload})`,
     );
 
@@ -801,7 +801,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
               runtimeKernel.configuration.runtimeDeployment.tlsProfile,
           },
         });
-        await transaction.$queryRaw(
+        await transaction.$executeRaw(
           Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(upsert)})`,
         );
       });
@@ -831,7 +831,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
         await transaction.kernelRuntimeEndpoint.delete({
           where: { kernelInstanceId: endpoint.kernelInstanceId },
         });
-        await transaction.$queryRaw(
+        await transaction.$executeRaw(
           Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(remove)})`,
         );
       });

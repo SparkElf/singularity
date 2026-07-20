@@ -254,7 +254,7 @@ export function buildContentDirectoryRootDocumentsPath(
     CONTENT_DIRECTORY_ROOT_DOCUMENTS_PATH_TEMPLATE,
     parameters,
   ).replace("{notebookId}", encodeURIComponent(parameters.notebookId));
-  return `${path}?${new URLSearchParams({ offset: String(parameters.offset) })}`;
+  return `${path}?${new URLSearchParams({ offset: String(parameters.offset) }).toString()}`;
 }
 
 export function buildContentDirectoryChildDocumentsPath(
@@ -266,7 +266,7 @@ export function buildContentDirectoryChildDocumentsPath(
   )
     .replace("{notebookId}", encodeURIComponent(parameters.notebookId))
     .replace("{documentId}", encodeURIComponent(parameters.documentId));
-  return `${path}?${new URLSearchParams({ offset: String(parameters.offset) })}`;
+  return `${path}?${new URLSearchParams({ offset: String(parameters.offset) }).toString()}`;
 }
 
 function buildSpaceDiscoveryPath(

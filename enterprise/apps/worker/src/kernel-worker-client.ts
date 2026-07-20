@@ -85,7 +85,7 @@ async function readObservation(message: IncomingMessage): Promise<unknown> {
         message.destroy();
         throw new WorkerJobError("kernel-response-invalid", null);
       }
-      chunks.push(bytes);
+      chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
   } catch (error) {
     message.destroy();

@@ -60,7 +60,7 @@ async function readDiscoveryJson(message: IncomingMessage): Promise<unknown> {
           new Error("Kernel discovery response exceeded the size limit"),
         );
       }
-      chunks.push(bytes);
+      chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch (error) {

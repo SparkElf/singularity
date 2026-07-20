@@ -160,7 +160,7 @@ async function readKernelJsonResult(message: IncomingMessage): Promise<{
           cause: error,
         });
       }
-      chunks.push(bytes);
+      chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
   } catch (error) {
     message.destroy();

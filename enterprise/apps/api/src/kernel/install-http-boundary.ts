@@ -62,7 +62,7 @@ interface FastifyBoundary {
     parser: (
       request: FastifyRequestBoundary,
       body: Buffer,
-      done: (error: Error | null, value?: Buffer) => void,
+      done: (error: Error | null, value?: unknown) => void,
     ) => void,
   ): void;
   addHook(
@@ -91,6 +91,27 @@ export function installKernelGatewayHttpBoundary(
     { bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
     (_request, body, done) => done(null, body),
   );
+  fastify.addContentTypeParser(
+    /^application\/json(?:;.*)?$/i,
+    { bodyLimit: KERNEL_JSON_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
+    (_request, body, done) => {
+      if (body.byteLength === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body.toString("utf8")) as unknown);
+      } catch (error) {
+        done(
+          error instanceof Error
+            ? error
+            : new Error("JSON request body parsing failed", { cause: error }),
+        );
+      }
+    },
+  );
+  // Fastify 需要通过异步 hook 的返回 Promise 接收 reply.send 的终止信号。
+  // eslint-disable-next-line @typescript-eslint/require-await
   fastify.addHook("onRequest", async (request, reply) => {
     try {
       admission.admit({
@@ -114,6 +135,8 @@ export function installKernelGatewayHttpBoundary(
         });
     }
   });
+  // 保持 Fastify preParsing 的 Promise 合同，让有界流在解析阶段完成替换。
+  // eslint-disable-next-line @typescript-eslint/require-await
   fastify.addHook("preParsing", async (request, _reply, payload) => {
     const target = admission.inspect(request.raw);
     const maximumBytes =

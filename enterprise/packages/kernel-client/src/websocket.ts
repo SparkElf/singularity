@@ -102,6 +102,8 @@ export class KernelPrivateWebSocketClient {
       const socket = new WebSocket(address, socketOptions);
       let settled = false;
       let closeNotified = false;
+      // abort 需要先由监听清理闭包捕获，再在 socket 创建后绑定。
+      // eslint-disable-next-line prefer-const
       let abort: (() => void) | undefined;
       const removeAbortListener = (): void => {
         if (abort !== undefined) {

@@ -888,7 +888,7 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
             runtimeKernel.configuration.runtimeDeployment.tlsProfile,
         },
       });
-      await transaction.$queryRaw(
+      await transaction.$executeRaw(
         Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(event)})`,
       );
     });

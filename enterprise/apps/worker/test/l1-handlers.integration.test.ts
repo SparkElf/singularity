@@ -601,7 +601,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     await firstStartedPromise;
     await expect(
       handler.execute(firstJob, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "backup-claim-active",
     });
     await expect(
@@ -624,7 +624,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
       `,
     );
     releaseFirst();
-    await expect(firstExecution).rejects.toMatchObject<Partial<WorkerJobError>>({
+    await expect(firstExecution).rejects.toMatchObject({
       code: "backup-state-conflict",
     });
     await handler.execute(secondJob, new AbortController().signal);
@@ -688,7 +688,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
 
     await expect(
       handler.execute(job, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "backup-execution-failed",
     });
     expect(body.destroyed).toBe(true);
@@ -934,7 +934,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     );
     releaseFirst();
 
-    await expect(firstExecution).rejects.toMatchObject<Partial<WorkerJobError>>({
+    await expect(firstExecution).rejects.toMatchObject({
       code: "restore-claim-active",
     });
     await expect(
@@ -954,7 +954,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
 
     await expect(
       handler.execute(secondJob, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "restore-claim-expired",
     });
     expect(destroyedTargets).toBe(1);
@@ -997,7 +997,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
 
     await expect(
       handler.execute(job, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "restore-authorization-revoked",
     });
 
@@ -1064,7 +1064,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
 
     await expect(
       handler.execute(job, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "restore-execution-failed",
     });
 
@@ -1116,7 +1116,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
 
     await expect(
       handler.execute(job, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "restore-execution-failed",
     });
     expect(archiveStream?.destroyed).toBe(true);
@@ -1610,7 +1610,7 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
     const changedRangeJob = handler.decode(changedRangeRecord);
     await expect(
       handler.execute(changedRangeJob, new AbortController().signal),
-    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+    ).rejects.toMatchObject({
       code: "audit-archive-range-conflict",
     });
 
@@ -2007,7 +2007,7 @@ describe("L1 cross-Kernel content audit reconciliation with PostgreSQL", () => {
         DROP FUNCTION IF EXISTS ${Prisma.raw(functionName)}()
       `);
     }
-    expect(failure).toMatchObject<Partial<WorkerJobError>>({
+    expect(failure).toMatchObject({
       code: "content-audit-finalization-failed",
     });
     const loggedError = logger.entries.find(
