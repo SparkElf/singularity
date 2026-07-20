@@ -110,6 +110,7 @@ function documentResponse(
       isBacklinkExpand: false,
       isSyncing: false,
       mode: 0,
+      name: fixture.title,
       notebook: notebookId,
       parent2ID: "",
       parentDocument: false,
@@ -323,7 +324,7 @@ async function installGatewayBoundary(
         return;
       }
       if (kernelPath === "/api/block/getDocInfo") {
-        await fulfillJson(route, { code: 0, data: { ial: {} }, msg: "" });
+        await fulfillJson(route, { code: 0, data: { ial: { title: "" } }, msg: "" });
         return;
       }
       if (kernelPath === "/api/block/getBlockBreadcrumb") {
@@ -345,6 +346,18 @@ async function installGatewayBoundary(
         await fulfillJson(route, {
           code: 0,
           data: { canRedo: false, canUndo: false },
+          msg: "",
+        });
+        return;
+      }
+      if ([
+        "/api/block/getBlocksWordCount",
+        "/api/block/getContentWordCount",
+        "/api/block/getTreeStat",
+      ].includes(kernelPath)) {
+        await fulfillJson(route, {
+          code: 0,
+          data: { stat: { blockCount: 1, imageCount: 0, linkCount: 0, refCount: 0, runeCount: 0, wordCount: 0 } },
           msg: "",
         });
         return;

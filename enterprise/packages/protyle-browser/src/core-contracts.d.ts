@@ -6,6 +6,19 @@ import type {
   ProtyleWorkspaceCoreFactory,
 } from "./contracts.ts";
 
+export interface RealProtyleBrowserDocumentOptions extends ProtyleCoreDocumentOptions {
+  readonly render?: {
+    readonly background?: boolean;
+    readonly breadcrumb?: boolean;
+    readonly breadcrumbDocName?: boolean;
+    readonly gutter?: boolean;
+    readonly hideTitleOnZoom?: boolean;
+    readonly scroll?: boolean;
+    readonly title?: boolean;
+    readonly titleShowTop?: boolean;
+  };
+}
+
 export interface RealProtyleBrowserMenuOptions {
   readonly localization: ProtyleLocalizationPort;
   readonly portalRoot: HTMLElement;
@@ -19,7 +32,7 @@ export interface RealProtyleApplicationBinding {
 /** 声明运行时桥接的公共合同，避免类型检查穿透到旧 App 的完整源码树。 */
 export declare function createRealProtyleBrowserCoreFactory<TRuntime = unknown>(
   binding: RealProtyleApplicationBinding,
-): ProtyleWorkspaceCoreFactory<ProtyleCoreDocumentOptions, TRuntime>;
+): ProtyleWorkspaceCoreFactory<RealProtyleBrowserDocumentOptions, TRuntime>;
 
 /** 创建与 Protyle 菜单端口兼容、可由空间 Session 管理的菜单表面。 */
 export declare function createRealProtyleBrowserMenu(
