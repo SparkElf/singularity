@@ -296,6 +296,16 @@ test("shared Trivy policy performs full license analysis without scanning genera
   assert.deepEqual(trivyConfig.scan["skip-dirs"], ["artifacts/supply-chain"]);
 });
 
+test("source install materializes every supported architecture for license metadata", () => {
+  const workspace = readYaml("app/pnpm-workspace.yaml");
+
+  assert.deepEqual(workspace.supportedArchitectures, {
+    cpu: ["x64", "arm64", "ia32", "ppc64", "s390x", "riscv64", "wasm32"],
+    libc: ["glibc", "musl"],
+    os: ["linux", "darwin", "win32", "freebsd"],
+  });
+});
+
 test("L0 workflow preserves source plus all three image report pairings", () => {
   const steps = readSupplyChainSteps();
   const licensePolicy = normalizeRunCommand(
@@ -322,6 +332,12 @@ test("L0 workflow preserves source plus all three image report pairings", () => 
       normalizeRunCommand(evidenceStep.run),
       new RegExp("--output " + canonicalPath.replaceAll(".", "\\.")),
     );
+    if (prefix === "worker") {
+      assert.match(
+        normalizeRunCommand(evidenceStep.run),
+        /--reference artifacts\/supply-chain\/source\.cdx\.json/,
+      );
+    }
     assert.equal(licenseStep.with.output, reportPath, prefix);
     assert.ok(licensePolicy.includes("--report " + reportPath + " --sbom " + canonicalPath), prefix);
   }

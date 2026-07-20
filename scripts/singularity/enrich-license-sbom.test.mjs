@@ -53,15 +53,22 @@ function createSbom(component) {
   };
 }
 
-function runEnrichment({ directory, env, evidence, sbom, image }) {
+function runEnrichment({ directory, env, evidence, sbom, image, reference }) {
   const inputPath = resolve(directory, "raw.cdx.json");
   const outputPath = resolve(directory, "enriched.cdx.json");
   const policyPath = resolve(directory, "policy.json");
   writeFileSync(inputPath, JSON.stringify(sbom), "utf8");
-  writeFileSync(policyPath, JSON.stringify({ licenseEvidence: [evidence], version: 3 }), "utf8");
+  writeFileSync(
+    policyPath,
+    JSON.stringify({ licenseEvidence: evidence === undefined ? [] : [evidence], version: 3 }),
+    "utf8",
+  );
   const args = [scriptPath, "--policy", policyPath, "--input", inputPath, "--output", outputPath];
   if (image !== undefined) {
     args.push("--image", image);
+  }
+  if (reference !== undefined) {
+    args.push("--reference", reference);
   }
   const result = spawnSync(process.execPath, args, {
     cwd: repositoryRoot,
@@ -374,6 +381,64 @@ test("unrelated duplicate PURLs do not block exact evidence", () => {
   assert.deepEqual(output.components[0].licenses, [{ expression: "AGPL-3.0" }]);
   assert.equal(output.components[1].licenses, undefined);
   assert.equal(output.components[2].licenses, undefined);
+});
+
+test("reference SBOM evidence inherits one exact component license", () => {
+  const directory = createDirectory();
+  const purl = "pkg:golang/example.com/module@v1.2.3";
+  const referencePath = resolve(directory, "source.cdx.json");
+  writeFileSync(
+    referencePath,
+    JSON.stringify(
+      createSbom({
+        name: "example.com/module",
+        purl,
+        type: "library",
+        version: "v1.2.3",
+        licenses: [{ expression: "MIT" }],
+      }),
+    ),
+    "utf8",
+  );
+  const { output, result } = runEnrichment({
+    directory,
+    reference: repositoryPath(referencePath),
+    sbom: createSbom({ name: "example.com/module", purl, type: "library", version: "v1.2.3" }),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(output.components[0].licenses, [{ expression: "MIT" }]);
+  assert.equal(
+    output.components[0].properties.find((property) => property.name.endsWith(".reference.kind"))?.value,
+    "canonical-sbom",
+  );
+});
+
+test("reference SBOM evidence rejects component identity drift", () => {
+  const directory = createDirectory();
+  const purl = "pkg:golang/example.com/module@v1.2.3";
+  const referencePath = resolve(directory, "source.cdx.json");
+  writeFileSync(
+    referencePath,
+    JSON.stringify(
+      createSbom({
+        name: "example.com/reviewed-module",
+        purl,
+        type: "library",
+        version: "v1.2.3",
+        licenses: [{ expression: "MIT" }],
+      }),
+    ),
+    "utf8",
+  );
+  const { result } = runEnrichment({
+    directory,
+    reference: repositoryPath(referencePath),
+    sbom: createSbom({ name: "example.com/module", purl, type: "library", version: "v1.2.3" }),
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Reference SBOM component identity does not match/);
 });
 
 test("Go module evidence resolves one exact module archive", () => {

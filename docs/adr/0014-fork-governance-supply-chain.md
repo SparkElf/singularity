@@ -3,7 +3,7 @@ title: "ADR-014: Fork治理、供应链与上游同步门禁"
 description: "定义奇点独立仓库的工作流隔离、品牌法律入口、制品扫描与可重复上游merge流程"
 author: "Codex"
 date: "2026-07-15"
-version: "1.5.0"
+version: "1.6.0"
 status: "accepted"
 tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 ---
@@ -23,6 +23,7 @@ tags: ["adr", "l0", "fork", "supply-chain", "upstream", "github-actions"]
 | 1.3.0 | 2026-07-17 | Codex | 记录首个候选完成显式merge并晋升为SiYuan 3.7.2上游基线 |
 | 1.4.0 | 2026-07-18 | Codex | 纳入Node 24 Worker镜像、运行图闭包及三镜像供应链门禁 |
 | 1.5.0 | 2026-07-19 | Codex | 补齐Worker真实恢复工具与appearance制品探测、Docker健康smoke和审计密钥一致性合同 |
+| 1.6.0 | 2026-07-21 | Codex | 补齐跨架构NPM许可证元数据、Worker Go运行图的source SBOM引用与Go stdlib固定许可证 |
 
 ## Table of Contents
 
@@ -68,6 +69,7 @@ Accepted
 11. L0 workflow的路径触发覆盖`.github/**`、`README*.md`、`LICENSE`、`NOTICE`、`Dockerfile*`、`config/**`、`scripts/singularity/**`、`docs/**`、`plans/**`、`output/md/**`、`enterprise/**`、`app/**`和`kernel/**`。路径过滤只决定何时运行，真实元数据、法律、工作流允许列表和供应链校验仍由命令执行。
 12. Go模块归档存在真实许可证正文时，只接受精确模块坐标、归档内许可证路径与SHA-256组成的`go-module-file`证据。仅当归档缺失正文且来源链可逐文件确认时，才接受`go-source-release`：策略必须锁定模块坐标、归档内来源声明文件及哈希、官方源提交和标签、官方源目录、仓库内保留的历史许可证正文及哈希；校验器必须离线重验这些字段后才能写入SBOM。该特例当前只允许`exp-html`，不形成按名称或模糊许可证放行。运行时代码、Go依赖图和构建路径保持不变。
 13. API、Worker和Web smoke统一等待镜像声明的Docker healthcheck进入`healthy`，随后再核对API与Web的精确公开响应。API和Worker消费同一份本轮随机审计HMAC密钥及相同key version，CI不为Worker生成第二份审计身份，也不把密钥写入镜像层、报告或日志。
+14. 源码许可证扫描在`app/pnpm-workspace.yaml`声明完整的`cpu`、`libc`和`os`集合，使锁文件中的跨平台可选包在CI中物化并获得真实manifest许可证字段。Worker Go二进制扫描缺少源码许可证字段时，`enrich-license-sbom.mjs --reference artifacts/supply-chain/source.cdx.json`只按精确PURL、name和version从source canonical SBOM继承许可证；引用文件路径和SHA-256写入Worker canonical SBOM，身份或许可证冲突直接失败，原始Trivy SBOM保持不变。Go `stdlib`只用固定`v1.26.5`、仓内正文和SHA-256证据放行，版本漂移重新进入未知。
 
 ## Data Flow
 
@@ -105,6 +107,7 @@ upstream baseline + pinned candidate + fork HEAD
 | API与Worker镜像只包含各自根运行图可达npm包，Web镜像不包含npm包 | supply-chain integration | 在只读断网API/Worker镜像内递归解析运行图，与各自原始SBOM按name、version和PURL双向比较 |
 | 禁止与未知许可证均阻断 | static + supply-chain integration | 真实Trivy许可证JSON加唯一策略配置 |
 | 缺正文Go模块不能凭源码头放行 | static + supply-chain integration | `node:test`覆盖来源发布坐标/哈希漂移，真实Trivy源码SBOM须由锁定历史许可证补齐且未知为零 |
+| Worker二进制许可证字段可追溯到源码 | supply-chain integration | source canonical SBOM按精确PURL/name/version引用，引用文件哈希写入Worker canonical SBOM；冲突拒绝 |
 | 可修复High/Critical漏洞阻断且空报告不能假绿 | supply-chain integration | Trivy扫描企业源码与三个真实镜像，要求非空Target/Type，再由统一策略处理四份JSON |
 | 上游候选影响和冲突可重放 | Git integration | `merge-tree`生成报告；正式`--no-ff` merge后运行全部门禁 |
 

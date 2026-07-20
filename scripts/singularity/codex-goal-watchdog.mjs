@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -448,7 +449,8 @@ function acquireLock(stateDir, lockPath) {
   }
   return () => {
     try {
-      rmSync(lockPath, { recursive: false });
+      // 并发锁以空目录表示占用，释放时只能删除该目录，不能把文件删除语义混用进来。
+      rmdirSync(lockPath);
     } catch {
       throw new WatchdogError("lock_release_failed");
     }
