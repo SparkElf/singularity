@@ -367,7 +367,7 @@ async function installGatewayBoundary(
       return;
     }
 
-    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel/api`;
+    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel`;
     if (!path.startsWith(`${kernelPrefix}/api/`)) {
       boundary.unexpectedRequests.push(`${request.method()} ${path}`);
       await route.abort("failed");
@@ -625,7 +625,7 @@ test.describe("Protyle complex-content identity integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
         !(
-          request.url().includes("/kernel/api/api/filetree/getDoc") &&
+          request.url().includes("/kernel/api/filetree/getDoc") &&
           request.failure()?.errorText === "net::ERR_ABORTED"
         )
       ),
@@ -694,7 +694,7 @@ test.describe("Protyle complex-content identity integration", () => {
 
     expect(boundary.unexpectedRequests).toEqual([]);
     await expect.poll(() => [...diagnostics.pendingRequests].some((request) =>
-      request.url().includes("/kernel/api/api/outline/getDocOutline")
+      request.url().includes("/kernel/api/outline/getDocOutline")
     )).toBe(false);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       unexpectedConsoleMessages: diagnostics.consoleMessages.filter(

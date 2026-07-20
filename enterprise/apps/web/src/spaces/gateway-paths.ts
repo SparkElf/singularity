@@ -104,7 +104,8 @@ export function buildKernelApiPath(
   ) {
     throw new Error("[protyle.gateway] Kernel API path is not canonical");
   }
-  return `${buildSpaceGatewayBasePath(space)}/kernel/api${path}`;
+  // Protyle path 已包含 `/api` 前缀，Gateway 外部路径只负责补入当前空间的 `/kernel` 前缀。
+  return `${buildSpaceGatewayBasePath(space)}/kernel${path}`;
 }
 
 export function buildKernelUploadPath(space: SpaceGatewayIdentity): string {

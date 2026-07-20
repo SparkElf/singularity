@@ -283,7 +283,7 @@ async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary
       return;
     }
 
-    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel/api`;
+    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel`;
     if (!path.startsWith(`${kernelPrefix}/api/`)) {
       await route.abort("failed");
       return;
@@ -571,7 +571,7 @@ test.describe("active content and PDF preview", () => {
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const url = new URL(request.url());
         const isActiveAsset = ACTIVE_ASSETS.some((asset) => url.pathname.endsWith(`/${asset.path}`));
-        const isCancelledTreeStat = url.pathname.endsWith("/kernel/api/api/block/getTreeStat");
+        const isCancelledTreeStat = url.pathname.endsWith("/kernel/api/block/getTreeStat");
         const isExpectedAbort = request.failure()?.errorText === "net::ERR_ABORTED" &&
           (isCancelledTreeStat || (
             isActiveAsset &&

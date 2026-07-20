@@ -133,6 +133,7 @@ export function parseKernelGatewayTarget(
   headers: IncomingHttpHeaders,
   policies: KernelRoutePolicyRegistry,
 ): KernelGatewayTarget | null {
+  // 将浏览器的 `/kernel/api/*` 路由还原为 Kernel 原生 `/api/*`，避免跨边界重复拼接 API 前缀。
   const route = parseSpaceRoute(rawUrl);
   if (route === null) {
     return null;
@@ -152,7 +153,7 @@ export function parseKernelGatewayTarget(
     );
     surface = "api";
     forceDownload = false;
-    upstreamPath = route.remainder.slice("/kernel/api".length);
+    upstreamPath = route.remainder.slice("/kernel".length);
   } else if (route.remainder.startsWith("/emojis/")) {
     if (
       !onlyParameters(route.url.searchParams, ["notebookId", "documentId"])

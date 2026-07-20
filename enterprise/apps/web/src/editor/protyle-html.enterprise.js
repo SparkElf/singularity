@@ -26,6 +26,7 @@ class EnterpriseProtyleHtml extends HTMLElement {
                 "embed",
                 "form",
                 "iframe",
+                "img",
                 "link",
                 "meta",
                 "object",

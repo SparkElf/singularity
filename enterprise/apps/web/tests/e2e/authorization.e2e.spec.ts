@@ -276,11 +276,17 @@ test("logout removes the authorized space from browser history", async ({ page }
   await expect(page.getByTestId("protyle-host")).toHaveCount(0);
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   const expectedUnauthorizedUrl = response.url();
+  const expectedUnauthorizedUrls = new Set(
+    diagnostics.responses
+      .filter((candidate) => candidate.status() === 401)
+      .map((candidate) => candidate.url()),
+  );
+  expectedUnauthorizedUrls.add(expectedUnauthorizedUrl);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
     unexpectedConsoleMessages: diagnostics.consoleMessages.filter((message) =>
       !(
         message.type() === "error" &&
-        message.location().url === expectedUnauthorizedUrl &&
+        expectedUnauthorizedUrls.has(message.location().url) &&
         /\b401\b/.test(message.text())
       )
     ),

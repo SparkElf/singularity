@@ -36,7 +36,7 @@ test("creates, reads, and immediately revokes a real read-only share", async ({
     `/api/v1/organizations/${state.organizationId}` +
     `/spaces/${state.spaceId}/shares`;
   await page.goto(sharesPath);
-  await expect(page.getByRole("heading", { name: "分享" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "分享", exact: true })).toBeVisible();
 
   const directory = page.getByRole("navigation", { name: "文档目录" });
   const documentButton = directory.getByRole("button", {

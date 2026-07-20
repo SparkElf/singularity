@@ -194,7 +194,7 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
       return;
     }
 
-    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel/api`;
+    const kernelPrefix = `${GATEWAY_BASE_PATH}/kernel`;
     if (!path.startsWith(`${kernelPrefix}/api/`)) {
       await route.abort("failed");
       return;
@@ -411,8 +411,8 @@ test.describe("React discovery work panels", () => {
     });
     await expect.poll(() => [...diagnostics.pendingRequests].every((request) => {
       const path = new URL(request.url()).pathname;
-      return path.includes("/kernel/api/api/filetree/getDoc") ||
-        path.includes("/kernel/api/api/block/getBlockBreadcrumb");
+      return path.includes("/kernel/api/filetree/getDoc") ||
+        path.includes("/kernel/api/block/getBlockBreadcrumb");
     })).toBe(true);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
@@ -422,15 +422,15 @@ test.describe("React discovery work panels", () => {
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const failure = request.failure();
         const url = new URL(request.url());
-        const isCancelledDocumentRequest = url.pathname.includes("/kernel/api/api/filetree/getDoc") ||
-          url.pathname.includes("/kernel/api/api/block/getBlockBreadcrumb");
+        const isCancelledDocumentRequest = url.pathname.includes("/kernel/api/filetree/getDoc") ||
+          url.pathname.includes("/kernel/api/block/getBlockBreadcrumb");
         return failure?.errorText !== "net::ERR_ABORTED" || !isCancelledDocumentRequest;
       }),
       // 并行浏览器运行时，已取消的旧文档请求可能没有及时发出终态事件；仅放行这两个请求。
       expectedPendingRequests: [...diagnostics.pendingRequests].filter((request) => {
         const url = new URL(request.url());
-        return url.pathname.includes("/kernel/api/api/filetree/getDoc") ||
-          url.pathname.includes("/kernel/api/api/block/getBlockBreadcrumb");
+        return url.pathname.includes("/kernel/api/filetree/getDoc") ||
+          url.pathname.includes("/kernel/api/block/getBlockBreadcrumb");
       }),
     });
   });
