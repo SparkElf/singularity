@@ -325,9 +325,11 @@ async function buildRuntimeArtifacts() {
     ["--filter", "@singularity/web", "build"],
     { cwd: enterpriseRoot },
   );
-  await runCommand("go", ["build", "-o", kernelBinary, "."], {
-    cwd: kernelRoot,
-  });
+  await runCommand(
+    "go",
+    ["build", "-tags", "fts5 sqlcipher", "-o", kernelBinary, "."],
+    { cwd: kernelRoot },
+  );
   return kernelBinary;
 }
 
@@ -358,7 +360,7 @@ async function createKernelContent(kernelBinary) {
   await mkdir(join(workspaceRoot, "conf"), { recursive: true });
   await writeFile(
     join(workspaceRoot, "conf/conf.json"),
-    JSON.stringify({ kernelVersion: "3.7.2" }),
+    JSON.stringify({ fileTree: {}, kernelVersion: "3.7.2" }),
     "utf8",
   );
   const cliEnvironment = {
@@ -371,6 +373,11 @@ async function createKernelContent(kernelBinary) {
     { cwd: appRoot, env: cliEnvironment },
   );
   const notebookId = lastOutputLine(notebook.stdout);
+  await runCommand(
+    kernelBinary,
+    ["--workspace", workspaceRoot, "notebook", "open", "--id", notebookId],
+    { cwd: appRoot, env: cliEnvironment },
+  );
   const document = await runCommand(
     kernelBinary,
     [
