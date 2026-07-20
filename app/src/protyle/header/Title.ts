@@ -114,6 +114,7 @@ export class Title {
     private timeout: number;
     private menuHandle?: TitleMenuHandle;
     private renameGeneration = 0;
+    private editing = false;
 
     public focusInput() {
         if (!this.editElement) {
@@ -445,6 +446,7 @@ export class Title {
     private rename(protyle: IProtyle) {
         clearTimeout(this.timeout);
         const generation = ++this.renameGeneration;
+        this.editing = true;
         const violation = validateDocumentTitle(protyle, this.editElement.textContent, this.editElement);
         if (violation) {
             if (violation === "too-long") {
@@ -473,6 +475,7 @@ export class Title {
                 if (protyle.requestSignal.aborted || generation !== this.renameGeneration) {
                     return;
                 }
+                this.editing = false;
                 const canonicalTitle = response.data.empty ? "" : response.data.title;
                 if (canonicalTitle !== this.editElement.textContent) {
                     const offset = titleSelectionOffset(this.editElement);
@@ -502,8 +505,14 @@ export class Title {
         }
     }
 
+    /** 标题推送据此判断是否存在未提交本地变更，避免依赖浏览器残留选区或 activeElement。 */
+    public isEditing() {
+        return this.editing;
+    }
+
     public setTitle(title: string, empty = false) {
         this.renameGeneration++;
+        this.editing = false;
         this.writeTitle(title, empty);
     }
 

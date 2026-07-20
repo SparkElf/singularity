@@ -262,7 +262,7 @@ export function createProtyleApplicationPort(
             newContentFile: "",
             newNameFile: "",
             newNameSettingFile: "",
-            openBy: "",
+            openBy: "⌥,",
             openInNewTab: "",
             optimizeTypography: "",
             outline: "⌥⌘O",

@@ -282,16 +282,18 @@ function createSpaceHostMediator(
       if (!composition.selectDocument(target)) {
         return;
       }
-      queueNavigation(bootstrap.spaceId, {
-        attention: event.attention,
-        blockId: event.blockId,
-        documentId: event.documentId,
-        notebookId: event.notebookId,
-        restoreScroll: event.restoreScroll,
-        scope: event.scope,
-        scroll: event.scroll,
-        zoom: event.zoom,
-      });
+      if (event.navigation !== "none") {
+        queueNavigation(bootstrap.spaceId, {
+          attention: event.attention,
+          blockId: event.blockId,
+          documentId: event.documentId,
+          notebookId: event.notebookId,
+          restoreScroll: event.restoreScroll,
+          scope: event.scope,
+          scroll: event.scroll,
+          zoom: event.zoom,
+        });
+      }
       return;
     }
     case "close-document": {

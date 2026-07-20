@@ -451,8 +451,19 @@ export class Protyle {
                                 }
                             }
                             if (isCurrentDocument && this.protyle.options.render.title) {
-                                if (!document.body.classList.contains("body--blur") && getSelection().rangeCount > 0 &&
-                                    this.protyle.title.editElement?.contains(getSelection().getRangeAt(0).startContainer)) {
+                                // 只按是否存在未提交本地变更判断，失焦后残留的浏览器选区不能阻止权威推送覆盖旧标题。
+                                const titleIsBeingEdited = this.protyle.title.isEditing();
+                                console.info("[protyle.push]", {
+                                    documentId: rename.data.documentId,
+                                    isCurrentDocument,
+                                    notebookId: rename.data.notebookId,
+                                    phase: "rename",
+                                    protyleDocumentId: this.protyle.block.rootID,
+                                    protyleNotebookId: this.protyle.notebookId,
+                                    title: rename.data.title,
+                                    titleIsBeingEdited,
+                                });
+                                if (!document.body.classList.contains("body--blur") && titleIsBeingEdited) {
                                     // 标题编辑中的不用更新 https://github.com/siyuan-note/siyuan/issues/6565
                                 } else {
                                     this.protyle.title.setTitle(rename.data.title, rename.data.empty);
@@ -498,6 +509,7 @@ export class Protyle {
                                     notebookId: move.data.toNotebook,
                                     documentId: identity.documentId,
                                     blockId: this.protyle.block.rootID,
+                                    navigation: "none",
                                     disposition: "current",
                                     scope: "target",
                                     attention: "none",

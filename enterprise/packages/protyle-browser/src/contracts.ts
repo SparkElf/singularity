@@ -54,6 +54,8 @@ export type ProtyleHostEvent =
       notebookId: string;
       documentId: string;
       blockId: string;
+      /** 移动已在编辑器重建时完成，不再对新实例重复发起导航读取。 */
+      navigation?: "none";
       disposition: ProtyleDocumentDisposition;
       scope: ProtyleDocumentScope;
       attention: ProtyleDocumentAttention;
