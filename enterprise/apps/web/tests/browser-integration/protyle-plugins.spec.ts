@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
@@ -268,6 +269,18 @@ async function openPluginDocument(page: Page) {
   };
 }
 
+async function focusEditable(editable: Locator): Promise<void> {
+  await editable.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    (element as HTMLElement).focus();
+  });
+}
+
 test.describe("React Protyle plugin browser integration", () => {
   test("adds a real grouped content-menu contribution and runs its action", async ({
     page,
@@ -304,7 +317,7 @@ test.describe("React Protyle plugin browser integration", () => {
 
     await expect(block).not.toHaveClass(/protyle-wysiwyg--hl/);
     await editable.click();
-    await editable.focus();
+    await focusEditable(editable);
     await page.keyboard.press("Alt+Shift+M");
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
 
@@ -327,7 +340,7 @@ test.describe("React Protyle plugin browser integration", () => {
     const gatewayImageSource = `${gatewayBasePath()}/${PERSISTENCE_IMAGE_PATH}?documentId=${DOCUMENT_ID}&notebookId=${NOTEBOOK_ID}`;
 
     await editable.click();
-    await editable.focus();
+    await focusEditable(editable);
     await page.keyboard.press("Alt+Shift+M");
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
     await expect(image).toHaveAttribute("src", gatewayImageSource);
