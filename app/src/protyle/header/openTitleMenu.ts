@@ -2,7 +2,7 @@ import {createSiyuanClipboardHTML} from "../util/clipboard";
 import {updateHotkeyTip} from "../util/keyboard";
 import {Constants} from "../../constants";
 import {emitProtylePluginMenu} from "../util/plugin";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {hideTooltip} from "../ui/tooltip";
 import {addEditorToDatabase} from "../render/av/addToDatabase";
 import {hasTopClosestByClassName} from "../util/hasClosest";

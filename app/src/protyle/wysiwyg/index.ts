@@ -24,7 +24,7 @@ import {previewDocImage} from "../preview/image";
 import {getDiagramBlock, previewDiagram} from "../preview/diagram";
 import {contentMenu} from "../ui/contentMenu";
 import {fileAnnotationRefMenu, inlineMathMenu, linkMenu, refMenu, tagMenu} from "../ui/inlineMenu";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {dropEvent} from "../util/editorCommonEvent";
 import {input} from "./input";
 import {

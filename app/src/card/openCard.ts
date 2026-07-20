@@ -16,7 +16,7 @@ import {openFile} from "../editor/util";
 /// #if !BROWSER
 import {ipcRenderer} from "electron";
 /// #endif
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {getDisplayName, isEncryptedBox, movePathTo} from "../util/pathName";
 import {App} from "../index";
 import {setStorageVal} from "../protyle/util/compatibility";

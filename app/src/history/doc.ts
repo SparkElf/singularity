@@ -3,7 +3,7 @@ import {confirmDialog} from "../dialog/confirmDialog";
 import {Constants} from "../constants";
 import {Protyle} from "../protyle";
 import {disabledProtyle, onGet} from "../protyle/util/onGet";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {fetchPost} from "../util/fetch";
 import {isMobile} from "../util/functions";
 import {App} from "../index";

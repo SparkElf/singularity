@@ -11,7 +11,7 @@ import {hasClosestBlock} from "../../util/hasClosest";
 import {genCellValueByElement, getTypeByCellElement} from "./cell";
 import {writeText} from "../../util/clipboard";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";
 import {filesize} from "filesize";

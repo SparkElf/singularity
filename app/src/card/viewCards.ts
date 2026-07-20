@@ -1,4 +1,4 @@
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {EmbeddedProtyleOwner} from "../protyle/EmbeddedProtyleOwner";
 import {fetchPost} from "../util/fetch";
 import {Dialog} from "../dialog";

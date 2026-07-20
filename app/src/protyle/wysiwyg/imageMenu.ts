@@ -1,4 +1,4 @@
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {Constants} from "../../constants";
 import {downloadExportFile} from "../util/download";
 import {combineAbortSignals} from "../util/abortSignal";

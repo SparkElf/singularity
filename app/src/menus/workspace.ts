@@ -25,7 +25,7 @@ import {confirmDialog} from "../dialog/confirmDialog";
 import {App} from "../index";
 import {isBrowser} from "../util/functions";
 import {openRecentDocs} from "../business/openRecentDocs";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {upDownHint} from "../protyle/util/upDownHint";
 
 const editLayout = (layoutName?: string) => {

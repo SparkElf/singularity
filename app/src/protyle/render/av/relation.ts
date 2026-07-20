@@ -6,7 +6,7 @@ import {updateCellsValue} from "./cell";
 import {updateAttrViewCellAnimation} from "./action";
 import {focusBlock} from "../../util/selection";
 import {setToolbarPosition} from "../../toolbar/position";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {getFieldsByData, getViewName} from "./view";
 import {getColId} from "./col";
 import {getFieldIdByCellElement} from "./row";

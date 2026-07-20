@@ -1,6 +1,6 @@
 import {transaction, updateTransaction} from "./transaction";
 import {focusByWbr} from "../util/selection";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {decodeHTML, escapeAttr} from "../../util/escape";
 import {Constants} from "../../constants";
 

@@ -8,7 +8,7 @@ import {insertEmptyBlock} from "../wysiwyg/blockActions";
 import {removeBlock} from "../wysiwyg/remove";
 import {hasNextSibling, hasPreviousSibling} from "../wysiwyg/getBlock";
 import {openProtyleDialog} from "../wysiwyg/dialogOwner";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 
 const scrollToView = (nodeElement: Element, rowElement: HTMLElement, protyle: IProtyle) => {
     if (nodeElement.getAttribute("custom-pinthead") === "true") {

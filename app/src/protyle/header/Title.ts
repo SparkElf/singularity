@@ -10,7 +10,7 @@ import {Constants} from "../../constants";
 import {matchHotKey} from "../util/hotKey";
 import {isMac, isNarrowViewport} from "../util/browserPlatform";
 import {readText} from "../util/clipboard";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {getProtyleDocumentDisplayName} from "../runtime/displayName";
 import {getContenteditableElement, getNoContainerElement} from "../wysiwyg/getBlock";
 import {commonHotkey} from "../wysiwyg/commonHotkey";

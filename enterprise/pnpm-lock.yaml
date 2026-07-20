@@ -199,6 +199,9 @@ importers:
       '@singularity/authorization':
         specifier: workspace:*
         version: link:../../packages/authorization
+      '@singularity/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@singularity/database':
         specifier: workspace:*
         version: link:../../packages/database

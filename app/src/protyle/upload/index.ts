@@ -8,7 +8,7 @@ import {getTypeByCellElement, updateCellsValue} from "../render/av/cell";
 import {scrollCenter} from "../util/highlightById";
 import {filesize} from "filesize";
 import {transaction} from "../wysiwyg/transaction";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {openProtyleConfirm} from "../wysiwyg/dialogOwner";
 import {canWriteProtyleContent} from "../runtime/readOnly";

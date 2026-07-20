@@ -31,6 +31,7 @@
     "@nestjs/common": "11.1.28",
     "@nestjs/core": "11.1.28",
     "@singularity/authorization": "workspace:*",
+    "@singularity/contracts": "workspace:*",
     "@singularity/database": "workspace:*",
     "@singularity/kernel-client": "workspace:*",
     "@singularity/object-store": "workspace:*",
