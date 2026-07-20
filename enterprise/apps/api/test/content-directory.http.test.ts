@@ -423,7 +423,7 @@ describe("Content directory HTTP contract", () => {
     expect(apiProblemSchema.parse(await response.json()).code).toBe(
       "service-unavailable",
     );
-    expect(logger.output).toContain("directory-stack-sentinel");
+    expect(logger.output).toContain("Kernel directory JSON is invalid");
     expect(logger.output).toContain("SyntaxError");
     expect(logger.output).toContain("at JSON.parse");
     expect(logger.output).toContain("at readDirectoryJson");
