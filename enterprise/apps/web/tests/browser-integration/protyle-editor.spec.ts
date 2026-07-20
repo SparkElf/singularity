@@ -290,7 +290,7 @@ async function installGatewayBoundary(
         return;
       }
 
-      const kernelPrefix = `${basePath}/kernel/api`;
+      const kernelPrefix = `${basePath}/kernel`;
       if (!path.startsWith(`${kernelPrefix}/api/`)) {
         continue;
       }

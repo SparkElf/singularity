@@ -175,6 +175,7 @@ export class ApiProblemFilter implements ExceptionFilter {
       reply.send(DATABASE_UNAVAILABLE_RESPONSE);
       return;
     }
+    reply.header("Content-Type", "application/problem+json; charset=utf-8");
     if (exception instanceof RuntimeAccessLostError) {
       reply.header(
         RUNTIME_ACCESS_LOST_HEADER_NAME,

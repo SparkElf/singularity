@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildKernelApiPath,
   buildSpaceGatewayAssetDownloadPath,
   createSpaceGatewayResourcePort,
 } from "@/spaces/gateway-paths.ts";
@@ -19,6 +20,12 @@ afterEach(() => {
 });
 
 describe("Space Gateway export resources", () => {
+  it("preserves the Protyle API prefix exactly once", () => {
+    expect(buildKernelApiPath(space, "/api/filetree/getDoc")).toBe(
+      "/api/v1/organizations/11111111-1111-4111-8111-111111111111/spaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/kernel/api/filetree/getDoc",
+    );
+  });
+
   it("builds a forced-download asset URL with the current content identity", () => {
     const resolved = new URL(
       buildSpaceGatewayAssetDownloadPath(space, identity, "assets/unsafe.html"),

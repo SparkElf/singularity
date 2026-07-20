@@ -18,7 +18,7 @@ const DOCUMENT_ID = "20260718010102-hijklmn";
 const policies = new KernelRoutePolicyRegistry(kernelRoutePolicies);
 
 function gatewayApiUrl(path: string): string {
-  return `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/kernel/api${path}`;
+  return `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/kernel${path}`;
 }
 
 describe("Kernel Gateway path admission", () => {

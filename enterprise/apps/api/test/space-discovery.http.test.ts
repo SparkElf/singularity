@@ -413,7 +413,7 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
   ): Promise<Response> {
     const gatewayPath =
       `/api/v1/organizations/${authenticated.organizationId}` +
-      `/spaces/${authenticated.spaceId}/kernel/api${path}`;
+      `/spaces/${authenticated.spaceId}/kernel${path}`;
     return fetch(`${testApi.baseUrl}${gatewayPath}`, {
       body: JSON.stringify(body),
       headers: {
@@ -639,7 +639,7 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     const requestOffset = kernel.requests.length;
     const gatewayPath =
       `/api/v1/organizations/${authenticated.organizationId}` +
-      `/spaces/${authenticated.spaceId}/kernel/api${DOCUMENT_SEARCH_PATH}`;
+      `/spaces/${authenticated.spaceId}/kernel${DOCUMENT_SEARCH_PATH}`;
     const response = await fetch(`${testApi.baseUrl}${gatewayPath}`, {
       body: JSON.stringify({ query: "Alpha" }),
       headers: {

@@ -167,7 +167,7 @@ async function installPluginGatewayBoundary(
       return;
     }
 
-    const kernelPrefix = `${basePath}/kernel/api`;
+    const kernelPrefix = `${basePath}/kernel`;
     if (path.startsWith(`${kernelPrefix}/api/`)) {
       const kernelPath = path.slice(kernelPrefix.length);
       const headers = request.headers();

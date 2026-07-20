@@ -375,7 +375,7 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     kernelPath = "/api/block/getBlockInfo",
     body: unknown = { id: DOCUMENT_ID },
   ): Promise<Response> {
-    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel/api${kernelPath}`;
+    const path = `/api/v1/organizations/${graph.organizationId}/spaces/${graph.spaceId}/kernel${kernelPath}`;
     return fetch(`${testApi.baseUrl}${path}`, {
       body: JSON.stringify(body),
       headers: {
@@ -537,6 +537,9 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     );
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("content-type")).toBe(
+      "application/problem+json; charset=utf-8",
+    );
     const problem = apiProblemSchema.parse(await response.json());
     expect(logger.output).toContain("outcome: 'admitted'");
     expect(logger.output).toContain(`requestId: '${problem.requestId}'`);
