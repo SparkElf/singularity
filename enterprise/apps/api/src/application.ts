@@ -3,7 +3,10 @@ import "reflect-metadata";
 import { randomUUID } from "node:crypto";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 
-import type { LoggerService } from "@nestjs/common";
+import type {
+  LoggerService,
+  NestApplicationOptions,
+} from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,
@@ -97,7 +100,13 @@ export async function createApiApplication(
     }),
     adapter,
     {
-      ...(options.https === undefined ? {} : { httpsOptions: options.https }),
+      ...(options.https === undefined
+        ? {}
+        : {
+            httpsOptions: options.https as NonNullable<
+              NestApplicationOptions["httpsOptions"]
+            >,
+          }),
       ...(options.logger === undefined ? {} : { logger: options.logger }),
     },
   );
