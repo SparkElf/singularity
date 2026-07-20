@@ -304,6 +304,7 @@ test.describe("React Protyle plugin browser integration", () => {
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
@@ -338,6 +339,7 @@ test.describe("React Protyle plugin browser integration", () => {
       `.img img[data-src="${PERSISTENCE_IMAGE_PATH}"]`,
     );
     const gatewayImageSource = `${gatewayBasePath()}/${PERSISTENCE_IMAGE_PATH}?documentId=${DOCUMENT_ID}&notebookId=${NOTEBOOK_ID}`;
+    const initialImageURL = new URL(PERSISTENCE_IMAGE_PATH, page.url()).href;
 
     await editable.click();
     await focusEditable(editable);
@@ -398,7 +400,13 @@ test.describe("React Protyle plugin browser integration", () => {
     await expect(image).toHaveAttribute("src", gatewayImageSource);
 
     expect(boundary.unexpectedRequests).toEqual([]);
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      // 图片切换到 Gateway 地址时，浏览器会终止旧资源请求；该取消必须限定到预期资源。
+      unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
+        request.failure()?.errorText !== "net::ERR_ABORTED" ||
+        request.url() !== initialImageURL,
+      ),
+    });
   });
 
   test("discovers and executes the identity-bound slash contribution", async ({
@@ -422,6 +430,7 @@ test.describe("React Protyle plugin browser integration", () => {
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

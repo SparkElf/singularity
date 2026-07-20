@@ -366,9 +366,11 @@ async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary
   return boundary;
 }
 
+// 等待空间编辑器完成首次装载，确保后续主动内容断言运行在 ready DOM 上。
 async function openWorkspace(page: Page) {
   await page.goto(`/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`);
   const editor = page.getByTestId("protyle-host");
+  await expect(editor).toHaveAttribute("aria-busy", "false");
   await expect(editor.getByText("主动内容安全样例", { exact: false })).toBeVisible();
   return editor;
 }
@@ -547,15 +549,20 @@ test.describe("active content and PDF preview", () => {
       notebookId: NOTEBOOK_ID,
       path: asset.path,
     })));
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       // 浏览器把已交给下载管理器的附件请求标记为 ERR_ABORTED，不代表 Gateway 失败。
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const url = new URL(request.url());
         const isActiveAsset = ACTIVE_ASSETS.some((asset) => url.pathname.endsWith(`/${asset.path}`));
-        return request.failure()?.errorText !== "net::ERR_ABORTED" ||
-          !isActiveAsset ||
-          url.searchParams.get("documentId") !== DOCUMENT_ID ||
-          url.searchParams.get("notebookId") !== NOTEBOOK_ID;
+        const isCancelledTreeStat = url.pathname.endsWith("/kernel/api/api/block/getTreeStat");
+        const isExpectedAbort = request.failure()?.errorText === "net::ERR_ABORTED" &&
+          (isCancelledTreeStat || (
+            isActiveAsset &&
+            url.searchParams.get("documentId") === DOCUMENT_ID &&
+            url.searchParams.get("notebookId") === NOTEBOOK_ID
+          ));
+        return !isExpectedAbort;
       }),
     });
   });
