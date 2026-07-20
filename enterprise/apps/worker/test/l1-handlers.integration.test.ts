@@ -824,7 +824,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
         where: { id: fixture.restoreId },
       }),
     ).resolves.toMatchObject({
-      status: "ready-for-activation",
+      status: "ready_for_activation",
       targetSpaceId: fixture.targetSpaceId,
     });
     await expect(
