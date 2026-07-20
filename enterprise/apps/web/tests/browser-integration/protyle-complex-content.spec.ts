@@ -618,6 +618,7 @@ test.describe("Protyle complex-content identity integration", () => {
     await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_C)).toContainText("跨库目标文档");
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
         !(
@@ -689,6 +690,9 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(shortcutOutlineRequest.documentId).toBe(DOCUMENT_A);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => [...diagnostics.pendingRequests].some((request) =>
+      request.url().includes("/kernel/api/api/outline/getDocOutline")
+    )).toBe(false);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
