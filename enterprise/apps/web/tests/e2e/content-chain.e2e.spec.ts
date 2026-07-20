@@ -73,6 +73,7 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
   );
   expect(committedRequest.postData()).toContain(persistedText);
 
+  await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   await page.reload();
   const reloadedEditor = page.getByTestId("protyle-host");
   await expect(reloadedEditor).toContainText(persistedMarker, { timeout: 30_000 });

@@ -23,7 +23,7 @@ import type { HttpRequestBoundary } from "../http-boundary.js";
 import { Authenticated, CurrentSession } from "../identity/http-access.js";
 import type { AuthenticatedSession } from "../identity/identity.service.js";
 import { ZodValidationPipe } from "../identity/zod-validation.pipe.js";
-import { notFound, serviceUnavailable } from "../problem.js";
+import { runtimeAccessLost, serviceUnavailable } from "../problem.js";
 import { SpaceAccessService } from "./space-access.service.js";
 
 @ApiTags("spaces")
@@ -88,7 +88,8 @@ export class SpacesController {
       request.id,
     );
     if (runtime === null) {
-      throw notFound();
+      // 空间从当前会话授权范围消失时保持隐藏式 404，并显式标记为访问丢失。
+      throw runtimeAccessLost();
     }
     if (runtime === "kernel-missing") {
       throw serviceUnavailable();

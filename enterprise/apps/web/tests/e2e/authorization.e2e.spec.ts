@@ -282,8 +282,14 @@ test("logout removes the authorized space from browser history", async ({ page }
       .map((candidate) => candidate.url()),
   );
   expectedUnauthorizedUrls.add(expectedUnauthorizedUrl);
+  const logoutWarnings = diagnostics.consoleMessages.filter((message) =>
+    message.type() === "warning" &&
+    message.text().startsWith("[protyle.lifecycle]") &&
+    /category:\s*['"]?unauthenticated\b/.test(message.text()),
+  );
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
     unexpectedConsoleMessages: diagnostics.consoleMessages.filter((message) =>
+      !logoutWarnings.includes(message) &&
       !(
         message.type() === "error" &&
         expectedUnauthorizedUrls.has(message.location().url) &&

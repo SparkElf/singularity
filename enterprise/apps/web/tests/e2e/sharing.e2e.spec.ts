@@ -29,6 +29,7 @@ test("creates, reads, and immediately revokes a real read-only share", async ({
       .innerText()
   ).trim();
   expect(currentDocumentText.length).toBeGreaterThan(0);
+  await expect.poll(() => adminDiagnostics.pendingRequests.size).toBe(0);
 
   const sharesPath =
     `/organizations/${state.organizationId}/settings/spaces/${state.spaceId}/shares`;
