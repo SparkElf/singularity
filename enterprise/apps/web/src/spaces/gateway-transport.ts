@@ -14,7 +14,11 @@ import type {
   ProtyleUploadOptions,
 } from "@singularity/protyle-browser";
 
-import { isApiProblem, NetworkFailureError } from "@/api/http.ts";
+import {
+  fetchWithNetworkRetry,
+  isApiProblem,
+  NetworkFailureError,
+} from "@/api/http.ts";
 import {
   buildKernelApiPath,
   buildKernelUploadPath,
@@ -293,7 +297,7 @@ export function createSpaceGatewayTransport<TMessage>(
 
     let response: Response;
     try {
-      response = await fetch(buildKernelApiPath(options.space, path), {
+      response = await fetchWithNetworkRetry(buildKernelApiPath(options.space, path), {
         body: serializedBody,
         credentials: "same-origin",
         headers,

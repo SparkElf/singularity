@@ -52,12 +52,23 @@ export async function sessionRequest(
     if (serializedBody !== undefined) {
       headers.set("Content-Type", "application/json");
     }
-    const response = await fetch(path, {
+    /** 仅重试浏览器瞬时网络切换，保留取消和第二次失败的原始异常。 */
+    const request = async () => fetch(path, {
       ...(serializedBody === undefined ? {} : { body: serializedBody }),
       credentials: "same-origin",
       headers,
       method,
     });
+    let response: Response;
+    try {
+      response = await request();
+    } catch (error) {
+      if (!(error instanceof TypeError) || error.message !== "Failed to fetch") {
+        throw error;
+      }
+      console.debug("[p5.e2e]", { phase: "network-retry", attempt: 1 }, error);
+      response = await request();
+    }
     return {
       contentType: response.headers.get("content-type"),
       status: response.status,
@@ -87,7 +98,16 @@ export async function loginAs(
   credentials: P5E2EStackState["editor"] | P5E2EStackState["viewer"],
 ): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel("账号").fill(credentials.loginIdentifier);
+  const account = page.getByLabel("账号");
+  // 首屏静态资源可能被浏览器瞬时网络切换取消；只重载一次，二次失败仍让用例失败。
+  try {
+    await expect(account).toBeVisible({ timeout: 10_000 });
+  } catch (error) {
+    console.warn("[p5.e2e] login page first render failed; reloading", error);
+    await page.reload();
+    await expect(account).toBeVisible({ timeout: 30_000 });
+  }
+  await account.fill(credentials.loginIdentifier);
   await page.getByLabel("密码").fill(credentials.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
