@@ -2,9 +2,9 @@
 title: "奇点 L1 实现交接"
 description: "L1 implementation收口状态、稳定合同与集中评审验证入口"
 author: "Codex"
-date: "2026-07-19"
-version: "2.0.0"
-status: "review-pending"
+date: "2026-07-21"
+version: "2.1.0"
+status: "completed"
 tags: ["l1", "implementation", "handoff"]
 ---
 
@@ -12,15 +12,15 @@ tags: ["l1", "implementation", "handoff"]
 
 ## 目标与阶段
 
-权威方案为`output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md`。L0已经完成；L1生产代码、公共合同、迁移、调用方、永久测试代码、旧路径删除与功能文档已经完成implementation收口，所有功能owner均已释放。当前尚未完成整阶段code-review、安全与许可证复评，也未运行本波正式verification，因此不能宣告L1完成。
+权威方案为`output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md`。L0已经完成；L1生产代码、公共合同、迁移、调用方、永久测试代码、旧路径删除与功能文档已经完成implementation收口，所有功能owner均已释放。2026-07-21已完成整阶段code-review、安全与许可证复评及正式verification，按方案第9.3节宣告L1完成。
 
 ## 当前现场
 
 - 仓库：`/root/projects/singularity`；环境：WSL2 Linux；分支：`master`；远程：`origin/master`。
-- 本轮implementation开始前的`HEAD`与`origin/master`均为`9ccb54f74`（`feat(backup): harden restore lifecycle`）；本文所在checkpoint提交承载其后的完整实现工作树。
+- 本轮implementation开始前的`HEAD`与`origin/master`均为`9ccb54f74`（`feat(backup): harden restore lifecycle`）；后续完整实现及验证提交已进入当前`master`，本文作为完成交接记录保留。
 - Enterprise正式命令必须使用Node `24.18.0`与pnpm `11.9.0`；SiYuan App使用自身锁定的pnpm `11.12.0`。不得以默认Node 22的结果作为交付证据。
 - 固定PostgreSQL 17测试服务为`singularity-postgres-test`，仅绑定`127.0.0.1:55432`并使用数据库`singularity_test`。本实现波未启动、停止或重配该容器，也未触碰用户占用的3000端口进程。
-- implementation期间没有运行正式runner、typecheck、build、Prisma、数据库、浏览器或服务验收；各owner只执行了允许的静态语法、格式、路径与差异检查。
+- 集中verification使用Node `24.18.0`、pnpm `11.9.0`与固定PostgreSQL 17测试库完成正式runner、typecheck、build、Prisma、数据库、浏览器、服务、Kernel及供应链验收；本轮没有启动、停止或重配固定数据库。
 
 ## 纵向功能状态
 
@@ -55,13 +55,16 @@ tags: ["l1", "implementation", "handoff"]
 - 启动器使用测试私有schema、工作区、密钥与对象存储；退出时清理API、Worker、源/恢复Kernel、schema和临时文件，但不启动或停止固定PostgreSQL服务。
 - 企业Web镜像只交付Vite `dist`；旧企业shell runner、错位Adapter测试和企业Webpack入口已物理删除。上游App构建链保持不变。
 
-## 下一阶段
+## Verification Record
 
-1. 对完整implementation工作树执行一次集中`code-review + test-governance`，按功能纵向并行复评生产链、测试价值、安全、许可证与旧路径删除。
-2. 复评问题按共同根因整批返回implementation修复；所有关联问题收口并复评通过后才进入verification。
-3. verification使用Node 24与固定PostgreSQL 17集中运行`pnpm verify:b4`、`pnpm verify:s0-s3`、`pnpm test:e2e`、Kernel `go test -vet=off -tags="fts5 sqlcipher" ./...`及供应链矩阵。不得运行`app pnpm build`。
-4. 批量收集失败后按共同根因修复，不形成“修一个case、跑一次”的循环；最终证据回到统一矩阵。
-5. verification通过后更新权威方案的最终证据，提交并推送修复批次，再根据第9.3节逐项证明L1完成。
+- `pnpm verify:b4`：architecture `25/25`、Protyle Browser `10/10`、Web `33/33`、App `78/78`，生产构建通过。
+- `pnpm verify:s0-s3`：contracts `24/24`、database `53/53`、API unit `123/123`、API integration `221/221`、Worker `59/59`、Web component `78/78`、browser integration `59 passed / 64 skipped / 0 failed`，Kernel serviceauth及企业构建通过。
+- `pnpm test:e2e`：P5真实链 `11 expected / 0 unexpected / 0 skipped`；Kernel全量、Docker冷构建、生产SBOM闭包、漏洞和许可证策略均通过。
+- 供应链标准runner：`node --test scripts/singularity/*.test.mjs` 为 `112/112`；许可证 `2642 allowed / 0 denied / 0 unknown`，漏洞 `0 fixable / 0 unfixed High/Critical`，生产依赖闭包 `0`。
+
+## 后续范围
+
+L1交付不包含方案第9.2节的实时多人编辑、评论、通知、文档级权限、LDAP/SCIM、本地离线和跨空间搜索；这些能力必须分别进入L2/L3产品与架构评审。
 
 ## 恢复入口
 
