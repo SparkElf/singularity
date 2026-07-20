@@ -4,6 +4,10 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
 blockExoticSubdeps: false
+supportedArchitectures:
+  cpu: [x64, arm64, ia32, ppc64, s390x, riscv64, wasm32]
+  libc: [glibc, musl]
+  os: [linux, darwin, win32, freebsd]
 minimumReleaseAgeExclude:
   - electron@42.5.0
   - app-builder-lib@26.15.6

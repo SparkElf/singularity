@@ -47,6 +47,7 @@ function parseArguments(args) {
   let inputPath;
   let outputPath;
   let policyPath;
+  let referencePath;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -62,6 +63,9 @@ function parseArguments(args) {
     } else if (argument === "--policy") {
       policyPath = readArgumentValue(args, index, argument);
       index += 1;
+    } else if (argument === "--reference") {
+      referencePath = readArgumentValue(args, index, argument);
+      index += 1;
     } else {
       throw new Error(`Unknown argument: ${String(argument)}`);
     }
@@ -70,10 +74,10 @@ function parseArguments(args) {
   if (inputPath === undefined || outputPath === undefined || policyPath === undefined) {
     throw new Error(
       "Usage: enrich-license-sbom.mjs --policy <policy.json> --input <raw.cdx.json> " +
-        "--output <enriched.cdx.json> [--image <image-ref>]",
+        "--output <enriched.cdx.json> [--image <image-ref>] [--reference <canonical.cdx.json>]",
     );
   }
-  return { image, inputPath, outputPath, policyPath };
+  return { image, inputPath, outputPath, policyPath, referencePath };
 }
 
 function readJson(path) {
@@ -487,6 +491,88 @@ function readComponentLicenses(component) {
     .filter((value) => typeof value === "string" && value.length > 0);
 }
 
+function readReferenceSbom(referencePath) {
+  const reference = readJson(referencePath);
+  if (reference.bomFormat !== "CycloneDX" || !Array.isArray(reference.components)) {
+    throw new Error("Reference is not a CycloneDX document with components");
+  }
+
+  const componentsByPurl = new Map();
+  for (const component of reference.components) {
+    if (typeof component?.purl !== "string" || component.purl.length === 0) {
+      continue;
+    }
+    const components = componentsByPurl.get(component.purl);
+    if (components === undefined) {
+      componentsByPurl.set(component.purl, [component]);
+    } else {
+      components.push(component);
+    }
+  }
+
+  return {
+    componentsByPurl,
+    path: readRelativePath(referencePath, "reference"),
+    sha256: sha256(referencePath),
+  };
+}
+
+function readReferenceLicense(reference, component) {
+  const candidates = reference.componentsByPurl.get(component.purl) ?? [];
+  const licensedCandidates = candidates.filter((candidate) => readComponentLicenses(candidate).length > 0);
+  if (licensedCandidates.length === 0) {
+    return null;
+  }
+
+  const first = licensedCandidates[0];
+  const firstLicenses = readComponentLicenses(first);
+  for (const candidate of licensedCandidates) {
+    if (candidate.name !== first.name || candidate.version !== first.version) {
+      throw new Error(`Reference SBOM has conflicting component identity for ${component.purl}`);
+    }
+    const candidateLicenses = readComponentLicenses(candidate);
+    if (
+      candidateLicenses.length !== firstLicenses.length ||
+      candidateLicenses.some((license, index) => license !== firstLicenses[index])
+    ) {
+      throw new Error(`Reference SBOM has conflicting license evidence for ${component.purl}`);
+    }
+  }
+  if (component.name !== first.name || component.version !== first.version) {
+    throw new Error(`Reference SBOM component identity does not match ${component.purl}`);
+  }
+  return { component: first, licenses: firstLicenses };
+}
+
+// 将同一精确 PURL 的源码许可证证据显式带入运行时 SBOM，避免二进制扫描器丢失 Go 模块许可证。
+function addReferenceEvidence(component, reference) {
+  const referenced = readReferenceLicense(reference, component);
+  if (referenced === null) {
+    return false;
+  }
+
+  const licenses = readComponentLicenses(component);
+  if (
+    licenses.length > 0 &&
+    (licenses.length !== referenced.licenses.length ||
+      licenses.some((license, index) => license !== referenced.licenses[index]))
+  ) {
+    throw new Error(`Reference SBOM license evidence conflicts for ${component.purl}`);
+  }
+  if (licenses.length === 0) {
+    component.licenses = referenced.component.licenses.map((license) => ({ ...license }));
+  }
+
+  component.properties ??= [];
+  component.properties.push(
+    { name: `${evidencePropertyPrefix}.reference.kind`, value: "canonical-sbom" },
+    { name: `${evidencePropertyPrefix}.reference.path`, value: reference.path },
+    { name: `${evidencePropertyPrefix}.reference.reason`, value: "Exact PURL license evidence inherited from canonical source SBOM" },
+    { name: `${evidencePropertyPrefix}.reference.sha256`, value: reference.sha256 },
+  );
+  return true;
+}
+
 function addEvidence(component, evidence) {
   const licenses = readComponentLicenses(component);
   let replacedScannerLicense;
@@ -533,7 +619,7 @@ function addEvidence(component, evidence) {
   }
 }
 
-const { image, inputPath, outputPath, policyPath } = parseArguments(process.argv.slice(2));
+const { image, inputPath, outputPath, policyPath, referencePath } = parseArguments(process.argv.slice(2));
 const policy = readJson(policyPath);
 if (policy.version !== 3) {
   throw new Error("Unsupported license policy version");
@@ -594,5 +680,22 @@ for (const evidence of readLicenseEvidence(policy)) {
   }
 }
 
+let referenceCount = 0;
+if (referencePath !== undefined) {
+  const reference = readReferenceSbom(referencePath);
+  for (const component of sbom.components) {
+    if (typeof component?.purl !== "string") {
+      continue;
+    }
+    if (addReferenceEvidence(component, reference)) {
+      referenceCount += 1;
+    }
+  }
+}
+
 writeFileSync(resolve(repositoryRoot, outputPath), `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
-process.stdout.write(`Enriched ${String(appliedCount)} CycloneDX license components\n`);
+process.stdout.write(
+  `Enriched ${String(appliedCount)} CycloneDX license components` +
+    (referenceCount === 0 ? "" : `; inherited ${String(referenceCount)} reference components`) +
+    "\n",
+);

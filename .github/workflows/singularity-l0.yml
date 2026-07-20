@@ -682,7 +682,8 @@ jobs:
             --policy config/license-policy.json \
             --input artifacts/supply-chain/worker.trivy.cdx.json \
             --output artifacts/supply-chain/worker.cdx.json \
-            --image "$WORKER_IMAGE"
+            --image "$WORKER_IMAGE" \
+            --reference artifacts/supply-chain/source.cdx.json
 
       - name: Enrich Web SBOM license evidence
         id: web_sbom_evidence

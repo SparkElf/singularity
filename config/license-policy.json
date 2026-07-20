@@ -43,6 +43,7 @@
     "LicenseRef-uthash",
     "MIT",
     "MIT-0",
+    "MPL-2.0",
     "MIT OR CC0-1.0",
     "MulanPSL-2.0",
     "NAIST-2003",
@@ -741,6 +742,16 @@
       ],
       "reason": "The exact module archive contains the reviewed Apache 2.0 license",
       "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "kind": "repository-file",
+      "license": "BSD-3-Clause",
+      "path": "config/licenses/go-stdlib/LICENSE.go1.26.5",
+      "purls": [
+        "pkg:golang/stdlib@v1.26.5"
+      ],
+      "reason": "Go 1.26.5 standard library distribution license",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
     },
     {
       "kind": "container-file",
