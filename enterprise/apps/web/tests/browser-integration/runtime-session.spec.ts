@@ -84,6 +84,10 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
       await fulfillJson(route, { organizations: [] });
       return;
     }
+    if (path === "/api/v1/auth/oidc/providers") {
+      await fulfillJson(route, { providers: [] });
+      return;
+    }
     if (path === runtimePath()) {
       await fulfillJson(route, {
         organizationId: ORGANIZATION_A,
@@ -131,13 +135,22 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
   const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
     message.text().includes("401 (Unauthorized)"),
   );
-  expect(expectedConsoleMessages).toHaveLength(1);
+  expect(expectedConsoleMessages).toHaveLength(2);
   const expectedErrorResponses = diagnostics.responses.filter(
     (response) =>
       response.status() === 401 &&
       new URL(response.url()).pathname === "/api/v1/spaces",
   );
-  expect(expectedErrorResponses).toHaveLength(1);
+  expect(expectedErrorResponses).toHaveLength(2);
+  const expectedRequestFailures = diagnostics.requestFailures.filter((request) => {
+    const path = new URL(request.url()).pathname;
+    return request.failure()?.errorText === "net::ERR_ABORTED" && (
+      path === "/api/v1/auth/oidc/providers" ||
+      path === "/api/v1/enterprise-management-access" ||
+      path === runtimePath() ||
+      path === "/api/v1/spaces"
+    );
+  });
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
     unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
       (message) => !expectedConsoleMessages.includes(message),
@@ -145,6 +158,9 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
     unexpectedErrorResponses: diagnostics.responses.filter(
       (response) =>
         response.status() >= 400 && !expectedErrorResponses.includes(response),
+    ),
+    unexpectedRequestFailures: diagnostics.requestFailures.filter(
+      (request) => !expectedRequestFailures.includes(request),
     ),
   });
 });
