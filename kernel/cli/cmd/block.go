@@ -117,7 +117,7 @@ var blockBreadcrumbCmd = &cobra.Command{
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tNAME\tTYPE")
 			for _, p := range paths {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", p.ID, p.Name, p.Type)
+				fmt.Fprintf(w, "%s\t%s\t%s\n", p.BlockID, p.Name, p.Type)
 			}
 			w.Flush()
 		}

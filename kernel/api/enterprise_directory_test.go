@@ -173,6 +173,14 @@ func TestEnterpriseDirectoryRejectsCrossNotebookParentAndUnknownQuery(t *testing
 
 func TestEnterpriseDirectoryHoldsEncryptedResponseUntilSerializationAndHidesLockedDocuments(t *testing.T) {
 	boxID := setupEncryptedResponseTest(t, 1)[0]
+	if _, err := model.Mount(boxID); err != nil {
+		t.Fatalf("mount encrypted directory notebook: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := model.Unmount(boxID); err != nil {
+			t.Errorf("unmount encrypted directory notebook: %v", err)
+		}
+	})
 	util.SetBooted()
 	const documentID = "20990718040000-direncr"
 	createEnterpriseDirectoryTree(t, boxID, documentID, "/"+documentID+".sy", "/Protected", "Protected")

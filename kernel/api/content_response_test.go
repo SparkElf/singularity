@@ -477,6 +477,7 @@ func setupEncryptedResponseTest(t *testing.T, boxCount int) []string {
 	util.IsExiting.Store(false)
 	util.ReadOnly = false
 	model.Conf = model.NewAppConf()
+	model.Conf.Lang = "en"
 	model.Conf.System = kernelconf.NewSystem()
 	model.Conf.Sync = kernelconf.NewSync()
 	model.Conf.FileTree = kernelconf.NewFileTree()
@@ -484,6 +485,27 @@ func setupEncryptedResponseTest(t *testing.T, boxCount int) []string {
 	model.Conf.Export = kernelconf.NewExport()
 	model.Conf.Search = kernelconf.NewSearch()
 	model.Conf.NotebookCrypto = kernelconf.NewNotebookCrypto()
+	englishLang, hadEnglishLang := util.Langs["en"]
+	if !hadEnglishLang {
+		englishLang = map[int]string{}
+		util.Langs["en"] = englishLang
+	}
+	untitledLabel, hadUntitledLabel := englishLang[16]
+	if !hadUntitledLabel {
+		// 测试直接替换配置，不经过 InitConf；补齐空标题规范化所需的语言合同。
+		englishLang[16] = "Untitled"
+	}
+	_, hadEnglishTimeLang := util.TimeLangs["en"]
+	if !hadEnglishTimeLang {
+		// 测试直接替换配置，不经过 InitConf；补齐 HumanizeTime 所需的最小语言合同。
+		util.TimeLangs["en"] = map[string]any{
+			"albl": "ago", "blbl": "from now", "now": "now",
+			"1s": "1 second %s", "xs": "%d seconds %s", "1m": "1 minute %s", "xm": "%d minutes %s",
+			"1h": "1 hour %s", "xh": "%d hours %s", "1d": "1 day %s", "xd": "%d days %s",
+			"1w": "1 week %s", "xw": "%d weeks %s", "1M": "1 month %s", "xM": "%d months %s",
+			"1y": "1 year %s", "2y": "2 years %s", "xy": "%d years %s", "max": "a long while %s",
+		}
+	}
 	cache.ClearTreeCache()
 	if err := kernelsql.ClearQueue(); err != nil {
 		t.Fatalf("clear encrypted response queue: %v", err)
@@ -505,6 +527,17 @@ func setupEncryptedResponseTest(t *testing.T, boxCount int) []string {
 		kernelsql.CloseDatabase()
 		cache.ClearTreeCache()
 		model.Conf = originalConf
+		if !hadEnglishTimeLang {
+			delete(util.TimeLangs, "en")
+		}
+		if hadUntitledLabel {
+			englishLang[16] = untitledLabel
+		} else {
+			delete(englishLang, 16)
+		}
+		if !hadEnglishLang {
+			delete(util.Langs, "en")
+		}
 		util.ReadOnly = originalReadOnly
 		util.IsExiting.Store(originalIsExiting)
 		util.BlockTreeDBPath = originalBlockTreeDBPath

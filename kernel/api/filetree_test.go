@@ -24,6 +24,7 @@ import (
 )
 
 func TestRenameDocReturnsPersistedCanonicalTitle(t *testing.T) {
+	setupEncryptedResponseTest(t, 0)
 	util.SetBooted()
 	const (
 		boxID  = "20990719100000-renamex"
@@ -31,6 +32,7 @@ func TestRenameDocReturnsPersistedCanonicalTitle(t *testing.T) {
 	)
 	boxConf := kernelconf.NewBoxConf()
 	boxConf.Name = "Rename response"
+	boxConf.Closed = false
 	if err := (&model.Box{ID: boxID}).SaveConf(boxConf); err != nil {
 		t.Fatalf("create rename notebook fixture: %v", err)
 	}
@@ -97,7 +99,7 @@ func TestRenameDocReturnsPersistedCanonicalTitle(t *testing.T) {
 	}
 	if persisted.Root.IALAttr("title") != emptyResult.Data.Title ||
 		persisted.Root.IALAttr(model.NodeAttrTitleEmpty) != "true" {
-		t.Fatalf("persisted empty title = %q, ial = %#v", persisted.Root.IALAttr("title"), persisted.Root.IAL)
+		t.Fatalf("persisted empty title = %q, kramdown ial = %#v", persisted.Root.IALAttr("title"), persisted.Root.KramdownIAL)
 	}
 }
 
