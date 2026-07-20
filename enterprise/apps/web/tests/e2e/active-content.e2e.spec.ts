@@ -46,5 +46,16 @@ test("keeps real PlantUML and HTML blocks inert and same-origin", async ({
   expect(externalRequests).toEqual([]);
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+  const webOrigin = new URL(state.webOrigin).origin;
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
+      const url = new URL(request.url());
+      const isParallelStartupNetworkChange =
+        request.failure()?.errorText === "net::ERR_NETWORK_CHANGED" &&
+        url.origin === webOrigin &&
+        ((url.pathname.startsWith("/assets/index-") && url.pathname.endsWith(".js")) ||
+          url.pathname === "/stage/protyle/js/lute/lute.min.js");
+      return !isParallelStartupNetworkChange;
+    }),
+  });
 });

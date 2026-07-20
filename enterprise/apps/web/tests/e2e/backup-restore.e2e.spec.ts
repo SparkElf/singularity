@@ -156,5 +156,37 @@ test("restores one committed content version into an activated isolated space", 
   ).not.toBe(state.documentId);
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+  const sourceSpaceApiPrefix =
+    `/api/v1/organizations/${state.organizationId}/spaces/${state.spaceId}`;
+  const targetSpaceApiPrefix =
+    `/api/v1/organizations/${state.organizationId}/spaces/${targetSpaceId}`;
+  const expectedNavigationAbortPaths = new Set([
+    `${sourceSpaceApiPrefix}/backups`,
+    `${sourceSpaceApiPrefix}/restores`,
+    `${sourceSpaceApiPrefix}/kernel/api/block/getDocInfo`,
+    `${sourceSpaceApiPrefix}/kernel/api/block/getBlockBreadcrumb`,
+    `${sourceSpaceApiPrefix}/kernel/api/transactions/undoState`,
+    `${targetSpaceApiPrefix}/kernel/api/block/getDocInfo`,
+  ]);
+  const expectedNavigationConsoleMessages = diagnostics.consoleMessages.filter((message) => {
+    const text = message.text();
+    return text === "[global-undo] initialize failed: Failed to fetch" ||
+      text.startsWith("[protyle.breadcrumb] render path failed TypeError: Failed to fetch") ||
+      (text.startsWith("[protyle.gateway]") &&
+        text.includes(`documentId: ${state.documentId}`) &&
+        text.includes(`phase: request-network, spaceId: ${state.spaceId}`)) ||
+      text ===
+        `[protyle.lifecycle] {category: network-failure, documentId: ${state.documentId}, ` +
+        `phase: transport, spaceId: ${state.spaceId}}`;
+  });
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter((message) =>
+      !expectedNavigationConsoleMessages.includes(message),
+    ),
+    // 页面切换会取消旧页面的轮询和编辑器读取，请求路径必须属于已知导航终态。
+    unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
+      request.failure()?.errorText !== "net::ERR_ABORTED" ||
+      !expectedNavigationAbortPaths.has(new URL(request.url()).pathname),
+    ),
+  });
 });
