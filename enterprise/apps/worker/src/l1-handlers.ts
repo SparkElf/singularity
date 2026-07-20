@@ -989,10 +989,10 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
                   )
                   OR EXISTS (
                     SELECT 1
-                    FROM "space_group_grants" AS grant
+                    FROM "space_group_grants" AS space_grant
                     INNER JOIN "user_groups" AS user_group
-                      ON user_group."id" = grant."group_id"
-                      AND user_group."organization_id" = grant."organization_id"
+                      ON user_group."id" = space_grant."group_id"
+                      AND user_group."organization_id" = space_grant."organization_id"
                       AND user_group."status" = 'active'
                     INNER JOIN "user_group_memberships" AS group_membership
                       ON group_membership."group_id" = user_group."id"
@@ -1002,9 +1002,9 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
                       ON group_organization_membership."organization_id" = user_group."organization_id"
                       AND group_organization_membership."user_id" = group_membership."user_id"
                       AND group_organization_membership."status" = 'active'
-                    WHERE grant."space_id" = restore."source_space_id"
-                      AND grant."organization_id" = restore."organization_id"
-                      AND grant."role" = 'admin'
+                    WHERE space_grant."space_id" = restore."source_space_id"
+                      AND space_grant."organization_id" = restore."organization_id"
+                      AND space_grant."role" = 'admin'
                   )
                 )
             )

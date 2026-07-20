@@ -30,9 +30,11 @@ async function acquireProducerLock(
   transaction: Prisma.TransactionClient,
   producer: string,
 ): Promise<void> {
+  // 使用事务级 advisory lock 串行化同一 producer；返回常量避免 Prisma 解码 PostgreSQL void 类型。
   await transaction.$queryRaw(
     Prisma.sql`
-      SELECT pg_advisory_xact_lock(
+      SELECT 1
+      FROM pg_advisory_xact_lock(
         hashtext(current_schema()),
         hashtext(${producer})
       )
