@@ -4,6 +4,8 @@ import {
   Body,
   Controller,
   Header,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Req,
@@ -52,6 +54,7 @@ export class SpaceDiscoveryController {
   constructor(private readonly discovery: SpaceDiscoveryService) {}
 
   @Post(ORGANIZATION_SPACE_DISCOVERY_SEARCH_CONTROLLER_PATH)
+  @HttpCode(HttpStatus.OK)
   @SessionMutation()
   @Header("Cache-Control", "no-store")
   @ApiProblemResponses(400, 401, 403, 404, 503)
@@ -80,6 +83,7 @@ export class SpaceDiscoveryController {
   }
 
   @Post(ORGANIZATION_SPACE_DISCOVERY_GRAPH_CONTROLLER_PATH)
+  @HttpCode(HttpStatus.OK)
   @SessionMutation()
   @Header("Cache-Control", "no-store")
   @ApiProblemResponses(400, 401, 403, 404, 503)

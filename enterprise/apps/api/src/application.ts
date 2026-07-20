@@ -96,11 +96,10 @@ export async function createApiApplication(
         : { oidcHttpTransport: options.oidcHttpTransport }),
     }),
     adapter,
-    options.logger === undefined ? {} : { logger: options.logger },
-  );
-  installKernelGatewayHttpBoundary(
-    adapter.getInstance(),
-    app.get(KernelGatewayAdmission),
+    {
+      ...(options.https === undefined ? {} : { httpsOptions: options.https }),
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
+    },
   );
   await app.register(cookie);
   app.useGlobalFilters(new ApiProblemFilter());
@@ -130,6 +129,10 @@ export async function createApiApplication(
   });
 
   await app.init();
+  installKernelGatewayHttpBoundary(
+    adapter.getInstance(),
+    app.get(KernelGatewayAdmission),
+  );
   app.get(KernelWebSocketGateway).attach(app.getHttpServer());
   return app;
 }

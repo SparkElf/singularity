@@ -56,6 +56,7 @@ interface FastifyReplyBoundary {
 }
 
 interface FastifyBoundary {
+  removeContentTypeParser(contentType: string): void;
   addContentTypeParser(
     contentType: RegExp,
     options: { bodyLimit: number; parseAs: "buffer" },
@@ -91,8 +92,9 @@ export function installKernelGatewayHttpBoundary(
     { bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
     (_request, body, done) => done(null, body),
   );
+  fastify.removeContentTypeParser("application/json");
   fastify.addContentTypeParser(
-    /^application\/json(?:;.*)?$/i,
+    "application/json",
     { bodyLimit: KERNEL_JSON_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
     (_request, body, done) => {
       if (body.byteLength === 0) {
