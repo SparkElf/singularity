@@ -55,6 +55,7 @@ export interface CoreModuleOptions {
   databaseUrl: string | undefined;
   auditConfiguration: AuditConfiguration;
   initializeDummyPasswordHash?: boolean;
+  loginRateLimiter?: LoginRateLimiter;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
 }
@@ -114,7 +115,7 @@ export class CoreModule {
         },
         {
           provide: LoginRateLimiter,
-          useFactory: () => new LoginRateLimiter(),
+          useFactory: () => options.loginRateLimiter ?? new LoginRateLimiter(),
         },
         {
           provide: OidcStartAdmission,

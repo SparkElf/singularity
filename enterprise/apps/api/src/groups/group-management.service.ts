@@ -392,7 +392,7 @@ export class GroupManagementService {
     return transaction.$queryRaw<Array<{ spaceId: string; userId: string }>>(
       Prisma.sql`
         SELECT DISTINCT
-          grant."space_id" AS "spaceId",
+          space_grant."space_id" AS "spaceId",
           membership."user_id" AS "userId"
         FROM "user_group_memberships" AS membership
         INNER JOIN "organization_memberships" AS organization_membership
@@ -402,12 +402,12 @@ export class GroupManagementService {
         INNER JOIN "users" AS account
           ON account."id" = membership."user_id"
           AND account."status" = 'active'
-        INNER JOIN "space_group_grants" AS grant
-          ON grant."organization_id" = membership."organization_id"
-          AND grant."group_id" = membership."group_id"
+        INNER JOIN "space_group_grants" AS space_grant
+          ON space_grant."organization_id" = membership."organization_id"
+          AND space_grant."group_id" = membership."group_id"
         INNER JOIN "spaces" AS space
-          ON space."id" = grant."space_id"
-          AND space."organization_id" = grant."organization_id"
+          ON space."id" = space_grant."space_id"
+          AND space."organization_id" = space_grant."organization_id"
           AND space."status" = 'active'
         WHERE membership."organization_id" = ${organizationId}
           AND membership."group_id" = ${groupId}

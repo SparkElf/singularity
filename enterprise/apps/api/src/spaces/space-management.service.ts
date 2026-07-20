@@ -694,10 +694,10 @@ export class SpaceManagementService {
   ): Promise<void> {
     const userIds = [...new Set([actorUserId, ...relatedUserIds])].sort();
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "users" WHERE "id" IN (${Prisma.join(userIds)}) ORDER BY "id" FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
     );
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "users" WHERE "id" IN (${Prisma.join(userIds)}) ORDER BY "id" FOR UPDATE`,
     );
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" IN (${Prisma.join(userIds)}) ORDER BY "user_id" FOR UPDATE`,

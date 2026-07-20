@@ -412,10 +412,10 @@ export class OrganizationManagementService {
     }
     await this.database.client.$transaction(async (transaction) => {
       await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
+        Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${invitationReference.organizationId} FOR UPDATE`,
       );
       await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${invitationReference.organizationId} FOR UPDATE`,
+        Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
       );
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${invitationReference.organizationId} AND "user_id" = ${userId} FOR UPDATE`,
@@ -784,10 +784,10 @@ export class OrganizationManagementService {
   ): Promise<OrganizationManagerRole> {
     const userIds = [...new Set([actorUserId, ...relatedUserIds])].sort();
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "users" WHERE "id" IN (${Prisma.join(userIds)}) ORDER BY "id" FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
     );
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "users" WHERE "id" IN (${Prisma.join(userIds)}) ORDER BY "id" FOR UPDATE`,
     );
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" IN (${Prisma.join(userIds)}) ORDER BY "user_id" FOR UPDATE`,
@@ -858,10 +858,10 @@ export class OrganizationManagementService {
       throw conflict();
     }
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
     );
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`,
     );
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" = ${userId} FOR UPDATE`,

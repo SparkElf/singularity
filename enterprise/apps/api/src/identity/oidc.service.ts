@@ -857,10 +857,10 @@ export class OidcService {
             currentUserId = identityReference.userId;
             if (attempt.invitationId === null) {
               await transaction.$queryRaw(
-                Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${currentUserId} FOR SHARE`,
+                Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
               );
               await transaction.$queryRaw(
-                Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${attempt.organizationId} FOR SHARE`,
+                Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${currentUserId} FOR SHARE`,
               );
               await transaction.$queryRaw(
                 Prisma.sql`
