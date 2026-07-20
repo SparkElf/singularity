@@ -69,5 +69,13 @@ test("shows a real Kernel backlink for the selected document", async ({
   await expect(editor).toContainText("P5 引用");
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
+      request.failure()?.errorText !== "net::ERR_ABORTED" ||
+      !(
+        new URL(request.url()).pathname.endsWith("/kernel/api/filetree/getDoc") ||
+        new URL(request.url()).pathname.endsWith("/kernel/api/block/getBlockBreadcrumb")
+      ),
+    ),
+  });
 });

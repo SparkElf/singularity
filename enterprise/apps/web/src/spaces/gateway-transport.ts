@@ -352,6 +352,10 @@ export function createSpaceGatewayTransport<TMessage>(
     try {
       return await response.json() as TResponse;
     } catch (error) {
+      // 页面切换或退出会话主动终止响应体读取；该终止不属于协议错误，不能污染运行时状态。
+      if (signal.aborted) {
+        throw error;
+      }
       logGatewayError({
         documentId: requestOptions.identity.documentId,
         phase: "request-response-json",
