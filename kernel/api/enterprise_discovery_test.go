@@ -23,11 +23,14 @@ import (
 	kernelconf "github.com/siyuan-note/siyuan/kernel/conf"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/serviceauth"
+	kernelsql "github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/treenode"
+	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) {
 	setupEncryptedResponseTest(t, 0)
+	util.SetBooted()
 	model.Conf.Graph = kernelconf.NewGraph()
 	model.Conf.Graph.Global.Paragraph = true
 	const (
@@ -56,6 +59,9 @@ func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) 
 		}},
 	}); err != nil {
 		t.Fatalf("create discovery fixture: %v", err)
+	}
+	if err := kernelsql.FlushQueue(); err != nil {
+		t.Fatalf("flush discovery fixture index: %v", err)
 	}
 
 	router := enterpriseDiscoveryTestRouter(t)
@@ -127,6 +133,7 @@ func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) 
 
 func TestEnterpriseDiscoveryAggregatesUnlockedEncryptedStoresAndExcludesLockedStores(t *testing.T) {
 	encryptedBoxIDs := setupEncryptedResponseTest(t, 2)
+	util.SetBooted()
 	model.Conf.Graph = kernelconf.NewGraph()
 	model.Conf.Graph.Global.Paragraph = true
 	const (
@@ -277,6 +284,7 @@ func TestEnterpriseEncryptedDocumentGraphIsRejectedBeforeDocumentLookup(t *testi
 
 func TestGraphTagNamespaceDoesNotCollideWithBlockIdentity(t *testing.T) {
 	setupEncryptedResponseTest(t, 0)
+	util.SetBooted()
 	model.Conf.Graph = kernelconf.NewGraph()
 	model.Conf.Graph.Local.Paragraph = true
 	model.Conf.Graph.Local.Tag = true
@@ -570,6 +578,9 @@ func createEnterpriseDiscoveryTree(
 		}},
 	}); err != nil {
 		t.Fatalf("create discovery tree %s/%s: %v", notebookID, documentID, err)
+	}
+	if err := kernelsql.FlushQueue(); err != nil {
+		t.Fatalf("flush discovery tree index %s/%s: %v", notebookID, documentID, err)
 	}
 }
 

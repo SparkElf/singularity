@@ -191,9 +191,16 @@ func TestCheckBlocksExistRequiresExplicitNotebook(t *testing.T) {
 
 func TestGetBlockBreadcrumbCarriesExplicitTargetIdentity(t *testing.T) {
 	boxID := setupEncryptedResponseTest(t, 1)[0]
+	if _, err := model.Mount(boxID); err != nil {
+		t.Fatalf("mount breadcrumb notebook: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := model.Unmount(boxID); err != nil {
+			t.Errorf("unmount breadcrumb notebook: %v", err)
+		}
+	})
 	const documentID = "20990719120001-bread01"
 	createEnterpriseDirectoryTree(t, boxID, documentID, "/"+documentID+".sy", "/Breadcrumb", "Breadcrumb")
-
 	previousMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(previousMode) })

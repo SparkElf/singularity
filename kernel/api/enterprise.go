@@ -22,7 +22,6 @@ import (
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/serviceauth"
-	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
 const (

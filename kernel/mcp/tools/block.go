@@ -433,6 +433,7 @@ func broadcastBlockTransactions(transactions []*model.Transaction) {
 	util.PushEvent(event)
 }
 
+// blockBreadcrumb 将内核返回的规范块路径投影为 MCP 文本，并保留每个路径节点的真实块身份。
 func blockBreadcrumb(args map[string]any) (CallToolResult, error) {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -446,7 +447,7 @@ func blockBreadcrumb(args map[string]any) (CallToolResult, error) {
 
 	var sb strings.Builder
 	for _, p := range paths {
-		sb.WriteString(fmt.Sprintf("%s/%s (%s)\n", p.Type, p.Name, p.ID))
+		sb.WriteString(fmt.Sprintf("%s/%s (%s)\n", p.Type, p.Name, p.BlockID))
 	}
 	return CallToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}, nil
 }
