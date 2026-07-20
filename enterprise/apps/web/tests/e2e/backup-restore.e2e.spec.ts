@@ -139,9 +139,11 @@ test("restores one committed content version into an activated isolated space", 
 
   const directory = page.getByRole("navigation", { name: "文档目录" });
   await expect(directory).toContainText(state.notebookName, { timeout: 30_000 });
-  await expect(
-    directory.getByRole("button", { name: state.documentTitle }),
-  ).toBeVisible({ timeout: 30_000 });
+  const restoredDocumentButton = directory.getByRole("button", {
+    name: state.documentTitle,
+  });
+  await expect(restoredDocumentButton).toBeVisible({ timeout: 30_000 });
+  await restoredDocumentButton.click();
   const restoredEditor = page.getByTestId("protyle-host");
   await expect(restoredEditor).toContainText(marker, { timeout: 30_000 });
 

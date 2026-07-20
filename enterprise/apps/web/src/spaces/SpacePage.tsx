@@ -29,7 +29,11 @@ import {
 } from "lucide-react";
 import { Link, Navigate, useLocation, useParams } from "react-router";
 
-import { NetworkFailureError, isApiProblem } from "@/api/http.ts";
+import {
+  NetworkFailureError,
+  isApiProblem,
+  isRuntimeAccessLostProblem,
+} from "@/api/http.ts";
 import {
   AssetPreviewSurface,
   type AssetPreviewSurfaceRequest,
@@ -970,6 +974,7 @@ export function SpacePage({
     event: RuntimeErrorEvent,
     failedBootstrap: ReadySpaceRuntimeBootstrap,
   ) => {
+    // 终止当前组合根后重新读取授权与运行时；只有两者都仍属于当前代次才允许恢复。
     if (event.category !== "unauthenticated" && event.category !== "forbidden") {
       return;
     }
@@ -1019,6 +1024,9 @@ export function SpacePage({
     if (runtimeResult.status === "rejected") {
       const runtimeError: unknown = runtimeResult.reason;
       console.warn("[protyle.lifecycle]", {
+        ...(isRuntimeAccessLostProblem(runtimeError)
+          ? { category: "forbidden" }
+          : {}),
         error: runtimeError,
         phase: "reauthorize",
         result: "runtime-failed",

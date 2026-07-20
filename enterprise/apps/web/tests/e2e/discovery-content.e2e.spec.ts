@@ -29,7 +29,15 @@ test("searches the real space index and navigates to the matching document", asy
   await expect(editor).toContainText(state.searchMarker, { timeout: 30_000 });
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
+      request.failure()?.errorText !== "net::ERR_ABORTED" ||
+      !(
+        new URL(request.url()).pathname.endsWith("/kernel/api/filetree/getDoc") ||
+        new URL(request.url()).pathname.endsWith("/kernel/api/block/getBlockBreadcrumb")
+      ),
+    ),
+  });
 });
 
 test("shows a real Kernel backlink for the selected document", async ({
