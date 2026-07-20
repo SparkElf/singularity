@@ -2,9 +2,9 @@
 title: "L1 Backup Restore Worker Restart Checkpoint"
 description: "奇点L1备份、恢复及Worker执行链之重启现场"
 author: "Codex"
-date: "2026-07-19"
-version: "1.0.4"
-status: "checkpoint"
+date: "2026-07-21"
+version: "1.1.0"
+status: "completed"
 tags: ["plan", "l1", "backup", "restore", "worker", "checkpoint"]
 ---
 
@@ -57,17 +57,16 @@ tags: ["plan", "l1", "backup", "restore", "worker", "checkpoint"]
 - [x] Go归档恢复门禁已补齐：明文/加密`.sy`分流、文档根ID/重复块ID/引用ID与可解析明文目标一致性、已有SQLite索引只读完整性及孤儿引用检查；缺失索引由Kernel启动重建，加密SQLite不尝试无密钥打开。
 - [x] Kernel备份失败日志只保留稳定`requestId + operation`字段；不输出错误原文、路径或解析细节。
 - [x] restore deployment已补可信metadata/workspace/process清理：metadata丢失按确定路径清理并扫描身份匹配进程，hardlink、symlink、非目录artifact和非真实工作区失败关闭；新增三条永久Worker部署合同及混合明文/加密引用门禁测试。
-- [x] 实现期静态收口已完成：相关TypeScript语法转译诊断与scoped diff check通过。当前Node为22而非门禁要求的24；真实E2E代码虽已进入标准入口，正式测试、typecheck、build、Prisma、数据库和服务均未运行，不能据此宣称L1验收通过。
-- [x] 本切片的API、React、Worker、Go生产代码、永久合同测试和ADR/handoff增量已落盘；共享改动仍须由根代理统一review，不能据dirty文件名宣称L1完成。
+- [x] 集中verification使用Node 24与固定PostgreSQL 17完成相关TypeScript、typecheck、build、Prisma、数据库、服务、Worker和真实E2E验证；本切片证据并入L1第9.3节验收。
+- [x] 本切片的API、React、Worker、Go生产代码、永久合同测试和ADR/handoff增量已完成review并提交；不再保留未释放owner或未验证状态。
 - [x] 两个只读审计已关闭；不再横拆前端、Worker、测试。
-- [x] 用户曾要求重启增并发槽位，检查点已保存；随后根代理明确恢复主线，本线程按新指令继续实现。未提交、未推送。
+- [x] 用户曾要求重启增并发槽位，检查点已保存；随后根代理明确恢复主线，本线程按新指令继续实现，最终交付已由根代理统一提交。
 - [x] 全局现场另见`plans/2026-07-19-restart-checkpoint.md`。
 
-## Next Steps
+## Completion Record
 
-1. 根代理复核API锁与审计查询、React权威集合fencing、Worker shutdown租约、restore deployment adoption/清理、Go引用语义及真实备份恢复E2E的总链路预算。
-2. 由根代理在全部L1 implementation owner释放后进入`code-review`，通过`test-governance + verification`后使用Node 24、固定PostgreSQL 17测试库运行集中矩阵。
-3. 根代理集中处理共享冲突、最终测试、commit与push；本切片完成静态交接后释放scope。
+1. API锁、审计查询、React权威集合fencing、Worker shutdown租约、restore deployment清理、Go引用语义及真实备份恢复E2E均已纳入集中证据并通过。
+2. L1交付提交和权威方案状态已由根代理统一收口；后续增强能力另立计划。
 
 ## Risks
 
@@ -80,9 +79,7 @@ tags: ["plan", "l1", "backup", "restore", "worker", "checkpoint"]
 
 ## Verification
 
-- 本实现期仅静态：相关TS/TSX `transpileModule`语法诊断、格式和scoped diff check。
-- 正式证据后置集中verification：contracts、API PostgreSQL HTTP、Worker integration/lifecycle、React component、必要browser contract。
-- DB、服务、Prisma、完整test/typecheck/build未授权于本owner当前阶段，皆未运行。
+- 正式集中verification：contracts、API PostgreSQL HTTP、Worker integration/lifecycle、React component、浏览器合同、P5真实备份恢复链、Go归档恢复、Prisma、构建和供应链均通过；具体计数见权威方案11.4。
 
 ## Resume Guide
 

@@ -2,9 +2,9 @@
 title: "Protyle Vite 生产闭包审计"
 description: "记录奇点企业唯一 Vite 入口与真实 Protyle Core 生产闭包的静态依赖审计合同"
 author: "Codex"
-date: "2026-07-18"
-version: "1.3.0"
-status: "implementation"
+date: "2026-07-21"
+version: "1.4.0"
+status: "verified"
 tags: ["singularity", "protyle", "vite", "boundary"]
 ---
 
@@ -38,11 +38,11 @@ node --test enterprise/scripts/p5-entry-closure.test.mjs
 
 ## 当前证据
 
-2026-07-19 实现状态：`main.tsx` 已按授权 `spaceId` 创建`ProtyleApplicationPort`，经专用公共子入口创建真实Core，再交给公共Factory；`space-session.ts`中的临时未接线函数和错误码已删除。当前允许的实现期source scan从真实入口遍历273个生产文件并报告0项边界违规；本快照只证明静态依赖方向，不替代L1完成后的集中typecheck、测试、Vite build、浏览器和E2E证据。
+2026-07-21 验证状态：`main.tsx` 已按授权 `spaceId` 创建`ProtyleApplicationPort`，经专用公共子入口创建真实Core，再交给公共Factory；`space-session.ts`中的临时未接线函数和错误码已删除。真实入口source scan遍历273个生产文件并报告0项边界违规；集中typecheck、测试、Vite build、浏览器和P5 E2E均已通过。
 
 本轮最后一条扩散根是`Title -> util/pathName`；Title改为消费Core自有纯显示名能力后，`pathName`及其旧全局、transport和平台依赖全部退出生产图。旧壳文件没有迁入Core，allowlist没有扩大，也没有增加App shim、全局fallback或第二条生产路径。后续代码变化继续由同一门禁拒绝回流。
 
-企业Web中原先直接加载`app/src/host/plugin.ts`与`app/src/layout/Model.ts`的两个错位Vitest文件已退出：PluginPort的稳定行为合同迁回`app/src/host/plugin.test.js`并由App标准`node:test`入口发现，旧Model重连case因不保护企业Transport合同而删除。P5 static case同时保护这两个旧企业路径物理不存在；本实现状态尚未执行runner，不构成验证通过证据。
+企业Web中原先直接加载`app/src/host/plugin.ts`与`app/src/layout/Model.ts`的两个错位Vitest文件已退出：PluginPort的稳定行为合同迁回`app/src/host/plugin.test.js`并由App标准`node:test`入口发现，旧Model重连case因不保护企业Transport合同而删除。P5 static case同时保护这两个旧企业路径物理不存在，并已在集中verification中通过。
 
 ## 入口生命周期
 

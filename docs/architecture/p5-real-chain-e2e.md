@@ -2,9 +2,9 @@
 title: "P5真实全链E2E与企业Web入口收口"
 description: "定义React、NestJS、Worker、PostgreSQL、Gateway与Go Kernel的真实Playwright链路、生命周期和旧入口边界"
 author: "Codex"
-date: "2026-07-20"
-version: "1.5.0"
-status: "working"
+date: "2026-07-21"
+version: "1.6.0"
+status: "verified"
 tags: ["l1", "p5", "e2e", "playwright", "vite"]
 ---
 
@@ -120,15 +120,15 @@ cd /root/projects/singularity/enterprise
 pnpm test:e2e
 ```
 
-root `test:e2e`只直接委托`@singularity/web test:e2e`，不进入`test:browser-integration`、`test:s0-s3`或其他聚合门禁；Web package仍只保留一个真实E2E leaf入口。Playwright `globalSetup`要求全部API、源/恢复Kernel和Web端口空闲，只启动并清理本轮supervisor，不接管或复用未知本地服务。当前L1仍处于code-review，本文件及测试代码落盘不表示上述命令已经运行或通过。
+root `test:e2e`只直接委托`@singularity/web test:e2e`，不进入`test:browser-integration`、`test:s0-s3`或其他聚合门禁；Web package仍只保留一个真实E2E leaf入口。Playwright `globalSetup`要求全部API、源/恢复Kernel和Web端口空闲，只启动并清理本轮supervisor，不接管或复用未知本地服务。2026-07-21集中verification已执行该入口并通过 `11 expected / 0 unexpected / 0 skipped`。
 
 ## CI门禁
 
 `.github/workflows/singularity-l0.yml`以独立`p5-e2e` job执行同一个root `test:e2e`入口。该job固定Node.js 24与pnpm 11.9.0，从`kernel/go.mod`读取Go版本，安装仓库锁定的enterprise与SiYuan app依赖及Playwright Chromium，并拥有独立的PostgreSQL 17 service container。runner step允许失败后继续收集证据；`always()`步骤结构化校验`e2e-report.json`至少包含suite、spec和test，上传JSON report、trace与附件，最终gate同时要求runner和报告校验均为success。它不依赖或复用`space-session`、browser integration、API、Worker、Kernel或Vite服务；Playwright仍由唯一E2E config启动并清理本轮API、Worker、源/恢复Kernel与Vite进程，数据库service只由GitHub job生命周期拥有。
 
-## 剩余验收
+## 验收结论
 
-当前代码已建立内容持久化与审计最终化、搜索、引用/反链、主动内容默认隔离、viewer输入与上传拒绝、撤权清屏、分享即时撤销、备份隔离恢复等真实纵向闭环，并把AV、插件、双实例与canonical HTTP/push映射到最低充分的P3/P4/Kernel证据。是否完成P5仍由整阶段verification在Node.js 24和完整依赖服务下运行上述矩阵后决定；新增真实全链场景只能扩展同一个E2E入口，不建立第二套runner、测试Kernel或目标链fallback。
+当前代码已建立内容持久化与审计最终化、搜索、引用/反链、主动内容默认隔离、viewer输入与上传拒绝、撤权清屏、分享即时撤销、备份隔离恢复等真实纵向闭环，并把AV、插件、双实例与canonical HTTP/push映射到最低充分的P3/P4/Kernel证据。P5真实链已通过，L1验收闭合；后续新增真实全链场景只能扩展同一个E2E入口，不建立第二套runner、测试Kernel或目标链fallback。
 
 ## References
 

@@ -2,9 +2,9 @@
 title: "Singularity L1 Restart Checkpoint"
 description: "L1 implementation恢复结果与集中评审验证入口"
 author: "Codex"
-date: "2026-07-19"
-version: "2.0.0"
-status: "resumed"
+date: "2026-07-21"
+version: "2.1.0"
+status: "completed"
 tags: ["checkpoint", "restart", "l1", "singularity"]
 ---
 
@@ -19,7 +19,7 @@ tags: ["checkpoint", "restart", "l1", "singularity"]
 - 仓库：`/root/projects/singularity`；环境：WSL2/Linux；分支：`master`。
 - 完整implementation工作树的前置`HEAD`与`origin/master`均为`9ccb54f74`。本文所在提交是重启后的L1 implementation checkpoint，不重写历史。
 - L0已经完成。L1全部纵向功能owner已经完成并释放；生产代码、公共合同、迁移、调用方、永久测试代码、旧企业路径清理和功能文档已经进入目标形态。
-- 当前状态是`review-pending`，不是`verified`：本波没有运行正式unit、contract、integration、browser、E2E、typecheck、build、Prisma、数据库或服务验收。
+- 当前状态是`verified`：2026-07-21已完成正式unit、contract、integration、browser、E2E、typecheck、build、Prisma、数据库、服务、Kernel和供应链验收。
 - Enterprise正式验证使用Node `24.18.0`、pnpm `11.9.0`和固定PostgreSQL 17容器`singularity-postgres-test`（`127.0.0.1:55432/singularity_test`）。不得用默认Node 22结果替代。
 - 本轮没有启动、停止、重启或重配PostgreSQL、Kernel、API、Worker、Vite或用户watch进程；3000端口的用户进程保持不变。
 
@@ -45,13 +45,10 @@ tags: ["checkpoint", "restart", "l1", "singularity"]
 - `app/src/block/Panel.ts`、`EmbeddedProtyleOwner`和App Webpack保留给上游真实客户端消费者；企业Vite依赖图只排除它们，不物理删除上游能力。
 - implementation测试代码已经落盘，但只有集中code-review通过后的verification结果可以作为L1交付证据。
 
-## Next Steps
+## Completion Record
 
-1. 对完整工作树执行集中`code-review + test-governance`，按功能纵向并行检查生产链、测试价值、安全、许可证和旧路径删除。
-2. 评审发现按共同根因一次修完整批问题，并通过整阶段复评。
-3. 使用Node 24与固定PostgreSQL 17集中运行B4、S0-S3、P5 E2E、Kernel和供应链矩阵；不运行`app pnpm build`。
-4. 汇总完整失败证据后批量修复，不逐case反复运行；修复批次及时提交推送。
-5. 全矩阵通过后按权威方案第9.3节逐项完成交付审计，只有证据完整时才宣告L1完成。
+1. L1 第9.3节逐项验收已闭合，权威方案11.4和L1交接文档已更新。
+2. 后续实时协作、评论、通知、文档级权限和跨空间搜索按方案9.2进入新的L2/L3计划。
 
 ## Risks
 

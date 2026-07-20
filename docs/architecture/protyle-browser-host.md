@@ -738,7 +738,7 @@ B4门禁的证据边界如下：`verify-protyle-browser-source.mjs`保护Core平
 - **P1-B2插件端口**：迁移options、toolbar、事件、菜单、快捷键、斜杠项和paste链；Protyle不再读取`app.plugins`。
 - **P1-B3会话协同**：以Session注册表替换`getAllEditor`、活动Tab与跨编辑器布局查询；工作台面板刷新改由Host/Kernel事件拥有。
 - **P1-B4边界收口**：保留已完成的显式Runtime与surface合同，S0至S3通过后从真实企业Session切入，经Transport切断请求/订阅隐式边，再移除Protyle对旧`App`、工作台`layout/editor/search/card/history/plugin/menus/mobile`实现的运行时依赖，更新真实入口闭包allowlist。
-- 当前实现状态：临时HTML Core和未接线分支已删除；企业`main.tsx`通过唯一公共Factory接入真实Core，生产Session提供Transport/WS、零插件端口、Menu、Overlay、Registry与ResourcePort，专用Sass由运行时资产清单编译并注入Vite入口。P3 browser integration代码已落盘但未运行；`IProtyle.app`等B4剩余条件、P4复杂内容及P5真实全链/旧入口删除仍未完成集中验收。
+- 当前验证状态：临时HTML Core和未接线分支已删除；企业`main.tsx`通过唯一公共Factory接入真实Core，生产Session提供Transport/WS、零插件端口、Menu、Overlay、Registry与ResourcePort，专用Sass由运行时资产清单编译并注入Vite入口。P3/P4 browser integration、B4入口闭包、复杂内容、旧入口删除及P5真实全链均已通过集中验收。
 - 完成条件：公共事件和插件合同类型通过；Protyle源码无旧工作台动作import、无`protyle.app`；浏览器入口闭包只含批准模块；static、unit、component与build集中通过。未达到这些条件前不得把B4或P3标记为已验证，也不得添加HTML、旧App或第二Factory fallback。
 
 P1-B1思源3.7.2加密内容路由收口任务清单与完成条件：
@@ -799,7 +799,7 @@ P1-B4任务清单与完成条件：
 - 真实E2E只从`tests/e2e`与独立config收集，不拦截目标React/Gateway/Kernel链路。
 - 完成条件：真实登录、选空间、打开/编辑/保存/重载、搜索、块引用、AV、插件、越权写拒绝、主动内容隔离和撤权清屏均通过；企业旧Web入口文件、企业侧错位Adapter owner和重复runner物理不存在；上游客户端Adapter由AST证明不进入Vite生产闭包，并满足L1第9.3节对应的生产Protyle验收。L0第8.3节基础工程验收已独立完成。
 
-P3、P4和P5在实现期完成对应浏览器/E2E用例、fixture边界与生产接线，不逐项启动runner。剩余L1全部实现完成后先集中复评，再由verification一次运行`verify:b4`、`verify:s0-s3`、P3/P4 browser integration、P5 E2E、Kernel与供应链矩阵；中途最小诊断不计通过证据。
+P3、P4和P5已在整阶段完成后由verification一次运行`verify:b4`、`verify:s0-s3`、P3/P4 browser integration、P5 E2E、Kernel与供应链矩阵；实现期最小诊断不计通过证据，本轮集中结果已记录在权威方案11.4。
 
 ## 12. 架构审查结论
 
