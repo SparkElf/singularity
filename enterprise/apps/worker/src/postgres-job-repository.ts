@@ -89,6 +89,7 @@ export class PostgresWorkerJobRepository implements WorkerJobRepository {
     retryAt: Date | null;
     workerId: string;
   }): Promise<boolean> {
+    // 原子结束或重排队任务；CASE 分支显式使用 timestamptz，避免 Prisma pg 适配器按文本写入时间列。
     const count = await this.database.client.$executeRaw(
       Prisma.sql`
         UPDATE "worker_jobs"
@@ -98,7 +99,7 @@ export class PostgresWorkerJobRepository implements WorkerJobRepository {
           "lease_expires_at" = NULL,
           "error_code" = ${input.errorCode},
           "available_at" = COALESCE(${input.retryAt}, "available_at"),
-          "completed_at" = CASE WHEN ${input.retryAt}::timestamptz IS NULL THEN ${input.failedAt} ELSE NULL END,
+          "completed_at" = CASE WHEN ${input.retryAt}::timestamptz IS NULL THEN ${input.failedAt}::timestamptz ELSE NULL END,
           "updated_at" = ${input.failedAt}
         WHERE "id" = ${input.jobId}::uuid
           AND "status" = 'running'
