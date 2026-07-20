@@ -74,7 +74,7 @@ async function readDirectoryJson(message: IncomingMessage): Promise<unknown> {
       return JSON.parse(text);
     } catch (error) {
       throw directoryUnavailable(
-        new SyntaxError(`Kernel directory JSON is invalid: ${text}`, {
+        new SyntaxError("Kernel directory JSON is invalid", {
           cause: error,
         }),
       );
