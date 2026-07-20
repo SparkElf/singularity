@@ -50,7 +50,10 @@ import {
   type SpaceSearchPanel,
   useDiscoveryStore,
 } from "@/spaces/discovery-state.ts";
-import { useContentSelectionStore } from "@/spaces/content-selection.ts";
+import {
+  type ContentSelection,
+  useContentSelectionStore,
+} from "@/spaces/content-selection.ts";
 import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 
 export interface DiscoveryNavigationTarget {
@@ -64,6 +67,25 @@ interface DiscoveryPanelProps {
   readonly onNavigate: (target: DiscoveryNavigationTarget) => void;
   readonly session: ProtyleSession<SpaceProtyleRuntime>;
   readonly spaceId: string;
+}
+
+/** 只保留与当前空间文档选择一致的面板，切换文档时让旧请求随组件卸载而取消。 */
+function panelForCurrentSelection(
+  panel: DiscoveryPanel | null,
+  selection: ContentSelection | null,
+  spaceId: string,
+): DiscoveryPanel | null {
+  if (panel === null || panel.spaceId !== spaceId) {
+    return null;
+  }
+  if (!("documentId" in panel)) {
+    return panel;
+  }
+  return selection?.spaceId === panel.spaceId &&
+    selection.notebookId === panel.notebookId &&
+    selection.documentId === panel.documentId
+    ? panel
+    : null;
 }
 
 type RequestState<T> =
@@ -755,19 +777,12 @@ export function DiscoveryPanel({
   session,
   spaceId,
 }: DiscoveryPanelProps) {
+  const selection = useContentSelectionStore((state) => state.selection);
   const panel = useDiscoveryStore((state) =>
-    state.panel?.spaceId === spaceId ? state.panel : null
+    panelForCurrentSelection(state.panel, selection, spaceId)
   );
-  const documentGraphEnabled = useContentSelectionStore((state) => {
-    if (panel?.kind !== "document-graph") {
-      return false;
-    }
-    const selection = state.selection;
-    return selection?.spaceId === panel.spaceId &&
-      selection.notebookId === panel.notebookId &&
-      selection.documentId === panel.documentId &&
-      selection.supportsGraph;
-  });
+  const documentGraphEnabled =
+    panel?.kind === "document-graph" && selection?.supportsGraph === true;
   const requestRevision = useDiscoveryStore((state) => state.requestRevision);
   const close = useDiscoveryStore((state) => state.close);
   const refresh = useDiscoveryStore((state) => state.refresh);

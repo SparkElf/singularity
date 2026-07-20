@@ -14,7 +14,7 @@ import {
   type ProtyleSession,
 } from "@singularity/protyle-browser";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { DiscoveryPanel } from "@/spaces/DiscoveryPanel.tsx";
@@ -118,6 +118,17 @@ afterEach(async () => {
 });
 
 describe("DiscoveryPanel", () => {
+  beforeEach(() => {
+    useContentSelectionStore.setState({
+      selection: {
+        documentId: DOCUMENT_ID,
+        notebookId: NOTEBOOK_ID,
+        spaceId: SPACE_ID,
+        supportsGraph: true,
+      },
+    });
+  });
+
   it("uses the public space contract and navigates with response-owned identity", async () => {
     const requests: Array<{ readonly body: unknown; readonly path: string }> = [];
     let csrfRequestCount = 0;
@@ -310,8 +321,68 @@ describe("DiscoveryPanel", () => {
       />,
     );
 
-    expect(await screen.findByText("当前文档无法显示关系图")).toBeVisible();
+    if (supportsGraph) {
+      expect(screen.queryByRole("complementary", { name: "文档关系图" })).toBeNull();
+    } else {
+      expect(await screen.findByText("当前文档无法显示关系图")).toBeVisible();
+    }
     expect(graphRequest).not.toHaveBeenCalled();
+  });
+
+  it("cancels a document panel when the current selection changes", async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined;
+    const documentRequest = vi.fn<DiscoveryRequest>(
+      () => new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    useDiscoveryStore.getState().open({
+      documentId: DOCUMENT_ID,
+      kind: "document-search",
+      notebookId: NOTEBOOK_ID,
+      query: "stale",
+      spaceId: SPACE_ID,
+    });
+
+    render(
+      <DiscoveryPanel
+        onNavigate={vi.fn()}
+        organizationId={ORGANIZATION_ID}
+        session={createTestSession(documentRequest)}
+        spaceId={SPACE_ID}
+      />,
+    );
+
+    await waitFor(() => expect(documentRequest).toHaveBeenCalledOnce());
+    act(() => {
+      useContentSelectionStore.setState({
+        selection: {
+          documentId: DOCUMENT_B,
+          notebookId: NOTEBOOK_ID,
+          spaceId: SPACE_ID,
+          supportsGraph: true,
+        },
+      });
+    });
+    expect(screen.queryByRole("complementary", { name: "文档内搜索" })).toBeNull();
+
+    await act(async () => {
+      resolveRequest?.({
+        code: 0,
+        data: {
+          blocks: [{
+            content: "迟到的旧文档结果",
+            documentId: DOCUMENT_ID,
+            id: BLOCK_ID,
+            notebookId: NOTEBOOK_ID,
+          }],
+          matchedBlockCount: 1,
+          pageCount: 1,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("迟到的旧文档结果")).not.toBeInTheDocument();
   });
 
   it("searches one document through a single identity-bound Gateway request", async () => {
