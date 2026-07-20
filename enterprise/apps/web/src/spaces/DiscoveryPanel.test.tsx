@@ -581,6 +581,14 @@ describe("DiscoveryPanel", () => {
     await waitFor(() => expect(documentRequest).toHaveBeenCalledTimes(1));
 
     act(() => {
+      useContentSelectionStore.setState({
+        selection: {
+          documentId: DOCUMENT_B,
+          notebookId: NOTEBOOK_ID,
+          spaceId: SPACE_ID,
+          supportsGraph: true,
+        },
+      });
       useDiscoveryStore.getState().open({
         documentId: DOCUMENT_B,
         kind: "document-search",

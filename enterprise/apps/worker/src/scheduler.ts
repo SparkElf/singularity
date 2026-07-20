@@ -1,6 +1,5 @@
-import { setTimeout as wait } from "node:timers/promises";
-
 import type { DeclaredWorkerJobProducer } from "./job-declarations.js";
+import { waitForDelay } from "./wait.js";
 import type { WorkerJobLogger } from "./worker.js";
 
 export interface WorkerJobSchedulerOptions {
@@ -105,7 +104,7 @@ export class WorkerJobScheduler {
 
   async #wait(milliseconds: number, signal: AbortSignal): Promise<void> {
     try {
-      await wait(milliseconds, undefined, { signal });
+      await waitForDelay(milliseconds, signal);
     } catch (error) {
       if (!signal.aborted) {
         throw error;

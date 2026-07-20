@@ -40,7 +40,7 @@ import {renderAVAttribute} from "./render/av/blockAttr";
 import {setFoldById} from "./util/blockFold";
 import {zoomOut} from "./util/zoom";
 import {setEditMode} from "./util/setEditMode";
-import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "./util/contentLoad";
+import {beginProtyleContentLoad, isAbortError, protyleContentIdentity, requestProtyleContent} from "./util/contentLoad";
 import {createProtyleReadOnlyState, isProtyleReadOnly, setHostReadOnly} from "./runtime/readOnly";
 import {
     setProtyleDefRefCount,
@@ -595,8 +595,9 @@ export class Protyle {
         }) as Promise<TResponse>;
     }
 
+    // 过滤生命周期取消后记录仍需关注的内容请求异常。
     private reportRequestFailure(error: unknown) {
-        if (this.requestController.signal.aborted) {
+        if (isAbortError(error) || this.requestController.signal.aborted) {
             return;
         }
         console.error("[protyle.transport] content request failed", error);

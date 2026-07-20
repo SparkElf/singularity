@@ -11,6 +11,7 @@ import {
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
+import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -372,7 +373,7 @@ async function installGatewayBoundary(
 async function openFirstDocument(page: Page) {
   await page.goto(workspacePath());
   const editor = page.getByTestId("protyle-host");
-  await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toContainText(
+  await expect(contentBlock(editor, BLOCK_A)).toContainText(
     "第一文档初始内容",
   );
   await expect(editor.locator(".protyle-wysiwyg")).toHaveAttribute(
@@ -401,9 +402,7 @@ test.describe("real Protyle browser integration", () => {
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
     const editor = await openFirstDocument(page);
-    const editable = editor.locator(
-      `[data-node-id="${BLOCK_A}"] [contenteditable="true"]`,
-    );
+    const editable = contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]');
 
     await expect(editable).toHaveAttribute("spellcheck", "false");
     await editable.fill("本地编辑已提交");
@@ -431,7 +430,7 @@ test.describe("real Protyle browser integration", () => {
       msg: "",
       sid: "remote-editor",
     }));
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toContainText(
+    await expect(contentBlock(editor, BLOCK_A)).toContainText(
       "服务推送已应用",
     );
 
@@ -452,7 +451,7 @@ test.describe("real Protyle browser integration", () => {
     await editor.getByText("打开同文档实例").click();
     const panel = page.locator('[data-protyle-block-panel="true"]');
     await expect(panel).toHaveClass(/block__popover--open/);
-    await expect(panel.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText("嵌入式文档内容");
+    await expect(contentBlock(panel, SAME_DOCUMENT_BLOCK)).toContainText("嵌入式文档内容");
     await expect.poll(() => boundary.sockets.filter(
       (socket) => socket.spaceId === SPACE_A && socket.documentId === DOCUMENT_A,
     ).length).toBe(2);
@@ -461,9 +460,9 @@ test.describe("real Protyle browser integration", () => {
     );
     expect(matchingSockets).toContain(workspaceSocket);
 
-    const sourceEditable = editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`);
-    const embeddedEditable = panel.locator(
-      `[data-node-id="${SAME_DOCUMENT_BLOCK}"] [contenteditable="true"]`,
+    const sourceEditable = contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]');
+    const embeddedEditable = contentBlock(panel, SAME_DOCUMENT_BLOCK).locator(
+      '[contenteditable="true"]',
     );
     const transactionsBeforeEmbeddedEdit = boundary.transactionRequests.length;
     await embeddedEditable.fill("嵌入实例唯一内容");
@@ -479,7 +478,7 @@ test.describe("real Protyle browser integration", () => {
     expect(typeof embeddedEditorId).toBe("string");
     expect(embeddedEditorId).not.toBe("");
 
-    await sourceEditable.click();
+    await sourceEditable.focus();
     await expect(sourceEditable).toBeFocused();
     const fallbackRequests = boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/block/getBlockDOM",
@@ -501,10 +500,10 @@ test.describe("real Protyle browser integration", () => {
       msg: "",
       sid: embeddedEditorId,
     }));
-    await expect(editor.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText(
+    await expect(contentBlock(editor, SAME_DOCUMENT_BLOCK)).toContainText(
       "嵌入实例唯一内容",
     );
-    await expect(panel.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText(
+    await expect(contentBlock(panel, SAME_DOCUMENT_BLOCK)).toContainText(
       "嵌入实例唯一内容",
     );
     expect(boundary.kernelRequests.filter(
@@ -523,7 +522,7 @@ test.describe("real Protyle browser integration", () => {
     const boundary = await installGatewayBoundary(page, "viewer");
     const editor = await openFirstDocument(page);
     const wysiwyg = editor.locator(".protyle-wysiwyg");
-    const block = editor.locator(`[data-node-id="${BLOCK_A}"]`);
+    const block = contentBlock(editor, BLOCK_A);
     const paragraph = block.locator("[spellcheck]");
     const background = editor.locator(".protyle-background");
 
@@ -650,7 +649,7 @@ test.describe("real Protyle browser integration", () => {
       requestAnimationFrame(() => resolve());
     }));
     await expect(panel).toHaveCount(0);
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+    await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
@@ -687,7 +686,7 @@ test.describe("real Protyle browser integration", () => {
     }));
     await expect(panel).toHaveCount(0);
     await expect.poll(() => embeddedSocket.closed).toBe(true);
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+    await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
@@ -704,10 +703,10 @@ test.describe("real Protyle browser integration", () => {
     const oldSocket = socketFor(boundary, SPACE_A, DOCUMENT_A)!;
 
     await page.getByRole("button", { name: "第二文档" }).click();
-    await expect(editor.locator(`[data-node-id="${BLOCK_B}"]`)).toContainText(
+    await expect(contentBlock(editor, BLOCK_B)).toContainText(
       "第二文档初始内容",
     );
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toHaveCount(0);
+    await expect(contentBlock(editor, BLOCK_A)).toHaveCount(0);
     await expect.poll(() => oldSocket.closed).toBe(true);
     await expect.poll(() => socketFor(boundary, SPACE_A, DOCUMENT_B)).toBeDefined();
     const oldClose = boundary.events.indexOf(
@@ -744,7 +743,7 @@ test.describe("real Protyle browser integration", () => {
       requestAnimationFrame(() => resolve());
     }));
     expect(boundary.kernelRequests).toHaveLength(requestsAfterSwitch);
-    await expect(editor.locator(`[data-node-id="${BLOCK_B}"]`)).toContainText(
+    await expect(contentBlock(editor, BLOCK_B)).toContainText(
       "第二文档初始内容",
     );
 
@@ -765,7 +764,7 @@ test.describe("real Protyle browser integration", () => {
     await page.getByRole("link", { name: /星际工程手册/ }).click();
     await expect(page).toHaveURL(workspacePath(ORGANIZATION_B, SPACE_B));
     const newEditor = page.getByTestId("protyle-host");
-    await expect(newEditor.locator(`[data-node-id="${BLOCK_C}"]`)).toContainText(
+    await expect(contentBlock(newEditor, BLOCK_C)).toContainText(
       "新空间文档内容",
     );
     await expect.poll(() => oldSocket.closed).toBe(true);
@@ -779,7 +778,7 @@ test.describe("real Protyle browser integration", () => {
     expect(oldClose).toBeGreaterThanOrEqual(0);
     expect(successorOpen).toBeGreaterThan(oldClose);
     await expect(page.locator('[data-space-session-state="ready"]')).toBeVisible();
-    await expect(page.locator(`[data-node-id="${BLOCK_A}"]`)).toHaveCount(0);
+    await expect(contentBlock(page.locator("body"), BLOCK_A)).toHaveCount(0);
 
     const requestsAfterSwitch = boundary.kernelRequests.length;
     oldSocket.route.send(JSON.stringify({
@@ -799,7 +798,7 @@ test.describe("real Protyle browser integration", () => {
       requestAnimationFrame(() => resolve());
     }));
     expect(boundary.kernelRequests).toHaveLength(requestsAfterSwitch);
-    await expect(newEditor.locator(`[data-node-id="${BLOCK_C}"]`)).toContainText(
+    await expect(contentBlock(newEditor, BLOCK_C)).toContainText(
       "新空间文档内容",
     );
 

@@ -22,6 +22,7 @@ import {
     currentProtyleContentLoad,
     requestProtyleContent,
     type ProtyleContentLoad,
+    isAbortError,
 } from "./contentLoad";
 import {resolveProtyleContentAssetSources} from "./assetSource";
 
@@ -67,11 +68,9 @@ const hideCoreElements = (panels: string[], protyle: IProtyle, focusHide = false
     }
 };
 
-const isAbort = (error: unknown): boolean =>
-    error instanceof DOMException && error.name === "AbortError";
-
+// 仅记录仍属于当前编辑器生命周期的内容加载异常。
 const reportRequestFailure = (protyle: IProtyle, error: unknown) => {
-    if (!isAbort(error) && !protyle.requestSignal.aborted && !protyle.destroyed) {
+    if (!isAbortError(error) && !protyle.requestSignal.aborted && !protyle.destroyed) {
         removeLoading(protyle);
         console.error("[protyle.transport] content load failed", error);
     }

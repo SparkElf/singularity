@@ -5,6 +5,7 @@ import {
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
+import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -352,7 +353,7 @@ test.describe("React discovery work panels", () => {
 
     await searchPanel.getByRole("button", { name: /空间搜索命中/ }).click();
     await expect(editor).toContainText("第二文档内容");
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toHaveCount(0);
+    await expect(contentBlock(editor, BLOCK_A)).toHaveCount(0);
 
     await searchPanel.getByRole("button", { name: "关闭面板" }).click();
     await page.getByRole("button", { name: "打开空间关系图" }).click();
@@ -366,7 +367,7 @@ test.describe("React discovery work panels", () => {
     const graphPanel = page.locator('[data-discovery-kind="document-graph"]');
     await expect(graphPanel).toBeVisible();
     await expect(graphPanel.getByRole("button", { name: "第一文档" })).toBeVisible();
-    const tagNode = graphPanel.getByText("#标签");
+    const tagNode = graphPanel.getByTitle("#标签");
     await expect(tagNode).toBeVisible();
     await expect(tagNode.locator("..").locator("button")).toHaveCount(0);
     expect(boundary.graph.at(-1)).toMatchObject({
@@ -391,7 +392,7 @@ test.describe("React discovery work panels", () => {
     await page.goto(`/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`);
     const editor = page.getByTestId("protyle-host");
     await expect(editor).toContainText("第一文档内容");
-    const titleIcon = editor.locator(".protyle-title__icon");
+    const titleIcon = page.locator(".protyle-title__icon");
 
     await titleIcon.click();
     await page.locator('[data-protyle-menu] [data-id="search"]').click();

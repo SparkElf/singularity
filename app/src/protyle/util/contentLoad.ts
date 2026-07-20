@@ -14,6 +14,10 @@ interface ContentLoadState {
     signal?: AbortSignal;
 }
 
+// 识别生命周期取消，不把正常的旧代次终止误报为内容服务故障。
+export const isAbortError = (error: unknown): boolean =>
+    error instanceof Error && error.name === "AbortError";
+
 const states = new WeakMap<IProtyle, ContentLoadState>();
 
 const stateFor = (protyle: IProtyle): ContentLoadState => {

@@ -10,6 +10,7 @@ import {
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
+import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -231,7 +232,7 @@ async function installPluginGatewayBoundary(
 async function openPluginDocument(page: Page) {
   await page.goto(workspacePath());
   const editor = page.getByTestId("protyle-host");
-  const block = editor.locator(`[data-node-id="${BLOCK_ID}"]`);
+  const block = contentBlock(editor, BLOCK_ID);
   await expect(block).toContainText("插件初始内容");
   return {
     block,
@@ -276,6 +277,7 @@ test.describe("React Protyle plugin browser integration", () => {
 
     await expect(block).not.toHaveClass(/protyle-wysiwyg--hl/);
     await editable.click();
+    await editable.focus();
     await page.keyboard.press("Alt+Shift+M");
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
 
@@ -298,6 +300,7 @@ test.describe("React Protyle plugin browser integration", () => {
     const gatewayImageSource = `${gatewayBasePath()}/${PERSISTENCE_IMAGE_PATH}?documentId=${DOCUMENT_ID}&notebookId=${NOTEBOOK_ID}`;
 
     await editable.click();
+    await editable.focus();
     await page.keyboard.press("Alt+Shift+M");
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
     await expect(image).toHaveAttribute("src", gatewayImageSource);

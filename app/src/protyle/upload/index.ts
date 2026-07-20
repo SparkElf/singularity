@@ -9,7 +9,7 @@ import {scrollCenter} from "../util/highlightById";
 import {filesize} from "filesize";
 import {transaction} from "../wysiwyg/transaction";
 import dayjs from "dayjs";
-import {protyleContentIdentity} from "../util/contentLoad";
+import {isAbortError, protyleContentIdentity} from "../util/contentLoad";
 import {openProtyleConfirm} from "../wysiwyg/dialogOwner";
 import {canWriteProtyleContent} from "../runtime/readOnly";
 
@@ -22,9 +22,6 @@ interface UploadResponse extends Omit<IWebSocketData, "data"> {
 
 const isUploadCurrent = (protyle: IProtyle) =>
     !protyle.destroyed && !protyle.requestSignal.aborted && protyle.element.isConnected;
-
-const isAbort = (error: unknown) =>
-    error instanceof DOMException && error.name === "AbortError";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : String(error);
@@ -388,7 +385,7 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
                 }
             }
         }, (error) => {
-            if (!isAbort(error) && isUploadCurrent(protyle)) {
+            if (!isAbortError(error) && isUploadCurrent(protyle)) {
                 const message = getErrorMessage(error);
                 console.error("[protyle.transport] asset upload failed", error);
                 if (protyle.options.upload.error) {
