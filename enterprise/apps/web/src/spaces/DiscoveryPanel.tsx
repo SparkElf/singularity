@@ -282,6 +282,7 @@ function SearchPanelBody({
   readonly session: ProtyleSession<SpaceProtyleRuntime>;
   readonly spaceClient: SpaceDiscoveryClient;
 }) {
+  const [submittedQuery, setSubmittedQuery] = useState(panel.query);
   const setQuery = useDiscoveryStore((state) => state.setQuery);
   const submitQuery = useDiscoveryStore((state) => state.submitQuery);
   const load = useCallback((signal: AbortSignal) => {
@@ -295,11 +296,11 @@ function SearchPanelBody({
     return searchDocument({
       documentId: panel.documentId,
       notebookId: panel.notebookId,
-      query: panel.query,
+      query: submittedQuery,
       signal,
       transport: session.runtime.transport,
     });
-  }, [panel, session.runtime.transport, spaceClient]);
+  }, [panel, session.runtime.transport, spaceClient, submittedQuery]);
   const diagnostic = useMemo(() => ({
     ...(panel.kind === "document-search"
       ? { documentId: panel.documentId, notebookId: panel.notebookId }
@@ -309,12 +310,14 @@ function SearchPanelBody({
   }), [panel]);
   const state = useDiscoveryRequest({
     diagnostic,
-    enabled: panel.query.trim() !== "",
+    enabled: submittedQuery.trim() !== "",
     load,
     requestRevision,
   });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // 输入框只维护草稿，只有提交后才推进请求代次，避免输入过程中重复查询。
+    setSubmittedQuery(panel.query);
     submitQuery();
   };
 
@@ -827,6 +830,9 @@ export function DiscoveryPanel({
       </header>
       {panel.kind === "space-search" || panel.kind === "document-search" ? (
         <SearchPanelBody
+          key={panel.kind === "document-search"
+            ? `${panel.kind}:${panel.spaceId}:${panel.notebookId}:${panel.documentId}`
+            : `${panel.kind}:${panel.spaceId}`}
           onNavigate={onNavigate}
           panel={panel}
           requestRevision={requestRevision}

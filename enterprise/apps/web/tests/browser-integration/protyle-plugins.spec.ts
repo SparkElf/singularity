@@ -185,7 +185,21 @@ async function installPluginGatewayBoundary(
         return;
       }
       if (kernelPath === "/api/block/getDocInfo") {
-        await fulfillJson(route, { code: 0, data: { ial: { title: "" } }, msg: "" });
+        await fulfillJson(route, {
+          code: 0,
+          data: {
+            attrViews: [],
+            ial: { id: DOCUMENT_ID, title: "", updated: "20260719000000" },
+            icon: "",
+            id: DOCUMENT_ID,
+            name: "插件文档",
+            refCount: 0,
+            refIDs: [],
+            rootID: DOCUMENT_ID,
+            subFileCount: 0,
+          },
+          msg: "",
+        });
         return;
       }
       if (kernelPath === "/api/block/getBlockBreadcrumb") {

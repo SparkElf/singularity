@@ -404,7 +404,21 @@ async function installGatewayBoundary(
       return;
     }
     if (kernelPath === "/api/block/getDocInfo") {
-      await fulfillJson(route, { code: 0, data: { ial: { title: "" } }, msg: "" });
+      await fulfillJson(route, {
+        code: 0,
+        data: {
+          attrViews: [],
+          ial: { id: observed.documentId, title: "", updated: "20260719000000" },
+          icon: "",
+          id: observed.documentId,
+          name: documentById.get(observed.documentId)!.title,
+          refCount: 0,
+          refIDs: [],
+          rootID: observed.documentId,
+          subFileCount: 0,
+        },
+        msg: "",
+      });
       return;
     }
     if (kernelPath === "/api/block/getBlockBreadcrumb") {
