@@ -53,6 +53,7 @@ export interface DocumentGraphPanel {
   readonly notebookId: string;
   readonly query: string;
   readonly spaceId: string;
+  readonly supportsGraph: boolean;
 }
 
 export type DiscoveryPanel =

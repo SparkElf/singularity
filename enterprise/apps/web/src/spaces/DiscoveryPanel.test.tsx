@@ -241,6 +241,7 @@ describe("DiscoveryPanel", () => {
       notebookId: NOTEBOOK_ID,
       query: "",
       spaceId: SPACE_ID,
+      supportsGraph: true,
     });
     const graphRequest = vi.fn<ProtyleTransport<unknown>["request"]>()
       .mockResolvedValue({
@@ -288,12 +289,13 @@ describe("DiscoveryPanel", () => {
   });
 
   it.each([
-    ["the current notebook disables it", DOCUMENT_ID, false],
-    ["the selected document identity differs", DOCUMENT_B, true],
-  ] as const)("does not request a document graph when %s", async (
+    ["the target notebook disables it", DOCUMENT_ID, false, "当前文档无法显示关系图"],
+    ["the selected document identity differs", DOCUMENT_B, true, null],
+  ] as const)("uses the target graph capability when %s", async (
     _reason,
     selectedDocumentId,
     supportsGraph,
+    unavailableMessage,
   ) => {
     useContentSelectionStore.setState({
       selection: {
@@ -309,6 +311,7 @@ describe("DiscoveryPanel", () => {
       notebookId: NOTEBOOK_ID,
       query: "",
       spaceId: SPACE_ID,
+      supportsGraph,
     });
     const graphRequest = vi.fn<ProtyleTransport<unknown>["request"]>();
 
@@ -321,12 +324,13 @@ describe("DiscoveryPanel", () => {
       />,
     );
 
-    if (supportsGraph) {
-      expect(screen.queryByRole("complementary", { name: "文档关系图" })).toBeNull();
+    if (unavailableMessage) {
+      expect(await screen.findByText(unavailableMessage)).toBeVisible();
+      expect(graphRequest).not.toHaveBeenCalled();
     } else {
-      expect(await screen.findByText("当前文档无法显示关系图")).toBeVisible();
+      expect(await screen.findByRole("complementary", { name: "文档关系图" })).toBeVisible();
+      await waitFor(() => expect(graphRequest).toHaveBeenCalledOnce());
     }
-    expect(graphRequest).not.toHaveBeenCalled();
   });
 
   it("cancels a document panel when its explicit target changes", async () => {

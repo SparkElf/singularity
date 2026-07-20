@@ -401,13 +401,11 @@ function createSpaceHostMediator(
         });
         return;
       }
-      const selection = composition.selection;
-      if (
-        selection?.spaceId !== bootstrap.spaceId ||
-        selection.notebookId !== event.notebookId ||
-        selection.documentId !== event.documentId ||
-        !selection.supportsGraph
-      ) {
+      const target = resolveContentSelectionTarget(queryClient, bootstrap, {
+        documentId: event.documentId,
+        notebookId: event.notebookId,
+      });
+      if (!target?.supportsGraph) {
         console.warn("[protyle.host]", {
           documentId: event.documentId,
           eventType: event.type,
@@ -424,6 +422,7 @@ function createSpaceHostMediator(
         notebookId: event.notebookId,
         query: "",
         spaceId: bootstrap.spaceId,
+        supportsGraph: target.supportsGraph,
       });
       return;
     }
