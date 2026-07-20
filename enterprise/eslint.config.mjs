@@ -100,6 +100,16 @@ export default tseslint.config(
     },
   },
   {
+    files: ["apps/web/src/editor/protyle-html.enterprise.js"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        DOMPurify: "readonly",
+        Lute: "readonly",
+      },
+    },
+  },
+  {
     files: ["apps/web/**/*.test.{ts,tsx}", "apps/web/tests/**/*.spec.ts"],
     rules: {
       "@typescript-eslint/no-base-to-string": "off",

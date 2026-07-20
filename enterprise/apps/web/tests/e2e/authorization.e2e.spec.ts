@@ -76,7 +76,21 @@ test("viewer receives the real editor DOM but cannot submit a transaction", asyn
   expect(transactionRequests).toBe(0);
   expect(uploadRequests).toBe(0);
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+  const staleDirectoryWarnings = diagnostics.consoleMessages.filter((message) => {
+    const text = message.text();
+    return message.type() === "warning" &&
+      text.startsWith("[content.directory]") &&
+      text.includes("result: stale-result-rejected") &&
+      text.includes("phase: bootstrap") &&
+      text.includes(`notebookId: ${state.notebookId}`) &&
+      text.includes(`spaceId: ${state.spaceId}`);
+  });
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    // 编辑器建立期间会主动拒绝旧空间目录响应，保留该结构化证据但不当作异常。
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+      (message) => !staleDirectoryWarnings.includes(message),
+    ),
+  });
 });
 
 test("viewer multipart uploads are rejected by the real Gateway authorization", async ({

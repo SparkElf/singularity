@@ -8,6 +8,7 @@ import { expect, test, type BrowserContext } from "@playwright/test";
 import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
+  isExpectedIconNetworkChange,
   type BrowserDiagnostics,
 } from "../browser-integration/support/diagnostics.ts";
 import { openSpaceEditor, sessionRequest } from "./support/session.ts";
@@ -193,10 +194,16 @@ test("creates, reads, and immediately revokes a real read-only share", async ({
       message.location().url === shareApiUrl &&
       /\b404\b/.test(message.text()),
     );
-  expectBrowserHealthy(adminDiagnostics, maximumRequestDurationMilliseconds);
+  expectBrowserHealthy(adminDiagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedConsoleMessages: adminDiagnostics.consoleMessages.filter(
+      (message) => !isExpectedIconNetworkChange(message),
+    ),
+  });
   expectBrowserHealthy(publicDiagnostics, maximumRequestDurationMilliseconds, {
     unexpectedConsoleMessages: publicDiagnostics.consoleMessages.filter(
-      (message) => !expectedRevocationConsoleMessages.includes(message),
+      (message) =>
+        !expectedRevocationConsoleMessages.includes(message) &&
+        !isExpectedIconNetworkChange(message),
     ),
     unexpectedErrorResponses: publicDiagnostics.responses.filter(
       (response) => !expectedRevocationResponses.includes(response) && response.status() >= 400,

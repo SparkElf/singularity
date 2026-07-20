@@ -253,7 +253,11 @@ test("a browser network failure remains distinct and explicit retry recovers", a
       new URL(request.url()).pathname === runtimePath() &&
       request.failure()?.errorText.includes("net::ERR_CONNECTION_FAILED"),
   );
-  expect(expectedRequestFailures).toHaveLength(1);
+  // 瞬时网络失败会按 HTTP 客户端合同自动重试一次；两次失败都必须属于同一 runtime 请求。
+  expect(expectedRequestFailures).toHaveLength(2);
+  expect(new Set(expectedRequestFailures.map((request) => new URL(request.url()).pathname))).toEqual(
+    new Set([runtimePath()]),
+  );
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
     unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
       (message) => !expectedConsoleMessages.includes(message),
