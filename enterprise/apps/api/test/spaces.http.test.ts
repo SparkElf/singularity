@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import {
   AUTHORIZED_SPACES_PATH,
@@ -453,8 +453,14 @@ describe("space HTTP contracts with PostgreSQL", () => {
     });
     const backup = await database.spaceBackup.create({
       data: {
+        completedAt: new Date("2026-07-19T00:00:00.000Z"),
         createdByUserId: installation.userId,
+        formatVersion: 1,
+        kernelVersion: "3.7.2",
         organizationId: installation.organizationId,
+        objectKey: randomBytes(32).toString("base64url"),
+        sha256: "a".repeat(64),
+        sizeBytes: 1n,
         sourceSpaceId: installation.spaceId,
         status: "succeeded",
       },
@@ -463,6 +469,7 @@ describe("space HTTP contracts with PostgreSQL", () => {
     await database.spaceRestoreJob.create({
       data: {
         backupId: backup.id,
+        completedAt: new Date("2026-07-19T00:00:00.000Z"),
         createdByUserId: installation.userId,
         organizationId: installation.organizationId,
         sourceSpaceId: installation.spaceId,

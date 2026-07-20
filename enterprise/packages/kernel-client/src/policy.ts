@@ -23,6 +23,7 @@ function normalizeHeaders(headers: readonly string[]): readonly string[] {
   return Object.freeze(normalized);
 }
 
+// 只规范化路由路径部分，查询参数保持原样，避免把合法参数误判为路径分隔符。
 export function canonicalKernelPath(value: string): `/${string}` {
   const rawPath = value.split("?", 1)[0] ?? "";
   let decodedSegments: string[];
@@ -32,11 +33,11 @@ export function canonicalKernelPath(value: string): `/${string}` {
     throw new Error("Kernel route is unavailable", { cause: error });
   }
   if (
-    !value.startsWith("/") ||
-    value.startsWith("//") ||
-    value.includes("\\") ||
-    value.includes("//") ||
-    ENCODED_PATH_SEPARATOR.test(value) ||
+    !rawPath.startsWith("/") ||
+    rawPath.startsWith("//") ||
+    rawPath.includes("\\") ||
+    rawPath.includes("//") ||
+    ENCODED_PATH_SEPARATOR.test(rawPath) ||
     decodedSegments.some(
       (segment) =>
         segment === "." ||

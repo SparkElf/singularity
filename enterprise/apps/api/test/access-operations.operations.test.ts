@@ -83,6 +83,7 @@ async function runOperation(
 async function runProductionOperation(
   databaseUrl: string,
   command: AccessOperation,
+  restoreLogger?: CapturingLogger,
 ): Promise<OperationRun> {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -92,6 +93,7 @@ async function runProductionOperation(
     stderr,
     stdin: Readable.from([JSON.stringify(command)]),
     stdout,
+    ...(restoreLogger === undefined ? {} : { restoreLogger }),
   });
   const stdoutText = streamText(stdout);
   return {
@@ -260,7 +262,7 @@ describe("controlled access operations with PostgreSQL", () => {
     const run = await runProductionOperation(isolatedDatabaseUrl(), {
       operation: "disable-space",
       spaceId: targetSpaceId,
-    });
+    }, logger);
 
     expect(run).toMatchObject({
       exitCode: 2,
@@ -284,6 +286,7 @@ describe("controlled access operations with PostgreSQL", () => {
         deploymentHandle: deploymentSentinel,
         version: versionSentinel,
       },
+      logger,
     );
 
     expect(run).toMatchObject({ exitCode: 1, result: { outcome: "failed" } });

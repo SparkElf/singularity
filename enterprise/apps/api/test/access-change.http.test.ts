@@ -189,6 +189,7 @@ function closed(socket: WebSocket): Promise<{ code: number; reason: string }> {
 async function runOperation(
   databaseUrl: string,
   command: AccessOperation,
+  restoreLogger?: CapturingLogger,
 ): Promise<AccessOperationResult> {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -198,6 +199,7 @@ async function runOperation(
     stderr,
     stdin: Readable.from([JSON.stringify(command)]),
     stdout,
+    ...(restoreLogger === undefined ? {} : { restoreLogger }),
   });
   const output = stdout.read()?.toString("utf8") ?? "";
   const result = accessOperationResultSchemaByOperation[command.operation].parse(
@@ -483,7 +485,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     const revokePromise = runOperation(isolatedDatabaseUrl(), {
       operation: "revoke-user-sessions",
       userId: graph.userId,
-    });
+    }, logger);
     const revoked = await revokePromise;
     expect(revoked.outcome).toBe("revoked");
     const result = await withTimeout(
@@ -565,7 +567,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
         operation: "revoke-space-member",
         spaceId: graph.spaceId,
         userId: graph.userId,
-      });
+      }, logger);
       expect(revoked.outcome).toBe("revoked");
       await expect(closePromise).resolves.toMatchObject({
         code: 4403,
@@ -609,7 +611,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
         operation === "disable-organization"
           ? { operation, organizationId: graph.organizationId }
           : { operation, spaceId: graph.spaceId };
-      const result = await runOperation(isolatedDatabaseUrl(), command);
+      const result = await runOperation(isolatedDatabaseUrl(), command, logger);
       expect(result.outcome).toBe("updated");
       await expect(closePromise).resolves.toEqual({
         code: expectedCode,
@@ -932,6 +934,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     const activeSocket = await openBrowserSocket(testApi.baseUrl, graph);
     activeSocket.on("error", () => undefined);
     const upstream = await kernel.websocket.nextConnection();
+    const upstreamConnectionCount = kernel.websocket.connectionCount;
     const received: string[] = [];
     activeSocket.on("message", (data) => received.push(data.toString()));
     const activeBrowserClose = closed(activeSocket);
@@ -973,7 +976,7 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
       await lock.completed;
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(received).toEqual([]);
-      expect(kernel.websocket.connectionCount).toBe(0);
+      expect(kernel.websocket.connectionCount).toBe(upstreamConnectionCount);
     } finally {
       lock?.release();
       if (lock !== undefined) {

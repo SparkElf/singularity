@@ -69,7 +69,16 @@ async function readDirectoryJson(message: IncomingMessage): Promise<unknown> {
       }
       chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const text = Buffer.concat(chunks).toString("utf8");
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw directoryUnavailable(
+        new SyntaxError(`Kernel directory JSON is invalid: ${text}`, {
+          cause: error,
+        }),
+      );
+    }
   } catch (error) {
     if (error instanceof ApiProblemError) {
       throw error;
