@@ -3,6 +3,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
+  isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 import { contentBlock } from "./support/protyle.ts";
@@ -414,6 +415,9 @@ test.describe("React discovery work panels", () => {
         path.includes("/kernel/api/api/block/getBlockBreadcrumb");
     })).toBe(true);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !isExpectedIconNetworkChange(message),
+      ),
       // 文档切换时主动取消的旧 getDoc 属于迟到响应隔离合同，不是失败请求。
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const failure = request.failure();

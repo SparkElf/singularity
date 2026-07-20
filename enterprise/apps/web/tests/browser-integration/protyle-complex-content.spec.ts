@@ -10,6 +10,7 @@ import {
 import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
+  isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 import { contentBlock } from "./support/protyle.ts";
@@ -695,13 +696,9 @@ test.describe("Protyle complex-content identity integration", () => {
     await expect.poll(() => [...diagnostics.pendingRequests].some((request) =>
       request.url().includes("/kernel/api/api/outline/getDocOutline")
     )).toBe(false);
-    const expectedIconNetworkChange = diagnostics.consoleMessages.filter((message) =>
-      message.text() === "Failed to load resource: net::ERR_NETWORK_CHANGED" &&
-      message.location().url.endsWith("/appearance/icons/litheness/icon.js?v=3.7.2"),
-    );
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
-        (message) => !expectedIconNetworkChange.includes(message),
+        (message) => !isExpectedIconNetworkChange(message),
       ),
     });
   });
