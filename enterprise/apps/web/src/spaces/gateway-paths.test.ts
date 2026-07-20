@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildSpaceGatewayAssetDownloadPath,
@@ -13,6 +13,10 @@ const identity = {
   documentId: "20260718000100-docum01",
   notebookId: "20260718000000-noteb01",
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("Space Gateway export resources", () => {
   it("builds a forced-download asset URL with the current content identity", () => {
@@ -53,6 +57,30 @@ describe("Space Gateway export resources", () => {
 
     expect(() => resources.resolveExport(identity, "code/report.txt")).toThrowError(
       /must start with \/export\//,
+    );
+  });
+
+  it("preserves the URI parsing stack for a malformed encoded resource path", () => {
+    const loggedErrors: unknown[] = [];
+    vi.spyOn(console, "error").mockImplementation((label, _context, error) => {
+      if (label === "[protyle.gateway]") {
+        loggedErrors.push(error);
+      }
+    });
+    const resources = createSpaceGatewayResourcePort(space);
+
+    let thrown: unknown;
+    try {
+      resources.resolveAsset(identity, "assets/%");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).cause).toBe(loggedErrors[0]);
+    expect(loggedErrors[0]).toBeInstanceOf(URIError);
+    expect((loggedErrors[0] as Error).stack).toContain(
+      (loggedErrors[0] as Error).message,
     );
   });
 });

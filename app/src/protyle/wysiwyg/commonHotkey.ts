@@ -18,6 +18,7 @@ import {clearBlockElement} from "../util/clear";
 import {beginProtyleContentLoad, protyleContentIdentity, requestProtyleContent} from "../util/contentLoad";
 import {getBlockRefContentTarget} from "../util/blockRefIdentity";
 
+/** 处理编辑器通用快捷键，并把文档级面板动作绑定到当前内容实例的显式身份。 */
 export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElement?: HTMLElement) => {
     if (protyle.content.mode === "local-only") {
         return protyle.plugins.runEditorCommand(protyle, event, matchHotKey) || undefined;
@@ -44,7 +45,11 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         if (!target) {
             return true;
         }
-        protyle.host.dispatch({type: "open-backlinks", ...target});
+        protyle.host.dispatch({
+            type: "open-backlinks",
+            notebookId: target.notebookId,
+            documentId: target.documentId,
+        });
         return true;
     }
     if (matchHotKey(hotkeys.graphView, event)) {
@@ -54,7 +59,12 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
         if (!target) {
             return true;
         }
-        protyle.host.dispatch({type: "open-graph", scope: "document", ...target});
+        protyle.host.dispatch({
+            type: "open-graph",
+            scope: "document",
+            notebookId: target.notebookId,
+            documentId: target.documentId,
+        });
         return true;
     }
     if (matchHotKey(hotkeys.outline, event)) {
@@ -83,7 +93,7 @@ export const commonHotkey = (protyle: IProtyle, event: KeyboardEvent, nodeElemen
     }
 
     if (matchHotKey(hotkeys.optimizeTypography, event)) {
-        void protyle.session!.runtime.transport.request<IWebSocketData>("/api/format/autoSpace", {
+        void protyle.runtime.transport.request<IWebSocketData>("/api/format/autoSpace", {
             id: protyle.block.rootID,
         }, {
             identity: protyleContentIdentity(protyle),
@@ -331,7 +341,7 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
         const newId = Lute.NewNodeID();
         if (item.getAttribute("data-type") !== "NodeBlockQueryEmbed" &&
             item.querySelector('[data-type="NodeHeading"][fold="1"]')) {
-            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
+            const response = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
                 id: item.getAttribute("data-node-id"),
                 notebook: protyle.notebookId,
             }, {
@@ -391,7 +401,7 @@ export const duplicateBlock = async (nodeElements: Element[], protyle: IProtyle)
         });
         if (item.getAttribute("data-type") === "NodeHeading" && item.getAttribute("fold") === "1") {
             foldHeadingIds.push({oldId: item.getAttribute("data-node-id"), newId});
-            const responseHTML = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingChildrenDOM", {
+            const responseHTML = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getHeadingChildrenDOM", {
                 id: item.getAttribute("data-node-id"),
                 notebook: protyle.notebookId,
             }, {

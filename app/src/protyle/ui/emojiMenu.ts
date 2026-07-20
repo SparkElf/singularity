@@ -33,7 +33,7 @@ export const openProtyleEmojiMenu = ({
     position,
     protyle,
 }: OpenProtyleEmojiMenuOptions) => {
-    const handle = protyle.runtime!.menu.open();
+    const handle = protyle.runtime.menu.open();
     const lifecycle = new AbortController();
     handle.menu.removeCB = () => lifecycle.abort();
     protyle.requestSignal.addEventListener("abort", () => handle.close(), {

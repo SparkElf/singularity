@@ -27,6 +27,7 @@ test("public shares stay read-only, hide internal identities, and recheck revoca
           html:
             '<p data-node-id="private-node">浏览器分享正文</p>' +
             '<a data-document-id="private-document" href="/organizations/private/spaces/private">内部链接</a>' +
+            '<a href="#private-document">内部锚点</a>' +
             '<a href="https://docs.example.test/guide">外部链接</a>' +
             '<svg><script>window.compromised=true</script></svg>',
           title: "只读分享合同",
@@ -54,6 +55,9 @@ test("public shares stay read-only, hide internal identities, and recheck revoca
   const internalLink = article.locator("a").filter({ hasText: "内部链接" });
   await expect(internalLink).toHaveCount(1);
   expect(await internalLink.getAttribute("href")).toBeNull();
+  expect(
+    await article.locator("a").filter({ hasText: "内部锚点" }).getAttribute("href"),
+  ).toBeNull();
   await expect(article.getByRole("link", { name: "外部链接" })).toHaveAttribute(
     "href",
     "https://docs.example.test/guide",

@@ -13,11 +13,12 @@ import {
 const notebookId = "20260719150000-noteb01";
 const documentId = "20260719150001-docum01";
 const blockId = "20260719150002-block01";
+const tagId = "tag:knowledge/tag";
 
 describe("document discovery payload contracts", () => {
   test("accepts source-derived content identities and non-navigable tag nodes", () => {
     const graph = {
-      links: [{ from: blockId, to: "knowledge/tag" }],
+      links: [{ from: blockId, to: tagId }],
       nodes: [
         {
           documentId,
@@ -27,7 +28,7 @@ describe("document discovery payload contracts", () => {
         },
         {
           documentId: null,
-          id: "knowledge/tag",
+          id: tagId,
           label: "knowledge/tag",
           notebookId: null,
         },
@@ -49,6 +50,30 @@ describe("document discovery payload contracts", () => {
       }).success,
       false,
     );
+  });
+
+  test("keeps graph topology identity distinct when a tag label equals a block ID", () => {
+    const collisionTagId = `tag:${blockId}`;
+    const graph = {
+      links: [{ from: collisionTagId, to: blockId }],
+      nodes: [
+        {
+          documentId,
+          id: blockId,
+          label: "Content block",
+          notebookId,
+        },
+        {
+          documentId: null,
+          id: collisionTagId,
+          label: blockId,
+          notebookId: null,
+        },
+      ],
+    };
+
+    assert.notEqual(graph.nodes[0].id, graph.nodes[1].id);
+    assert.deepEqual(documentDiscoveryGraphDataSchema.parse(graph), graph);
   });
 
   test("rejects legacy response aliases at the raw Kernel boundary", () => {
@@ -141,6 +166,32 @@ describe("document discovery payload contracts", () => {
       spaceDiscoverySearchResponseSchema.safeParse({
         ...response,
         blocks: [{ ...response.blocks[0], content: "😀".repeat(4097) }],
+      }).success,
+      false,
+    );
+
+    const longestTagId = `tag:${"😀".repeat(512)}`;
+    assert.equal(
+      documentDiscoveryGraphDataSchema.safeParse({
+        links: [],
+        nodes: [{
+          documentId: null,
+          id: longestTagId,
+          label: "😀".repeat(512),
+          notebookId: null,
+        }],
+      }).success,
+      true,
+    );
+    assert.equal(
+      documentDiscoveryGraphDataSchema.safeParse({
+        links: [],
+        nodes: [{
+          documentId: null,
+          id: `${longestTagId}x`,
+          label: "😀".repeat(512),
+          notebookId: null,
+        }],
       }).success,
       false,
     );

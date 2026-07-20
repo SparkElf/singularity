@@ -8,6 +8,7 @@ import {previewImages} from "../preview/image";
 import {escapeAttr, escapeHtml} from "../../util/escape";
 import {createCoverData, type CoverData} from "./coverData";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {protyleContentScopeIdentity} from "../runtime/contentScope";
 import {isOnlyMeta} from "../util/keyboard";
 import {resolveProtyleAssetSource} from "../util/assetSource";
 import {unicodeToEmoji} from "../hint/emoji";
@@ -133,7 +134,7 @@ export class Background {
 
     private openMenu(protyle: IProtyle) {
         this.closeMenu();
-        const runtime = protyle.session!.runtime as TProtyleRuntime;
+        const runtime = protyle.runtime;
         const handle = runtime.menu.open();
         this.menuHandle = handle;
         handle.menu.removeCB = () => {
@@ -147,7 +148,7 @@ export class Background {
 
     private updateBlockAttrs(protyle: IProtyle, attrs: Record<string, string>, onSuccess?: () => void) {
         const identity = protyleContentIdentity(protyle);
-        const runtime = protyle.session!.runtime as TProtyleRuntime;
+        const runtime = protyle.runtime;
         void runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
             id: protyle.block.rootID,
             attrs,
@@ -162,10 +163,8 @@ export class Background {
         }).catch((error) => {
             if (!protyle.requestSignal.aborted) {
                 console.error("[protyle.background] document attributes update failed", {
-                    documentId: identity.documentId,
+                    ...protyleContentScopeIdentity(protyle),
                     error,
-                    notebookId: identity.notebookId,
-                    spaceId: protyle.session!.spaceId,
                 });
             }
         });
@@ -195,13 +194,12 @@ export class Background {
                 documentId: protyleContentIdentity(protyle).documentId,
                 icon,
             });
-            protyle.model?.parent.setDocIcon(icon);
         });
     }
 
     private insertCover(protyle: IProtyle, name: string) {
         const identity = protyleContentIdentity(protyle);
-        const runtime = protyle.session!.runtime as TProtyleRuntime;
+        const runtime = protyle.runtime;
         void runtime.transport.request<CoverInsertResponse>("/api/asset/insertCover", {
             id: protyle.block.rootID,
             name,
@@ -217,11 +215,9 @@ export class Background {
         }).catch((error) => {
             if (!protyle.requestSignal.aborted) {
                 console.error("[protyle.background] cover insertion failed", {
-                    documentId: identity.documentId,
+                    ...protyleContentScopeIdentity(protyle),
                     error,
                     name,
-                    notebookId: identity.notebookId,
-                    spaceId: protyle.session!.spaceId,
                 });
             }
         });
@@ -790,7 +786,7 @@ export class Background {
                     const generation = ++this.tagSearchGeneration;
                     const isCurrent = () => this.menuHandle === handle &&
                         this.tagSearchGeneration === generation && !protyle.requestSignal.aborted;
-                    const runtime = protyle.session!.runtime as TProtyleRuntime;
+                    const runtime = protyle.runtime;
                     void runtime.transport.request<TagSearchResponse>("/api/search/searchTag", {
                         k: keyword,
                     }, {
@@ -827,10 +823,8 @@ export class Background {
                         message.textContent = this.localization.kernelText(258);
                         listElement.replaceChildren(message);
                         console.error("[protyle.background] tag search failed", {
-                            documentId: identity.documentId,
+                            ...protyleContentScopeIdentity(protyle),
                             error,
-                            notebookId: identity.notebookId,
-                            spaceId: protyle.session!.spaceId,
                         });
                     });
                 };

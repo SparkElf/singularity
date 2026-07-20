@@ -3,7 +3,7 @@ export interface OwnedHintMenu {
     close: () => void;
 }
 
-/** 一个 Hint 只持有自己触发的菜单实例；Session 继续持有菜单能力本身。 */
+/** 一个 Hint 只持有自己触发的菜单实例；Runtime 继续持有菜单能力本身。 */
 export class HintMenuOwner {
     private current?: ReturnType<TProtyleRuntime["menu"]["open"]>;
 
@@ -24,7 +24,7 @@ export class HintMenuOwner {
 
     public open(onClose?: () => void): OwnedHintMenu {
         this.close();
-        const runtime = this.protyle.session!.runtime as TProtyleRuntime;
+        const runtime = this.protyle.runtime;
         const handle = runtime.menu.open();
         this.current = handle;
         handle.menu.removeCB = () => {

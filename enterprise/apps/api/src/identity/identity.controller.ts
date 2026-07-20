@@ -73,28 +73,29 @@ export class IdentityController {
   @HttpCode(200)
   @Header("Cache-Control", "no-store")
   @SameOrigin()
-  @ApiProblemResponses(400, 404, 409, 429, 503)
+  @ApiProblemResponses(400, 403, 404, 409, 503)
   @ApiOperation({ summary: "Accept an organization invitation with a local account" })
   @ApiBody({
     schema: ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
   })
   @ApiOkResponse({ schema: LOGIN_RESPONSE_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 429,
+    headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
+  })
   async acceptLocalInvitation(
     @Body(new ZodValidationPipe(acceptLocalOrganizationInvitationRequestSchema))
     body: AcceptLocalOrganizationInvitationRequest,
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
   ): Promise<LoginResponse> {
-    const accepted = await this.organizations.acceptLocalInvitation(
+    const session = await this.organizations.acceptLocalInvitation(
       body.invitationToken,
       body.password,
+      request.cookies[AUTH_SESSION_COOKIE_NAME],
       request.id,
     );
-    const session = await this.identity.issueSessionForUser({
-      currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
-      requestId: request.id,
-      userId: accepted.userId,
-    });
     reply.setCookie(
       AUTH_SESSION_COOKIE_NAME,
       session.tokenValue,

@@ -9,6 +9,7 @@ import {hasTopClosestByClassName} from "../util/hasClosest";
 import {removeZWJ} from "../util/normalizeText";
 import {createBlockCopyMenu} from "../ui/blockCopyMenu";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {protyleContentScopeIdentity} from "../runtime/contentScope";
 import {transaction} from "../wysiwyg/transaction";
 
 type TitleMenuHandle = ReturnType<NonNullable<IProtyle["runtime"]>["menu"]["open"]>;
@@ -20,7 +21,7 @@ const closeTitleMenu = (protyle: IProtyle) => {
 };
 
 const createTitleMenu = (protyle: IProtyle) => {
-    const handle = protyle.runtime!.menu.open();
+    const handle = protyle.runtime.menu.open();
     const closeOnOwnerAbort = () => handle.close();
     protyle.requestSignal.addEventListener("abort", closeOnOwnerAbort, {once: true});
     handle.menu.removeCB = () => {
@@ -38,7 +39,7 @@ const requestTitleMenu = <TResponse>(
     path: string,
     body: unknown,
     intent: "read" | "write" = "read",
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity: protyleContentIdentity(protyle),
     intent,
     signal: protyle.requestSignal,
@@ -96,11 +97,11 @@ export const openTitleMenu = (protyle: IProtyle, position: IPosition, from: stri
                         }),
                     ]);
 
-                    const textHTML = createSiyuanClipboardHTML(responseHTML.data.dom, {
-                        spaceId: protyle.session!.spaceId,
-                        notebookId: identity.notebookId,
-                        documentId: identity.documentId,
-                    }, removeZWJ(responseHTML.data.dom));
+                    const textHTML = createSiyuanClipboardHTML(
+                        responseHTML.data.dom,
+                        protyleContentScopeIdentity(protyle),
+                        removeZWJ(responseHTML.data.dom),
+                    );
                     await navigator.clipboard.write([
                         new ClipboardItem({
                             "text/plain": new Blob([responseText.data.content], {type: "text/plain"}),

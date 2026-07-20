@@ -1,11 +1,7 @@
 import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
 import {combineAbortSignals} from "./abortSignal";
 
-/**
- * Owns the cancellation and generation boundary for one Protyle content load.
- * The transport remains the direct request owner; this module only prevents a
- * response from an older load or a destroyed editor from reaching onGet.
- */
+/** 拥有一次 Protyle 内容加载的取消与代次边界，阻止旧响应或已销毁编辑器继续进入 onGet。 */
 export interface ProtyleContentLoad {
     readonly generation: number;
     readonly signal: AbortSignal;
@@ -44,7 +40,7 @@ const makeLoad = (
     };
 };
 
-/** Start a new load and make every older load ineligible to publish. */
+/** 开始新的内容加载并让所有旧代次失去发布资格。 */
 export const beginProtyleContentLoad = (
     protyle: IProtyle,
     ownerSignal?: AbortSignal,
@@ -62,7 +58,7 @@ export const beginProtyleContentLoad = (
     return makeLoad(protyle, state, generation);
 };
 
-/** Reuse the current owner when a response is handed back through onGet. */
+/** onGet 返回响应时复用当前加载 owner，避免重新推断内容身份。 */
 export const currentProtyleContentLoad = (protyle: IProtyle): ProtyleContentLoad | undefined => {
     const state = states.get(protyle);
     if (!state?.controller || !state.signal) {
@@ -71,18 +67,18 @@ export const currentProtyleContentLoad = (protyle: IProtyle): ProtyleContentLoad
     return makeLoad(protyle, state, state.generation);
 };
 
-/** Content identity is fixed at construction and never inferred from a response or DOM. */
+/** 读取构造时固定的内容身份，禁止从响应或 DOM 推断 notebook/document。 */
 export const protyleContentIdentity = (protyle: IProtyle): ProtyleContentIdentity => {
     if (protyle.content.mode !== "bound") {
         throw new Error("[protyle.content] local-only Protyle cannot issue content requests");
     }
     return {
-        documentId: protyle.options.blockId!,
+        documentId: protyle.block.rootID!,
         notebookId: protyle.content.notebookId,
     };
 };
 
-/** Issue one read through the bound Session transport for the current load. */
+/** 通过绑定 Session 的 transport 发起当前加载代次的读请求。 */
 export const requestProtyleContent = <TResponse>(
     protyle: IProtyle,
     path: string,
@@ -90,8 +86,7 @@ export const requestProtyleContent = <TResponse>(
     load: ProtyleContentLoad,
 ): Promise<TResponse> => {
     const identity = protyleContentIdentity(protyle);
-    const runtime = protyle.session!.runtime as TProtyleRuntime;
-    return runtime.transport.request<TResponse>(path, body, {
+    return protyle.runtime.transport.request<TResponse>(path, body, {
         identity,
         intent: "read",
         signal: load.signal,

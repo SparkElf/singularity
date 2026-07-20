@@ -8,7 +8,7 @@ import {
   loginResponseSchema,
   type EnterpriseManagementAccessResponse,
 } from "@singularity/contracts";
-import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
+import { DatabaseRuntime, Prisma, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { PasswordHasher } from "../src/identity/password-hasher.js";
@@ -20,10 +20,20 @@ import {
 } from "./support/test-app.js";
 
 const USER_PASSWORD = "correct horse battery staple";
+const LOCK_OBSERVATION_TIMEOUT_MS = 10_000;
+const LOCK_TRANSACTION_TIMEOUT_MS = 30_000;
 
 interface AuthenticatedUser {
   cookie: string;
   userId: string;
+}
+
+interface HeldSpaceTableLock {
+  commitWith(
+    mutation: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ): void;
+  completed: Promise<void>;
+  lockerPid: number;
 }
 
 function cookiePair(response: Response): string {
@@ -32,6 +42,90 @@ function cookiePair(response: Response): string {
     throw new Error("Login response cookie is unavailable");
   }
   return pair;
+}
+
+async function holdSpaceTableLock(
+  database: DatabaseClient,
+): Promise<HeldSpaceTableLock> {
+  let resolveReady!: (pid: number) => void;
+  let rejectReady!: (error: unknown) => void;
+  const ready = new Promise<number>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  let resolveMutation!: (
+    mutation: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ) => void;
+  const mutation = new Promise<
+    (transaction: Prisma.TransactionClient) => Promise<void>
+  >((resolve) => {
+    resolveMutation = resolve;
+  });
+  let completedMutation = false;
+  const commitWith = (
+    callback: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ): void => {
+    if (!completedMutation) {
+      completedMutation = true;
+      resolveMutation(callback);
+    }
+  };
+  const completed = database.$transaction(
+    async (transaction) => {
+      await transaction.$executeRaw(
+        Prisma.sql`LOCK TABLE "spaces" IN ACCESS EXCLUSIVE MODE`,
+      );
+      const rows = await transaction.$queryRaw<Array<{ pid: number }>>(
+        Prisma.sql`SELECT pg_backend_pid() AS "pid"`,
+      );
+      const backend = rows[0];
+      if (backend === undefined) {
+        throw new Error("The PostgreSQL table-lock backend is unavailable");
+      }
+      resolveReady(backend.pid);
+      const applyMutation = await mutation;
+      await applyMutation(transaction);
+    },
+    { maxWait: 2_000, timeout: LOCK_TRANSACTION_TIMEOUT_MS },
+  );
+  void completed.catch(rejectReady);
+
+  try {
+    return { commitWith, completed, lockerPid: await ready };
+  } catch (error) {
+    commitWith(async () => undefined);
+    await Promise.allSettled([completed]);
+    throw error;
+  }
+}
+
+async function waitForBlockedBackend(
+  database: DatabaseClient,
+  lockerPid: number,
+): Promise<void> {
+  const deadline = Date.now() + LOCK_OBSERVATION_TIMEOUT_MS;
+  for (;;) {
+    const rows = await database.$queryRaw<Array<{ pid: number }>>(
+      Prisma.sql`
+        SELECT activity.pid AS "pid"
+        FROM pg_stat_activity AS activity
+        WHERE ${lockerPid} = ANY(pg_blocking_pids(activity.pid))
+          AND activity.wait_event_type = 'Lock'
+      `,
+    );
+    if (rows.length === 1) {
+      return;
+    }
+    if (rows.length > 1) {
+      throw new Error(
+        `Observed ${String(rows.length)} blocked backends; expected 1`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Did not observe the management request waiting for spaces");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 describe("enterprise management access HTTP contract with PostgreSQL", () => {
@@ -280,5 +374,79 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
       ],
     });
     expect(await readManagementAccess(ordinary)).toEqual({ organizations: [] });
+  });
+
+  test("returns one management snapshot across a concurrent role and space change", async () => {
+    const organizationId = await createOrganization("Snapshot organization");
+    const spaceId = await createSpace(organizationId, "Snapshot space");
+    const admin = await createAuthenticatedMember(
+      organizationId,
+      "admin",
+      "snapshot-admin",
+    );
+    const heldLock = await holdSpaceTableLock(database);
+    let response: Promise<Response> | undefined;
+
+    try {
+      response = fetch(
+        `${testApi.baseUrl}${ENTERPRISE_MANAGEMENT_ACCESS_PATH}`,
+        { headers: { Cookie: admin.cookie } },
+      );
+      void response.catch(() => undefined);
+      await waitForBlockedBackend(database, heldLock.lockerPid);
+      heldLock.commitWith(async (transaction) => {
+        await transaction.organizationMembership.update({
+          where: {
+            organizationId_userId: {
+              organizationId,
+              userId: admin.userId,
+            },
+          },
+          data: { role: "member" },
+        });
+        await transaction.space.update({
+          where: { id: spaceId },
+          data: { name: "Changed space" },
+        });
+      });
+      await heldLock.completed;
+
+      const snapshotResponse = await response;
+      expect(snapshotResponse.status).toBe(200);
+      expect(
+        enterpriseManagementAccessResponseSchema.parse(
+          await snapshotResponse.json(),
+        ),
+      ).toEqual({
+        organizations: [
+          {
+            organizationCapabilities: ["members", "groups", "spaces", "audit"],
+            organizationId,
+            organizationName: "Snapshot organization",
+            spaces: [
+              {
+                capabilities: [
+                  "access",
+                  "shares",
+                  "audit",
+                  "backups",
+                  "observability",
+                ],
+                spaceId,
+                spaceName: "Snapshot space",
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      heldLock.commitWith(async () => undefined);
+      await Promise.allSettled([
+        heldLock.completed,
+        ...(response === undefined ? [] : [response]),
+      ]);
+    }
+
+    expect(await readManagementAccess(admin)).toEqual({ organizations: [] });
   });
 });

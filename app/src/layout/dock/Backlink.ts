@@ -553,6 +553,7 @@ export class Backlink extends Model {
                     content: {mode: "bound", notebookId},
                     initialLoad: "owner",
                     hostReadOnly: window.siyuan.config.readonly,
+                    upstreamLocalRuntime: this.app.upstreamLocalRuntime,
                     onBacklinkChange: () => {
                         if (!this.abortController.signal.aborted && renderVersion === this.renderVersion &&
                             blockId === this.blockId && notebookId === this.notebookId && editorElement.isConnected) {

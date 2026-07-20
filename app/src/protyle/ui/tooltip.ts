@@ -14,7 +14,7 @@ const createTooltip = (protyle: IProtyle): ProtyleTooltipRegistration => {
     element.dataset.protyleTooltip = "";
     element.setAttribute("role", "tooltip");
     protyle.element.append(element);
-    const overlays = protyle.session!.runtime.overlays;
+    const overlays = protyle.runtime.overlays;
     const registration = {
         element,
         handle: overlays.add(element),
@@ -75,7 +75,7 @@ export const showTooltip = (
     messageElement.className = tooltipClass ? `tooltip tooltip--${tooltipClass}` : "tooltip";
     messageElement.textContent = message;
     messageElement.removeAttribute("style");
-    protyle.session!.runtime.overlays.bringToFront(messageElement);
+    protyle.runtime.overlays.bringToFront(messageElement);
 
     const position = target.getAttribute("data-position");
     const parentRect = target.parentElement!.getBoundingClientRect();

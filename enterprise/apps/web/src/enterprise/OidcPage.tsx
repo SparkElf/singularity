@@ -30,6 +30,7 @@ import {
   PageFailure,
   PageHeader,
   SectionHeading,
+  prioritizedError,
 } from "@/enterprise/components.tsx";
 import {
   createManagedOidcProvider,
@@ -242,11 +243,16 @@ export function OidcPage() {
   }
 
   const providers = providersQuery.data?.providers ?? [];
+  const mutationErrors = [
+    createProviderMutation.error,
+    updateProviderMutation.error,
+  ];
+  const mutationError = prioritizedError(mutationErrors);
 
   return (
     <div className="flex flex-col">
       <PageHeader description="组织 OpenID Connect Provider" title="单点登录" />
-      <MutationFailure error={createProviderMutation.error ?? updateProviderMutation.error} />
+      <MutationFailure error={mutationError} />
 
       <form
         className="grid grid-cols-4 items-end gap-3 border-b bg-muted/25 p-3 max-xl:grid-cols-2 max-sm:grid-cols-1"

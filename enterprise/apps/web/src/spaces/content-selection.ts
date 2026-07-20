@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { useEffect, useState } from "react";
 
 import type { SpaceRuntimePathParameters } from "@singularity/contracts";
 
@@ -7,11 +6,13 @@ export interface ContentSelection {
   readonly documentId: string;
   readonly notebookId: string;
   readonly spaceId: string;
+  readonly supportsGraph: boolean;
 }
 
 export interface ContentSelectionTarget {
   readonly documentId: string;
   readonly notebookId: string;
+  readonly supportsGraph: boolean;
 }
 
 /** 当前授权空间代次的内存能力；代次不进入选择对象，避免把生命周期元数据伪装成内容身份。 */
@@ -35,6 +36,7 @@ function ownsScope(scope: ContentSelectionScope): boolean {
   return activeScope === scope;
 }
 
+/** 激活新的空间代次并清空旧选择，使迟到响应无法写入新空间。 */
 export function activateContentSelectionScope(
   identity: SpaceRuntimePathParameters,
 ): ContentSelectionScope {
@@ -49,6 +51,7 @@ export function activateContentSelectionScope(
   return scope;
 }
 
+/** 释放当前空间代次；非当前代次的清理请求不会影响活动选择。 */
 export function releaseContentSelectionScope(
   scope: ContentSelectionScope,
 ): boolean {
@@ -72,12 +75,14 @@ export function freezeContentSelectionScope(
   return true;
 }
 
+/** 判断选择作用域是否仍由当前空间拥有，用于拦截迟到异步结果。 */
 export function isContentSelectionScopeActive(
   scope: ContentSelectionScope,
 ): boolean {
   return ownsScope(scope);
 }
 
+/** 读取当前空间的选择，只返回带相同 spaceId 的内容身份。 */
 export function getContentSelectionForScope(
   scope: ContentSelectionScope,
 ): ContentSelection | null {
@@ -88,6 +93,7 @@ export function getContentSelectionForScope(
   return selection?.spaceId === scope.spaceId ? selection : null;
 }
 
+/** 清除当前代次的选择；冻结代次保留选择供编辑器完成关闭流程。 */
 export function clearContentSelection(
   scope: ContentSelectionScope,
 ): boolean {
@@ -100,6 +106,7 @@ export function clearContentSelection(
   return true;
 }
 
+/** 写入带 spaceId、notebookId、documentId 的唯一选择，拒绝旧代次或冻结代次的更新。 */
 export function selectContentDocument(
   scope: ContentSelectionScope,
   target: ContentSelectionTarget,
@@ -121,7 +128,8 @@ export function selectContentDocument(
   if (
     current?.spaceId === scope.spaceId &&
     current.notebookId === target.notebookId &&
-    current.documentId === target.documentId
+    current.documentId === target.documentId &&
+    current.supportsGraph === target.supportsGraph
   ) {
     return true;
   }
@@ -130,26 +138,8 @@ export function selectContentDocument(
       documentId: target.documentId,
       notebookId: target.notebookId,
       spaceId: scope.spaceId,
+      supportsGraph: target.supportsGraph,
     },
   });
   return true;
-}
-
-export function useContentSelectionScope(
-  identity: SpaceRuntimePathParameters,
-): ContentSelectionScope | null {
-  const [scope, setScope] = useState<ContentSelectionScope | null>(null);
-
-  useEffect(() => {
-    const nextScope = activateContentSelectionScope(identity);
-    setScope(nextScope);
-    return () => {
-      releaseContentSelectionScope(nextScope);
-    };
-  }, [identity.organizationId, identity.spaceId]);
-
-  return scope?.organizationId === identity.organizationId &&
-    scope.spaceId === identity.spaceId
-    ? scope
-    : null;
 }

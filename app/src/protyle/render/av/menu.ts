@@ -28,7 +28,7 @@ export const openAVMenu = (
         }
     }
 
-    const handle = protyle.session!.runtime.menu.open();
+    const handle = protyle.runtime.menu.open();
     const closeOnOwnerAbort = () => handle.close();
     protyle.requestSignal.addEventListener("abort", closeOnOwnerAbort, {once: true});
     handle.menu.removeCB = () => {

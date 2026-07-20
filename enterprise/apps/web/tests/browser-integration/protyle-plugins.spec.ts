@@ -16,6 +16,7 @@ const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NOTEBOOK_ID = "20260719000000-noteb01";
 const DOCUMENT_ID = "20260719000100-docum01";
 const BLOCK_ID = "20260719000200-block01";
+const PERSISTENCE_IMAGE_PATH = "assets/plugin-persistence.png";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
 const FOCUS_LABEL = "聚焦当前块";
@@ -40,16 +41,19 @@ function gatewayBasePath() {
   return `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
 }
 
-function paragraphBlock(text: string) {
-  return `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">${text}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`;
+function paragraphBlock(text: string, includePersistenceImage: boolean) {
+  const image = includePersistenceImage
+    ? `<span contenteditable="false" data-type="img" class="img"><span> </span><span><img src="${PERSISTENCE_IMAGE_PATH}" data-src="${PERSISTENCE_IMAGE_PATH}" alt="plugin persistence" /><span class="protyle-action__drag"></span><span class="protyle-action__title"></span></span><span> </span></span>`
+    : "";
+  return `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">${text}${image}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`;
 }
 
-function documentResponse() {
+function documentResponse(includePersistenceImage = false) {
   return {
     code: 0,
     data: {
       blockCount: 1,
-      content: paragraphBlock("插件初始内容"),
+      content: paragraphBlock("插件初始内容", includePersistenceImage),
       eof: false,
       id: DOCUMENT_ID,
       isBacklinkExpand: false,
@@ -77,6 +81,7 @@ function requireDesktop(testInfo: TestInfo) {
 
 async function installPluginGatewayBoundary(
   page: Page,
+  options: { readonly includePersistenceImage?: boolean } = {},
 ): Promise<PluginGatewayBoundary> {
   const boundary: PluginGatewayBoundary = {
     transactionRequests: [],
@@ -125,6 +130,7 @@ async function installPluginGatewayBoundary(
           locked: false,
           name: "插件笔记本",
           notebookId: NOTEBOOK_ID,
+          supportsGraph: true,
         }],
       });
       return;
@@ -146,6 +152,17 @@ async function installPluginGatewayBoundary(
       });
       return;
     }
+    if (path === `${basePath}/${PERSISTENCE_IMAGE_PATH}`) {
+      await route.fulfill({
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+        contentType: "image/png",
+        status: 200,
+      });
+      return;
+    }
 
     const kernelPrefix = `${basePath}/kernel/api`;
     if (path.startsWith(`${kernelPrefix}/api/`)) {
@@ -159,7 +176,10 @@ async function installPluginGatewayBoundary(
       };
 
       if (kernelPath === "/api/filetree/getDoc") {
-        await fulfillJson(route, documentResponse());
+        await fulfillJson(
+          route,
+          documentResponse(options.includePersistenceImage),
+        );
         return;
       }
       if (kernelPath === "/api/block/getDocInfo") {
@@ -191,7 +211,8 @@ async function installPluginGatewayBoundary(
       }
       if (kernelPath === "/api/transactions") {
         boundary.transactionRequests.push(observed);
-        await fulfillJson(route, { code: 0, data: [], msg: "" });
+        const transactions = (observed.body as { transactions?: unknown }).transactions;
+        await fulfillJson(route, { code: 0, data: transactions ?? [], msg: "" });
         return;
       }
 
@@ -262,6 +283,81 @@ test.describe("React Protyle plugin browser integration", () => {
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
+  test("keeps plugin focus local while persisting edited content", async ({
+    page,
+  }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const boundary = await installPluginGatewayBoundary(page, {
+      includePersistenceImage: true,
+    });
+    const { block, editable } = await openPluginDocument(page);
+    const image = block.locator(
+      `.img img[data-src="${PERSISTENCE_IMAGE_PATH}"]`,
+    );
+    const gatewayImageSource = `${gatewayBasePath()}/${PERSISTENCE_IMAGE_PATH}?documentId=${DOCUMENT_ID}&notebookId=${NOTEBOOK_ID}`;
+
+    await editable.click();
+    await page.keyboard.press("Alt+Shift+M");
+    await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
+    await expect(image).toHaveAttribute("src", gatewayImageSource);
+    await editable.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      (element as HTMLElement).focus();
+    });
+    await page.keyboard.type("插件事务净化前置");
+    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(0);
+    const transactionCount = boundary.transactionRequests.length;
+    await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
+    await page.keyboard.type("插件事务净化标记");
+    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(transactionCount);
+
+    const request = boundary.transactionRequests.at(-1)!;
+    const transaction = (request.body as {
+      transactions?: Array<{
+        doOperations?: unknown[];
+        undoOperations?: unknown[];
+      }>;
+    }).transactions?.[0];
+    expect(transaction?.doOperations).toBeInstanceOf(Array);
+    expect(transaction?.undoOperations).toBeInstanceOf(Array);
+    const doHTML = transaction?.doOperations?.flatMap((operation) => {
+      const record = operation as { data?: unknown; retData?: unknown };
+      return [record.data, record.retData].filter(
+        (value): value is string => typeof value === "string",
+      );
+    }) ?? [];
+    const undoHTML = transaction?.undoOperations?.flatMap((operation) => {
+      const record = operation as { data?: unknown; retData?: unknown };
+      return [record.data, record.retData].filter(
+        (value): value is string => typeof value === "string",
+      );
+    }) ?? [];
+    const persistedDoImage = doHTML.find((html) =>
+      html.includes(`data-src="${PERSISTENCE_IMAGE_PATH}"`)
+    );
+    const persistedUndoImage = undoHTML.find((html) =>
+      html.includes(`data-src="${PERSISTENCE_IMAGE_PATH}"`)
+    );
+    expect(persistedDoImage).toContain(`src="${PERSISTENCE_IMAGE_PATH}"`);
+    expect(persistedUndoImage).toContain(`src="${PERSISTENCE_IMAGE_PATH}"`);
+    expect(persistedDoImage).not.toContain(gatewayImageSource);
+    expect(persistedUndoImage).not.toContain(gatewayImageSource);
+    expect(doHTML.join("\n")).toContain("插件事务净化标记");
+    expect(undoHTML.join("\n")).toContain("插件事务净化前置");
+    expect(JSON.stringify(transaction)).not.toContain("protyle-wysiwyg--hl");
+    await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
+    await expect(image).toHaveAttribute("src", gatewayImageSource);
+
+    expect(boundary.unexpectedRequests).toEqual([]);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
   test("discovers and executes the identity-bound slash contribution", async ({
     page,
   }, testInfo) => {
@@ -278,6 +374,7 @@ test.describe("React Protyle plugin browser integration", () => {
       hasText: FOCUS_LABEL,
     });
     await expect(slashItem).toBeVisible();
+    await expect(slashItem).toHaveAttribute("data-value", "");
     await slashItem.click();
     await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
 

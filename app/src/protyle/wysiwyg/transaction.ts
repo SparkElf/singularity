@@ -21,6 +21,7 @@ import {canWriteProtyleContent, setDocumentReadOnlyFromResponse} from "../runtim
 import {getBlockRefContentTarget, syncBlockRefContentIdentities} from "../util/blockRefIdentity";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {resolveProtyleContentAssetSources} from "../util/assetSource";
+import {persistTransactionOperations} from "./transactionPersistence";
 
 const carriesContentAssetSource = (operation: IOperation) =>
     [operation.data, operation.retData].some((value) => typeof value === "string" && value.includes("data-src"));
@@ -69,7 +70,7 @@ const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
     }
 };
 
-// 用于执行操作，外加处理当前编辑器中块引用、嵌入块的更新
+// 执行事务并处理当前编辑器中的块引用、嵌入块和提交后渲染顺序。
 const promiseTransaction = (options: {
     protyle: IProtyle,
     doOperations: IOperation[],
@@ -311,17 +312,18 @@ const promiseTransaction = (options: {
             // 不能撤销，否则就无限循环了
             focusByWbr(emptyElement, range);
         }
-        resolveTransactionContentAssetSources(protyle, options.doOperations);
     }
     const identity = protyleContentIdentity(protyle);
-    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/transactions", {
+    const persistedDoOperations = persistTransactionOperations(options.doOperations);
+    const persistedUndoOperations = persistTransactionOperations(options.undoOperations);
+    void protyle.runtime.transport.request<IWebSocketData>("/api/transactions", {
         reqId: Date.now(),
         session: protyle.id,
         app: Constants.SIYUAN_APPID,
         transactions: [{
             notebook: identity.notebookId,
-            doOperations: options.doOperations,
-            undoOperations: options.undoOperations,// 目前用于 ws 推送更新大纲
+            doOperations: persistedDoOperations,
+            undoOperations: persistedUndoOperations,// 目前用于 ws 推送更新大纲
         }]
     }, {
         identity,
@@ -706,7 +708,7 @@ export const onTransaction = (
                 }
                 Object.keys(data.new).forEach(key => {
                     if ("id" === key) {
-                        // 设置属性以后不应该给块元素添加 id 属性 No longer add the `id` attribute to block elements after setting the attribute https://github.com/siyuan-note/siyuan/issues/15327
+                        // 设置属性后不再给块元素添加 id 属性 https://github.com/siyuan-note/siyuan/issues/15327
                         return;
                     }
 
@@ -759,7 +761,7 @@ export const onTransaction = (
                 tempEl.setAttribute("data-node-id", operation.id);
                 tempEl.setAttribute("data-protyle-id", protyle.id);
                 updateElements.push(tempEl);
-                void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
+                void protyle.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {
                     id: operation.id,
                 }, {
                     identity: protyleContentIdentity(protyle),
@@ -1400,7 +1402,7 @@ export const turnsOneInto = async (options: {
         for (const item of options.nodeElement.querySelectorAll('[data-type="NodeHeading"][fold="1"]')) {
             const itemId = item.getAttribute("data-node-id");
             item.removeAttribute("fold");
-            const response = await options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/transactions", {
+            const response = await options.protyle.runtime.transport.request<IWebSocketData>("/api/transactions", {
                 reqId: Date.now(),
                 session: options.protyle.id,
                 app: Constants.SIYUAN_APPID,
@@ -1437,7 +1439,7 @@ export const turnsOneInto = async (options: {
     const oldHTML = options.nodeElement.outerHTML;
     let previousId = options.nodeElement.previousElementSibling?.getAttribute("data-node-id");
     if (!options.nodeElement.previousElementSibling && options.protyle.block.showAll) {
-        const response = await options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getBlockRelevantIDs", {
+        const response = await options.protyle.runtime.transport.request<IWebSocketData>("/api/block/getBlockRelevantIDs", {
             id: options.id,
         }, {
             identity,
@@ -1498,7 +1500,7 @@ export const turnsOneInto = async (options: {
             if (!target) {
                 return;
             }
-            void options.protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+            void options.protyle.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                 id: target.blockId,
                 notebook: target.notebookId,
             }, {
@@ -1524,6 +1526,7 @@ export const turnsOneInto = async (options: {
     avRender(options.protyle.wysiwyg.element, options.protyle);
 };
 
+/** 校验编辑器写入能力后记录撤销并发送事务，提交响应到达后再刷新依赖块。 */
 export const transaction = (protyle: IProtyle, doOperations: IOperation[], undoOperations?: IOperation[],
                             options?: {
                                 skipSync?: boolean
@@ -1626,7 +1629,7 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
                 mode: 2,
                 size: (protyle.application as ProtyleApplicationPort).settings.editor.dynamicLoadBlocks,
             };
-            void protyle.session!.runtime.transport.request<IWebSocketData>("/api/filetree/getDoc", getDocParam, {
+            void protyle.runtime.transport.request<IWebSocketData>("/api/filetree/getDoc", getDocParam, {
                 identity: protyleContentIdentity(protyle),
                 intent: "read",
                 signal: protyle.requestSignal,

@@ -25,6 +25,7 @@ import {
   AUTH_OIDC_PROVIDERS_PATH,
   AUTH_OIDC_START_PATH,
   AUTH_SESSION_COOKIE_NAME,
+  API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   CREATE_OIDC_PROVIDER_REQUEST_OPENAPI_SCHEMA,
   MANAGED_OIDC_PROVIDERS_RESPONSE_OPENAPI_SCHEMA,
   MANAGED_OIDC_PROVIDER_OPENAPI_SCHEMA,
@@ -67,6 +68,7 @@ import {
   OIDC_FLOW_COOKIE_NAME,
   OIDC_FLOW_COOKIE_OPTIONS,
   OidcService,
+  didConsumeOidcFlow,
 } from "./oidc.service.js";
 import {
   SESSION_COOKIE_OPTIONS,
@@ -75,6 +77,12 @@ import { ZodValidationPipe } from "./zod-validation.pipe.js";
 
 type OrganizationPathParameters = z.infer<typeof organizationPathParametersSchema>;
 type OidcProviderPathParameters = z.infer<typeof oidcProviderPathParametersSchema>;
+
+const RETRY_AFTER_RESPONSE_HEADER_OPENAPI = {
+  description: "Seconds until another OIDC flow may be started",
+  required: true,
+  schema: { type: "integer" as const, minimum: 1 },
+};
 
 @ApiTags("oidc")
 @Controller()
@@ -93,17 +101,27 @@ export class OidcController {
   }
 
   @Post(AUTH_OIDC_START_PATH)
+  @HttpCode(200)
   @Header("Cache-Control", "no-store")
   @SameOrigin()
   @ApiProblemResponses(400, 404, 503)
   @ApiOperation({ summary: "Start an OIDC authorization-code flow" })
   @ApiBody({ schema: OIDC_START_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: OIDC_START_RESPONSE_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 429,
+    headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
+  })
   async start(
     @Body(new ZodValidationPipe(oidcStartRequestSchema)) body: OidcStartRequest,
+    @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
   ): Promise<OidcStartResponse> {
-    const result = await this.oidc.start(body);
+    const result = await this.oidc.start(body, {
+      requestId: request.id,
+      sourceAddress: request.ip,
+    });
     reply.setCookie(
       OIDC_FLOW_COOKIE_NAME,
       result.flowToken,
@@ -125,14 +143,22 @@ export class OidcController {
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
   ): Promise<{ url: string }> {
     const flowTokenValue = request.cookies[OIDC_FLOW_COOKIE_NAME];
+    let result: Awaited<ReturnType<OidcService["callback"]>>;
+    try {
+      result = await this.oidc.callback({
+        code: query.code,
+        currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
+        flowTokenValue,
+        requestId: request.id,
+        state: query.state,
+      });
+    } catch (error) {
+      if (didConsumeOidcFlow(error)) {
+        reply.clearCookie(OIDC_FLOW_COOKIE_NAME, OIDC_FLOW_COOKIE_OPTIONS);
+      }
+      throw error;
+    }
     reply.clearCookie(OIDC_FLOW_COOKIE_NAME, OIDC_FLOW_COOKIE_OPTIONS);
-    const result = await this.oidc.callback({
-      code: query.code,
-      currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
-      flowTokenValue,
-      requestId: request.id,
-      state: query.state,
-    });
     reply.setCookie(
       AUTH_SESSION_COOKIE_NAME,
       result.tokenValue,

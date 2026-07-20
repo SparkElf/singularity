@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   parseArguments,
+  probeApiRuntimeArtifacts,
   probeWorkerRuntimeArtifacts,
   validateContainerMetadata,
 } from "./verify-container-metadata.mjs";
@@ -39,11 +40,12 @@ function inspectedImage({ command, environment = [], healthcheck, port, startPer
 function apiImage() {
   return inspectedImage({
     command: ["dist/main.js"],
+    environment: ["NODE_ENV=production", "PORT=3001"],
     healthcheck: [
       "CMD",
       "/nodejs/bin/node",
       "-e",
-      "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+      "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>{if(!response.ok)throw new Error('API healthcheck returned status '+response.status);process.exit(0)}).catch((error)=>{console.error(error);process.exit(1)})",
     ],
     port: "3001/tcp",
     startPeriod: 10_000_000_000,
@@ -72,6 +74,7 @@ function workerImage() {
       "SINGULARITY_WORKER_OBJECT_STORE_ROOT=/var/lib/singularity-worker/objects",
       "SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL=/opt/singularity-kernel/kernel",
       "SINGULARITY_WORKER_RESTORE_KERNEL_BINARY=/opt/singularity-kernel/kernel",
+      "SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS=127.0.0.1",
       "SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY=/opt/singularity-kernel",
       "SINGULARITY_WORKER_RESTORE_RUNTIME_ROOT=/var/lib/singularity-worker/runtime",
     ],
@@ -79,7 +82,7 @@ function workerImage() {
       "CMD",
       "/nodejs/bin/node",
       "-e",
-      "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error();for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch{process.exit(1)}",
+      "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error('Worker runtime is not Node 24');for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch(error){console.error(error);process.exit(1)}",
     ],
     port: null,
     startPeriod: 10_000_000_000,
@@ -113,6 +116,18 @@ test("API metadata requires its nonroot user, port, and command", () => {
     "api:test: exposed port mismatch for Singularity Enterprise API",
     "api:test: command mismatch for Singularity Enterprise API",
   ]);
+});
+
+test("API metadata requires the production Node environment", () => {
+  const api = apiImage();
+  api.Config.Env = ["NODE_ENV=development", "PORT=3001"];
+
+  assert.deepEqual(
+    validate(["api:test", "worker:test", "web:test"], [api, workerImage(), webImage()]),
+    [
+      "api:test: environment mismatch for Singularity Enterprise API: NODE_ENV",
+    ],
+  );
 });
 
 test("Web metadata requires its nonroot user, port, and nginx command", () => {
@@ -162,6 +177,34 @@ test("Worker metadata requires the production object, Kernel, appearance, and ru
   );
 });
 
+test("API artifact probe runs the real entry check read-only and offline", () => {
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ args, command, options });
+    return { status: 0 };
+  };
+
+  assert.deepEqual(probeApiRuntimeArtifacts("api:test", run), []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "docker");
+  assert.deepEqual(
+    calls[0].args.slice(0, 7),
+    [
+      "run",
+      "--rm",
+      "--network=none",
+      "--pull=never",
+      "--read-only",
+      "--entrypoint=/nodejs/bin/node",
+      "api:test",
+    ],
+  );
+  assert.equal(calls[0].args[7], "-e");
+  assert.match(calls[0].args[8], /NODE_ENV.*production/u);
+  assert.match(calls[0].args[8], /dist\/main\.js/u);
+  assert.equal(calls[0].options.encoding, "utf8");
+});
+
 test("Worker artifact probe runs the image read-only and offline, then executes restore-archive", () => {
   const calls = [];
   const run = (command, args, options) => {
@@ -178,6 +221,8 @@ test("Worker artifact probe runs the image read-only and offline, then executes 
   }
   assert.equal(calls[0].args[5], "--entrypoint=/nodejs/bin/node");
   assert.equal(calls[0].args[6], "worker:test");
+  assert.match(calls[0].args[8], /NODE_ENV.*production/u);
+  assert.match(calls[0].args[8], /dist\/main\.js/u);
   assert.match(calls[0].args[8], /appearance.*langs.*en\.json/u);
   assert.deepEqual(calls[1].args.slice(5), [
     "--entrypoint=/opt/singularity-kernel/kernel",
@@ -197,6 +242,22 @@ test("Worker artifact probe fails when the bundled restore-archive executable ca
   assert.deepEqual(failures, [
     "worker:test: Kernel restore-archive executable probe failed",
   ]);
+});
+
+test("artifact probe failures retain bounded command tails and the spawn stack", () => {
+  const error = new Error("spawn-sentinel");
+  const failures = probeApiRuntimeArtifacts("api:test", () => ({
+    error,
+    status: null,
+    stderr: "stderr-sentinel",
+    stdout: `${"x".repeat(70_000)}stdout-sentinel`,
+  }));
+
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /spawn-sentinel/u);
+  assert.match(failures[0], /stdout-sentinel/u);
+  assert.match(failures[0], /stderr-sentinel/u);
+  assert.ok(failures[0].length < 70_000);
 });
 
 test("API metadata rejects an arbitrary successful healthcheck command", () => {

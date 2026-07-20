@@ -1,5 +1,6 @@
 import type { ProtyleEditorRegistry } from "./contracts.ts";
 
+/** 创建编辑器注册表，提供带 token 的幂等注销、活动编辑器选择和销毁封存。 */
 export function createProtyleEditorRegistry<TEditor>(): ProtyleEditorRegistry<TEditor> {
   interface Registration {
     readonly token: symbol;

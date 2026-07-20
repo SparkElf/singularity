@@ -1,6 +1,7 @@
 import {Constants} from "../../constants";
 import {addScript} from "../util/addScript";
 
+/** 创建可取消的图片预览实例，并在关闭或取消时释放 Viewer 资源。 */
 export const previewImages = (srcList: string[], currentSrc?: string, onHidden?: () => void, signal?: AbortSignal) => {
     addScript(`${Constants.PROTYLE_CDN}/js/viewerjs/viewer.js?v=1.11.7`, "protyleViewerScript").then(() => {
         if (signal?.aborted) {
@@ -63,8 +64,9 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
     });
 };
 
+/** 按当前文档身份获取文档图片资源并打开预览。 */
 export const previewDocImage = (currentSrc: string, protyle: IProtyle) => {
-    void protyle.transport!.request<IWebSocketData>("/api/asset/getDocImageAssets", {
+    void protyle.runtime.transport.request<IWebSocketData>("/api/asset/getDocImageAssets", {
         id: protyle.block.rootID,
         notebook: protyle.notebookId,
     }, {
@@ -86,8 +88,9 @@ export const previewDocImage = (currentSrc: string, protyle: IProtyle) => {
     });
 };
 
+/** 按当前文档身份获取属性视图图片资源并打开预览。 */
 export const previewAttrViewImages = (protyle: IProtyle, currentSrc: string, avID: string, viewID: string, query: string) => {
-    void protyle.transport!.request<IWebSocketData>("/api/av/getCurrentAttrViewImages", {
+    void protyle.runtime.transport.request<IWebSocketData>("/api/av/getCurrentAttrViewImages", {
         id: avID,
         viewID,
         query,

@@ -5,6 +5,7 @@ import {
     encodeBase64,
     getTextSiyuanFromTextHTML,
 } from "../../src/protyle/util/clipboard";
+import {isSameProtyleContentScope} from "../../src/protyle/runtime/contentScope";
 
 describe("Protyle clipboard identity", () => {
     it("binds internal BlockDOM to its complete source identity", () => {
@@ -39,5 +40,37 @@ describe("Protyle clipboard identity", () => {
             textSiyuan: "",
             textHtml: html,
         });
+    });
+
+    it("preserves an upstream local application scope without inventing a spaceId", () => {
+        const siyuanHTML = '<div data-node-id="20260719000000-block02">local</div>';
+        const html = createSiyuanClipboardHTML(siyuanHTML, {
+            localAppId: "local-app",
+            notebookId: "20260719000000-box0002",
+            documentId: "20260719000000-doc0002",
+        }, "<p>local</p>");
+
+        assert.deepEqual(getTextSiyuanFromTextHTML(html).sourceIdentity, {
+            localAppId: "local-app",
+            notebookId: "20260719000000-box0002",
+            documentId: "20260719000000-doc0002",
+        });
+    });
+
+    it("matches cut identity only inside the same discriminated scope", () => {
+        const identity = {documentId: "document-a", notebookId: "notebook-a"};
+
+        assert.equal(isSameProtyleContentScope(
+            {...identity, localAppId: "local-a"},
+            {...identity, localAppId: "local-a"},
+        ), true);
+        assert.equal(isSameProtyleContentScope(
+            {...identity, localAppId: "local-a"},
+            {...identity, localAppId: "local-b"},
+        ), false);
+        assert.equal(isSameProtyleContentScope(
+            {...identity, localAppId: "local-a"},
+            {...identity, spaceId: "space-a"},
+        ), false);
     });
 });

@@ -337,7 +337,7 @@ const openEmoji = (options: {
         dynamicImgElement = document.createElement("img");
         dynamicImgElement.src = options.dynamicIconURL;
     }
-    openEmojiPanel("", "av", options.position, options.selectedCB, dynamicImgElement, {
+    openEmojiPanel("", "", "av", options.position, options.selectedCB, dynamicImgElement, {
         dynamic: options.hideDynamicIcon,
         custom: options.hideCustomIcon
     });

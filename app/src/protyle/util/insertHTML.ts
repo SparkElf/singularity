@@ -29,7 +29,7 @@ const PLACEHOLDER_ROW_CLASS = "av__row--placeholder";
 type ContentResponse<TData> = {data: TData};
 
 const requestContent = <TData>(protyle: IProtyle, path: string, body: unknown) =>
-    protyle.transport!.request<ContentResponse<TData>>(path, body, {
+    protyle.runtime.transport.request<ContentResponse<TData>>(path, body, {
         identity: {
             documentId: protyle.options.blockId!,
             notebookId: protyle.notebookId,

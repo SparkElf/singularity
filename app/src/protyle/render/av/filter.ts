@@ -855,7 +855,7 @@ export const bindInlineFilterEvents = (panelElement: HTMLElement, data: IAV, pro
                 if (dropdown.style.display === "none") {
                     // 展开时用 fixed 定位到 trigger 下方（避免被 overflow:auto 裁剪）
                     const rect = trigger.getBoundingClientRect();
-                    protyle.session!.runtime.overlays.bringToFront(panelElement);
+                    protyle.runtime.overlays.bringToFront(panelElement);
                     dropdown.style.left = rect.left + "px";
                     dropdown.style.width = Math.max(rect.width, 120) + "px";
                     // 先临时显示以测量真实高度，再决定向上还是向下展开

@@ -84,7 +84,7 @@ export const loadBreadcrumb = (protyle: IProtyle, element: HTMLElement) => {
         !signal.aborted &&
         !protyle.destroyed &&
         protyle.element.contains(element);
-    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    const runtime = protyle.runtime;
     const target: TProtyleContentTarget = {
         blockId: element.dataset.id!,
         notebookId: element.dataset.notebookId!,

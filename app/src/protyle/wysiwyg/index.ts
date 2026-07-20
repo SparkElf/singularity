@@ -73,6 +73,7 @@ import {openProtyleLink} from "../util/openLink";
 import {mathRender} from "../render/mathRender";
 import {editAssetItem} from "../render/av/asset";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {protyleContentScopeIdentity} from "../runtime/contentScope";
 import {hideTooltip} from "../ui/tooltip";
 import {openGalleryItemMenu} from "../render/av/gallery/util";
 import {clearSelect} from "../util/clear";
@@ -91,7 +92,7 @@ const requestWysiwygContent = <TResponse>(
     protyle: IProtyle,
     path: string,
     body: unknown,
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity: protyleContentIdentity(protyle),
     intent: "read",
     signal: protyle.requestSignal,
@@ -332,7 +333,7 @@ export class WYSIWYG {
 
     private openTableSelectionMenu(protyle: IProtyle) {
         this.closeTableSelectionMenu();
-        const handle = protyle.session!.runtime.menu.open();
+        const handle = protyle.runtime.menu.open();
         this.tableSelectionMenuHandle = handle;
         handle.menu.removeCB = () => {
             if (this.tableSelectionMenuHandle === handle) {
@@ -628,12 +629,12 @@ export class WYSIWYG {
                 event.clipboardData.setData("text/siyuan", textSiyuan);
                 restoreLuteMarkdownSyntax(protyle);
                 // 在 text/html 中插入注释节点，用于右键菜单粘贴时获取 text/siyuan 数据
-                const sourceIdentity = protyleContentIdentity(protyle);
-                const textHTML = createSiyuanClipboardHTML(textSiyuan, {
-                    spaceId: protyle.session!.spaceId,
-                    notebookId: sourceIdentity.notebookId,
-                    documentId: sourceIdentity.documentId,
-                }, removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)));
+                const textHTML = createSiyuanClipboardHTML(
+                    textSiyuan,
+                    protyleContentScopeIdentity(protyle),
+                    removeZWJ((selectTableElement || selectTableRange) ? html :
+                        protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)),
+                );
                 event.clipboardData.setData("text/html", textHTML);
                 if (needClipboardWrite) {
                     try {
@@ -2485,12 +2486,12 @@ export class WYSIWYG {
                 restoreLuteMarkdownSyntax(protyle);
                 event.clipboardData.setData("text/siyuan", textSiyuan);
                 // 在 text/html 中插入注释节点，用于右键菜单粘贴时获取 text/siyuan 数据
-                const sourceIdentity = protyleContentIdentity(protyle);
-                const textHTML = createSiyuanClipboardHTML(textSiyuan, {
-                    spaceId: protyle.session!.spaceId,
-                    notebookId: sourceIdentity.notebookId,
-                    documentId: sourceIdentity.documentId,
-                }, removeZWJ((selectTableElement || selectTableRange) ? html : protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)));
+                const textHTML = createSiyuanClipboardHTML(
+                    textSiyuan,
+                    protyleContentScopeIdentity(protyle),
+                    removeZWJ((selectTableElement || selectTableRange) ? html :
+                        protyle.lute.BlockDOM2HTML(selectAVElement ? textPlain : html)),
+                );
                 event.clipboardData.setData("text/html", textHTML);
                 if (needClipboardWrite) {
                     try {

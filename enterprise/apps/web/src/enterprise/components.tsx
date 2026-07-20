@@ -108,6 +108,14 @@ export function errorMessage(error: unknown): string {
   return "服务返回了无法处理的结果，请重试。";
 }
 
+export function prioritizedError(errors: readonly unknown[]): unknown {
+  return (
+    errors.find((error) => isApiProblem(error, "unauthenticated")) ??
+    errors.find((error) => error !== null && error !== undefined) ??
+    null
+  );
+}
+
 interface PageFailureProps {
   error: unknown;
   onRetry?: () => void;

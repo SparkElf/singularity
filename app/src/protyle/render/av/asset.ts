@@ -596,7 +596,7 @@ export const dragUpload = (files: ILocalFiles[], protyle: IProtyle, cellElement:
 
     const insert = () => {
         const identity = protyleContentIdentity(protyle);
-        void protyle.transport!.request<IWebSocketData>("/api/asset/insertLocalAssets", {
+        void protyle.runtime.transport.request<IWebSocketData>("/api/asset/insertLocalAssets", {
             assetPaths,
             isUpload: true,
             id: protyle.block.rootID

@@ -1,6 +1,6 @@
 import { loginRequestSchema, oidcStartRequestSchema } from "@singularity/contracts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2Icon, OrbitIcon, RefreshCwIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -39,7 +39,16 @@ interface LoginCooldown {
   until: number;
 }
 
+interface OidcState {
+  error: unknown;
+  pendingProviderId: string | null;
+}
+
 const IDLE_LOGIN_STATE: LoginState = { error: null, pending: false };
+const IDLE_OIDC_STATE: OidcState = {
+  error: null,
+  pendingProviderId: null,
+};
 
 function loginErrorMessage(error: unknown, cooldownSeconds: number): string {
   if (isApiProblem(error, "unauthenticated")) {
@@ -70,6 +79,7 @@ export function LoginPage() {
   const setCsrfToken = useCsrfStore((state) => state.setCsrfToken);
   const [validationError, setValidationError] = useState(false);
   const [loginState, setLoginState] = useState<LoginState>(IDLE_LOGIN_STATE);
+  const [oidcState, setOidcState] = useState<OidcState>(IDLE_OIDC_STATE);
   const [cooldown, setCooldown] = useState<LoginCooldown | null>(null);
   const activeController = useRef<AbortController | null>(null);
   const attemptGeneration = useRef(0);
@@ -79,13 +89,6 @@ export function LoginPage() {
     enabled: false,
     queryKey: ["oidc-login-providers"],
     queryFn: ({ signal }) => getOidcProviders(signal),
-  });
-  const oidcMutation = useMutation({
-    mutationFn: (request: Parameters<typeof startOidc>[0]) =>
-      startOidc(request),
-    onSuccess: ({ authorizationUrl }) => {
-      window.location.assign(authorizationUrl);
-    },
   });
   const refetchOidcProviders = oidcProvidersQuery.refetch;
 
@@ -132,6 +135,7 @@ export function LoginPage() {
     activeController.current = null;
     const generation = attemptGeneration.current + 1;
     attemptGeneration.current = generation;
+    setOidcState(IDLE_OIDC_STATE);
 
     if (cooldownSeconds > 0) {
       return;
@@ -190,6 +194,44 @@ export function LoginPage() {
         activeController.current = null;
       }
     }
+  };
+
+  const handleOidcStart = async (
+    request: Parameters<typeof startOidc>[0],
+  ): Promise<void> => {
+    activeController.current?.abort();
+    const controller = new AbortController();
+    const generation = attemptGeneration.current + 1;
+    attemptGeneration.current = generation;
+    activeController.current = controller;
+    setValidationError(false);
+    setLoginState(IDLE_LOGIN_STATE);
+    setOidcState({ error: null, pendingProviderId: request.providerId });
+
+    let authorizationUrl: string;
+    try {
+      ({ authorizationUrl } = await startOidc(request, controller.signal));
+    } catch (error) {
+      if (
+        mounted.current &&
+        !controller.signal.aborted &&
+        generation === attemptGeneration.current
+      ) {
+        activeController.current = null;
+        setOidcState({ error, pendingProviderId: null });
+      }
+      return;
+    }
+
+    if (
+      !mounted.current ||
+      controller.signal.aborted ||
+      generation !== attemptGeneration.current
+    ) {
+      return;
+    }
+    activeController.current = null;
+    window.location.assign(authorizationUrl);
   };
 
   const hasError = validationError || loginState.error !== null;
@@ -312,12 +354,10 @@ export function LoginPage() {
           ) : null}
 
           {oidcProviders.map((provider) => {
-            const pending =
-              oidcMutation.isPending &&
-              oidcMutation.variables?.providerId === provider.providerId;
+            const pending = oidcState.pendingProviderId === provider.providerId;
             return (
               <Button
-                disabled={oidcMutation.isPending}
+                disabled={oidcState.pendingProviderId !== null}
                 key={provider.providerId}
                 onClick={() => {
                   const returnTo =
@@ -328,7 +368,7 @@ export function LoginPage() {
                     returnTo,
                   });
                   if (request.success) {
-                    oidcMutation.mutate(request.data);
+                    void handleOidcStart(request.data);
                   }
                 }}
                 variant="outline"
@@ -343,11 +383,11 @@ export function LoginPage() {
             );
           })}
 
-          {oidcMutation.isError ? (
+          {oidcState.error !== null ? (
             <Alert variant="destructive">
               <AlertTitle>无法开始单点登录</AlertTitle>
               <AlertDescription>
-                {oidcMutation.error instanceof NetworkFailureError
+                {oidcState.error instanceof NetworkFailureError
                   ? "无法连接到服务，请稍后重试。"
                   : "Provider 未接受登录请求，请重试。"}
               </AlertDescription>

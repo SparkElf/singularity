@@ -51,8 +51,11 @@ const PDF_RUNTIME_READY_EVENT = "singularity:pdfjs-ready";
 const PDF_BRIDGE_URL = new URL("./pdf-runtime-bridge.mjs", import.meta.url).href;
 let runtimePromise: Promise<PdfJsRuntime> | null = null;
 
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+function abortReason(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+  return reason instanceof Error
+    ? reason
+    : new Error(String(reason), { cause: reason });
 }
 
 function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -76,7 +79,7 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       },
       (error: unknown) => {
         cleanup();
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error), { cause: error }));
       },
     );
   });

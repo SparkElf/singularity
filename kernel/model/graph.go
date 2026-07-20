@@ -36,7 +36,7 @@ import (
 type GraphNode struct {
 	ID         string  `json:"id"`
 	Box        string  `json:"box"`
-	DocumentID string  `json:"documentId,omitempty"`
+	DocumentID string  `json:"-"`
 	Path       string  `json:"path"`
 	Size       float64 `json:"size"`
 	Title      string  `json:"title,omitempty"`
@@ -44,6 +44,12 @@ type GraphNode struct {
 	Type       string  `json:"type"`
 	Refs       int     `json:"refs"`
 	Defs       int     `json:"defs"`
+}
+
+const graphTagNodeIDPrefix = "tag:"
+
+func graphTagNodeID(label string) string {
+	return graphTagNodeIDPrefix + label
 }
 
 type GraphLink struct {
@@ -96,15 +102,15 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 	stmt += graphTypeFilter(local.TypeFilter)
 	stmt += graphDailyNoteFilter(local.DailyNote)
 	stmt = strings.ReplaceAll(stmt, "content", "ref.content")
-	forwardlinks, backlinks := buildFullLinks(stmt)
+	forwardlinks, backlinks := buildFullLinksInBox(stmt, notebookID)
 
 	var sqlBlocks []*sql.Block
 	var rootID string
 	if ast.NodeDocument == node.Type {
-		sqlBlocks = sql.GetAllChildBlocks([]string{block.ID}, stmt, Conf.Graph.MaxBlocks)
+		sqlBlocks = sql.GetAllChildBlocksInBox([]string{block.ID}, stmt, Conf.Graph.MaxBlocks, notebookID)
 		rootID = block.ID
 	} else {
-		sqlBlocks = sql.GetChildBlocks(block.ID, stmt, Conf.Graph.MaxBlocks)
+		sqlBlocks = sql.GetChildBlocksInBox(block.ID, stmt, Conf.Graph.MaxBlocks, notebookID)
 	}
 	blocks := fromSQLBlocks(&sqlBlocks, "", 0)
 	if "" != rootID {
@@ -112,7 +118,7 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 		rootBlock := getBlockIn(blocks, rootID)
 		if nil != rootBlock {
 			// 按引用处理
-			sqlRootDefs := sql.QueryDefRootBlocksByRefRootID(rootID)
+			sqlRootDefs := sql.QueryDefRootBlocksByRefRootIDInBox(rootID, notebookID)
 			rootDefBlocks := fromSQLBlocks(&sqlRootDefs, "", 0)
 			var rootIDs []string
 			for _, rootDef := range rootDefBlocks {
@@ -120,7 +126,7 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 				rootIDs = append(rootIDs, rootDef.ID)
 			}
 
-			sqlRefBlocks := sql.QueryRefRootBlocksByDefRootIDs(rootIDs)
+			sqlRefBlocks := sql.QueryRefRootBlocksByDefRootIDsInBox(rootIDs, notebookID)
 			for defRootID, sqlRefBs := range sqlRefBlocks {
 				rootB := getBlockIn(rootDefBlocks, defRootID)
 				if nil == rootB {
@@ -135,7 +141,7 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 
 			// 按定义处理
 			blocks = append(blocks, rootBlock)
-			sqlRefBlocks = sql.QueryRefRootBlocksByDefRootIDs([]string{rootID})
+			sqlRefBlocks = sql.QueryRefRootBlocksByDefRootIDsInBox([]string{rootID}, notebookID)
 
 			// 关系图日记过滤失效 https://github.com/siyuan-note/siyuan/issues/7547
 			dailyNotesPaths := dailyNotePaths(local.DailyNote)
@@ -174,7 +180,7 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 	buildLinks(&blocks, &links, local.Arrow)
 	if local.Tag {
 		p := sqlBlock.Path
-		linkTagBlocks(&blocks, &nodes, &links, p, local.NodeSize)
+		linkTagBlocksInBox(&blocks, &nodes, &links, p, local.NodeSize, notebookID)
 	}
 	markLinkedNodes(&nodes, &links, local.NodeSize)
 	nodes = removeDuplicatedUnescape(nodes)
@@ -182,6 +188,16 @@ func buildTreeGraphInBox(id, query, notebookID string, local *conf.LocalGraph) (
 }
 
 func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+	return buildGraphInBox(query, "")
+}
+
+// BuildGraphInBox 构建一个显式内容库的全局图。空 contentStore 保持原有普通全局图语义；
+// 加密内容库必须由调用方在持有响应读门时传入。
+func BuildGraphInBox(query, contentStore string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
+	return buildGraphInBox(query, contentStore)
+}
+
+func buildGraphInBox(query, contentStore string) (boxID string, nodes []*GraphNode, links []*GraphLink) {
 	nodes = []*GraphNode{}
 	links = []*GraphLink{}
 
@@ -190,10 +206,10 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 	stmt += graphTypeFilter(Conf.Graph.Global.TypeFilter)
 	stmt += graphDailyNoteFilter(Conf.Graph.Global.DailyNote)
 	stmt = strings.ReplaceAll(stmt, "content", "ref.content")
-	forwardlinks, backlinks := buildFullLinks(stmt)
+	forwardlinks, backlinks := buildFullLinksInBox(stmt, contentStore)
 
 	var blocks []*Block
-	roots := sql.GetAllRootBlocks()
+	roots := sql.GetAllRootBlocksInBox(contentStore)
 	if 0 < len(roots) {
 		boxID = roots[0].Box
 	}
@@ -203,14 +219,14 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 	}
 	rootIDs = gulu.Str.RemoveDuplicatedElem(rootIDs)
 
-	sqlBlocks := sql.GetAllChildBlocks(rootIDs, stmt, Conf.Graph.MaxBlocks)
+	sqlBlocks := sql.GetAllChildBlocksInBox(rootIDs, stmt, Conf.Graph.MaxBlocks, contentStore)
 	treeBlocks := fromSQLBlocks(&sqlBlocks, "", 0)
 	treeBlocks = filterDailyNote(treeBlocks, Conf.Graph.Global.DailyNote)
 	genTreeNodes(treeBlocks, &nodes, &links, Conf.Graph.Global.NodeSize)
 	blocks = append(blocks, treeBlocks...)
 
 	// 文档块关联
-	sqlRootRefBlocks := sql.QueryRefRootBlocksByDefRootIDs(rootIDs)
+	sqlRootRefBlocks := sql.QueryRefRootBlocksByDefRootIDsInBox(rootIDs, contentStore)
 	for defRootID, sqlRefBlocks := range sqlRootRefBlocks {
 		rootBlock := getBlockIn(treeBlocks, defRootID)
 		if nil == rootBlock {
@@ -226,7 +242,7 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 	blocks = append(blocks, backlinks...)
 	buildLinks(&blocks, &links, Conf.Graph.Global.Arrow)
 	if Conf.Graph.Global.Tag {
-		linkTagBlocks(&blocks, &nodes, &links, "", Conf.Graph.Global.NodeSize)
+		linkTagBlocksInBox(&blocks, &nodes, &links, "", Conf.Graph.Global.NodeSize, contentStore)
 	}
 	markLinkedNodes(&nodes, &links, Conf.Graph.Global.NodeSize)
 	pruneUnref(&nodes, &links)
@@ -235,7 +251,11 @@ func BuildGraph(query string) (boxID string, nodes []*GraphNode, links []*GraphL
 }
 
 func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p string, nodeSize float64) {
-	tagSpans := sql.QueryTagSpans(p)
+	linkTagBlocksInBox(blocks, nodes, links, p, nodeSize, "")
+}
+
+func linkTagBlocksInBox(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p string, nodeSize float64, boxID string) {
+	tagSpans := sql.QueryTagSpansInBox(p, boxID)
 	if 1 > len(tagSpans) {
 		return
 	}
@@ -247,7 +267,7 @@ func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p
 	for _, tagSpan := range tagSpans {
 		if nil == tagNodeIn(tagNodes, tagSpan.Content) {
 			node := &GraphNode{
-				ID:    tagSpan.Content,
+				ID:    graphTagNodeID(tagSpan.Content),
 				Label: tagSpan.Content,
 				Size:  nodeSize,
 				Type:  tagSpan.Type,
@@ -260,17 +280,21 @@ func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p
 	// 连接标签和块
 	for _, block := range *blocks {
 		for _, tagSpan := range tagSpans {
+			tagNode := tagNodeIn(tagNodes, tagSpan.Content)
+			if tagNode == nil {
+				continue
+			}
 			if isGlobal { // 全局关系图将标签链接到文档块上
 				if block.RootID == tagSpan.RootID { // 局部关系图将标签链接到子块上
 					*links = append(*links, &GraphLink{
-						From: tagSpan.Content,
+						From: tagNode.ID,
 						To:   block.RootID,
 					})
 				}
 			} else {
 				if block.ID == tagSpan.BlockID { // 局部关系图将标签链接到子块上
 					*links = append(*links, &GraphLink{
-						From: tagSpan.Content,
+						From: tagNode.ID,
 						To:   block.ID,
 					})
 				}
@@ -280,17 +304,17 @@ func linkTagBlocks(blocks *[]*Block, nodes *[]*GraphNode, links *[]*GraphLink, p
 
 	// 连接层级标签
 	for _, tagNode := range tagNodes {
-		ids := strings.Split(tagNode.ID, "/")
+		ids := strings.Split(tagNode.Label, "/")
 		if 2 > len(ids) {
 			continue
 		}
 
-		for _, targetID := range ids[:len(ids)-1] {
-			if targetTag := tagNodeIn(tagNodes, targetID); nil != targetTag {
+		for _, targetLabel := range ids[:len(ids)-1] {
+			if targetTag := tagNodeIn(tagNodes, targetLabel); nil != targetTag {
 
 				*links = append(*links, &GraphLink{
 					From: tagNode.ID,
-					To:   targetID,
+					To:   targetTag.ID,
 				})
 			}
 		}

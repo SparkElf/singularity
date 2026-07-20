@@ -54,15 +54,11 @@ export const requestHint = <TResponse>(
     request: HintRequestGeneration,
     identity?: {readonly notebookId: string; readonly documentId: string},
 ): Promise<TResponse> => {
-    try {
-        return protyle.session!.runtime.transport.request<TResponse>(path, body, {
-            identity: identity ?? protyleContentIdentity(protyle),
-            intent,
-            signal: request.signal,
-        });
-    } catch (error) {
-        return Promise.reject(error);
-    }
+    return protyle.runtime.transport.request<TResponse>(path, body, {
+        identity: identity ?? protyleContentIdentity(protyle),
+        intent,
+        signal: request.signal,
+    });
 };
 
 export const reportHintRequestFailure = (

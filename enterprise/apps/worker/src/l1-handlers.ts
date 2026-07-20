@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import type { Readable } from "node:stream";
 
 import { Inject, Injectable } from "@nestjs/common";
 import { DatabaseRuntime, Prisma } from "@singularity/database";
@@ -42,7 +43,7 @@ export interface BackupKernelPort {
     job: BackupSpaceJob,
     signal: AbortSignal,
   ): Promise<{
-    body: AsyncIterable<Uint8Array>;
+    body: Readable;
     formatVersion: number;
     kernelVersion: string;
     sha256: string;
@@ -50,6 +51,7 @@ export interface BackupKernelPort {
 }
 
 export interface RestoreDeploymentPort {
+  commitTarget(job: RestoreSpaceJob): Promise<void>;
   destroyTarget(job: RestoreSpaceJob): Promise<void>;
   restore(
     input: {
@@ -58,7 +60,11 @@ export interface RestoreDeploymentPort {
       job: RestoreSpaceJob;
     },
     signal: AbortSignal,
-  ): Promise<{ endpoint: KernelRuntimeEndpoint; kernelVersion: string }>;
+  ): Promise<{
+    endpoint: KernelRuntimeEndpoint;
+    kernelVersion: string;
+    runtimeOwner: string;
+  }>;
 }
 
 async function publishKernelDeploymentChange(
@@ -113,6 +119,19 @@ function baseJob(record: WorkerJobRecord): WorkerJobBase {
   };
 }
 
+function activeWorkerClaim(job: WorkerJobBase): Prisma.Sql {
+  return Prisma.sql`
+    EXISTS (
+      SELECT 1
+      FROM "worker_jobs" AS current_claim
+      WHERE current_claim."id" = ${job.id}::uuid
+        AND current_claim."status" = 'running'
+        AND current_claim."attempt" = ${job.attempt}
+        AND current_claim."lease_expires_at" > CURRENT_TIMESTAMP
+    )
+  `;
+}
+
 function stringProperty(
   payload: Readonly<Record<string, unknown>>,
   name: string,
@@ -149,8 +168,10 @@ function sequenceProperty(
   let sequence: bigint;
   try {
     sequence = BigInt(value);
-  } catch {
-    throw new WorkerJobError("worker-job-payload-invalid", null);
+  } catch (error) {
+    throw new WorkerJobError("worker-job-payload-invalid", null, {
+      cause: error,
+    });
   }
   if (sequence > MAXIMUM_POSTGRES_BIGINT) {
     throw new WorkerJobError("worker-job-payload-invalid", null);
@@ -163,8 +184,15 @@ type BackupBegin =
   | {
       objectKey: ReturnType<typeof parseObjectKey>;
       outcome: "execute";
+      staged: BackupStagingMetadata | null;
       transitioned: boolean;
     };
+
+interface BackupStagingMetadata {
+  readonly formatVersion: number;
+  readonly kernelVersion: string;
+  readonly sha256: string;
+}
 
 @Injectable()
 @HandlesWorkerJob({ kind: "backup-space" })
@@ -192,6 +220,7 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
     };
   }
 
+  /** 执行幂等备份：先持久化暂存元数据，再写入对象并以租约条件提交完成状态。 */
   async execute(job: BackupSpaceJob, signal: AbortSignal): Promise<void> {
     const startedAt = performance.now();
     let runningCommitted = false;
@@ -219,48 +248,60 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
         });
       }
       signal.throwIfAborted();
-      const archive = await this.kernel.createBackup(job, signal);
-      let stored: StoredObject;
-      try {
-        stored = await this.objects.put({
-          expectedSha256: archive.sha256,
-          key,
-          maximumBytes: this.maximumBackupBytes,
-          source: archive.body,
-        });
-      } catch (error) {
-        if (!(error instanceof ObjectStoreError) || error.code !== "already-exists") {
-          throw error;
+      let metadata = begin.staged;
+      let stored: StoredObject | null = null;
+      if (metadata !== null) {
+        try {
+          stored = await this.objects.digest(key, this.maximumBackupBytes);
+        } catch (error) {
+          if (
+            !(error instanceof ObjectStoreError) ||
+            error.code !== "not-found"
+          ) {
+            throw error;
+          }
         }
-        stored = await this.objects.digest(key, this.maximumBackupBytes);
-        if (stored.sha256 !== archive.sha256) {
+        if (stored !== null && stored.sha256 !== metadata.sha256) {
           throw new WorkerJobError("backup-object-conflict", null);
         }
       }
-      signal.throwIfAborted();
-      const count = await this.database.client.$executeRaw(
-        Prisma.sql`
-          UPDATE "space_backups"
-          SET
-            "status" = 'succeeded',
-            "format_version" = ${archive.formatVersion},
-            "kernel_version" = ${archive.kernelVersion},
-            "sha256" = ${stored.sha256},
-            "size_bytes" = ${stored.sizeBytes},
-            "worker_job_id" = NULL,
-            "worker_attempt" = NULL,
-            "completed_at" = CURRENT_TIMESTAMP
-          WHERE "id" = ${job.backupId}::uuid
-            AND "organization_id" = ${job.organizationId}::uuid
-            AND "source_space_id" = ${job.spaceId}::uuid
-            AND "status" = 'running'
-            AND "worker_job_id" = ${job.id}::uuid
-            AND "worker_attempt" = ${job.attempt}
-        `,
-      );
-      if (count !== 1) {
+      if (stored === null) {
+        const archive = await this.kernel.createBackup(job, signal);
+        metadata = {
+          formatVersion: archive.formatVersion,
+          kernelVersion: archive.kernelVersion,
+          sha256: archive.sha256,
+        };
+        try {
+          await this.#recordStagingMetadata(job, metadata);
+          try {
+            stored = await this.objects.put({
+              expectedSha256: archive.sha256,
+              key,
+              maximumBytes: this.maximumBackupBytes,
+              source: archive.body,
+            });
+          } catch (error) {
+            if (
+              !(error instanceof ObjectStoreError) ||
+              error.code !== "already-exists"
+            ) {
+              throw error;
+            }
+            stored = await this.objects.digest(key, this.maximumBackupBytes);
+            if (stored.sha256 !== archive.sha256) {
+              throw new WorkerJobError("backup-object-conflict", null);
+            }
+          }
+        } finally {
+          archive.body.destroy();
+        }
+      }
+      if (metadata === null || stored === null) {
         throw new WorkerJobError("backup-state-conflict", null);
       }
+      signal.throwIfAborted();
+      await this.#complete(job, metadata, stored);
       this.logger.info({
         elapsedMs: performance.now() - startedAt,
         event: "backup.job",
@@ -285,7 +326,9 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
         if (error instanceof WorkerJobError) {
           throw error;
         }
-        throw new WorkerJobError("backup-execution-failed", nextRetryAt);
+        throw new WorkerJobError("backup-execution-failed", nextRetryAt, {
+          cause: error,
+        });
       }
       const transitioned = await this.database.client.$executeRaw(
         Prisma.sql`
@@ -294,6 +337,18 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
             "status" = ${nextRetryAt === null ? "failed" : "queued"}::"space_backup_status",
             "worker_job_id" = NULL,
             "worker_attempt" = NULL,
+            "staged_format_version" = CASE
+              WHEN ${nextRetryAt}::timestamptz IS NULL THEN NULL
+              ELSE "staged_format_version"
+            END,
+            "staged_kernel_version" = CASE
+              WHEN ${nextRetryAt}::timestamptz IS NULL THEN NULL
+              ELSE "staged_kernel_version"
+            END,
+            "staged_sha256" = CASE
+              WHEN ${nextRetryAt}::timestamptz IS NULL THEN NULL
+              ELSE "staged_sha256"
+            END,
             "completed_at" = CASE
               WHEN ${nextRetryAt}::timestamptz IS NULL THEN CURRENT_TIMESTAMP
               ELSE NULL
@@ -304,6 +359,7 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
             AND "status" = 'running'
             AND "worker_job_id" = ${job.id}::uuid
             AND "worker_attempt" = ${job.attempt}
+            AND ${activeWorkerClaim(job)}
         `,
       );
       if (transitioned === 1) {
@@ -331,16 +387,86 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
       if (error instanceof WorkerJobError) {
         throw error;
       }
-      throw new WorkerJobError("backup-execution-failed", nextRetryAt);
+      throw new WorkerJobError("backup-execution-failed", nextRetryAt, {
+        cause: error,
+      });
     }
   }
 
+  /** 记录归档摘要作为崩溃恢复锚点，只有当前 worker 租约仍有效时才允许写入。 */
+  async #recordStagingMetadata(
+    job: BackupSpaceJob,
+    metadata: BackupStagingMetadata,
+  ): Promise<void> {
+    const updated = await this.database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "space_backups"
+        SET
+          "staged_format_version" = ${metadata.formatVersion},
+          "staged_kernel_version" = ${metadata.kernelVersion},
+          "staged_sha256" = ${metadata.sha256}
+        WHERE "id" = ${job.backupId}::uuid
+          AND "organization_id" = ${job.organizationId}::uuid
+          AND "source_space_id" = ${job.spaceId}::uuid
+          AND "status" = 'running'
+          AND "worker_job_id" = ${job.id}::uuid
+          AND "worker_attempt" = ${job.attempt}
+          AND ${activeWorkerClaim(job)}
+      `,
+    );
+    if (updated !== 1) {
+      throw new WorkerJobError("backup-state-conflict", null);
+    }
+  }
+
+  /** 校验对象摘要与暂存元数据后原子完成备份，避免迟到 worker 覆盖新任务。 */
+  async #complete(
+    job: BackupSpaceJob,
+    metadata: BackupStagingMetadata,
+    stored: StoredObject,
+  ): Promise<void> {
+    const count = await this.database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "space_backups"
+        SET
+          "status" = 'succeeded',
+          "format_version" = ${metadata.formatVersion},
+          "kernel_version" = ${metadata.kernelVersion},
+          "sha256" = ${stored.sha256},
+          "size_bytes" = ${stored.sizeBytes},
+          "staged_format_version" = NULL,
+          "staged_kernel_version" = NULL,
+          "staged_sha256" = NULL,
+          "worker_job_id" = NULL,
+          "worker_attempt" = NULL,
+          "completed_at" = CURRENT_TIMESTAMP
+        WHERE "id" = ${job.backupId}::uuid
+          AND "organization_id" = ${job.organizationId}::uuid
+          AND "source_space_id" = ${job.spaceId}::uuid
+          AND "status" = 'running'
+          AND "worker_job_id" = ${job.id}::uuid
+          AND "worker_attempt" = ${job.attempt}
+          AND "staged_format_version" = ${metadata.formatVersion}
+          AND "staged_kernel_version" = ${metadata.kernelVersion}
+          AND "staged_sha256" = ${metadata.sha256}
+          AND ${activeWorkerClaim(job)}
+      `,
+    );
+    if (count !== 1) {
+      throw new WorkerJobError("backup-state-conflict", null);
+    }
+  }
+
+  /** 在事务内获取备份任务并建立 worker 声明，返回幂等、继续执行或租约冲突结果。 */
   async #begin(job: BackupSpaceJob): Promise<BackupBegin> {
     return this.database.client.$transaction(async (transaction) => {
       const rows = await transaction.$queryRaw<
         Array<{
           claimActive: boolean;
           objectKey: string | null;
+          stagedFormatVersion: number | null;
+          stagedKernelVersion: string | null;
+          stagedSha256: string | null;
           status: "queued" | "running" | "succeeded";
           workerAttempt: number | null;
           workerJobId: string | null;
@@ -357,6 +483,9 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
                 AND claim."lease_expires_at" > CURRENT_TIMESTAMP
             ) AS "claimActive",
             backup."object_key" AS "objectKey",
+            backup."staged_format_version" AS "stagedFormatVersion",
+            backup."staged_kernel_version" AS "stagedKernelVersion",
+            backup."staged_sha256" AS "stagedSha256",
             backup."status",
             backup."worker_attempt" AS "workerAttempt",
             backup."worker_job_id" AS "workerJobId"
@@ -411,6 +540,7 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
             AND "organization_id" = ${job.organizationId}::uuid
             AND "source_space_id" = ${job.spaceId}::uuid
             AND "status" = ${current.status}::"space_backup_status"
+            AND ${activeWorkerClaim(job)}
         `,
       );
       if (updated !== 1) {
@@ -419,6 +549,14 @@ export class BackupSpaceHandler implements WorkerJobHandler<BackupSpaceJob> {
       return {
         objectKey,
         outcome: "execute",
+        staged:
+          current.stagedFormatVersion === null
+            ? null
+            : {
+                formatVersion: current.stagedFormatVersion,
+                kernelVersion: current.stagedKernelVersion!,
+                sha256: current.stagedSha256!,
+              },
         transitioned: current.status === "queued",
       };
     });
@@ -503,6 +641,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
     };
   }
 
+  /** 执行恢复状态机：校验来源和租约、恢复暂存运行时，并在任一失败路径清理目标。 */
   async execute(job: RestoreSpaceJob, signal: AbortSignal): Promise<void> {
     const startedAt = performance.now();
     let started = false;
@@ -564,6 +703,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           throw new WorkerJobError(
             "restore-target-cleanup-failed",
             restoreCleanupRetryAt(),
+            { cause: error },
           );
         }
         throw new WorkerJobError(begin.failureCode, null);
@@ -592,10 +732,15 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         parsedObjectKey,
         this.maximumBackupBytes,
       );
-      const result = await this.deployment.restore(
-        { archive, expectedSha256: begin.sha256, job },
-        signal,
-      );
+      let result: Awaited<ReturnType<RestoreDeploymentPort["restore"]>>;
+      try {
+        result = await this.deployment.restore(
+          { archive, expectedSha256: begin.sha256, job },
+          signal,
+        );
+      } finally {
+        archive.destroy();
+      }
       signal.throwIfAborted();
       await this.database.client.$transaction(async (transaction) => {
         const updated = await transaction.$executeRaw(
@@ -613,6 +758,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
               AND "status" = 'restoring'
               AND "worker_job_id" = ${job.id}::uuid
               AND "worker_attempt" = ${job.attempt}
+              AND ${activeWorkerClaim(job)}
           `,
         );
         if (updated !== 1) {
@@ -622,21 +768,23 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           Prisma.sql`
             INSERT INTO "kernel_runtime_endpoints" (
               "kernel_instance_id", "space_id", "hostname", "port",
-              "server_name", "tls_profile"
+              "server_name", "tls_profile", "runtime_owner"
             ) VALUES (
               ${result.endpoint.kernelInstanceId}::uuid,
               ${result.endpoint.spaceId}::uuid,
               ${result.endpoint.hostname},
               ${result.endpoint.port},
               ${result.endpoint.serverName},
-              ${result.endpoint.tlsProfile}
+              ${result.endpoint.tlsProfile},
+              ${result.runtimeOwner}
             )
             ON CONFLICT ("kernel_instance_id") DO UPDATE SET
               "space_id" = EXCLUDED."space_id",
               "hostname" = EXCLUDED."hostname",
               "port" = EXCLUDED."port",
               "server_name" = EXCLUDED."server_name",
-              "tls_profile" = EXCLUDED."tls_profile"
+              "tls_profile" = EXCLUDED."tls_profile",
+              "runtime_owner" = EXCLUDED."runtime_owner"
           `,
         );
         await transaction.kernelInstance.update({
@@ -654,6 +802,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           spaceId: result.endpoint.spaceId,
         });
       });
+      await this.deployment.commitTarget(job);
       this.logger.info({
         elapsedMs: performance.now() - startedAt,
         event: "backup.job",
@@ -678,9 +827,6 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         toState: "ready",
       });
     } catch (error) {
-      if (signal.aborted) {
-        throw error;
-      }
       if (!started) {
         throw error;
       }
@@ -731,12 +877,19 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
         throw new WorkerJobError(
           "restore-target-cleanup-failed",
           restoreCleanupRetryAt(),
+          {
+            cause: new AggregateError(
+              [error, cleanupError],
+              "restore-target-cleanup-failed",
+            ),
+          },
         );
       }
-      throw new WorkerJobError(failureCode, null);
+      throw new WorkerJobError(failureCode, null, { cause: error });
     }
   }
 
+  /** 原子领取恢复任务并读取目标状态，区分可继续、幂等完成和必须清理的旧尝试。 */
   async #begin(job: RestoreSpaceJob): Promise<RestoreBegin> {
     const cleanupRows = await this.database.client.$queryRaw<RestoreCleanupRow[]>(
       Prisma.sql`
@@ -805,6 +958,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           AND backup."status" = 'succeeded'
           AND backup."object_key" IS NOT NULL
           AND backup."sha256" IS NOT NULL
+          AND ${activeWorkerClaim(job)}
         RETURNING
           backup."object_key" AS "objectKey",
           backup."sha256",
@@ -956,6 +1110,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
     return { ...source, cleanupRequired: false, idempotent: false };
   }
 
+  /** 把恢复失败写成带 worker 租约的清理状态，确保清理动作不会被其他尝试抢走。 */
   async #markCleanupRequired(
     job: RestoreSpaceJob,
     failureCode: string,
@@ -977,6 +1132,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
           AND "source_space_id" = ${job.sourceSpaceId}::uuid
           AND "target_space_id" = ${job.targetSpaceId}::uuid
           AND "status" = ${status}::"space_restore_status"
+          AND ${activeWorkerClaim(job)}
           AND (
             "worker_job_id" IS NULL
             OR ("worker_job_id" = ${job.id}::uuid AND "worker_attempt" = ${job.attempt})
@@ -994,6 +1150,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
     return updated === 1;
   }
 
+  /** 删除失败恢复的运行时、权限和观测记录，并发布部署撤销事件。 */
   async #cleanupFailed(job: RestoreSpaceJob): Promise<boolean> {
     await this.deployment.destroyTarget(job);
     return this.database.client.$transaction(async (transaction) => {
@@ -1025,6 +1182,7 @@ export class RestoreSpaceHandler implements WorkerJobHandler<RestoreSpaceJob> {
             AND "failure_code" IS NOT NULL
             AND "worker_job_id" = ${job.id}::uuid
             AND "worker_attempt" = ${job.attempt}
+            AND ${activeWorkerClaim(job)}
         `,
       );
       if (updated !== 1) {
@@ -1104,6 +1262,7 @@ export class SampleKernelHandler implements WorkerJobHandler<SampleKernelJob> {
     };
   }
 
+  /** 读取指定运行时的健康/容量快照，并在事务中校验组织、空间和部署身份后落库。 */
   async execute(job: SampleKernelJob, signal: AbortSignal): Promise<void> {
     const observation = await this.observations.read(job, signal);
     const sample = observation.sample;
@@ -1235,6 +1394,7 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
     };
   }
 
+  /** 连续读取审计链并校验 MAC、范围和大小，再生成不可变归档对象。 */
   async execute(job: ArchiveAuditJob, signal: AbortSignal): Promise<void> {
     const existing = await this.#existing(job);
     if (existing !== null) {
@@ -1326,7 +1486,16 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
               cleanupError.code === "not-found"
             )
           ) {
-            throw new WorkerJobError("audit-archive-object-cleanup-failed", null);
+            throw new WorkerJobError(
+              "audit-archive-object-cleanup-failed",
+              null,
+              {
+                cause: new AggregateError(
+                  [error, cleanupError],
+                  "audit-archive-object-cleanup-failed",
+                ),
+              },
+            );
           }
         }
       }
@@ -1334,6 +1503,7 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
     }
   }
 
+  /** 检查同一审计范围是否已有完整对象，摘要不一致时拒绝继续以避免覆盖归档。 */
   async #existing(job: ArchiveAuditJob): Promise<ExistingAuditArchiveRow | null> {
     const rows = await this.database.client.$queryRaw<ExistingAuditArchiveRow[]>(
       Prisma.sql`

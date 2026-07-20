@@ -66,6 +66,8 @@ export function PdfCanvasPreview({
   const [renderError, setRenderError] = useState(false);
 
   useEffect(() => {
+    // 初始页码属于输入变化后的同步状态，必须先于 PDF 请求重置。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPageNumber(normalizePage(initialPage));
   }, [data, initialPage]);
 
@@ -74,18 +76,27 @@ export function PdfCanvasPreview({
     let disposed = false;
     let loadingTask: PdfLoadingTask | null = null;
     let loadingTaskDestroyed = false;
+    const loadingCanvas = canvasRef.current;
     const destroyLoadingTask = () => {
       if (!loadingTask || loadingTaskDestroyed) {
         return;
       }
       loadingTaskDestroyed = true;
-      void loadingTask.destroy().catch(() => undefined);
+      void loadingTask.destroy().catch((error: unknown) => {
+        console.error(
+          "[asset.preview]",
+          { operation: "pdf-destroy", result: "failed" },
+          error,
+        );
+      });
     };
     activeRenderCleanupRef.current?.();
+    // 替换 PDF 前清空旧文档、错误和画布，避免旧页短暂可见。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoaded(null);
     setRenderError(false);
     setStatus("loading");
-    clearCanvas(canvasRef.current);
+    clearCanvas(loadingCanvas);
 
     void loadPdfJsRuntime(controller.signal)
       .then((runtime) => {
@@ -110,9 +121,14 @@ export function PdfCanvasPreview({
         setPageNumber((current) => Math.min(current, pageCount));
         setStatus("ready");
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         destroyLoadingTask();
         if (!disposed && !controller.signal.aborted) {
+          console.error(
+            "[asset.preview]",
+            { operation: "pdf-load", result: "failed" },
+            error,
+          );
           setStatus("error");
         }
       });
@@ -122,7 +138,7 @@ export function PdfCanvasPreview({
       activeRenderCleanupRef.current?.();
       controller.abort();
       destroyLoadingTask();
-      clearCanvas(canvasRef.current);
+      clearCanvas(loadingCanvas);
     };
   }, [data]);
 
@@ -137,6 +153,11 @@ export function PdfCanvasPreview({
 
     const context = canvas.getContext("2d");
     if (!context) {
+      console.error(
+        "[asset.preview]",
+        { operation: "pdf-canvas-context", result: "failed" },
+        new Error("PDF canvas 2D context is unavailable"),
+      );
       setRenderError(true);
       return;
     }
@@ -160,6 +181,8 @@ export function PdfCanvasPreview({
 
     const targetPage = Math.min(pageNumber, current.pageCount);
     if (targetPage !== pageNumber) {
+      // PDF 文档页数变化时收敛到合法页码，避免再次请求不存在的页面。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPageNumber(targetPage);
       return cleanupRender;
     }
@@ -196,6 +219,11 @@ export function PdfCanvasPreview({
       })
       .catch((error: unknown) => {
         if (!cancelled && !isCancelledRenderError(error)) {
+          console.error(
+            "[asset.preview]",
+            { operation: "pdf-render", result: "failed" },
+            error,
+          );
           clearCanvas(canvas);
           setRenderError(true);
         }

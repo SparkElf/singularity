@@ -162,7 +162,14 @@ func ExportNodeStdMd(node *ast.Node, luteEngine *lute.Lute) string {
 }
 
 func IsNodeOCRed(node *ast.Node) (ret bool) {
+	return true
+}
+
+func IsNodeOCRedInDocument(node *ast.Node, boxID, documentPath string) (ret bool) {
 	if !util.TesseractEnabled || nil == node {
+		return true
+	}
+	if boxID == "" || documentPath == "" || IsEncryptedBoxFn == nil || IsEncryptedBoxFn(boxID) {
 		return true
 	}
 
@@ -179,11 +186,11 @@ func IsNodeOCRed(node *ast.Node) (ret bool) {
 			}
 
 			linkDestStr := linkDest.TokensStr()
-			if !cache.ExistAsset(linkDestStr) {
+			assetKey, exists := util.ResolveAssetTextKey(linkDestStr, boxID, documentPath)
+			if !exists {
 				return ast.WalkContinue
 			}
-
-			if !util.ExistsAssetText(linkDestStr) {
+			if !util.ExistsAssetText(assetKey) {
 				ret = false
 				return ast.WalkStop
 			}

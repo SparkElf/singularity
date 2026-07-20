@@ -67,7 +67,7 @@ const requestGutter = (
     path: string,
     body: unknown,
     intent: "read" | "write",
-) => protyle.session!.runtime.transport.request<IWebSocketData>(path, body, {
+) => protyle.runtime.transport.request<IWebSocketData>(path, body, {
     identity: protyleContentIdentity(protyle),
     intent,
     signal: protyle.requestSignal,
@@ -162,7 +162,7 @@ export class Gutter {
 
     private openMenu(protyle: IProtyle) {
         this.closeMenu();
-        const handle = protyle.session!.runtime.menu.open() as ProtyleMenuHandle<ProtyleMenuSurface>;
+        const handle = protyle.runtime.menu.open() as ProtyleMenuHandle<ProtyleMenuSurface>;
         this.menuHandle = handle;
         handle.menu.removeCB = () => {
             if (this.menuHandle === handle) {
@@ -283,8 +283,8 @@ export class Gutter {
             } else {
                 event.dataTransfer.setDragImage(ghostElement, 0, 0);
                 if (touchDragOwner.active) {
-                    const ghostHandle = protyle.runtime!.overlays.add(ghostElement);
-                    protyle.runtime!.overlays.bringToFront(ghostElement);
+                    const ghostHandle = protyle.runtime.overlays.add(ghostElement);
+                    protyle.runtime.overlays.bringToFront(ghostElement);
                     touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
                 } else {
                     setTimeout(() => {
@@ -1911,7 +1911,7 @@ export class Gutter {
                             "read",
                         ).then((response) => {
                             downloadExportFile(
-                                protyle.session!.runtime.resources.resolveExport(identity, response.data.path),
+                                protyle.runtime.resources.resolveExport(identity, response.data.path),
                             );
                         }).catch((error) => {
                             reportGutterRequestFailure(protyle, "/api/export/exportCodeBlock", error);
@@ -1984,7 +1984,7 @@ export class Gutter {
                         notebook: protyle.notebookId,
                     }, "read").then((response) => {
                         downloadExportFile(
-                            protyle.session!.runtime.resources.resolveExport(identity, response.data.zip),
+                            protyle.runtime.resources.resolveExport(identity, response.data.zip),
                         );
                     }).catch((error) => {
                         reportGutterRequestFailure(protyle, "/api/export/exportAttributeView", error);

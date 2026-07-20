@@ -9,7 +9,7 @@ import {openAVMenu} from "./menu";
 
 const setAttrViewGroup = (protyle: IProtyle, blockID: string, avID: string, group: IAVGroup) => {
     const identity = protyleContentIdentity(protyle);
-    return protyle.transport!.request<IWebSocketData>("/api/av/setAttrViewGroup", {
+    return protyle.runtime.transport.request<IWebSocketData>("/api/av/setAttrViewGroup", {
         blockID,
         avID,
         group,

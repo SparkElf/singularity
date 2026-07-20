@@ -7,6 +7,7 @@ import { AUTH_SESSION_COOKIE_NAME, CSRF_HEADER_NAME } from "@singularity/contrac
 import type { ApiConfiguration } from "../configuration.js";
 import type { HttpReplyBoundary } from "../http-boundary.js";
 import { singleHeader } from "../http-boundary.js";
+import { bindHttpRequestAbortSignal } from "../http-request-signal.js";
 import {
   IdentityService,
   type AuthenticatedSession,
@@ -59,23 +60,21 @@ export class KernelGatewayController {
   ): Promise<void> {
     const target = this.admission.consume(request.raw);
     const session = await this.#authenticate(request, reply);
-    const abortController = new AbortController();
-    const abort = () => abortController.abort(new Error("Browser request closed"));
-    request.raw.once("aborted", abort);
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
     try {
       await this.gateway.proxy(
         {
           body: request.body,
           headers: request.headers,
           requestId: request.id,
-          signal: abortController.signal,
+          signal: abortScope.signal,
           target,
           userId: session.userId,
         },
         reply,
       );
     } finally {
-      request.raw.off("aborted", abort);
+      abortScope.dispose();
     }
   }
 

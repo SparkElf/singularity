@@ -33,8 +33,10 @@ const AV_CELL_ID = "20990719000305-avcell01";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
 const GATEWAY_BASE_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
-const CANONICAL_RENAME_TITLE = "内核规范标题";
-const CANONICAL_RENAME_REF_TEXT = "内核规范引用文本";
+const HTTP_CANONICAL_RENAME_TITLE = "HTTP 规范标题";
+const HTTP_CANONICAL_RENAME_REF_TEXT = "HTTP 规范引用文本";
+const PUSH_CANONICAL_RENAME_TITLE = "推送规范标题";
+const PUSH_CANONICAL_RENAME_REF_TEXT = "推送规范引用文本";
 
 interface DocumentFixture {
   readonly blockId: string;
@@ -63,6 +65,7 @@ interface ComplexContentBoundary {
   readonly sockets: ObservedSocket[];
   readonly transactionRequests: KernelRequest[];
   readonly unexpectedRequests: string[];
+  readonly setDocumentTitle: (documentId: string, title: string) => void;
 }
 
 interface InstallBoundaryOptions {
@@ -237,10 +240,10 @@ function discoveryResponse(kernelPath: string): object {
     data: {
       links: [],
       nodes: [{
-        box: NOTEBOOK_A,
         documentId: DOCUMENT_B,
         id: BLOCK_B,
         label: "同库目标文档",
+        notebookId: NOTEBOOK_A,
       }],
     },
     msg: "",
@@ -259,6 +262,9 @@ async function installGatewayBoundary(
   options: InstallBoundaryOptions = {},
 ): Promise<ComplexContentBoundary> {
   const fixtureDocuments = documents();
+  const documentTitles = new Map(
+    fixtureDocuments.map((document) => [document.documentId, document.title] as const),
+  );
   const documentById = new Map(
     fixtureDocuments.map((document) => [document.documentId, document] as const),
   );
@@ -269,6 +275,9 @@ async function installGatewayBoundary(
     sockets: [],
     transactionRequests: [],
     unexpectedRequests: [],
+    setDocumentTitle: (documentId, title) => {
+      documentTitles.set(documentId, title);
+    },
   };
   const skipInitialAttributeViewRender = options.skipInitialAttributeViewRender ?? true;
 
@@ -318,8 +327,8 @@ async function installGatewayBoundary(
     if (path === `${GATEWAY_BASE_PATH}/content-directory/notebooks`) {
       await fulfillJson(route, {
         notebooks: [
-          { icon: "", locked: false, name: "主内容库", notebookId: NOTEBOOK_A },
-          { icon: "", locked: false, name: "隔离内容库", notebookId: NOTEBOOK_B },
+          { icon: "", locked: false, name: "主内容库", notebookId: NOTEBOOK_A, supportsGraph: true },
+          { icon: "", locked: false, name: "隔离内容库", notebookId: NOTEBOOK_B, supportsGraph: true },
         ],
       });
       return;
@@ -333,7 +342,7 @@ async function installGatewayBoundary(
             hasChildren: false,
             icon: "",
             notebookId: NOTEBOOK_A,
-            title: document.title,
+            title: documentTitles.get(document.documentId) ?? document.title,
           })),
         locked: false,
         nextOffset: null,
@@ -347,7 +356,7 @@ async function installGatewayBoundary(
           hasChildren: false,
           icon: "",
           notebookId: NOTEBOOK_B,
-          title: "跨库目标文档",
+          title: documentTitles.get(DOCUMENT_C) ?? "跨库目标文档",
         }],
         locked: false,
         nextOffset: null,
@@ -363,7 +372,9 @@ async function installGatewayBoundary(
     }
     const headers = request.headers();
     const kernelPath = path.slice(kernelPrefix.length);
-    const body = request.method() === "POST" ? request.postDataJSON() : {};
+    const body: Record<string, unknown> = request.method() === "POST"
+      ? request.postDataJSON() as Record<string, unknown>
+      : {};
     const observed: KernelRequest = {
       body,
       documentId: headers["x-singularity-document-id"] ?? "",
@@ -444,8 +455,8 @@ async function installGatewayBoundary(
           documentId: observed.documentId,
           empty: false,
           notebookId: observed.notebookId,
-          refText: CANONICAL_RENAME_REF_TEXT,
-          title: CANONICAL_RENAME_TITLE,
+          refText: HTTP_CANONICAL_RENAME_REF_TEXT,
+          title: HTTP_CANONICAL_RENAME_TITLE,
         },
         msg: "",
       });
@@ -696,7 +707,7 @@ test.describe("Protyle complex-content identity integration", () => {
       path: `/${DOCUMENT_A}.sy`,
       title: "客户端标题",
     });
-    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+    await expect(title).toHaveText(HTTP_CANONICAL_RENAME_TITLE);
 
     socket!.route.send(JSON.stringify({
       cmd: "rename",
@@ -711,8 +722,9 @@ test.describe("Protyle complex-content identity integration", () => {
       msg: "",
     }));
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+    await expect(title).toHaveText(HTTP_CANONICAL_RENAME_TITLE);
 
+    boundary.setDocumentTitle(DOCUMENT_A, PUSH_CANONICAL_RENAME_TITLE);
     socket!.route.send(JSON.stringify({
       cmd: "rename",
       code: 0,
@@ -720,12 +732,17 @@ test.describe("Protyle complex-content identity integration", () => {
         documentId: DOCUMENT_A,
         empty: false,
         notebookId: NOTEBOOK_A,
-        refText: CANONICAL_RENAME_REF_TEXT,
-        title: CANONICAL_RENAME_TITLE,
+        refText: PUSH_CANONICAL_RENAME_REF_TEXT,
+        title: PUSH_CANONICAL_RENAME_TITLE,
       },
       msg: "",
     }));
-    await expect(title).toHaveText(CANONICAL_RENAME_TITLE);
+    await expect(title).toHaveText(PUSH_CANONICAL_RENAME_TITLE);
+    const selectedDirectoryDocument = page.getByRole("button", {
+      exact: true,
+      name: PUSH_CANONICAL_RENAME_TITLE,
+    });
+    await expect(selectedDirectoryDocument).toHaveAttribute("aria-current", "page");
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);

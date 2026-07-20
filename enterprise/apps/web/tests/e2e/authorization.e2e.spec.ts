@@ -19,9 +19,14 @@ test("viewer receives the real editor DOM but cannot submit a transaction", asyn
   const state = readP5E2EStackState();
   const diagnostics = collectBrowserDiagnostics(page);
   let transactionRequests = 0;
+  let uploadRequests = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname.endsWith("/kernel/api/transactions")) {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/kernel/api/transactions")) {
       transactionRequests += 1;
+    }
+    if (path.endsWith(`/spaces/${state.spaceId}/upload`)) {
+      uploadRequests += 1;
     }
   });
 
@@ -31,12 +36,116 @@ test("viewer receives the real editor DOM but cannot submit a transaction", asyn
   await expect(wysiwyg).toHaveAttribute("contenteditable", "false");
   const paragraph = editor.locator('[data-type="NodeParagraph"] [spellcheck]').first();
   await expect(paragraph).toHaveAttribute("contenteditable", "false");
+  const initialEditorHtml = await wysiwyg.innerHTML();
   await paragraph.click();
   await page.keyboard.type(" viewer write must be rejected");
   await expect(paragraph).not.toContainText("viewer write must be rejected");
+  await paragraph.evaluate((element) => {
+    const text = new DataTransfer();
+    text.setData("text/plain", "viewer paste must be rejected");
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: text,
+    }));
+
+    const pastedFile = new DataTransfer();
+    pastedFile.items.add(new File(["paste"], "viewer-paste.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: pastedFile,
+    }));
+
+    const droppedFile = new DataTransfer();
+    droppedFile.items.add(new File(["drop"], "viewer-drop.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: droppedFile,
+    }));
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+  await expect.poll(() => wysiwyg.innerHTML()).toBe(initialEditorHtml);
   expect(transactionRequests).toBe(0);
+  expect(uploadRequests).toBe(0);
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
+});
+
+test("viewer multipart uploads are rejected by the real Gateway authorization", async ({
+  page,
+}) => {
+  const state = readP5E2EStackState();
+  const diagnostics = collectBrowserDiagnostics(page);
+  await openSpaceEditor(page, state, state.viewer);
+  const uploadPath =
+    `/api/v1/organizations/${state.organizationId}` +
+    `/spaces/${state.spaceId}/upload`;
+  const result = await page.evaluate(async ({
+    documentId,
+    notebookId,
+    path,
+  }) => {
+    const csrfResponse = await fetch("/api/v1/auth/csrf", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    const csrf = await csrfResponse.json() as { csrfToken?: unknown };
+    if (csrfResponse.status !== 200 || typeof csrf.csrfToken !== "string") {
+      throw new Error("P5 E2E upload CSRF token was not returned");
+    }
+    const form = new FormData();
+    form.append("file[]", new File(["viewer upload"], "viewer-upload.txt", {
+      type: "text/plain",
+    }));
+    form.set("id", documentId);
+    form.set("notebook", notebookId);
+    const response = await fetch(path, {
+      body: form,
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": csrf.csrfToken,
+        "X-Singularity-Document-Id": documentId,
+        "X-Singularity-Notebook-Id": notebookId,
+      },
+      method: "POST",
+    });
+    return {
+      body: await response.text(),
+      contentType: response.headers.get("content-type"),
+      status: response.status,
+    };
+  }, {
+    documentId: state.documentId,
+    notebookId: state.notebookId,
+    path: uploadPath,
+  });
+
+  expect(result.status).toBe(403);
+  expect(result.contentType?.split(";", 1)[0]).toBe("application/problem+json");
+  expect(JSON.parse(result.body)).toMatchObject({ code: "forbidden", status: 403 });
+  await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
+  const expectedUploadUrl = new URL(uploadPath, state.webOrigin).href;
+  expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter((message) =>
+      !(
+        message.type() === "error" &&
+        message.location().url === expectedUploadUrl &&
+        /\b403\b/.test(message.text())
+      )
+    ),
+    unexpectedErrorResponses: diagnostics.responses.filter((response) =>
+      response.status() >= 400 && response.url() !== expectedUploadUrl
+    ),
+  });
 });
 
 test("viewer direct HTTP writes are rejected by the real Gateway authorization", async ({
@@ -130,7 +239,7 @@ test("revoking a live viewer closes its Kernel connection and clears the editor"
   const accessLossWarnings = diagnostics.consoleMessages.filter((message) =>
     message.type() === "warning" &&
     message.text().startsWith("[protyle.lifecycle]") &&
-    /category:\s*['\"]?forbidden\b/.test(message.text()),
+    /category:\s*['"]?forbidden\b/.test(message.text()),
   );
   expect(accessLossWarnings.length).toBeGreaterThan(0);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {

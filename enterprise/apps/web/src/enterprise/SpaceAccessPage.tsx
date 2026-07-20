@@ -36,6 +36,7 @@ import {
   PageFailure,
   PageHeader,
   SectionHeading,
+  prioritizedError,
 } from "@/enterprise/components.tsx";
 import {
   enterpriseManagementAccessQueryKey,
@@ -148,12 +149,33 @@ export function SpaceAccessPage() {
     },
   });
 
-  const directoryError =
-    memberCandidatesQuery.error ?? groupCandidatesQuery.error ?? null;
-  const queryError =
-    membersQuery.error ??
-    grantsQuery.error ??
-    (isApiProblem(directoryError, "unauthenticated") ? directoryError : null);
+  const queryErrors = [
+    membersQuery.error,
+    grantsQuery.error,
+    memberCandidatesQuery.error,
+    groupCandidatesQuery.error,
+  ];
+  const mutationErrors = [
+    setMemberMutation.error,
+    revokeMemberMutation.error,
+    setGroupGrantMutation.error,
+    revokeGroupGrantMutation.error,
+  ];
+  const currentErrors = [...queryErrors, ...mutationErrors];
+  const authenticationError = currentErrors.find((error) =>
+    isApiProblem(error, "unauthenticated"),
+  );
+  if (authenticationError) {
+    return <PageFailure error={authenticationError} />;
+  }
+  const directoryError = prioritizedError([
+    memberCandidatesQuery.error,
+    groupCandidatesQuery.error,
+  ]);
+  const queryError = prioritizedError([
+    membersQuery.error,
+    grantsQuery.error,
+  ]);
   if (queryError) {
     return (
       <PageFailure
@@ -178,11 +200,7 @@ export function SpaceAccessPage() {
   const groupCandidates = (groupCandidatesQuery.data?.groups ?? []).filter(
     (group) => !grantedGroupIds.has(group.groupId),
   );
-  const mutationError =
-    setMemberMutation.error ??
-    revokeMemberMutation.error ??
-    setGroupGrantMutation.error ??
-    revokeGroupGrantMutation.error;
+  const mutationError = prioritizedError(mutationErrors);
 
   return (
     <div className="flex flex-col">

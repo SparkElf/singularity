@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import type {
   ProtyleController,
   ProtyleMenuSurface,
+  ProtyleRequestOptions,
   ProtyleTransport,
 } from "@singularity/protyle-browser";
 import {
@@ -17,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { DiscoveryPanel } from "@/spaces/DiscoveryPanel.tsx";
+import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
 import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 
@@ -30,6 +32,12 @@ const BLOCK_B = "20260719000201-block02";
 const CSRF_TOKEN = "A".repeat(43);
 
 const sessions = new Set<ProtyleSession<SpaceProtyleRuntime>>();
+
+type DiscoveryRequest = (
+  path: string,
+  body: unknown,
+  options: ProtyleRequestOptions,
+) => Promise<unknown>;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -54,7 +62,7 @@ function menuSurface(): ProtyleMenuSurface {
 }
 
 function createTestSession(
-  request: ProtyleTransport<unknown>["request"] = async () => {
+  request: DiscoveryRequest = async () => {
     throw new Error("Gateway transport is outside the current Discovery contract");
   },
   hostDispatch: SpaceProtyleRuntime["host"]["dispatch"] = () => undefined,
@@ -65,7 +73,12 @@ function createTestSession(
   const transport = {
     dispose: () => undefined,
     freeze: () => undefined,
-    request,
+    request: <TResponse,>(
+      path: string,
+      body: unknown,
+      options: ProtyleRequestOptions,
+    ) =>
+      request(path, body, options) as Promise<TResponse>,
     resumeSubmission: () => undefined,
     subscribe: () => ({ disconnect: () => undefined }),
     upload,
@@ -94,6 +107,7 @@ function createTestSession(
 afterEach(async () => {
   cleanup();
   useDiscoveryStore.setState({ panel: null, requestRevision: 0 });
+  useContentSelectionStore.setState({ selection: null });
   useCsrfStore.getState().clearCsrfToken();
   for (const session of sessions) {
     await session.dispose();
@@ -202,6 +216,14 @@ describe("DiscoveryPanel", () => {
   });
 
   it("does not render an identity-less graph node as a navigation command", async () => {
+    useContentSelectionStore.setState({
+      selection: {
+        documentId: DOCUMENT_ID,
+        notebookId: NOTEBOOK_ID,
+        spaceId: SPACE_ID,
+        supportsGraph: true,
+      },
+    });
     useDiscoveryStore.getState().open({
       documentId: DOCUMENT_ID,
       kind: "document-graph",
@@ -223,7 +245,7 @@ describe("DiscoveryPanel", () => {
             },
             {
               documentId: null,
-              id: "#标签",
+              id: "tag:#标签",
               label: "#标签",
               notebookId: null,
             },
@@ -243,14 +265,53 @@ describe("DiscoveryPanel", () => {
     );
 
     const documentNode = await screen.findByRole("button", { name: "可导航文档" });
-    expect(screen.getByText("#标签")).toBeVisible();
+    expect(screen.getByTitle("#标签")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "#标签" })).not.toBeInTheDocument();
     documentNode.click();
     expect(onNavigate).toHaveBeenCalledWith({
       blockId: BLOCK_ID,
       documentId: DOCUMENT_ID,
       notebookId: NOTEBOOK_ID,
     });
-    expect(screen.getByText("#标签").closest("button")).toBeNull();
+    expect(screen.getByTitle("#标签").closest("button")).toBeNull();
+  });
+
+  it.each([
+    ["the current notebook disables it", DOCUMENT_ID, false],
+    ["the selected document identity differs", DOCUMENT_B, true],
+  ] as const)("does not request a document graph when %s", async (
+    _reason,
+    selectedDocumentId,
+    supportsGraph,
+  ) => {
+    useContentSelectionStore.setState({
+      selection: {
+        documentId: selectedDocumentId,
+        notebookId: NOTEBOOK_ID,
+        spaceId: SPACE_ID,
+        supportsGraph,
+      },
+    });
+    useDiscoveryStore.getState().open({
+      documentId: DOCUMENT_ID,
+      kind: "document-graph",
+      notebookId: NOTEBOOK_ID,
+      query: "",
+      spaceId: SPACE_ID,
+    });
+    const graphRequest = vi.fn<ProtyleTransport<unknown>["request"]>();
+
+    render(
+      <DiscoveryPanel
+        onNavigate={vi.fn()}
+        organizationId={ORGANIZATION_ID}
+        session={createTestSession(graphRequest)}
+        spaceId={SPACE_ID}
+      />,
+    );
+
+    expect(await screen.findByText("当前文档无法显示关系图")).toBeVisible();
+    expect(graphRequest).not.toHaveBeenCalled();
   });
 
   it("searches one document through a single identity-bound Gateway request", async () => {
@@ -296,7 +357,7 @@ describe("DiscoveryPanel", () => {
           notebookId: NOTEBOOK_ID,
         },
         intent: "read",
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as unknown,
       },
     );
   });
@@ -336,7 +397,7 @@ describe("DiscoveryPanel", () => {
       {
         identity: { documentId: DOCUMENT_ID, notebookId: NOTEBOOK_ID },
         intent: "read",
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as unknown,
       },
     );
   });
@@ -380,7 +441,7 @@ describe("DiscoveryPanel", () => {
       {
         identity: { documentId: DOCUMENT_ID, notebookId: NOTEBOOK_ID },
         intent: "read",
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as unknown,
       },
     );
   });
@@ -419,15 +480,15 @@ describe("DiscoveryPanel", () => {
       {
         identity: { documentId: DOCUMENT_ID, notebookId: NOTEBOOK_ID },
         intent: "read",
-        signal: expect.any(AbortSignal),
+        signal: expect.any(AbortSignal) as unknown,
       },
     );
   });
 
   it("ignores a late response after the document identity changes", async () => {
     const pending = new Map<string, (value: unknown) => void>();
-    const documentRequest = vi.fn<ProtyleTransport<unknown>["request"]>(
-      (_path, _body, options) => new Promise((resolve) => {
+    const documentRequest = vi.fn<DiscoveryRequest>(
+      (_path, _body, options) => new Promise<unknown>((resolve) => {
         pending.set(options.identity.documentId, resolve);
       }),
     );

@@ -247,8 +247,76 @@ jobs:
         working-directory: enterprise
 
       - name: Run P5 real-chain E2E
+        id: p5_runner
+        continue-on-error: true
         run: pnpm test:e2e
         working-directory: enterprise
+
+      - name: Validate P5 structured report
+        id: p5_report
+        if: ${{ always() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const reportPath = "apps/web/test-results/e2e-report.json";
+          const report = JSON.parse(readFileSync(reportPath, "utf8"));
+          if (report === null || typeof report !== "object" || Array.isArray(report)) {
+            throw new Error("P5 Playwright report root is invalid");
+          }
+          const pending = Array.isArray(report.suites) ? [...report.suites] : [];
+          const suites = [];
+          while (pending.length > 0) {
+            const suite = pending.pop();
+            if (suite === null || typeof suite !== "object" || Array.isArray(suite)) {
+              throw new Error("P5 Playwright report suite is invalid");
+            }
+            suites.push(suite);
+            if (Array.isArray(suite.suites)) {
+              pending.push(...suite.suites);
+            }
+          }
+          const specs = suites.flatMap((suite) =>
+            Array.isArray(suite.specs) ? suite.specs : []
+          );
+          const tests = specs.flatMap((spec) =>
+            spec !== null && typeof spec === "object" && Array.isArray(spec.tests)
+              ? spec.tests
+              : []
+          );
+          if (suites.length === 0 || specs.length === 0 || tests.length === 0) {
+            throw new Error(
+              `P5 Playwright report is empty; suites=${suites.length} specs=${specs.length} tests=${tests.length}`,
+            );
+          }
+          process.stdout.write(
+            `P5 report: suites=${suites.length} specs=${specs.length} tests=${tests.length}\n`,
+          );
+          NODE
+        working-directory: enterprise
+
+      - name: Upload P5 E2E evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: p5-e2e-${{ github.sha }}
+          path: |
+            enterprise/apps/web/test-results/e2e-report.json
+            enterprise/apps/web/test-results/e2e/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce P5 E2E outcomes
+        if: ${{ always() }}
+        env:
+          P5_REPORT_OUTCOME: ${{ steps.p5_report.outcome }}
+          P5_RUNNER_OUTCOME: ${{ steps.p5_runner.outcome }}
+        run: |
+          if [ "$P5_RUNNER_OUTCOME" != "success" ] || [ "$P5_REPORT_OUTCOME" != "success" ]; then
+            printf 'P5 runner outcome: %s\nP5 report outcome: %s\n' \
+              "$P5_RUNNER_OUTCOME" "$P5_REPORT_OUTCOME" >&2
+            exit 1
+          fi
 
   kernel-baseline:
     if: ${{ github.repository == 'SparkElf/singularity' }}
@@ -390,9 +458,25 @@ jobs:
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
+          containers=()
           cleanup() {
-            docker rm --force singularity-api-smoke singularity-worker-smoke singularity-web-smoke >/dev/null 2>&1 || true
-            rm -rf "$secret_dir"
+            local original_status=$?
+            local cleanup_status=0
+            trap - EXIT
+            for container in "${containers[@]}"; do
+              docker rm --force "$container" >/dev/null 2>&1 || cleanup_status=1
+            done
+            chmod 0700 "$secret_dir" || cleanup_status=1
+            rm -rf "$secret_dir" || cleanup_status=1
+            if [ "$original_status" -ne 0 ]; then
+              exit "$original_status"
+            fi
+            exit "$cleanup_status"
+          }
+          report_container_failure() {
+            local container="$1"
+            docker inspect --format '{{json .State.Health.Log}}' "$container" || true
+            docker logs "$container" || true
           }
           wait_for_health() {
             local container="$1"
@@ -405,12 +489,12 @@ jobs:
                 return 0
               fi
               if [ "$state" != "running" ] || [ "$health" = "unhealthy" ]; then
-                docker logs "$container"
+                report_container_failure "$container"
                 return 1
               fi
               sleep 1
             done
-            docker logs "$container"
+            report_container_failure "$container"
             return 1
           }
           trap cleanup EXIT
@@ -456,6 +540,7 @@ jobs:
             --env SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE="/run/secrets/singularity/service.key" \
             --env SINGULARITY_PUBLIC_ORIGIN="https://singularity.invalid" \
             "$API_IMAGE"
+          containers+=(singularity-api-smoke)
           docker run --detach --name singularity-worker-smoke --network host \
             --mount "type=bind,source=$secret_dir,target=/run/secrets/singularity,readonly" \
             --env DATABASE_URL="$DATABASE_URL" \
@@ -464,12 +549,15 @@ jobs:
             --env SINGULARITY_KERNEL_DEPLOYMENTS_FILE="/run/secrets/singularity/deployments.json" \
             --env SINGULARITY_KERNEL_SERVICE_KEY_ID="ci-key" \
             --env SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE="/run/secrets/singularity/service.key" \
+            --env SINGULARITY_WORKER_BACKUP_REQUEST_TIMEOUT_MS="300000" \
             --env SINGULARITY_WORKER_ID="ci-worker" \
+            --env SINGULARITY_WORKER_RESTORE_ARCHIVE_TIMEOUT_MS="300000" \
             --env SINGULARITY_WORKER_RESTORE_CLIENT_CA_FILE="/run/secrets/singularity/ca.crt" \
             --env SINGULARITY_WORKER_RESTORE_CLIENT_CERT_FILE="/run/secrets/singularity/client.crt" \
             --env SINGULARITY_WORKER_RESTORE_CLIENT_KEY_FILE="/run/secrets/singularity/client.key" \
             --env SINGULARITY_WORKER_RESTORE_GATEWAY_CLIENT_DNS_NAME="worker.invalid" \
             --env SINGULARITY_WORKER_RESTORE_GATEWAY_HOSTNAME="127.0.0.1" \
+            --env SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS="127.0.0.1" \
             --env SINGULARITY_WORKER_RESTORE_PORT_FIRST="19443" \
             --env SINGULARITY_WORKER_RESTORE_PORT_LAST="19443" \
             --env SINGULARITY_WORKER_RESTORE_SERVER_CERT_FILE="/run/secrets/singularity/client.crt" \
@@ -478,7 +566,9 @@ jobs:
             --env SINGULARITY_WORKER_RESTORE_SERVICE_KEYS_FILE="/run/secrets/singularity/service-keys.json" \
             --env SINGULARITY_WORKER_RESTORE_TLS_PROFILE="ci-runtime" \
             "$WORKER_IMAGE"
+          containers+=(singularity-worker-smoke)
           docker run --detach --name singularity-web-smoke --network host "$WEB_IMAGE"
+          containers+=(singularity-web-smoke)
           wait_for_health singularity-api-smoke
           wait_for_health singularity-worker-smoke
           wait_for_health singularity-web-smoke

@@ -17,11 +17,13 @@ export type ProtyleDefRefCountData = ProtyleReferenceIdentity & {
     rootRefCount: number;
 };
 
+/** 判断编辑器是否拥有推送事件声明的 notebook/document 身份。 */
 const ownsDocument = (protyle: IProtyle, identity: ProtyleReferenceIdentity) =>
     protyle.content.mode === "bound" &&
     protyle.content.notebookId === identity.notebookId &&
     protyle.block.rootID === identity.documentId;
 
+/** 判断普通块或嵌入块元素是否属于推送来源文档，避免跨空间更新 DOM。 */
 const ownsRenderedDocument = (protyle: IProtyle, element: Element, identity: ProtyleReferenceIdentity) => {
     const embedElement = element.closest(".protyle-wysiwyg__embed");
     if (embedElement) {
@@ -31,6 +33,7 @@ const ownsRenderedDocument = (protyle: IProtyle, element: Element, identity: Pro
     return ownsDocument(protyle, identity);
 };
 
+/** 将引用动态文本推送到来源文档的匹配实例，拒绝不属于该文档的迟到事件。 */
 export const setProtyleRefDynamicText = (protyle: IProtyle, data: ProtyleRefDynamicTextData) => {
     protyle.wysiwyg.element
         .querySelectorAll(`[data-node-id="${data.blockID}"] span[data-type~="block-ref"][data-subtype="d"][data-id="${data.defBlockID}"]`)
@@ -41,6 +44,7 @@ export const setProtyleRefDynamicText = (protyle: IProtyle, data: ProtyleRefDyna
         });
 };
 
+/** 更新文档及块引用计数，只修改通过身份校验的当前编辑器或嵌入块。 */
 export const setProtyleDefRefCount = (protyle: IProtyle, data: ProtyleDefRefCountData) => {
     if (ownsDocument(protyle, data) && protyle.title) {
         const attrElement = protyle.title.element.querySelector(".protyle-attr");

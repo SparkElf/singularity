@@ -8,7 +8,10 @@ export class PopoverCaptureState {
 
     public capture(target: HTMLElement, contentNotebookId?: string): PopoverCapture | undefined {
         const isBlockRef = (target.getAttribute("data-type") || "").split(" ").includes("block-ref");
-        const notebookId = target.getAttribute("data-notebook-id") || (isBlockRef ? "" : contentNotebookId || "");
+        // 记录弹窗目标的 notebook 归属；显式空属性表示解绑，只有缺少属性时才继承编辑器 owner。
+        const notebookId = target.hasAttribute("data-notebook-id")
+            ? target.getAttribute("data-notebook-id") || ""
+            : (isBlockRef ? "" : contentNotebookId || "");
         if (!notebookId || !target.isConnected) {
             this.current = undefined;
             return;

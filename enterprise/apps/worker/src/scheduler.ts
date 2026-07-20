@@ -94,6 +94,7 @@ export class WorkerJobScheduler {
       });
     } catch (error) {
       this.#logger.error({
+        error,
         event: "worker.producer",
         kind: producer.kind,
         outcome: "failed",

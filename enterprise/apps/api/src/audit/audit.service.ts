@@ -17,6 +17,7 @@ export class AuditService {
     private readonly spaces: SpaceManagementService,
   ) {}
 
+  /** 在组织审计链上按游标读取事件，保持顺序、分页边界和完整校验字段。 */
   async listOrganizationEvents(input: {
     actorUserId: string;
     beforeSequence: bigint | null;
@@ -39,6 +40,7 @@ export class AuditService {
     });
   }
 
+  /** 在空间审计链上按游标读取事件，先锁定空间归属再投影最小事件视图。 */
   async listSpaceEvents(input: {
     actorUserId: string;
     beforeSequence: bigint | null;
@@ -63,6 +65,7 @@ export class AuditService {
     });
   }
 
+  /** 复用统一审计查询和 MAC 校验逻辑，避免组织与空间入口产生不同链路。 */
   async #query(
     transaction: Prisma.TransactionClient,
     organizationId: string,

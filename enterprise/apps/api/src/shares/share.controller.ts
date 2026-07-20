@@ -1,7 +1,12 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Readable } from "node:stream";
+
 import {
   Body,
+  type CallHandler,
   Controller,
   Delete,
+  type ExecutionContext,
   Get,
   Header,
   HttpCode,
@@ -11,6 +16,8 @@ import {
   Req,
   Res,
   StreamableFile,
+  type NestInterceptor,
+  UseInterceptors,
 } from "@nestjs/common";
 import {
   ApiBody,
@@ -57,6 +64,10 @@ import type {
   HttpRequestBoundary,
 } from "../http-boundary.js";
 import {
+  bindHttpRequestAbortSignal,
+  type HttpRequestAbortScope,
+} from "../http-request-signal.js";
+import {
   Authenticated,
   ApiProblemResponses,
   CurrentSession,
@@ -66,6 +77,14 @@ import {
 } from "../identity/http-access.js";
 import { ZodValidationPipe } from "../identity/zod-validation.pipe.js";
 import { ShareService } from "./share.service.js";
+
+interface PublicShareHttpRequest extends HttpRequestBoundary {
+  readonly raw: IncomingMessage;
+}
+
+interface PublicShareHttpReply extends HttpReplyBoundary {
+  readonly raw: ServerResponse;
+}
 
 function setPublicHeaders(reply: HttpReplyBoundary): void {
   reply
@@ -83,6 +102,64 @@ function encodedFileName(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
     `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
+}
+
+const publicShareHeadersInterceptor: NestInterceptor = {
+  intercept(context: ExecutionContext, next: CallHandler) {
+    setPublicHeaders(
+      context.switchToHttp().getResponse<HttpReplyBoundary>(),
+    );
+    return next.handle();
+  },
+};
+
+/** 在公开响应完成前保留分享行读锁和请求 AbortSignal，撤销/改密只能在旧读者释放后提交。 */
+function retainShareResponseScope(
+  scope: HttpRequestAbortScope,
+  response: ServerResponse,
+  release: () => Promise<void>,
+  terminateAtMilliseconds: number,
+  body?: Readable,
+): void {
+  let disposed = false;
+  let timeout: NodeJS.Timeout | undefined;
+  const dispose = (): void => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    body?.off("error", abortResponse);
+    response.off("close", abortResponse);
+    response.off("error", abortResponse);
+    response.off("finish", dispose);
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    scope.dispose();
+    void release();
+  };
+  const abortResponse = (): void => {
+    body?.destroy();
+    if (!response.destroyed) {
+      response.destroy();
+    }
+    dispose();
+  };
+  if (response.destroyed || response.writableFinished) {
+    dispose();
+    return;
+  }
+  body?.once("error", abortResponse);
+  response.once("close", abortResponse);
+  response.once("error", abortResponse);
+  response.once("finish", dispose);
+  const remainingMilliseconds = terminateAtMilliseconds - Date.now();
+  if (remainingMilliseconds <= 0) {
+    abortResponse();
+    return;
+  }
+  timeout = setTimeout(abortResponse, remainingMilliseconds);
+  timeout.unref();
 }
 
 @ApiTags("shares")
@@ -190,6 +267,7 @@ export class ShareManagementController {
 
 @ApiTags("public-shares")
 @Controller()
+@UseInterceptors(publicShareHeadersInterceptor)
 export class PublicShareController {
   constructor(private readonly shares: ShareService) {}
 
@@ -197,19 +275,38 @@ export class PublicShareController {
   @ApiProblemResponses(400, 401, 404, 503)
   @ApiOperation({ summary: "Read the current shared document" })
   @ApiOkResponse({ schema: SHARED_DOCUMENT_PAYLOAD_OPENAPI_SCHEMA })
+  /** 读取公开文档并把分享锁保留到 Fastify 完成 JSON 序列化。 */
   async readDocument(
     @Param(new ZodValidationPipe(publicSharePathParametersSchema))
     parameters: PublicSharePathParameters,
-    @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
+    @Req() request: PublicShareHttpRequest,
+    @Res({ passthrough: true }) reply: PublicShareHttpReply,
   ): Promise<SharedDocumentPayload> {
-    setPublicHeaders(reply);
-    return this.shares.readDocument({
-      cookies: request.cookies,
-      requestId: request.id,
-      shareToken: parameters.shareToken,
-      sourceAddress: request.ip,
-    });
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    let lease: Awaited<ReturnType<ShareService["readDocument"]>> | undefined;
+    let retained = false;
+    try {
+      lease = await this.shares.readDocument({
+        cookies: request.cookies,
+        requestId: request.id,
+        shareToken: parameters.shareToken,
+        signal: abortScope.signal,
+        sourceAddress: request.ip,
+      });
+      retainShareResponseScope(
+        abortScope,
+        reply.raw,
+        lease.release,
+        lease.terminateAtMilliseconds,
+      );
+      retained = true;
+      return lease.payload;
+    } finally {
+      if (!retained) {
+        abortScope.dispose();
+        await lease?.release();
+      }
+    }
   }
 
   @Post(PUBLIC_SHARE_CHALLENGE_CONTROLLER_PATH)
@@ -227,7 +324,6 @@ export class PublicShareController {
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
   ): Promise<void> {
-    setPublicHeaders(reply);
     const challenge = await this.shares.issueChallenge({
       password: body.password,
       requestId: request.id,
@@ -247,25 +343,47 @@ export class PublicShareController {
   @ApiProblemResponses(400, 401, 404, 503)
   @ApiOperation({ summary: "Read an asset in the current shared document closure" })
   @ApiOkResponse()
+  /** 读取公开资产并把上游字节流、分享锁和浏览器响应绑定到同一终止边界。 */
   async readAsset(
     @Param(new ZodValidationPipe(publicShareAssetPathParametersSchema))
     parameters: PublicShareAssetPathParameters,
-    @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
+    @Req() request: PublicShareHttpRequest,
+    @Res({ passthrough: true }) reply: PublicShareHttpReply,
   ): Promise<StreamableFile> {
-    setPublicHeaders(reply);
-    const asset = await this.shares.readAsset({
-      assetId: parameters.assetId,
-      cookies: request.cookies,
-      requestId: request.id,
-      shareToken: parameters.shareToken,
-      sourceAddress: request.ip,
-    });
-    const disposition = `${asset.disposition}; filename*=UTF-8''${encodedFileName(asset.fileName)}`;
-    reply
-      .header("Content-Disposition", disposition)
-      .header("Content-Length", asset.sizeBytes)
-      .header("Content-Type", asset.mediaType);
-    return new StreamableFile(asset.body);
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    let lease: Awaited<ReturnType<ShareService["readAsset"]>> | undefined;
+    let retained = false;
+    try {
+      lease = await this.shares.readAsset({
+        assetId: parameters.assetId,
+        cookies: request.cookies,
+        requestId: request.id,
+        shareToken: parameters.shareToken,
+        signal: abortScope.signal,
+        sourceAddress: request.ip,
+      });
+      const asset = lease.payload;
+      const disposition = `${asset.disposition}; filename*=UTF-8''${encodedFileName(asset.fileName)}`;
+      reply
+        .header("Content-Disposition", disposition)
+        .header("Content-Length", asset.sizeBytes)
+        .header("Content-Type", asset.mediaType);
+      const stream = new StreamableFile(asset.body);
+      retainShareResponseScope(
+        abortScope,
+        reply.raw,
+        lease.release,
+        lease.terminateAtMilliseconds,
+        asset.body,
+      );
+      retained = true;
+      return stream;
+    } finally {
+      if (!retained) {
+        lease?.payload.body.destroy();
+        abortScope.dispose();
+        await lease?.release();
+      }
+    }
   }
 }

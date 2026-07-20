@@ -81,7 +81,7 @@ const USER_GROUP_STATUS_OPENAPI_SCHEMA: OpenApiSchema = {
 };
 export const USER_GROUP_SUMMARY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   groupId: UUID_OPENAPI_SCHEMA,
-  memberCount: { type: "integer" },
+  memberCount: { type: "integer", minimum: 0 },
   name: { type: "string", minLength: 1, maxLength: USER_GROUP_NAME_MAX_LENGTH },
   organizationId: UUID_OPENAPI_SCHEMA,
   status: USER_GROUP_STATUS_OPENAPI_SCHEMA,
@@ -107,14 +107,17 @@ export const CREATE_USER_GROUP_REQUEST_OPENAPI_SCHEMA =
     },
   });
 export const UPDATE_USER_GROUP_REQUEST_OPENAPI_SCHEMA =
-  strictObjectOpenApiSchema(
-    {
-      name: {
-        type: "string",
-        minLength: 1,
-        maxLength: USER_GROUP_NAME_MAX_LENGTH,
+  {
+    ...strictObjectOpenApiSchema(
+      {
+        name: {
+          type: "string",
+          minLength: 1,
+          maxLength: USER_GROUP_NAME_MAX_LENGTH,
+        },
+        status: USER_GROUP_STATUS_OPENAPI_SCHEMA,
       },
-      status: USER_GROUP_STATUS_OPENAPI_SCHEMA,
-    },
-    [],
-  );
+      [],
+    ),
+    minProperties: 1,
+  };

@@ -68,7 +68,7 @@ const createQuantityMenu = (
 
 export const contentMenu = (protyle: IProtyle, nodeElement: Element): ProtyleMenuHandle<ProtyleMenuSurface> => {
     const range = getEditorRange(nodeElement);
-    const handle = protyle.session!.runtime.menu.open();
+    const handle = protyle.runtime.menu.open();
     const menu = handle.menu;
     const oldHTML = nodeElement.outerHTML;
     const captionElement = hasClosestByTag(range.startContainer, "CAPTION");

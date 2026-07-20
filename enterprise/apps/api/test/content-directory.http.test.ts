@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import {
   AUTH_LOGIN_PATH,
   AUTH_SESSION_COOKIE_NAME,
+  RUNTIME_ACCESS_LOST_HEADER_NAME,
+  RUNTIME_ACCESS_LOST_HEADER_VALUE,
   apiProblemSchema,
   buildContentDirectoryChildDocumentsPath,
   buildContentDirectoryNotebooksPath,
@@ -15,6 +17,7 @@ import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { PasswordHasher } from "../src/identity/password-hasher.js";
+import { CapturingLogger } from "./support/capturing-logger.js";
 import { truncateTestDatabase } from "./support/database.js";
 import {
   startTestKernelGateway,
@@ -38,6 +41,7 @@ const INVALID_SCHEMA_NOTEBOOK_ID = "20260718010106-dirbad1";
 const NON_FORWARD_NOTEBOOK_ID = "20260718010107-dirnext";
 const OVERSIZED_NOTEBOOK_ID = "20260718010108-dirsize";
 const UPSTREAM_AUTH_NOTEBOOK_ID = "20260718010109-dirauth";
+const MALFORMED_JSON_NOTEBOOK_ID = "20260718010110-dirmalf";
 const INTERNAL_NOTEBOOKS_PATH = "/internal/enterprise/directory/notebooks";
 const INTERNAL_DOCUMENTS_PATH = "/internal/enterprise/directory/documents";
 
@@ -60,8 +64,20 @@ function directoryKernelResponse(request: TestKernelRequest): TestKernelResponse
   if (target.pathname === INTERNAL_NOTEBOOKS_PATH) {
     return jsonResponse({
       notebooks: [
-        { icon: "", locked: false, name: "Engineering", notebookId: NOTEBOOK_ID },
-        { icon: "", locked: true, name: "Vault", notebookId: OTHER_NOTEBOOK_ID },
+        {
+          icon: "",
+          locked: false,
+          name: "Engineering",
+          notebookId: NOTEBOOK_ID,
+          supportsGraph: true,
+        },
+        {
+          icon: "",
+          locked: true,
+          name: "Vault",
+          notebookId: OTHER_NOTEBOOK_ID,
+          supportsGraph: false,
+        },
       ],
     });
   }
@@ -74,6 +90,13 @@ function directoryKernelResponse(request: TestKernelRequest): TestKernelResponse
     return {
       body: "not-json",
       headers: { "content-type": "text/plain" },
+      status: 200,
+    };
+  }
+  if (notebookId === MALFORMED_JSON_NOTEBOOK_ID) {
+    return {
+      body: "directory-stack-sentinel",
+      headers: { "content-type": "application/json" },
       status: 200,
     };
   }
@@ -145,14 +168,17 @@ function cookiePair(response: Response): string {
 describe("Content directory HTTP contract", () => {
   let database: DatabaseClient;
   let kernel: TestKernelGateway;
+  let logger: CapturingLogger;
   let passwordDigest: string;
   let testApi: TestApiApplication;
 
   beforeAll(async () => {
+    logger = new CapturingLogger();
     kernel = await startTestKernelGateway({ handler: directoryKernelResponse });
     try {
       testApi = await startTestApiApplication({
         kernelGateway: kernel.configuration,
+        logger,
       });
       database = testApi.app.get(DatabaseRuntime).client;
       passwordDigest = await testApi.app
@@ -166,6 +192,7 @@ describe("Content directory HTTP contract", () => {
 
   afterEach(async () => {
     await truncateTestDatabase(database);
+    logger.clear();
   });
 
   afterAll(async () => {
@@ -273,8 +300,20 @@ describe("Content directory HTTP contract", () => {
     expect(contentDirectoryNotebooksResponseSchema.parse(
       await notebooksResponse.json(),
     ).notebooks).toEqual([
-      { icon: "", locked: false, name: "Engineering", notebookId: NOTEBOOK_ID },
-      { icon: "", locked: true, name: "Vault", notebookId: OTHER_NOTEBOOK_ID },
+      {
+        icon: "",
+        locked: false,
+        name: "Engineering",
+        notebookId: NOTEBOOK_ID,
+        supportsGraph: true,
+      },
+      {
+        icon: "",
+        locked: true,
+        name: "Vault",
+        notebookId: OTHER_NOTEBOOK_ID,
+        supportsGraph: false,
+      },
     ]);
 
     const rootResponse = await requestDirectory(
@@ -342,8 +381,52 @@ describe("Content directory HTTP contract", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME)).toBe(
+      RUNTIME_ACCESS_LOST_HEADER_VALUE,
+    );
     expect(apiProblemSchema.parse(await response.json()).code).toBe("not-found");
     expect(kernel.requests).toHaveLength(requestCount);
+  });
+
+  test("keeps a trusted Kernel business 404 local to the directory request", async () => {
+    const graph = await createAuthenticatedGraph();
+    const response = await requestDirectory(
+      graph,
+      buildContentDirectoryRootDocumentsPath({
+        notebookId: OTHER_NOTEBOOK_ID,
+        offset: 0,
+        organizationId: graph.organizationId,
+        spaceId: graph.spaceId,
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get(RUNTIME_ACCESS_LOST_HEADER_NAME)).toBeNull();
+    expect(apiProblemSchema.parse(await response.json()).code).toBe("not-found");
+  });
+
+  test("records the original directory parsing stack before returning 503", async () => {
+    const graph = await createAuthenticatedGraph();
+    logger.clear();
+
+    const response = await requestDirectory(
+      graph,
+      buildContentDirectoryRootDocumentsPath({
+        notebookId: MALFORMED_JSON_NOTEBOOK_ID,
+        offset: 0,
+        organizationId: graph.organizationId,
+        spaceId: graph.spaceId,
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "service-unavailable",
+    );
+    expect(logger.output).toContain("directory-stack-sentinel");
+    expect(logger.output).toContain("SyntaxError");
+    expect(logger.output).toContain("at JSON.parse");
+    expect(logger.output).toContain("at readDirectoryJson");
   });
 
   test("rejects an out-of-range offset before contacting the Kernel directory", async () => {

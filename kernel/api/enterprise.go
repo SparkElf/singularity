@@ -25,7 +25,11 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-const enterpriseBackupDigestHeader = "X-Singularity-Backup-Sha256"
+const (
+	enterpriseBackupDigestHeader       = "X-Singularity-Backup-Sha256"
+	enterpriseBackupMaximumBytesHeader = "X-Singularity-Backup-Maximum-Bytes"
+	enterpriseBackupMaximumFilesHeader = "X-Singularity-Backup-Maximum-Files"
+)
 
 var enterpriseSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
@@ -98,7 +102,11 @@ func EnterpriseReadSharedAsset(c *gin.Context) {
 
 func EnterpriseCreateBackupHandler(sourceSpaceID string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		archive, err := model.CreateEnterpriseBackupArchive(sourceSpaceID)
+		limits, ok := enterpriseBackupLimits(c)
+		if !ok {
+			return
+		}
+		archive, err := model.CreateEnterpriseBackupArchive(c.Request.Context(), sourceSpaceID, limits)
 		if err != nil {
 			requestID := c.GetHeader(serviceauth.RequestIDHeader)
 			logging.LogErrorf("backup.job create archive failed [requestId=%s, operation=backup.create]", requestID)
@@ -114,6 +122,39 @@ func EnterpriseCreateBackupHandler(sourceSpaceID string) gin.HandlerFunc {
 		c.Header("X-Singularity-Kernel-Version", archive.Manifest.KernelVersion)
 		c.File(archive.ArchivePath)
 	}
+}
+
+func enterpriseBackupLimits(c *gin.Context) (model.EnterpriseBackupLimits, bool) {
+	maximumBytes, ok := enterprisePositiveIntegerHeader(
+		c,
+		enterpriseBackupMaximumBytesHeader,
+		model.EnterpriseBackupMaximumBytes,
+	)
+	if !ok {
+		return model.EnterpriseBackupLimits{}, false
+	}
+	maximumFiles, ok := enterprisePositiveIntegerHeader(
+		c,
+		enterpriseBackupMaximumFilesHeader,
+		model.EnterpriseBackupMaximumFiles,
+	)
+	if !ok {
+		return model.EnterpriseBackupLimits{}, false
+	}
+	return model.EnterpriseBackupLimits{
+		MaximumBytes: maximumBytes,
+		MaximumFiles: maximumFiles,
+	}, true
+}
+
+func enterprisePositiveIntegerHeader(c *gin.Context, name string, maximum int64) (int64, bool) {
+	value := c.GetHeader(name)
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 1 || parsed > maximum || strconv.FormatInt(parsed, 10) != value {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return 0, false
+	}
+	return parsed, true
 }
 
 func EnterpriseReadObservation(c *gin.Context) {

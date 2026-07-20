@@ -23,6 +23,7 @@ import {resolveLinkDest} from "../toolbar/config";
 import {protyleContentIdentity} from "./contentLoad";
 import {getBlockRefContentTarget} from "./blockRefIdentity";
 import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
+import {isCurrentProtyleContentScope} from "../runtime/contentScope";
 
 interface PasteImageUploadResponse extends Omit<IWebSocketData, "data"> {
     data: {
@@ -53,7 +54,7 @@ const uploadDataImages = async (protyle: IProtyle, sources: string[]) => {
         files.forEach((file) => formData.append("file[]", file));
         formData.set("id", identity.documentId);
         formData.set("notebook", identity.notebookId);
-        const response = await protyle.session!.runtime.transport.upload<PasteImageUploadResponse>(formData, {
+        const response = await protyle.runtime.transport.upload<PasteImageUploadResponse>(formData, {
             identity,
             signal: protyle.requestSignal,
         });
@@ -524,8 +525,8 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                 oldIds.push(e.getAttribute("data-node-id"));
             });
             let existingBlocks: Record<string, boolean> | undefined;
-            if (sourceIdentity && sourceIdentity.spaceId === protyle.session!.spaceId) {
-                const existResponse = await protyle.session!.runtime.transport.request<{
+            if (sourceIdentity && isCurrentProtyleContentScope(protyle, sourceIdentity)) {
+                const existResponse = await protyle.runtime.transport.request<{
                     data: Record<string, boolean>;
                 }>("/api/block/checkBlocksExist", {
                     ids: oldIds,
@@ -676,7 +677,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                 return;
             }
             const identity = protyleContentIdentity(protyle);
-            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/lute/html2BlockDOM", {
+            const response = await protyle.runtime.transport.request<IWebSocketData>("/api/lute/html2BlockDOM", {
                 dom: tempElement.innerHTML,
                 notebook: identity.notebookId,
             }, {
@@ -691,7 +692,7 @@ export const paste = async (protyle: IProtyle, event: (ClipboardEvent | DragEven
                     return item.textContent === "" && target ? [{item, target}] : [];
                 });
             await Promise.all(emptyReferences.map(async ({item, target}) => {
-                const refResponse = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+                const refResponse = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                     id: target.blockId,
                     notebook: target.notebookId,
                 }, {

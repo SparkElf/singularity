@@ -20,11 +20,15 @@ import type { AuditConfiguration } from "@singularity/database";
 import { AppModule } from "./app.module.js";
 import {
   parseContentAuditIndeterminateAfterMilliseconds,
-  parseOidcClientSecretFiles,
+  parseOidcClientSecretBindings,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
 import { SystemClock, type Clock } from "./identity/clock.js";
+import type {
+  OidcClientSecretResolver,
+  OidcHttpTransport,
+} from "./identity/oidc.service.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
   installKernelGatewayHttpBoundary,
@@ -37,12 +41,14 @@ import { ApiProblemFilter } from "./problem.js";
 export interface CreateApiApplicationOptions {
   auditConfiguration: AuditConfiguration;
   clock?: Clock;
-  contentAuditIndeterminateAfterMilliseconds?: string;
+  contentAuditIndeterminateAfterMilliseconds?: string | undefined;
   databaseUrl: string | undefined;
   https?: HttpsServerOptions;
   kernelGateway: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
-  oidcClientSecretFiles?: string | undefined;
+  oidcClientSecretBindings?: string | undefined;
+  oidcClientSecretResolver?: OidcClientSecretResolver;
+  oidcHttpTransport?: OidcHttpTransport;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
 }
@@ -55,8 +61,8 @@ export async function createApiApplication(
       parseContentAuditIndeterminateAfterMilliseconds(
         options.contentAuditIndeterminateAfterMilliseconds,
       ),
-    oidcClientSecretFiles: parseOidcClientSecretFiles(
-      options.oidcClientSecretFiles,
+    oidcClientSecretBindings: parseOidcClientSecretBindings(
+      options.oidcClientSecretBindings,
     ),
     publicOrigin: parsePublicOrigin(options.publicOrigin),
     trustedProxyCidrs: parseTrustedProxyCidrs(options.trustedProxyCidrs),
@@ -82,6 +88,12 @@ export async function createApiApplication(
       configuration,
       databaseUrl: options.databaseUrl,
       kernelGateway: options.kernelGateway,
+      ...(options.oidcClientSecretResolver === undefined
+        ? {}
+        : { oidcClientSecretResolver: options.oidcClientSecretResolver }),
+      ...(options.oidcHttpTransport === undefined
+        ? {}
+        : { oidcHttpTransport: options.oidcHttpTransport }),
     }),
     adapter,
     options.logger === undefined ? {} : { logger: options.logger },

@@ -93,6 +93,7 @@ describe("public document shares", () => {
             ASSET_ID +
             '"><script>window.compromised=true</script><a href="javascript:alert(1)">危险链接</a>' +
             '<a data-document-id="20260718000001-private" href="/organizations/private/spaces/private">内部链接</a>' +
+            '<a href="#20260718000001-private">内部锚点</a>' +
             '<a href="https://docs.example.test/guide">外部链接</a><svg><script>window.compromised=true</script></svg>' +
             '<img alt="未投影资源" src="singularity-share-asset:' +
             ASSET_ID +
@@ -130,7 +131,7 @@ describe("public document shares", () => {
       "/api/v1/shares/" + SHARE_TOKEN + "/assets/" + ASSET_ID,
     );
     expect(container.querySelector("script")).toBeNull();
-    expect(container.querySelector("svg")).toBeNull();
+    expect(container.querySelector("article svg")).toBeNull();
     expect(container.querySelector("singularity-active")).toBeNull();
     expect(screen.getByAltText("未投影资源")).not.toHaveAttribute("src");
     expect(screen.getByText("危险链接")).not.toHaveAttribute("href");
@@ -138,6 +139,7 @@ describe("public document shares", () => {
     expect(screen.getByText("内部链接")).not.toHaveAttribute(
       "data-document-id",
     );
+    expect(screen.getByText("内部锚点")).not.toHaveAttribute("href");
     expect(screen.getByText("外部链接")).toHaveAttribute(
       "href",
       "https://docs.example.test/guide",

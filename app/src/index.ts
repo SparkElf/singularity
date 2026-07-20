@@ -46,28 +46,32 @@ import {renderSnippet} from "./config/util/snippets";
 import {setBodyHighlight} from "./util/assets";
 import {reloadSync} from "./util/reloadSync";
 import {setTitle} from "./util/processTitle";
-import {createAppProtyleHost} from "./host/protyle";
-import {createAppProtylePluginPort} from "./host/plugin";
 import {createAppProtyleApplicationSettings} from "./host/protyle-settings";
 import {createAppProtyleLocalization} from "./host/protyle-localization";
 import {createProtyleEditorRegistry} from "../../enterprise/packages/protyle-browser/src";
-import type {ProtyleHostPort} from "../../enterprise/packages/protyle-browser/src/contracts";
+import {createUpstreamLocalProtyleRuntime} from "./protyle/runtime/upstreamLocal";
 
 export class App {
     public plugins: import("./plugin").Plugin[] = [];
     public readonly protyleEditors: TProtyleEditorRegistry;
-    public readonly protyleHost: ProtyleHostPort;
+    public readonly protyleHost: TProtyleHostPort;
     public readonly protylePlugins: TProtylePluginPort;
     public readonly localization: TProtyleLocalizationPort;
     public readonly settings: TProtyleApplicationSettingsPort;
+    public readonly upstreamLocalRuntime: TProtyleUpstreamLocalRuntime;
     public appId: string;
 
     constructor() {
         this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
-        this.protyleHost = createAppProtyleHost(this);
-        this.protylePlugins = createAppProtylePluginPort(this);
         this.localization = createAppProtyleLocalization();
         this.settings = createAppProtyleApplicationSettings();
+        this.upstreamLocalRuntime = createUpstreamLocalProtyleRuntime(this, {
+            editors: this.protyleEditors,
+            localAppId: Constants.SIYUAN_APPID,
+            localization: this.localization,
+        });
+        this.protyleHost = this.upstreamLocalRuntime.host;
+        this.protylePlugins = this.upstreamLocalRuntime.plugins;
         if (checkPublishServiceClosed()) {
             return;
         }

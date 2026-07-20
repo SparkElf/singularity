@@ -39,6 +39,7 @@ export interface ProtylePluginContribution<TOptions, TToolbar, TEditor> {
   readonly dispose?: () => void | Promise<void>;
 }
 
+/** 创建插件能力端口，按声明顺序执行扩展并在销毁时尝试释放全部插件。 */
 function createPluginPort<
   TOptions,
   TToolbar,
@@ -73,6 +74,7 @@ function createPluginPort<
         try {
           await contribution.dispose?.();
         } catch (error) {
+          console.error("[protyle.plugins] contribution disposal failed", error);
           errors.push(error);
         }
       }
@@ -131,14 +133,14 @@ function createPluginPort<
         }
       }
     },
-    runSlashItem: (pluginName, itemId, editor, nodeElement) => {
+    runSlashItem: (pluginName, selectedItem, editor, nodeElement) => {
       assertActive();
       for (const contribution of contributions) {
         if (contribution.name !== pluginName) {
           continue;
         }
         for (const item of contribution.slashItems ?? []) {
-          if (item.id === itemId) {
+          if (item === selectedItem) {
             item.run(editor, nodeElement);
             return true;
           }
@@ -173,6 +175,7 @@ function createPluginPort<
   };
 }
 
+/** 创建带至少一个声明的插件端口，禁止重复插件身份并保留扩展字段。 */
 export function createProtylePluginPort<
   TOptions,
   TToolbar,
@@ -186,6 +189,7 @@ export function createProtylePluginPort<
   return createPluginPort(contributions);
 }
 
+/** 创建无插件端口，用于本地或测试运行时复用同一能力合同。 */
 export function createEmptyProtylePluginPort<TOptions, TToolbar, TEditor>(): ProtylePluginPort<
   TOptions,
   TToolbar,

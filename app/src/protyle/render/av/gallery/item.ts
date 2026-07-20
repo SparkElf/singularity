@@ -81,7 +81,7 @@ ${fieldType === "block" ? ' data-detached="true"' : ""}>${renderCell(genCellValu
         ghostItem = ghostItem.nextElementSibling!;
     }
     const identity = protyleContentIdentity(options.protyle);
-    void options.protyle.transport!.request<IWebSocketData>("/api/av/getAttributeViewAddingBlockDefaultValues", {
+    void options.protyle.runtime.transport.request<IWebSocketData>("/api/av/getAttributeViewAddingBlockDefaultValues", {
         avID: options.blockElement.getAttribute("data-av-id"),
         viewID: options.blockElement.getAttribute(Constants.CUSTOM_SY_AV_VIEW),
         groupID: options.groupID,

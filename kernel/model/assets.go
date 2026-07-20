@@ -740,6 +740,156 @@ func AssetPathWithoutQuery(relativePath string) string {
 	return filepath.ToSlash(relativePath)
 }
 
+var ErrDocumentAssetUnavailable = errors.New("document asset is unavailable")
+
+type DocumentAssetForOCR struct {
+	AbsPath  string
+	AssetKey string
+	Source   *os.File
+}
+
+// ResolveDocumentAssetForOCR 校验内容身份对应真实文档，并确认该文档实际引用目标资源。
+// ResolveDocumentAssetForOCR 按真实文档引用解析资产并返回 canonical 相对键，禁止跨 notebook 扫描。
+func ResolveDocumentAssetForOCR(notebookID, documentID, assetPath string) (*DocumentAssetForOCR, error) {
+	if !ast.IsNodeIDPattern(notebookID) || !ast.IsNodeIDPattern(documentID) {
+		return nil, ErrDocumentAssetUnavailable
+	}
+	blockTree := treenode.GetBlockTreeInBox(documentID, notebookID)
+	if blockTree == nil || blockTree.BoxID != notebookID || blockTree.RootID != documentID {
+		return nil, ErrDocumentAssetUnavailable
+	}
+	tree, loadErr := loadTreeByBlockTree(blockTree)
+	if loadErr != nil || tree == nil || tree.Root == nil || tree.Box != notebookID || tree.Root.ID != documentID {
+		return nil, ErrDocumentAssetUnavailable
+	}
+
+	cleanPath, _, err := assetPathAndBox(assetPath, notebookID)
+	if err != nil {
+		return nil, err
+	}
+	cleanPath = path.Clean(filepath.ToSlash(cleanPath))
+	if cleanPath == "." || cleanPath == ".." || path.IsAbs(cleanPath) || strings.HasPrefix(cleanPath, "../") ||
+		!strings.HasPrefix(cleanPath, "assets/") {
+		return nil, fmt.Errorf("[%s] is not an asset path", cleanPath)
+	}
+	source, absPath, err := resolveDocumentAssetAbsPath(cleanPath, notebookID, tree.Path, assetPathHasBoxQuery(assetPath))
+	if err != nil {
+		return nil, err
+	}
+	assetKey, err := util.AssetTextKeyFromAbsPath(absPath)
+	if err != nil {
+		return nil, errors.Join(ErrDocumentAssetUnavailable, err, source.Close())
+	}
+
+	referenced := false
+	for _, referencedPath := range append(getAssetsLinkDests(tree.Root, false), treenode.GetDocTitleImgPath(tree.Root)) {
+		if referencedPath == "" {
+			continue
+		}
+		referencedCleanPath, _, referenceErr := assetPathAndBox(referencedPath, notebookID)
+		if referenceErr != nil {
+			continue
+		}
+		referencedCleanPath = path.Clean(filepath.ToSlash(referencedCleanPath))
+		if referencedCleanPath == "." || referencedCleanPath == ".." || path.IsAbs(referencedCleanPath) ||
+			strings.HasPrefix(referencedCleanPath, "../") || !strings.HasPrefix(referencedCleanPath, "assets/") {
+			continue
+		}
+		referencedSource, referencedAbsPath, resolveErr := resolveDocumentAssetAbsPath(
+			referencedCleanPath,
+			notebookID,
+			tree.Path,
+			assetPathHasBoxQuery(referencedPath),
+		)
+		if resolveErr != nil {
+			continue
+		}
+		referencedKey, keyErr := util.AssetTextKeyFromAbsPath(referencedAbsPath)
+		closeErr := referencedSource.Close()
+		if closeErr != nil {
+			return nil, errors.Join(closeErr, source.Close())
+		}
+		if keyErr != nil {
+			return nil, errors.Join(keyErr, source.Close())
+		}
+		if referencedKey == assetKey {
+			referenced = true
+			break
+		}
+	}
+	if !referenced {
+		return nil, errors.Join(ErrDocumentAssetUnavailable, source.Close())
+	}
+	return &DocumentAssetForOCR{AbsPath: absPath, AssetKey: assetKey, Source: source}, nil
+}
+
+func resolveDocumentAssetAbsPath(assetPath, boxID, documentPath string, boxBound bool) (*os.File, string, error) {
+	boxRoot := filepath.Join(util.DataDir, boxID)
+	documentFile := filepath.Join(boxRoot, filepath.FromSlash(strings.TrimPrefix(documentPath, "/")))
+	candidates := []struct {
+		path string
+		root string
+	}{
+		{path: filepath.Join(filepath.Dir(documentFile), filepath.FromSlash(assetPath)), root: boxRoot},
+		{path: filepath.Join(boxRoot, filepath.FromSlash(assetPath)), root: boxRoot},
+	}
+	if !boxBound && !IsEncryptedBox(boxID) {
+		globalRoot := filepath.Join(util.DataDir, "assets")
+		candidates = append(candidates, struct {
+			path string
+			root string
+		}{path: filepath.Join(util.DataDir, filepath.FromSlash(assetPath)), root: globalRoot})
+	}
+
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate.path = filepath.Clean(candidate.path)
+		if _, duplicate := seen[candidate.path]; duplicate {
+			continue
+		}
+		seen[candidate.path] = struct{}{}
+		if !gulu.File.IsSubPath(candidate.root, candidate.path) {
+			continue
+		}
+		file, openErr := openDocumentAssetCandidate(candidate.root, candidate.path)
+		if openErr != nil {
+			continue
+		}
+		return file, candidate.path, nil
+	}
+	return nil, "", ErrDocumentAssetUnavailable
+}
+
+func openDocumentAssetCandidate(rootPath, candidatePath string) (*os.File, error) {
+	expectedRoot, err := os.Lstat(rootPath)
+	if err != nil || !expectedRoot.IsDir() || expectedRoot.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.Join(err, ErrDocumentAssetUnavailable)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	actualRoot, err := root.Stat(".")
+	if err != nil || !os.SameFile(expectedRoot, actualRoot) {
+		return nil, errors.Join(err, ErrDocumentAssetUnavailable)
+	}
+	relativePath, err := filepath.Rel(rootPath, candidatePath)
+	if err != nil {
+		return nil, err
+	}
+	return util.OpenRegularFileInRoot(root, relativePath)
+}
+
+func assetPathHasBoxQuery(assetPath string) bool {
+	queryStart := strings.IndexByte(assetPath, '?')
+	if queryStart < 0 {
+		return false
+	}
+	query, err := url.ParseQuery(assetPath[queryStart+1:])
+	return err == nil && query.Has("box")
+}
+
 func assetPathAndBox(relativePath, defaultBoxID string) (cleanPath, boxID string, err error) {
 	relativePath = strings.TrimSpace(relativePath)
 	boxID = defaultBoxID
@@ -1290,7 +1440,15 @@ func RenameAsset(oldPath, newName string) (newPath string, err error) {
 		logging.LogErrorf("get asset [%s] abs path failed: %s", oldPath, getErr)
 		return
 	}
+	oldAssetTextKey, oldAssetTextKeyErr := util.AssetTextKeyFromAbsPath(oldAbsPath)
+	if oldAssetTextKeyErr != nil {
+		return "", oldAssetTextKeyErr
+	}
 	newAbsPath := filepath.Join(filepath.Dir(oldAbsPath), newName)
+	newAssetTextKey, newAssetTextKeyErr := util.AssetTextKeyFromAbsPath(newAbsPath)
+	if newAssetTextKeyErr != nil {
+		return "", newAssetTextKeyErr
+	}
 	filelock.Lock(oldAbsPath)
 	if err = os.Rename(oldAbsPath, newAbsPath); err != nil {
 		if err = gulu.File.Copy(oldAbsPath, newAbsPath); err != nil {
@@ -1412,10 +1570,8 @@ func RenameAsset(oldPath, newName string) (newPath string, err error) {
 		}
 	}
 
-	if ocrText := util.GetAssetText(oldPath); "" != ocrText {
-		// 图片重命名后 ocr-texts.json 需要更新 https://github.com/siyuan-note/siyuan/issues/12974
-		util.SetAssetText(newPath, ocrText)
-	}
+	// 图片重命名后 ocr-texts.json 需要更新 https://github.com/siyuan-note/siyuan/issues/12974
+	util.RenameAssetText(oldAssetTextKey, newAssetTextKey)
 
 	IncSync()
 	return

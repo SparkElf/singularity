@@ -54,22 +54,12 @@ export const exportImage = (context: ProtyleRendererContext, id: string, noteboo
     btnsElement[0].addEventListener("click", () => {
         exportDialog.destroy();
     });
-    btnsElement[1].addEventListener("click", async () => {
+    btnsElement[1].addEventListener("click", () => {
         const msgId = showMessage(window.siyuan.languages.exporting, 0);
         const containerElement = exportDialog.element.querySelector(".b3-dialog__container") as HTMLElement;
         containerElement.style.height = "";
         const contentElement = exportDialog.element.querySelector(".b3-dialog__content") as HTMLElement;
         contentElement.style.overflow = "hidden";
-        const plantumlElements = previewElement.querySelectorAll("[data-subtype='plantuml']");
-        for (let i = 0; i < plantumlElements.length; i++) {
-            const objectElement = plantumlElements[i].querySelector("object");
-            if (objectElement) {
-                const res = await fetch(objectElement.getAttribute("data"));
-                const response = await res.text();
-                objectElement.insertAdjacentHTML("beforebegin", response as string);
-                objectElement.remove();
-            }
-        }
         previewElement.querySelectorAll(".protyle-linenumber__rows span").forEach((item, index) => {
             item.textContent = (index + 1).toString();
         });

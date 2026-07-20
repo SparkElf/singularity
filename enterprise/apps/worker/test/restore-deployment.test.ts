@@ -115,8 +115,10 @@ function runtimeMetadata(job: RestoreSpaceJob) {
     handle: workspaceDirectoryName,
     hostname: "127.0.0.1",
     kernelInstanceId: job.targetKernelInstanceId,
+    kernelListenAddress: "127.0.0.1",
     pid: null,
     port: 49_152,
+    runtimeOwner: "restore-test-worker",
     serverName: "kernel.test",
     spaceId: job.targetSpaceId,
     state: "starting",
@@ -252,6 +254,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
           ...process.env,
           SINGULARITY_KERNEL_INSTANCE_ID: job.targetKernelInstanceId,
           SINGULARITY_KERNEL_LISTEN_ADDRESS: "127.0.0.1",
+          SINGULARITY_KERNEL_RUNTIME_OWNER: "restore-test-worker",
           SINGULARITY_KERNEL_SPACE_ID: job.targetSpaceId,
         },
         stdio: "ignore",
@@ -310,6 +313,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     processInspection.environment = [
       `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
       "SINGULARITY_KERNEL_LISTEN_ADDRESS=127.0.0.1",
+      "SINGULARITY_KERNEL_RUNTIME_OWNER=restore-test-worker",
       `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
     ].join("\u0000");
     await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
@@ -328,6 +332,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
       `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
       `SINGULARITY_KERNEL_INSTANCE_ID=${job.targetKernelInstanceId}`,
       "SINGULARITY_KERNEL_LISTEN_ADDRESS=127.0.0.1",
+      "SINGULARITY_KERNEL_RUNTIME_OWNER=restore-test-worker",
       `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
     ].join("\u0000");
     await expect(deployment.destroyTarget(job)).rejects.toMatchObject<

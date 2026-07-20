@@ -26,6 +26,7 @@ export default tseslint.config(
       "**/playwright-report/**",
       "**/src/generated/**",
       "**/test-results/**",
+      "packages/protyle-browser/src/core.ts",
     ],
   },
   js.configs.recommended,
@@ -44,7 +45,15 @@ export default tseslint.config(
       ...reactRefresh.configs.vite.rules,
       "react-refresh/only-export-components": [
         "error",
-        { allowExportNames: ["badgeVariants", "buttonVariants", "useSidebar"] },
+        {
+          allowExportNames: [
+            "badgeVariants",
+            "buttonVariants",
+            "errorMessage",
+            "prioritizedError",
+            "useSidebar",
+          ],
+        },
       ],
     },
   },
@@ -65,6 +74,30 @@ export default tseslint.config(
         ],
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+  },
+  {
+    files: ["apps/web/tests/e2e/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
+    files: ["apps/web/src/assets/pdf-runtime-bridge.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+  },
+  {
+    files: ["apps/web/**/*.test.{ts,tsx}", "apps/web/tests/**/*.spec.ts"],
+    rules: {
+      "@typescript-eslint/no-base-to-string": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/unbound-method": "off",
     },
   },
   {

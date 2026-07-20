@@ -56,7 +56,7 @@ export async function runAccessOperationsApplication(
         configuration: {
           contentAuditIndeterminateAfterMilliseconds:
             DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
-          oidcClientSecretFiles: {},
+          oidcClientSecretBindings: [],
           publicOrigin: "https://operations.invalid",
           trustedProxyCidrs: [],
         },
@@ -68,7 +68,8 @@ export async function runAccessOperationsApplication(
         logger: createOperationsLogger(options.stderr),
       },
     );
-  } catch {
+  } catch (error) {
+    console.error("[access-operation] application bootstrap failed", error);
     return writeFailedAccessOperation(options.stdout, options.stderr);
   }
 
@@ -79,12 +80,14 @@ export async function runAccessOperationsApplication(
       stdin: options.stdin,
       stdout: options.stdout,
     });
-  } catch {
+  } catch (error) {
+    console.error("[access-operation] execution boundary failed", error);
     return await writeFailedAccessOperation(options.stdout, options.stderr);
   } finally {
     try {
       await context.close();
-    } catch {
+    } catch (error) {
+      console.error("[access-operation] application shutdown failed", error);
       options.stderr.write("access-operation shutdown failed\n");
     }
   }

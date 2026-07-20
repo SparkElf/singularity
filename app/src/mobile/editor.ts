@@ -192,6 +192,7 @@ export const openMobileFileById = (app: App, notebookId: string, id: string,
                 initialLoad: "automatic",
                 hostReadOnly: window.siyuan.config.readonly,
                 signal,
+                upstreamLocalRuntime: app.upstreamLocalRuntime,
             });
         }
         setEditor();

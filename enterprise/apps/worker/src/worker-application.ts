@@ -76,6 +76,7 @@ export class WorkerApplication
       await Promise.all(executions);
     } catch (error) {
       this.logger.error({
+        error,
         event: "worker.lifecycle",
         outcome: "failed",
         workerId: this.configuration.workerId,

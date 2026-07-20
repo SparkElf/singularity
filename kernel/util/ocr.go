@@ -21,10 +21,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,20 +49,27 @@ var (
 	TesseractMaxSize = 2 * 1000 * uint64(1000)
 	TesseractLangs   []string
 
-	assetsTexts        = map[string]string{}
-	assetsTextsLock    = sync.Mutex{}
-	assetsTextsChanged = atomic.Bool{}
+	assetsTexts         = map[string]string{}
+	assetsTextsLock     = sync.Mutex{}
+	assetsTextsSaveLock = sync.Mutex{}
+	assetsTextsChanged  = atomic.Bool{}
+	IsEncryptedBoxFn    func(boxID string) bool
 )
+
+var errUnsafeOCRSource = errors.New("unsafe OCR source")
 
 func CleanNotExistAssetsTexts() {
 	assetsTextsLock.Lock()
 	defer assetsTextsLock.Unlock()
 
-	assetsPath := GetDataAssetsAbsPath()
 	var toRemoves []string
 	for asset := range assetsTexts {
-		assetAbsPath := strings.TrimPrefix(asset, "assets")
-		assetAbsPath = filepath.Join(assetsPath, assetAbsPath)
+		assetKey, ok := CanonicalAssetTextKey(asset)
+		if !ok || assetKey != asset || !assetTextAllowed(assetKey) {
+			toRemoves = append(toRemoves, asset)
+			continue
+		}
+		assetAbsPath := filepath.Join(DataDir, filepath.FromSlash(assetKey))
 		if !filelock.IsExist(assetAbsPath) {
 			toRemoves = append(toRemoves, asset)
 		}
@@ -81,29 +92,38 @@ func LoadAssetsTexts() {
 	start := time.Now()
 	data, err := filelock.ReadFile(assetsTextsPath)
 	if err != nil {
-		logging.LogErrorf("read assets texts failed: %s", err)
+		logOCRFailure("load.read", err)
 		return
 	}
 
-	assetsTextsLock.Lock()
-	if err = gulu.JSON.UnmarshalJSON(data, &assetsTexts); err != nil {
-		logging.LogErrorf("unmarshal assets texts failed: %s", err)
+	loaded := map[string]string{}
+	err = gulu.JSON.UnmarshalJSON(data, &loaded)
+	if err != nil {
+		logOCRFailure("load.decode", err)
 		if err = filelock.Remove(assetsTextsPath); err != nil {
-			logging.LogErrorf("removed corrupted assets texts failed: %s", err)
+			logOCRFailure("load.remove-corrupt", err)
 		}
 		return
 	}
+	loaded, migrated := canonicalizeLoadedAssetTexts(loaded)
+	assetsTextsLock.Lock()
+	assetsTexts = loaded
 	assetsTextsLock.Unlock()
+	if migrated {
+		assetsTextsChanged.Store(true)
+	}
 	debug.FreeOSMemory()
 
 	if elapsed := time.Since(start).Seconds(); 2 < elapsed {
-		logging.LogWarnf("read assets texts [%s] to [%s], elapsed [%.2fs]", humanize.BytesCustomCeil(uint64(len(data)), 2), assetsTextsPath, elapsed)
+		logging.LogWarnf("read assets texts [size=%s], elapsed [%.2fs]", humanize.BytesCustomCeil(uint64(len(data)), 2), elapsed)
 	}
 	return
 }
 
 func SaveAssetsTexts() {
-	if !assetsTextsChanged.Load() {
+	assetsTextsSaveLock.Lock()
+	defer assetsTextsSaveLock.Unlock()
+	if !assetsTextsChanged.Swap(false) {
 		return
 	}
 
@@ -116,31 +136,34 @@ func SaveAssetsTexts() {
 	// OCR 功能未开启且 ocr-texts.json 不存在时，如果 assetsTexts 为空则不创建文件
 	if !TesseractEnabled && !filelock.IsExist(assetsTextsPath) && 0 == len(assetsTexts) {
 		assetsTextsLock.Unlock()
-		assetsTextsChanged.Store(false)
 		return
 	}
 	data, err := gulu.JSON.MarshalIndentJSON(assetsTexts, "", "  ")
 	if err != nil {
-		logging.LogErrorf("marshal assets texts failed: %s", err)
+		logOCRFailure("save.encode", err)
 		assetsTextsLock.Unlock()
+		assetsTextsChanged.Store(true)
 		return
 	}
 	assetsTextsLock.Unlock()
 
 	if err = filelock.WriteFile(assetsTextsPath, data); err != nil {
-		logging.LogErrorf("write assets texts failed: %s", err)
+		logOCRFailure("save.write", err)
+		assetsTextsChanged.Store(true)
 		return
 	}
 	debug.FreeOSMemory()
 
 	if elapsed := time.Since(start).Seconds(); 2 < elapsed {
-		logging.LogWarnf("save assets texts [size=%s] to [%s], elapsed [%.2fs]", humanize.BytesCustomCeil(uint64(len(data)), 2), assetsTextsPath, elapsed)
+		logging.LogWarnf("save assets texts [size=%s], elapsed [%.2fs]", humanize.BytesCustomCeil(uint64(len(data)), 2), elapsed)
 	}
-
-	assetsTextsChanged.Store(false)
 }
 
 func SetAssetText(asset, text string) {
+	asset, ok := CanonicalAssetTextKey(asset)
+	if !ok || !assetTextAllowed(asset) {
+		return
+	}
 	assetsTextsLock.Lock()
 	oldText, ok := assetsTexts[asset]
 	assetsTexts[asset] = text
@@ -151,10 +174,19 @@ func SetAssetText(asset, text string) {
 }
 
 func ExistsAssetText(asset string) (ret bool) {
+	asset, ok := CanonicalAssetTextKey(asset)
+	if !ok || !assetTextAllowed(asset) {
+		return false
+	}
 	assetsTextsLock.Lock()
 	_, ret = assetsTexts[asset]
 	assetsTextsLock.Unlock()
 	return
+}
+
+func ExistsAssetTextInDocument(asset, boxID, documentPath string) bool {
+	assetKey, ok := ResolveAssetTextKey(asset, boxID, documentPath)
+	return ok && ExistsAssetText(assetKey)
 }
 
 func OcrAsset(assetKey, assetAbsPath string) (ret []map[string]any, err error) {
@@ -163,28 +195,290 @@ func OcrAsset(assetKey, assetAbsPath string) (ret []map[string]any, err error) {
 		return
 	}
 	ret = Tesseract(assetAbsPath)
-	assetsTextsLock.Lock()
 	ocrText := GetOcrJsonText(ret)
-	assetsTexts[assetKey] = ocrText
-	assetsTextsLock.Unlock()
-	if "" != ocrText {
-		assetsTextsChanged.Store(true)
+	SetAssetText(assetKey, ocrText)
+	return
+}
+
+func OcrAssetFromFile(assetKey, assetAbsPath string, source *os.File) (ret []map[string]any, err error) {
+	if !TesseractEnabled {
+		err = errors.New(Langs[Lang][266])
+		return
 	}
+	ret = TesseractFile(assetAbsPath, source)
+	ocrText := GetOcrJsonText(ret)
+	SetAssetText(assetKey, ocrText)
 	return
 }
 
 func GetAssetText(asset string) (ret string) {
+	asset, ok := CanonicalAssetTextKey(asset)
+	if !ok || !assetTextAllowed(asset) {
+		return ""
+	}
 	assetsTextsLock.Lock()
 	ret = assetsTexts[asset]
 	assetsTextsLock.Unlock()
 	return
 }
 
+// GetAssetTextInDocument 从指定文档引用解析OCR文本，读取范围只属于当前 notebook。
+func GetAssetTextInDocument(asset, boxID, documentPath string) string {
+	assetKey, ok := ResolveAssetTextKey(asset, boxID, documentPath)
+	if !ok {
+		return ""
+	}
+	return GetAssetText(assetKey)
+}
+
 func RemoveAssetText(asset string) {
+	asset, ok := CanonicalAssetTextKey(asset)
+	if !ok {
+		return
+	}
 	assetsTextsLock.Lock()
-	delete(assetsTexts, asset)
+	_, existed := assetsTexts[asset]
+	if existed {
+		delete(assetsTexts, asset)
+	}
 	assetsTextsLock.Unlock()
-	assetsTextsChanged.Store(true)
+	if existed {
+		assetsTextsChanged.Store(true)
+	}
+}
+
+func RenameAssetText(oldAsset, newAsset string) {
+	oldAsset, oldOK := CanonicalAssetTextKey(oldAsset)
+	newAsset, newOK := CanonicalAssetTextKey(newAsset)
+	if !oldOK || !newOK || oldAsset == newAsset {
+		return
+	}
+	assetsTextsLock.Lock()
+	text, exists := assetsTexts[oldAsset]
+	if exists {
+		delete(assetsTexts, oldAsset)
+		if assetTextAllowed(newAsset) {
+			assetsTexts[newAsset] = text
+		}
+	}
+	assetsTextsLock.Unlock()
+	if exists {
+		assetsTextsChanged.Store(true)
+	}
+}
+
+// CanonicalAssetTextKey 将 OCR 键规范为相对 DataDir 的资源路径。box 查询参数承载身份，调用方必须先解析为真实路径。
+func CanonicalAssetTextKey(asset string) (string, bool) {
+	asset = strings.TrimSpace(asset)
+	if fragment := strings.IndexByte(asset, '#'); fragment >= 0 {
+		asset = asset[:fragment]
+	}
+	if queryStart := strings.IndexByte(asset, '?'); queryStart >= 0 {
+		query, err := url.ParseQuery(asset[queryStart+1:])
+		if err != nil || query.Has("box") {
+			return "", false
+		}
+		asset = asset[:queryStart]
+	}
+	asset = path.Clean(filepath.ToSlash(asset))
+	if asset == "." || asset == ".." || path.IsAbs(asset) || strings.HasPrefix(asset, "../") {
+		return "", false
+	}
+	parts := strings.Split(asset, "/")
+	if parts[0] != "assets" && !ast.IsNodeIDPattern(parts[0]) {
+		return "", false
+	}
+	assetsSegment := -1
+	for index, part := range parts {
+		if part == "assets" {
+			assetsSegment = index
+			break
+		}
+	}
+	if assetsSegment < 0 || assetsSegment == len(parts)-1 {
+		return "", false
+	}
+	if parts[0] == "assets" && assetsSegment != 0 {
+		return "", false
+	}
+	return asset, true
+}
+
+func assetTextAllowed(assetKey string) bool {
+	parts := strings.SplitN(assetKey, "/", 2)
+	if len(parts) < 2 || !ast.IsNodeIDPattern(parts[0]) {
+		return true
+	}
+	return IsEncryptedBoxFn != nil && !IsEncryptedBoxFn(parts[0])
+}
+
+// AssetTextKeyFromAbsPath 根据资源解析后的路径生成唯一持久化 OCR 身份。
+func AssetTextKeyFromAbsPath(assetAbsPath string) (string, error) {
+	relativePath, err := filepath.Rel(DataDir, assetAbsPath)
+	if err != nil {
+		return "", fmt.Errorf("derive asset OCR identity: %w", err)
+	}
+	assetKey, ok := CanonicalAssetTextKey(filepath.ToSlash(relativePath))
+	if !ok {
+		return "", errors.New("resolved OCR asset is outside the data asset stores")
+	}
+	return assetKey, nil
+}
+
+// ResolveAssetTextKey 在文档上下文中解析资源链接，不扫描其他笔记本。
+// ResolveAssetTextKey 将文档引用映射为稳定的相对OCR缓存键，避免用全局扫描补齐身份。
+func ResolveAssetTextKey(asset, boxID, documentPath string) (string, bool) {
+	assetPath, boxID, boxBound, ok := assetTextReference(asset, boxID)
+	if !ok || !strings.HasPrefix(assetPath, "assets/") {
+		return "", false
+	}
+	if boxID != "" && (!ast.IsNodeIDPattern(boxID) || IsEncryptedBoxFn == nil || IsEncryptedBoxFn(boxID)) {
+		return "", false
+	}
+
+	type assetCandidate struct {
+		path string
+		root string
+	}
+	var candidates []assetCandidate
+	if boxID != "" {
+		boxRoot := filepath.Join(DataDir, boxID)
+		documentPath = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(documentPath)), "/")
+		cleanDocumentPath := path.Clean(documentPath)
+		if cleanDocumentPath != "." && cleanDocumentPath != ".." && !path.IsAbs(cleanDocumentPath) &&
+			!strings.HasPrefix(cleanDocumentPath, "../") {
+			documentDir := filepath.Dir(filepath.Join(boxRoot, filepath.FromSlash(cleanDocumentPath)))
+			candidates = append(candidates, assetCandidate{
+				path: filepath.Join(documentDir, filepath.FromSlash(assetPath)),
+				root: boxRoot,
+			})
+		}
+		candidates = append(candidates, assetCandidate{
+			path: filepath.Join(boxRoot, filepath.FromSlash(assetPath)),
+			root: boxRoot,
+		})
+	}
+	if !boxBound {
+		candidates = append(candidates, assetCandidate{
+			path: filepath.Join(DataDir, filepath.FromSlash(assetPath)),
+			root: filepath.Join(DataDir, "assets"),
+		})
+	}
+
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate.path = filepath.Clean(candidate.path)
+		if _, duplicate := seen[candidate.path]; duplicate {
+			continue
+		}
+		seen[candidate.path] = struct{}{}
+		if !pathWithinRoot(candidate.root, candidate.path) || !isRegularAssetCandidate(candidate.root, candidate.path) {
+			continue
+		}
+		assetKey, keyErr := AssetTextKeyFromAbsPath(candidate.path)
+		if keyErr == nil {
+			return assetKey, true
+		}
+	}
+	return "", false
+}
+
+func assetTextReference(asset, defaultBoxID string) (assetPath, boxID string, boxBound, ok bool) {
+	asset = strings.TrimSpace(asset)
+	if fragment := strings.IndexByte(asset, '#'); fragment >= 0 {
+		asset = asset[:fragment]
+	}
+	boxID = defaultBoxID
+	if queryStart := strings.IndexByte(asset, '?'); queryStart >= 0 {
+		query, err := url.ParseQuery(asset[queryStart+1:])
+		if err != nil {
+			return "", "", false, false
+		}
+		if queryBoxes, found := query["box"]; found {
+			if len(queryBoxes) != 1 || !ast.IsNodeIDPattern(strings.TrimSpace(queryBoxes[0])) {
+				return "", "", false, false
+			}
+			queryBoxID := strings.TrimSpace(queryBoxes[0])
+			if defaultBoxID != "" && defaultBoxID != queryBoxID {
+				return "", "", false, false
+			}
+			boxID = queryBoxID
+			boxBound = true
+		}
+		asset = asset[:queryStart]
+	}
+	assetPath, ok = CanonicalAssetTextKey(asset)
+	return assetPath, boxID, boxBound, ok
+}
+
+func isRegularAssetCandidate(rootPath, candidatePath string) bool {
+	file, err := openRegularAssetCandidate(rootPath, candidatePath)
+	if err != nil {
+		return false
+	}
+	return file.Close() == nil
+}
+
+func openRegularAssetCandidate(rootPath, candidatePath string) (*os.File, error) {
+	expectedRoot, err := os.Lstat(rootPath)
+	if err != nil || !expectedRoot.IsDir() || expectedRoot.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.Join(err, errUnsafeOCRSource)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	actualRoot, err := root.Stat(".")
+	if err != nil || !os.SameFile(expectedRoot, actualRoot) {
+		return nil, errors.Join(err, errUnsafeOCRSource)
+	}
+	relativePath, err := filepath.Rel(rootPath, candidatePath)
+	if err != nil {
+		return nil, err
+	}
+	file, err := OpenRegularFileInRoot(root, relativePath)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func pathWithinRoot(root, candidate string) bool {
+	relativePath, err := filepath.Rel(root, candidate)
+	return err == nil && relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) &&
+		!filepath.IsAbs(relativePath)
+}
+
+func canonicalizeLoadedAssetTexts(loaded map[string]string) (map[string]string, bool) {
+	keys := make([]string, 0, len(loaded))
+	for key := range loaded {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	canonical := make(map[string]string, len(loaded))
+	canonicalSource := make(map[string]bool, len(loaded))
+	migrated := false
+	for _, key := range keys {
+		canonicalKey, ok := CanonicalAssetTextKey(key)
+		if !ok || !assetTextAllowed(canonicalKey) {
+			migrated = true
+			continue
+		}
+		isCanonical := key == canonicalKey
+		if existingCanonical := canonicalSource[canonicalKey]; existingCanonical && !isCanonical {
+			migrated = true
+			continue
+		}
+		if _, duplicate := canonical[canonicalKey]; duplicate {
+			migrated = true
+		}
+		canonical[canonicalKey] = loaded[key]
+		canonicalSource[canonicalKey] = isCanonical
+		migrated = migrated || !isCanonical
+	}
+	return canonical, migrated
 }
 
 var tesseractExts = []string{
@@ -219,6 +513,26 @@ func Tesseract(imgAbsPath string) (ret []map[string]any) {
 	if ContainerStd != Container || !TesseractEnabled {
 		return
 	}
+	if !IsTesseractExtractable(imgAbsPath) {
+		return
+	}
+	source, err := openOCRSource(imgAbsPath)
+	if err != nil {
+		logOCRFailure("tesseract.open-source", err)
+		return
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			logOCRFailure("tesseract.close-source", closeErr)
+		}
+	}()
+	return TesseractFile(imgAbsPath, source)
+}
+
+func TesseractFile(imgAbsPath string, source *os.File) (ret []map[string]any) {
+	if ContainerStd != Container || !TesseractEnabled {
+		return
+	}
 
 	defer logging.Recover()
 	tesseractOCRLock.Lock()
@@ -228,14 +542,17 @@ func Tesseract(imgAbsPath string) (ret []map[string]any) {
 		return
 	}
 
-	info, err := os.Stat(imgAbsPath)
+	displayName := filepath.Base(imgAbsPath)
+	if source == nil {
+		logOCRFailure("tesseract.open-source", errors.New("OCR source file is unavailable"))
+		return
+	}
+	snapshotPath, size, cleanup, err := createOCRSnapshot(imgAbsPath, source)
 	if err != nil {
+		logOCRFailure("tesseract.snapshot", err)
 		return
 	}
-
-	if TesseractMaxSize < uint64(info.Size()) {
-		return
-	}
+	defer cleanup()
 
 	defer logging.Recover()
 
@@ -245,22 +562,27 @@ func Tesseract(imgAbsPath string) (ret []map[string]any) {
 		if timeoutParsed, parseErr := strconv.Atoi(timeoutEnv); nil == parseErr {
 			timeout = timeoutParsed
 		} else {
-			logging.LogWarnf("parse tesseract timeout [%s] failed: %s", timeoutEnv, parseErr)
+			logOCRFailure("tesseract.timeout-config", parseErr)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, TesseractBin, "-c", "debug_file=/dev/null", imgAbsPath, "stdout", "-l", strings.Join(TesseractLangs, "+"), "tsv")
+	cmd := exec.CommandContext(ctx, TesseractBin, "-c", "debug_file=/dev/null", snapshotPath, "stdout", "-l", strings.Join(TesseractLangs, "+"), "tsv")
 	gulu.CmdAttr(cmd)
 	output, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		logging.LogWarnf("tesseract [path=%s, size=%d] timeout [%dms]", imgAbsPath, info.Size(), timeout)
+		logOCRFailure("tesseract.timeout", fmt.Errorf("size [%d], timeout [%dms]: %w", size, timeout, ctx.Err()))
 		return
 	}
 
 	if err != nil {
-		logging.LogWarnf("tesseract [path=%s, size=%d] failed: %s", imgAbsPath, info.Size(), err)
+		exitCode := -1
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			exitCode = exitError.ExitCode()
+		}
+		logOCRFailure("tesseract.execute", fmt.Errorf("size [%d], exit code [%d]: %w", size, exitCode, err))
 		return
 	}
 
@@ -293,7 +615,7 @@ func Tesseract(imgAbsPath string) (ret []map[string]any) {
 
 	tsv = RemoveInvalid(tsv)
 	tsv = RemoveRedundantSpace(tsv)
-	msg := fmt.Sprintf("OCR [%s] [%s]", html.EscapeString(info.Name()), html.EscapeString(GetOcrJsonText(ret)))
+	msg := fmt.Sprintf("OCR [%s] [%s]", html.EscapeString(displayName), html.EscapeString(GetOcrJsonText(ret)))
 	PushStatusBar(msg)
 	return
 }
@@ -427,6 +749,129 @@ func getTesseractVer() (ret string) {
 		return
 	}
 	return
+}
+
+func openOCRSource(imgAbsPath string) (*os.File, error) {
+	assetKey, err := AssetTextKeyFromAbsPath(imgAbsPath)
+	if err != nil {
+		return nil, err
+	}
+	if !assetTextAllowed(assetKey) {
+		return nil, errors.New("OCR is unavailable for this content store")
+	}
+	candidatePath := filepath.Join(DataDir, filepath.FromSlash(assetKey))
+	if filepath.Clean(candidatePath) != filepath.Clean(imgAbsPath) {
+		return nil, errors.New("OCR source identity does not match its canonical path")
+	}
+	parts := strings.SplitN(assetKey, "/", 2)
+	if len(parts) != 2 {
+		return nil, errors.New("OCR source identity is unavailable")
+	}
+	rootPath := filepath.Join(DataDir, "assets")
+	if parts[0] != "assets" {
+		rootPath = filepath.Join(DataDir, parts[0])
+	}
+	return openRegularAssetCandidate(rootPath, candidatePath)
+}
+
+func createOCRSnapshot(imgAbsPath string, source *os.File) (snapshotPath string, size int64, cleanup func(), err error) {
+	cleanup = func() {}
+	info, err := source.Stat()
+	if err != nil {
+		return "", 0, cleanup, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", 0, cleanup, errors.New("OCR source is not a regular file")
+	}
+	if info.Size() < 0 || uint64(info.Size()) > TesseractMaxSize {
+		return "", 0, cleanup, errors.New("OCR source exceeds the configured size limit")
+	}
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		return "", 0, cleanup, err
+	}
+
+	extension := strings.ToLower(filepath.Ext(imgAbsPath))
+	snapshot, err := os.CreateTemp(TempDir, "siyuan-ocr-*"+extension)
+	if err != nil {
+		return "", 0, cleanup, err
+	}
+	snapshotPath = snapshot.Name()
+	cleanup = func() {
+		if removeErr := os.Remove(snapshotPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			logOCRFailure("tesseract.snapshot-remove", removeErr)
+		}
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, snapshot.Close())
+			cleanup()
+		}
+	}()
+
+	limit := int64(TesseractMaxSize)
+	if TesseractMaxSize >= uint64(^uint64(0)>>1) {
+		limit = int64(^uint64(0) >> 1)
+	} else {
+		limit++
+	}
+	written, copyErr := io.Copy(snapshot, io.LimitReader(source, limit))
+	if copyErr != nil {
+		err = copyErr
+		return
+	}
+	if uint64(written) > TesseractMaxSize {
+		err = errors.New("OCR source exceeds the configured size limit")
+		return
+	}
+	afterCopy, statErr := source.Stat()
+	if statErr != nil || !os.SameFile(info, afterCopy) || info.Size() != afterCopy.Size() || !info.ModTime().Equal(afterCopy.ModTime()) {
+		err = errors.Join(statErr, errors.New("OCR source changed while creating its snapshot"))
+		return
+	}
+	if closeErr := snapshot.Close(); closeErr != nil {
+		err = closeErr
+		return
+	}
+	return snapshotPath, written, cleanup, nil
+}
+
+func logOCRFailure(operation string, err error) {
+	logging.LogErrorf("ocr.%s failed [causes=%s]\n%s", operation, sanitizedOCRErrorCauses(err), debug.Stack())
+}
+
+func sanitizedOCRErrorCauses(err error) string {
+	var causes []string
+	var appendCause func(error, int)
+	appendCause = func(current error, depth int) {
+		if current == nil || depth >= 16 {
+			return
+		}
+		causes = append(causes, fmt.Sprintf("%T: %s", current, sanitizedOCRErrorMessage(current)))
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			for _, cause := range joined.Unwrap() {
+				appendCause(cause, depth+1)
+			}
+			return
+		}
+		appendCause(errors.Unwrap(current), depth+1)
+	}
+	appendCause(err, 0)
+	return strings.Join(causes, " <- ")
+}
+
+func sanitizedOCRErrorMessage(err error) string {
+	message := err.Error()
+	paths := []string{WorkspaceDir, DataDir, TempDir}
+	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+	for _, sensitivePath := range paths {
+		if sensitivePath == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, sensitivePath, "<path>")
+		message = strings.ReplaceAll(message, filepath.ToSlash(sensitivePath), "<path>")
+	}
+	message = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(message)
+	return strings.TrimSpace(message)
 }
 
 func getTesseractLangs() (ret []string) {

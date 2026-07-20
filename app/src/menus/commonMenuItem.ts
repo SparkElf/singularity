@@ -185,6 +185,7 @@ export const openFileAttr = (attrs: Record<string, string>, focusName = "bookmar
             content: {mode: "bound", notebookId},
             initialLoad: "owner",
             hostReadOnly: window.siyuan.config.readonly,
+            upstreamLocalRuntime: window.siyuan.ws.app.upstreamLocalRuntime,
         });
     }
     Object.keys(attrs).forEach(item => {

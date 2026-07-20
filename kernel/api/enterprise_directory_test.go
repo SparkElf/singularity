@@ -58,7 +58,8 @@ func TestEnterpriseDirectoryReturnsMinimalRootAndChildIdentity(t *testing.T) {
 	if err := json.Unmarshal(notebookResponse.Body.Bytes(), &notebookPayload); err != nil {
 		t.Fatalf("decode notebook directory: %v", err)
 	}
-	if len(notebookPayload.Notebooks) != 1 || notebookPayload.Notebooks[0].NotebookID != boxID || notebookPayload.Notebooks[0].Locked {
+	if len(notebookPayload.Notebooks) != 1 || notebookPayload.Notebooks[0].NotebookID != boxID ||
+		notebookPayload.Notebooks[0].Locked || !notebookPayload.Notebooks[0].SupportsGraph {
 		t.Fatalf("notebook directory = %#v, want one open notebook", notebookPayload.Notebooks)
 	}
 
@@ -177,6 +178,23 @@ func TestEnterpriseDirectoryHoldsEncryptedResponseUntilSerializationAndHidesLock
 	createEnterpriseDirectoryTree(t, boxID, documentID, "/"+documentID+".sy", "/Protected", "Protected")
 
 	router := enterpriseDirectoryTestRouter(t)
+	var unlockedNotebooks struct {
+		Notebooks []model.EnterpriseDirectoryNotebook `json:"notebooks"`
+	}
+	unlockedNotebookResponse := serveEnterpriseDirectoryRequest(
+		router,
+		"/internal/enterprise/directory/notebooks",
+	)
+	if err := json.Unmarshal(unlockedNotebookResponse.Body.Bytes(), &unlockedNotebooks); err != nil {
+		t.Fatalf("decode unlocked encrypted notebook directory: %v", err)
+	}
+	unlockedIndex := slices.IndexFunc(unlockedNotebooks.Notebooks, func(notebook model.EnterpriseDirectoryNotebook) bool {
+		return notebook.NotebookID == boxID
+	})
+	if unlockedIndex < 0 || unlockedNotebooks.Notebooks[unlockedIndex].Locked ||
+		unlockedNotebooks.Notebooks[unlockedIndex].SupportsGraph {
+		t.Fatalf("unlocked encrypted notebook capability = %#v, want unlocked without document graph", unlockedNotebooks.Notebooks)
+	}
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/internal/enterprise/directory/documents?notebookId="+boxID+"&offset=0",
@@ -215,6 +233,23 @@ func TestEnterpriseDirectoryHoldsEncryptedResponseUntilSerializationAndHidesLock
 	))
 	if !locked.Locked || len(locked.Documents) != 0 || locked.NextOffset != nil {
 		t.Fatalf("locked directory response = %#v, want no document disclosure", locked)
+	}
+	var lockedNotebooks struct {
+		Notebooks []model.EnterpriseDirectoryNotebook `json:"notebooks"`
+	}
+	lockedNotebookResponse := serveEnterpriseDirectoryRequest(
+		router,
+		"/internal/enterprise/directory/notebooks",
+	)
+	if err := json.Unmarshal(lockedNotebookResponse.Body.Bytes(), &lockedNotebooks); err != nil {
+		t.Fatalf("decode locked encrypted notebook directory: %v", err)
+	}
+	lockedIndex := slices.IndexFunc(lockedNotebooks.Notebooks, func(notebook model.EnterpriseDirectoryNotebook) bool {
+		return notebook.NotebookID == boxID
+	})
+	if lockedIndex < 0 || !lockedNotebooks.Notebooks[lockedIndex].Locked ||
+		lockedNotebooks.Notebooks[lockedIndex].SupportsGraph {
+		t.Fatalf("locked encrypted notebook capability = %#v, want locked without document graph", lockedNotebooks.Notebooks)
 	}
 }
 

@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { Clock } from "../identity/clock.js";
 import { CLOCK } from "../tokens.js";
 import type { AccessChanged, AccessSelector } from "./access-changed.js";
+import { kernelErrorContext } from "./error-context.js";
 
 export type SpaceConnectionState = "pending" | "active" | "closed";
 
@@ -38,6 +39,9 @@ interface ConnectionRecord extends PendingSpaceConnection {
   state: SpaceConnectionState;
 }
 
+export type KernelNotificationListener = "access" | "deployment";
+type KernelNotificationListenerState = "starting" | "ready" | "failed";
+
 const CLOSE = {
   forbidden: { code: 4403, reason: "forbidden" },
   "kernel-unavailable": { code: 1011, reason: "kernel-unavailable" },
@@ -53,36 +57,55 @@ export class SpaceConnectionRegistry {
   readonly #bySpace = new Map<string, Set<string>>();
   readonly #byUser = new Map<string, Set<string>>();
   readonly #connections = new Map<string, ConnectionRecord>();
+  readonly #kernelLifecycleGenerationBySpace = new Map<string, number>();
   readonly #logger = new Logger("SpaceConnectionRegistry");
-  #notificationListenerState: "starting" | "ready" | "failed" = "starting";
+  readonly #notificationListenerState: Record<
+    KernelNotificationListener,
+    KernelNotificationListenerState
+  > = {
+    access: "starting",
+    deployment: "starting",
+  };
 
   constructor(@Inject(CLOCK) private readonly clock: Clock) {}
 
+  /** 只有 AccessChanged 与 deployment 两条通知链均健康时才允许建立新连接。 */
   get available(): boolean {
-    return this.#notificationListenerState === "ready";
+    return Object.values(this.#notificationListenerState).every(
+      (state) => state === "ready",
+    );
   }
 
-  markNotificationListenerReady(): boolean {
-    if (this.#notificationListenerState === "failed") {
+  markNotificationListenerReady(listener: KernelNotificationListener): boolean {
+    if (
+      Object.values(this.#notificationListenerState).some(
+        (state) => state === "failed",
+      )
+    ) {
       return false;
     }
-    this.#notificationListenerState = "ready";
+    this.#notificationListenerState[listener] = "ready";
     return true;
   }
 
-  failNotificationListener(): void {
-    if (this.#notificationListenerState === "failed") {
+  failNotificationListener(listener: KernelNotificationListener): void {
+    if (this.#notificationListenerState[listener] === "failed") {
       return;
     }
-    this.#notificationListenerState = "failed";
+    this.#notificationListenerState[listener] = "failed";
+    this.#kernelLifecycleGenerationBySpace.clear();
     for (const record of [...this.#connections.values()]) {
       this.#close(record, "service-unavailable", true);
     }
   }
 
+  /** 登记待复验连接并建立唯一索引；空间生命周期失效期间直接拒绝新连接。 */
   registerPending(input: PendingSpaceConnection): SpaceConnectionHandle {
-    if (this.#notificationListenerState !== "ready") {
+    if (!this.available) {
       throw new Error("Access notification listener is unavailable");
+    }
+    if (this.#kernelLifecycleGenerationBySpace.has(input.spaceId)) {
+      throw new Error("Kernel deployment lifecycle is changing");
     }
     if (this.#connections.has(input.connectionId)) {
       throw new Error("Space connection identity is unavailable");
@@ -124,11 +147,17 @@ export class SpaceConnectionRegistry {
     }
   }
 
-  /**
-   * 端点离开 ready 或被替换时，先终止该空间的上游订阅，再通知浏览器显式重试。
-   * 该路径不改变用户授权状态，因而使用 kernel-unavailable 而不是 forbidden。
-   */
-  closeByKernelLifecycle(spaceId: string): void {
+  /** 以空间代次封锁 pending/active 连接，先中止上游再通知浏览器。 */
+  fenceKernelLifecycle(spaceId: string, generation: number): void {
+    const currentGeneration =
+      this.#kernelLifecycleGenerationBySpace.get(spaceId);
+    if (
+      currentGeneration !== undefined &&
+      currentGeneration >= generation
+    ) {
+      return;
+    }
+    this.#kernelLifecycleGenerationBySpace.set(spaceId, generation);
     const connectionIds = [...(this.#bySpace.get(spaceId) ?? [])];
     for (const connectionId of connectionIds) {
       const record = this.#connections.get(connectionId);
@@ -138,21 +167,41 @@ export class SpaceConnectionRegistry {
     }
   }
 
+  /** 仅最新代次完成数据库事实应用后解除空间封锁，迟到代次不得重新放行。 */
+  resolveKernelLifecycleFence(spaceId: string, generation: number): boolean {
+    if (this.#kernelLifecycleGenerationBySpace.get(spaceId) !== generation) {
+      return false;
+    }
+    this.#kernelLifecycleGenerationBySpace.delete(spaceId);
+    return true;
+  }
+
   closeAllByKernelLifecycle(): void {
     for (const record of [...this.#connections.values()]) {
       this.#close(record, "kernel-unavailable", true);
     }
   }
 
+  /** 单调延长同一认证会话的连接期限，并让 pending 连接在激活时使用最新期限。 */
   refreshSessionExpiry(authSessionId: string, expiresAt: Date): void {
     for (const connectionId of this.#byAuthSession.get(authSessionId) ?? []) {
       const record = this.#connections.get(connectionId);
-      if (record !== undefined && record.state === "active") {
+      if (
+        record === undefined ||
+        record.state === "closed" ||
+        (record.expiresAt !== undefined &&
+          record.expiresAt.getTime() >= expiresAt.getTime())
+      ) {
+        continue;
+      }
+      record.expiresAt = expiresAt;
+      if (record.state === "active") {
         this.#scheduleExpiry(record, expiresAt);
       }
     }
   }
 
+  /** 在生命周期封锁、授权期限和连接状态均有效时把 pending 提升为 active。 */
   #activate(
     record: ConnectionRecord,
     expiresAt: Date,
@@ -161,13 +210,22 @@ export class SpaceConnectionRegistry {
     if (record.state !== "pending") {
       return false;
     }
-    if (expiresAt.getTime() <= this.clock.now().getTime()) {
+    if (this.#kernelLifecycleGenerationBySpace.has(record.spaceId)) {
+      this.#close(record, "kernel-unavailable", true);
+      return false;
+    }
+    const effectiveExpiresAt =
+      record.expiresAt !== undefined &&
+      record.expiresAt.getTime() > expiresAt.getTime()
+        ? record.expiresAt
+        : expiresAt;
+    if (effectiveExpiresAt.getTime() <= this.clock.now().getTime()) {
       this.#close(record, "unauthenticated", true);
       return false;
     }
     record.kernelInstanceId = kernelInstanceId;
     record.state = "active";
-    this.#scheduleExpiry(record, expiresAt);
+    this.#scheduleExpiry(record, effectiveExpiresAt);
     return true;
   }
 
@@ -186,7 +244,18 @@ export class SpaceConnectionRegistry {
     }
     try {
       record.sendBrowser(data, binary);
-    } catch {
+    } catch (error) {
+      this.#logger.warn({
+        ...kernelErrorContext(error, "Browser WebSocket send failed"),
+        connectionId: record.connectionId,
+        event: "kernel.route",
+        outcome: "browser-send-failed",
+        requestId: record.requestId,
+        spaceId: record.spaceId,
+        ...(record.kernelInstanceId === undefined
+          ? {}
+          : { kernelInstanceId: record.kernelInstanceId }),
+      });
       this.#close(record, "kernel-unavailable", true);
     }
   }
@@ -207,6 +276,7 @@ export class SpaceConnectionRegistry {
     }, delay);
   }
 
+  /** 统一连接终止顺序：冻结状态、取消上游、通知浏览器、移除全部索引。 */
   #close(
     record: ConnectionRecord,
     reason: keyof typeof CLOSE,
@@ -224,8 +294,9 @@ export class SpaceConnectionRegistry {
     if (closeUpstream) {
       try {
         record.closeUpstream?.();
-      } catch {
+      } catch (error) {
         this.#logger.warn({
+          ...kernelErrorContext(error, "Kernel upstream close callback failed"),
           connectionId: record.connectionId,
           event: "kernel.route",
           outcome: "upstream-close-failed",
@@ -240,8 +311,9 @@ export class SpaceConnectionRegistry {
     if (notifyBrowser) {
       try {
         record.closeBrowser(CLOSE[reason].code, CLOSE[reason].reason);
-      } catch {
+      } catch (error) {
         this.#logger.warn({
+          ...kernelErrorContext(error, "Browser WebSocket close callback failed"),
           connectionId: record.connectionId,
           event: "kernel.route",
           outcome: "browser-close-failed",

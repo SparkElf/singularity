@@ -26,10 +26,12 @@ import {
   SampleKernelJobProducer,
 } from "./scheduled-producers.js";
 import {
+  BACKUP_REQUEST_TIMEOUT_MILLISECONDS,
   KERNEL_WORKER,
   MAXIMUM_AUDIT_ARCHIVE_BYTES,
   MAXIMUM_AUDIT_ARCHIVE_EVENT_COUNT,
   MAXIMUM_BACKUP_BYTES,
+  MAXIMUM_BACKUP_FILES,
   WORKER_CONFIGURATION,
 } from "./tokens.js";
 import { WorkerApplication } from "./worker-application.js";
@@ -84,6 +86,12 @@ export class WorkerModule {
             }),
         },
         {
+          provide: BACKUP_REQUEST_TIMEOUT_MILLISECONDS,
+          inject: [WORKER_CONFIGURATION],
+          useFactory: (configuration: WorkerConfiguration) =>
+            configuration.backupRequestTimeoutMilliseconds,
+        },
+        {
           provide: KERNEL_WORKER,
           useExisting: KernelWorkerClient,
         },
@@ -104,6 +112,12 @@ export class WorkerModule {
           inject: [WORKER_CONFIGURATION],
           useFactory: (configuration: WorkerConfiguration) =>
             configuration.maximumBackupBytes,
+        },
+        {
+          provide: MAXIMUM_BACKUP_FILES,
+          inject: [WORKER_CONFIGURATION],
+          useFactory: (configuration: WorkerConfiguration) =>
+            configuration.restore.maximumFiles,
         },
         ArchiveAuditHandler,
         ArchiveAuditJobProducer,

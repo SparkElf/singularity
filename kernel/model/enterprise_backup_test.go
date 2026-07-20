@@ -2,6 +2,8 @@ package model
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"crypto/sha256"
 	stdsql "database/sql"
 	"encoding/hex"
@@ -132,6 +134,89 @@ func TestEnterpriseBackupArchiveRoundTripAndDigestContract(t *testing.T) {
 	}
 	if string(restored) != string(data) {
 		t.Fatalf("restored content = %q", restored)
+	}
+}
+
+func TestEnterpriseBackupArchiveAcceptsDifferentKernelVersionForSameFormat(t *testing.T) {
+	data := []byte("enterprise backup version contract")
+	manifest := validEnterpriseBackupTestManifest(data, "data/docs/version.txt")
+	manifest.KernelVersion = "3.6.9"
+	archivePath, digest := writeEnterpriseBackupTestArchive(t, manifest, []enterpriseBackupTestEntry{{
+		mode: 0600,
+		name: "data/docs/version.txt",
+		data: data,
+	}})
+
+	validated, err := ValidateEnterpriseBackupArchive(archivePath, digest, restoredWorkspaceLimits())
+	if err != nil {
+		t.Fatalf("validate same-format backup from another Kernel version: %v", err)
+	}
+	if validated.KernelVersion != manifest.KernelVersion {
+		t.Fatalf("validated Kernel version = %q", validated.KernelVersion)
+	}
+}
+
+func TestEnterpriseBackupArchiveRejectsDifferentFormatVersion(t *testing.T) {
+	data := []byte("enterprise backup format contract")
+	manifest := validEnterpriseBackupTestManifest(data, "data/docs/format.txt")
+	manifest.FormatVersion++
+	archivePath, digest := writeEnterpriseBackupTestArchive(t, manifest, []enterpriseBackupTestEntry{{
+		mode: 0600,
+		name: "data/docs/format.txt",
+		data: data,
+	}})
+
+	if _, err := ValidateEnterpriseBackupArchive(archivePath, digest, restoredWorkspaceLimits()); err == nil || !errors.Is(err, ErrEnterpriseBackupInvalid) {
+		t.Fatalf("format mismatch error = %v", err)
+	}
+}
+
+func TestEnterpriseBackupGenerationEnforcesWorkerLimits(t *testing.T) {
+	originalDataDir := util.DataDir
+	util.DataDir = t.TempDir()
+	t.Cleanup(func() { util.DataDir = originalDataDir })
+	if err := os.WriteFile(filepath.Join(util.DataDir, "first.txt"), []byte("first"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(util.DataDir, "second.txt"), []byte("second"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildEnterpriseBackupManifest(context.Background(), "space-contract", EnterpriseBackupLimits{
+		MaximumBytes: 4,
+		MaximumFiles: 10,
+	}); err == nil || !errors.Is(err, ErrEnterpriseBackupInvalid) {
+		t.Fatalf("byte limit error = %v", err)
+	}
+	if _, err := buildEnterpriseBackupManifest(context.Background(), "space-contract", EnterpriseBackupLimits{
+		MaximumBytes: 1 << 20,
+		MaximumFiles: 1,
+	}); err == nil || !errors.Is(err, ErrEnterpriseBackupInvalid) {
+		t.Fatalf("file limit error = %v", err)
+	}
+
+	manifest, err := buildEnterpriseBackupManifest(context.Background(), "space-contract", EnterpriseBackupLimits{
+		MaximumBytes: 1 << 20,
+		MaximumFiles: 2,
+	})
+	if err != nil {
+		t.Fatalf("build bounded manifest: %v", err)
+	}
+	var archive bytes.Buffer
+	bounded := &enterpriseBackupArchiveWriter{maximumBytes: 32, writer: &archive}
+	writer := zip.NewWriter(bounded)
+	err = writeEnterpriseBackupArchive(context.Background(), writer, manifest, EnterpriseBackupLimits{
+		MaximumBytes: 32,
+		MaximumFiles: 2,
+	})
+	if closeErr := writer.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil || !errors.Is(err, ErrEnterpriseBackupInvalid) {
+		t.Fatalf("archive byte limit error = %v", err)
+	}
+	if archive.Len() > 32 {
+		t.Fatalf("archive bytes = %d, want at most 32", archive.Len())
 	}
 }
 
@@ -324,7 +409,7 @@ func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruptio
 		}
 	})
 
-	t.Run("reference target must remain in its source notebook", func(t *testing.T) {
+	t.Run("reference target may be in another plaintext notebook", func(t *testing.T) {
 		workspaceRoot := t.TempDir()
 		sourceBoxID := "20260719000003-box0001"
 		targetBoxID := "20260719000004-box0002"
@@ -341,8 +426,8 @@ func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruptio
 			"data/"+targetBoxID+"/"+targetID+".sy",
 			restoredTreeJSON(t, targetID, "", false),
 		)
-		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err == nil {
-			t.Fatal("cross-notebook reference target was accepted")
+		if err := ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
+			t.Fatalf("validate cross-notebook reference target: %v", err)
 		}
 	})
 
@@ -375,6 +460,9 @@ func TestValidateEnterpriseRestoredWorkspaceRejectsDocumentAndReferenceCorruptio
 
 func TestValidateEnterpriseRestoredWorkspaceChecksSQLiteIntegrity(t *testing.T) {
 	workspaceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "data"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(workspaceRoot, "temp"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +479,25 @@ func TestValidateEnterpriseRestoredWorkspaceChecksSQLiteIntegrity(t *testing.T) 
 		_ = database.Close()
 		t.Fatal(err)
 	}
+	if _, err = database.Exec("INSERT INTO blocks (id, box) VALUES ('20260719000002-target1', '20260719000004-box0002')"); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
 	if _, err = database.Exec("INSERT INTO refs (def_block_id, box) VALUES ('20260719000002-target1', '20260719000003-box0001')"); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateEnterpriseRestoredWorkspace(workspaceRoot, restoredWorkspaceLimits()); err != nil {
+		t.Fatalf("validate cross-notebook SQLite reference: %v", err)
+	}
+	database, err = stdsql.Open("sqlite3_extended", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec("DELETE FROM blocks"); err != nil {
 		_ = database.Close()
 		t.Fatal(err)
 	}

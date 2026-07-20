@@ -149,13 +149,17 @@ func QueryTagSpansByKeywordInBox(keyword string, limit int, boxID string) (ret [
 }
 
 func QueryTagSpans(p string) (ret []*Span) {
+	return QueryTagSpansInBox(p, "")
+}
+
+func QueryTagSpansInBox(p, boxID string) (ret []*Span) {
 	stmt := "SELECT * FROM spans WHERE type LIKE '%tag%'"
 	var args []any
 	if "" != p {
 		stmt += " AND path = ?"
 		args = append(args, p)
 	}
-	rows, err := query(stmt, args...)
+	rows, err := queryForBox(boxID, stmt, args...)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return

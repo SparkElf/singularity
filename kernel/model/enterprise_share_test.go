@@ -48,7 +48,7 @@ func TestEnterpriseShareAssetIdentityAndDispositionAreStable(t *testing.T) {
 	) {
 		t.Fatal("different asset paths share an identity")
 	}
-	for _, mediaType := range []string{"image/png", "audio/ogg", "video/webm"} {
+	for _, mediaType := range []string{"image/png", "audio/aac", "audio/flac", "audio/ogg", "video/webm"} {
 		if !enterpriseShareInlineMediaType(mediaType) {
 			t.Fatalf("%s was not allowed inline", mediaType)
 		}
@@ -63,7 +63,7 @@ func TestEnterpriseShareAssetIdentityAndDispositionAreStable(t *testing.T) {
 func TestEnterpriseShareProjectionDropsIdentityAndActiveContentMarkup(t *testing.T) {
 	rendered, err := rewriteEnterpriseSharedAssetLinks(
 		util.SanitizeHTML(
-			`<div data-node-id="20260718010101-private"><svg><script>alert(1)</script></svg><p>正文</p><a href="/organizations/internal/spaces/private">内部链接</a><a href="siyuan://blocks/20260718010101-private">块引用</a><a href="https://docs.example.test/guide">外部链接</a><a href="https://user:secret@docs.example.test/private">凭据链接</a><img src="https://tracking.example.test/pixel.png"></div>`,
+			`<div data-node-id="20260718010101-private"><svg><script>alert(1)</script></svg><p>正文</p><a href="/organizations/internal/spaces/private">内部链接</a><a href="#20260718010101-private">内部锚点</a><a href="siyuan://blocks/20260718010101-private">块引用</a><a href="https://docs.example.test/guide">外部链接</a><a href="https://user:secret@docs.example.test/private">凭据链接</a><img src="https://tracking.example.test/pixel.png"></div>`,
 		),
 		map[string]string{},
 	)

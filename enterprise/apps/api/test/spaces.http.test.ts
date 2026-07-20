@@ -27,6 +27,7 @@ import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
+import { captureAccessChanges } from "./support/access-change-barrier.js";
 import { CapturingLogger } from "./support/capturing-logger.js";
 import { truncateTestDatabase } from "./support/database.js";
 import {
@@ -145,6 +146,7 @@ function mutationHeaders(user: AuthenticatedUser): Record<string, string> {
 
 describe("space HTTP contracts with PostgreSQL", () => {
   let database: DatabaseClient;
+  let databaseRuntime: DatabaseRuntime;
   let logger: CapturingLogger;
   let operations: AccessOperationsService;
   let testApi: TestApiApplication;
@@ -152,7 +154,8 @@ describe("space HTTP contracts with PostgreSQL", () => {
   beforeAll(async () => {
     logger = new CapturingLogger();
     testApi = await startTestApiApplication({ logger });
-    database = testApi.app.get(DatabaseRuntime).client;
+    databaseRuntime = testApi.app.get(DatabaseRuntime);
+    database = databaseRuntime.client;
     operations = testApi.app.get(AccessOperationsService);
   });
 
@@ -391,6 +394,52 @@ describe("space HTTP contracts with PostgreSQL", () => {
     ).toBe(false);
   });
 
+  test("treats an identical space patch as a side-effect-free success", async () => {
+    const installation = await initialize();
+    const owner = await login(installation.loginIdentifier);
+    const spacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+    });
+    const auditCount = await database.auditEvent.count({
+      where: {
+        organizationId: installation.organizationId,
+        spaceId: installation.spaceId,
+        targetId: installation.spaceId,
+        targetType: "space",
+      },
+    });
+
+    const captured = await captureAccessChanges(databaseRuntime, () =>
+      fetch(`${testApi.baseUrl}${spacePath}`, {
+        body: JSON.stringify({ name: "Primary Space", status: "active" }),
+        headers: mutationHeaders(owner),
+        method: "PATCH",
+      }),
+    );
+
+    expect(captured.result.status).toBe(200);
+    expect(
+      managedSpaceSummarySchema.parse(await captured.result.json()),
+    ).toEqual({
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+      spaceName: "Primary Space",
+      status: "active",
+    });
+    expect(captured.events).toEqual([]);
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId: installation.organizationId,
+          spaceId: installation.spaceId,
+          targetId: installation.spaceId,
+          targetType: "space",
+        },
+      }),
+    ).resolves.toBe(auditCount);
+  });
+
   test("hides an unactivated restore target from the managed space list", async () => {
     const installation = await initialize();
     const owner = await login(installation.loginIdentifier);
@@ -569,6 +618,276 @@ describe("space HTTP contracts with PostgreSQL", () => {
         },
       ],
     });
+  });
+
+  test.each(["direct member", "user group"] as const)(
+    "publishes only real %s grant transitions",
+    async (kind) => {
+      const installation = await initialize();
+      const owner = await login(installation.loginIdentifier);
+      const loginIdentifier = `notification-target-${randomUUID()}@example.test`;
+      const userId = createdUserId(
+        await operations.execute({
+          operation: "create-user",
+          organizationId: installation.organizationId,
+          loginIdentifier,
+          password,
+        }),
+      );
+      let targetId = userId;
+      let targetType: "group" | "membership" = "membership";
+      let path = buildPath(ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE, {
+        organizationId: installation.organizationId,
+        spaceId: installation.spaceId,
+        userId,
+      });
+      if (kind === "user group") {
+        const group = await database.userGroup.create({
+          data: {
+            name: `Notification group ${randomUUID()}`,
+            organizationId: installation.organizationId,
+            status: "active",
+          },
+          select: { id: true },
+        });
+        await database.userGroupMembership.create({
+          data: {
+            groupId: group.id,
+            organizationId: installation.organizationId,
+            userId,
+          },
+        });
+        targetId = group.id;
+        targetType = "group";
+        path = buildPath(ORGANIZATION_SPACE_GROUP_PATH_TEMPLATE, {
+          groupId: group.id,
+          organizationId: installation.organizationId,
+          spaceId: installation.spaceId,
+        });
+      }
+
+      const firstGrant = await captureAccessChanges(databaseRuntime, () =>
+        fetch(`${testApi.baseUrl}${path}`, {
+          body: JSON.stringify({ role: "editor" }),
+          headers: mutationHeaders(owner),
+          method: "PUT",
+        }),
+      );
+      expect(firstGrant.result.status).toBe(204);
+      expect(firstGrant.events).toEqual([
+        expect.objectContaining({
+          kind: "close",
+          reason: "forbidden",
+          selectors: [
+            { kind: "space", value: installation.spaceId },
+            { kind: "user", value: userId },
+          ],
+        }),
+      ]);
+
+      const repeatedGrant = await captureAccessChanges(databaseRuntime, () =>
+        fetch(`${testApi.baseUrl}${path}`, {
+          body: JSON.stringify({ role: "editor" }),
+          headers: mutationHeaders(owner),
+          method: "PUT",
+        }),
+      );
+      expect(repeatedGrant.result.status).toBe(204);
+      expect(repeatedGrant.events).toEqual([]);
+
+      const firstRevocation = await captureAccessChanges(databaseRuntime, () =>
+        fetch(`${testApi.baseUrl}${path}`, {
+          headers: mutationHeaders(owner),
+          method: "DELETE",
+        }),
+      );
+      expect(firstRevocation.result.status).toBe(204);
+      expect(firstRevocation.events).toEqual([
+        expect.objectContaining({
+          kind: "close",
+          reason: "forbidden",
+          selectors: [
+            { kind: "space", value: installation.spaceId },
+            { kind: "user", value: userId },
+          ],
+        }),
+      ]);
+
+      const repeatedRevocation = await captureAccessChanges(
+        databaseRuntime,
+        () =>
+          fetch(`${testApi.baseUrl}${path}`, {
+            headers: mutationHeaders(owner),
+            method: "DELETE",
+          }),
+      );
+      expect(repeatedRevocation.result.status).toBe(204);
+      expect(repeatedRevocation.events).toEqual([]);
+      await expect(
+        database.auditEvent.count({
+          where: {
+            organizationId: installation.organizationId,
+            spaceId: installation.spaceId,
+            targetId,
+            targetType,
+          },
+        }),
+      ).resolves.toBe(2);
+    },
+  );
+
+  test.each([
+    {
+      expectedCode: "not-found",
+      expectedStatus: 404,
+      label: "no delegated",
+      role: null,
+    },
+    {
+      expectedCode: "forbidden",
+      expectedStatus: 403,
+      label: "viewer",
+      role: "viewer",
+    },
+    {
+      expectedCode: "forbidden",
+      expectedStatus: 403,
+      label: "editor",
+      role: "editor",
+    },
+  ] as const)(
+    "returns $expectedStatus for $label space management access",
+    async ({ expectedCode, expectedStatus, role }) => {
+      const installation = await initialize();
+      const loginIdentifier = `management-role-${randomUUID()}@example.test`;
+      const userId = createdUserId(
+        await operations.execute({
+          operation: "create-user",
+          organizationId: installation.organizationId,
+          loginIdentifier,
+          password,
+        }),
+      );
+      if (role !== null) {
+        const assigned = await operations.execute({
+          operation: "set-space-member",
+          role,
+          spaceId: installation.spaceId,
+          userId,
+        });
+        expect(assigned.outcome).toBe("created");
+      }
+      const delegated = await login(loginIdentifier);
+      const spacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+        organizationId: installation.organizationId,
+        spaceId: installation.spaceId,
+      });
+
+      await expectProblem(
+        await fetch(`${testApi.baseUrl}${spacePath}`, {
+          headers: { Cookie: delegated.cookie },
+        }),
+        expectedStatus,
+        expectedCode,
+      );
+    },
+  );
+
+  test("uses the highest direct and group role for delegated administration", async () => {
+    const installation = await initialize();
+    const delegatedLogin = `group-admin-${randomUUID()}@example.test`;
+    const delegatedUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier: delegatedLogin,
+        password,
+      }),
+    );
+    const directRole = await operations.execute({
+      operation: "set-space-member",
+      role: "viewer",
+      spaceId: installation.spaceId,
+      userId: delegatedUserId,
+    });
+    expect(directRole.outcome).toBe("created");
+    const group = await database.userGroup.create({
+      data: {
+        name: "Delegated administrators",
+        organizationId: installation.organizationId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    await database.userGroupMembership.create({
+      data: {
+        groupId: group.id,
+        organizationId: installation.organizationId,
+        userId: delegatedUserId,
+      },
+    });
+    await database.spaceGroupGrant.create({
+      data: {
+        groupId: group.id,
+        organizationId: installation.organizationId,
+        role: "admin",
+        spaceId: installation.spaceId,
+      },
+    });
+    const candidateUserId = createdUserId(
+      await operations.execute({
+        operation: "create-user",
+        organizationId: installation.organizationId,
+        loginIdentifier: `delegation-target-${randomUUID()}@example.test`,
+        password,
+      }),
+    );
+    const delegated = await login(delegatedLogin);
+    const spacePath = buildPath(ORGANIZATION_SPACE_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+    });
+
+    const managedSpace = await fetch(`${testApi.baseUrl}${spacePath}`, {
+      headers: { Cookie: delegated.cookie },
+    });
+    expect(managedSpace.status).toBe(200);
+    expect(
+      managedSpaceSummarySchema.parse(await managedSpace.json()),
+    ).toMatchObject({ spaceId: installation.spaceId, status: "active" });
+    const authorized = await listSpaces(delegated.cookie);
+    expect(authorized.status).toBe(200);
+    expect(
+      authorizedSpacesResponseSchema.parse(await authorized.json()).spaces,
+    ).toContainEqual(
+      expect.objectContaining({
+        role: "admin",
+        spaceId: installation.spaceId,
+      }),
+    );
+
+    const candidatePath = buildPath(ORGANIZATION_SPACE_MEMBER_PATH_TEMPLATE, {
+      organizationId: installation.organizationId,
+      spaceId: installation.spaceId,
+      userId: candidateUserId,
+    });
+    const granted = await fetch(`${testApi.baseUrl}${candidatePath}`, {
+      body: JSON.stringify({ role: "viewer" }),
+      headers: mutationHeaders(delegated),
+      method: "PUT",
+    });
+    expect(granted.status).toBe(204);
+    await expect(
+      database.spaceMembership.findUniqueOrThrow({
+        where: {
+          spaceId_userId: {
+            spaceId: installation.spaceId,
+            userId: candidateUserId,
+          },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "viewer", status: "active" });
   });
 
   test("limits a delegated space administrator to access management for its exact space", async () => {

@@ -12,8 +12,8 @@ import {
 } from "@singularity/kernel-client";
 
 export class KernelGatewayConfigurationError extends Error {
-  constructor() {
-    super("Kernel gateway deployment configuration is unavailable");
+  constructor(options?: ErrorOptions) {
+    super("Kernel gateway deployment configuration is unavailable", options);
     this.name = "KernelGatewayConfigurationError";
   }
 }
@@ -55,8 +55,8 @@ function requiredFile(value: string | undefined): string {
 function readSecret(path: string): Buffer {
   try {
     return readFileSync(path);
-  } catch {
-    throw new KernelGatewayConfigurationError();
+  } catch (error) {
+    throw new KernelGatewayConfigurationError({ cause: error });
   }
 }
 
@@ -123,7 +123,7 @@ export function loadKernelGatewayConfiguration(
         tlsProfile: runtimeTlsProfile.data,
       },
     };
-  } catch {
-    throw new KernelGatewayConfigurationError();
+  } catch (error) {
+    throw new KernelGatewayConfigurationError({ cause: error });
   }
 }

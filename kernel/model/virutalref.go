@@ -55,7 +55,7 @@ func getBlockVirtualRefKeywords(root *ast.Node, boxID string) (ret []string) {
 				return ast.WalkContinue
 			}
 
-			content := sql.NodeStaticContent(n, nil, false, false, false)
+			content := sql.NodeStaticContentWithoutOCR(n, nil, false, false, false)
 			content = strings.ReplaceAll(content, editor.Zwsp, "")
 			buf.WriteString(content)
 			return ast.WalkContinue

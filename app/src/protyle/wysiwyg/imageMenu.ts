@@ -81,7 +81,7 @@ const requestImageOperation = <TResponse>(
     path: string,
     body: unknown,
     intent: "read" | "write",
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity: protyleContentIdentity(protyle),
     intent,
     signal,
@@ -143,7 +143,7 @@ const uploadDataImage = async (
     const identity = protyleContentIdentity(protyle);
     formData.set("id", identity.documentId);
     formData.set("notebook", identity.notebookId);
-    const upload = await protyle.session!.runtime.transport.upload<ImageUploadResponse>(formData, {
+    const upload = await protyle.runtime.transport.upload<ImageUploadResponse>(formData, {
         identity,
         signal: protyle.requestSignal,
     });
@@ -393,7 +393,7 @@ export const openImageMenu = (options: OpenImageMenuOptions): ImageMenuHandle | 
     // Kernel OCR 只接收持久化资源路径，不接收 Gateway 解析后的 src。
     const currentPersistedSource = () => imgElement.getAttribute("data-src");
     const identity = protyleContentIdentity(protyle);
-    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    const runtime = protyle.runtime;
     const handle = runtime.menu.open();
     const {menu} = handle;
     const controller = new AbortController();

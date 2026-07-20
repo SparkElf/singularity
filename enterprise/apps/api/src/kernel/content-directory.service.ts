@@ -51,6 +51,11 @@ function jsonContentType(message: IncomingMessage): boolean {
   );
 }
 
+function directoryUnavailable(cause: unknown): ApiProblemError {
+  return new ApiProblemError("service-unavailable", 503, undefined, { cause });
+}
+
+/** 读取目录响应的有限 JSON 投影，保证连接断开、超限和解析失败都会终止上游流。 */
 async function readDirectoryJson(message: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let sizeBytes = 0;
@@ -69,7 +74,7 @@ async function readDirectoryJson(message: IncomingMessage): Promise<unknown> {
     if (error instanceof ApiProblemError) {
       throw error;
     }
-    throw serviceUnavailable();
+    throw directoryUnavailable(error);
   }
 }
 
@@ -82,6 +87,7 @@ export class ContentDirectoryService {
     private readonly kernel: KernelPrivateClient,
   ) {}
 
+  /** 获取当前授权空间的可见笔记本，不把锁定库或文档身份下沉给浏览器。 */
   listNotebooks(
     input: DirectoryRequestContext,
   ): Promise<ContentDirectoryNotebooksResponse> {
@@ -89,12 +95,13 @@ export class ContentDirectoryService {
       const value = await this.#requestJson(input, DIRECTORY_NOTEBOOKS_PATH);
       const parsed = contentDirectoryNotebooksResponseSchema.safeParse(value);
       if (!parsed.success) {
-        throw serviceUnavailable();
+        throw directoryUnavailable(parsed.error);
       }
       return parsed.data;
     });
   }
 
+  /** 按真实父文档和 offset 分页读取目录，拒绝跨笔记本响应与倒退游标。 */
   listDocuments(
     input: DirectoryRequestContext & {
       readonly notebookId: string;
@@ -115,20 +122,31 @@ export class ContentDirectoryService {
         `${DIRECTORY_DOCUMENTS_PATH}?${query}`,
       );
       const parsed = contentDirectoryDocumentsResponseSchema.safeParse(value);
+      if (!parsed.success) {
+        throw directoryUnavailable(parsed.error);
+      }
       if (
-        !parsed.success ||
         parsed.data.documents.some(
           (document) => document.notebookId !== input.notebookId,
-        ) ||
-        (parsed.data.nextOffset !== null &&
-          parsed.data.nextOffset <= input.offset)
+        )
       ) {
-        throw serviceUnavailable();
+        throw directoryUnavailable(
+          new Error("Kernel directory returned a document from another notebook"),
+        );
+      }
+      if (
+        parsed.data.nextOffset !== null &&
+        parsed.data.nextOffset <= input.offset
+      ) {
+        throw directoryUnavailable(
+          new Error("Kernel directory returned a non-forward pagination offset"),
+        );
       }
       return parsed.data;
     });
   }
 
+  /** 在空间授权后调用私有 Kernel 目录接口，并在唯一跨进程边界解析 JSON。 */
   async #requestJson(
     input: DirectoryRequestContext,
     path: string,
@@ -151,17 +169,25 @@ export class ContentDirectoryService {
         requestId: input.requestId,
         signal: input.signal,
       });
-    } catch {
-      throw serviceUnavailable();
+    } catch (error) {
+      throw directoryUnavailable(error);
     }
 
     if (response.status === 404) {
-      response.message.resume();
+      response.message.destroy();
       throw notFound();
     }
-    if (response.status !== 200 || !jsonContentType(response.message)) {
-      response.message.resume();
-      throw serviceUnavailable();
+    if (response.status !== 200) {
+      response.message.destroy();
+      throw directoryUnavailable(
+        new Error(`Kernel directory returned HTTP ${response.status}`),
+      );
+    }
+    if (!jsonContentType(response.message)) {
+      response.message.destroy();
+      throw directoryUnavailable(
+        new Error("Kernel directory returned a non-JSON response"),
+      );
     }
     return readDirectoryJson(response.message);
   }
@@ -195,6 +221,7 @@ export class ContentDirectoryService {
     } catch (error) {
       this.#logger.warn({
         durationMilliseconds: performance.now() - startedAt,
+        error,
         ...logContext,
         outcome:
           error instanceof ApiProblemError && error.code === "not-found"

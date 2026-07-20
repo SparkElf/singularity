@@ -8,6 +8,10 @@ import type { ApiConfiguration } from "./configuration.js";
 import { CoreModule } from "./core.module.js";
 import { DatabaseHealthController } from "./database-health.controller.js";
 import type { Clock } from "./identity/clock.js";
+import type {
+  OidcClientSecretResolver,
+  OidcHttpTransport,
+} from "./identity/oidc.service.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
 import { KernelGatewayModule } from "./kernel/kernel.module.js";
@@ -18,6 +22,8 @@ export interface AppModuleOptions {
   databaseUrl: string | undefined;
   auditConfiguration: AuditConfiguration;
   kernelGateway: KernelGatewayRuntimeConfiguration;
+  oidcClientSecretResolver?: OidcClientSecretResolver;
+  oidcHttpTransport?: OidcHttpTransport;
 }
 
 @Module({})

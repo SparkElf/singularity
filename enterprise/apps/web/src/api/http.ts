@@ -31,6 +31,7 @@ export class NetworkFailureError extends Error {
   constructor(cause: unknown) {
     super("The server could not be reached", { cause });
     this.name = "NetworkFailureError";
+    console.error("[http.client]", { phase: "network" }, cause);
   }
 }
 
@@ -38,7 +39,12 @@ export class ResponseContractError extends Error {
   constructor(cause: unknown) {
     super("The server response did not match the public contract", { cause });
     this.name = "ResponseContractError";
+    console.error("[http.client]", { phase: "response-contract" }, cause);
   }
+}
+
+function isAbortError(error: unknown): error is Error {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function parseRetryAfter(value: string | null): number | null {
@@ -54,6 +60,9 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch (cause) {
+    if (isAbortError(cause)) {
+      throw cause;
+    }
     throw new ResponseContractError(cause);
   }
 }
@@ -79,6 +88,12 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
       headers,
     });
   } catch (cause) {
+    if (init?.signal?.aborted) {
+      throw init.signal.reason ?? cause;
+    }
+    if (isAbortError(cause)) {
+      throw cause;
+    }
     throw new NetworkFailureError(cause);
   }
 }

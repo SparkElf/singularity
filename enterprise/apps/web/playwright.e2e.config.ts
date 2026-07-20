@@ -4,10 +4,16 @@ import { resolve } from "node:path";
 
 const apiPort = process.env.SINGULARITY_E2E_API_PORT ?? "3012";
 const webPort = process.env.SINGULARITY_E2E_WEB_PORT ?? "4174";
-const stateFile = process.env.SINGULARITY_E2E_STATE_FILE ??
-  resolve(tmpdir(), `singularity-p5-e2e-state-${String(process.pid)}.json`);
+const runtimeRoot = resolve(
+  tmpdir(),
+  `singularity-p5-e2e-runtime-${String(process.pid)}`,
+);
+const stateFile = resolve(runtimeRoot, "stack-state.json");
+const schema = `singularity_p5_e2e_${String(process.pid)}`;
 
 process.env.SINGULARITY_E2E_API_PORT = apiPort;
+process.env.SINGULARITY_E2E_RUNTIME_ROOT = runtimeRoot;
+process.env.SINGULARITY_E2E_SCHEMA = schema;
 process.env.SINGULARITY_E2E_WEB_PORT = webPort;
 process.env.SINGULARITY_E2E_STATE_FILE = stateFile;
 
@@ -17,7 +23,10 @@ export default defineConfig({
   forbidOnly: true,
   globalSetup: "./tests/e2e/global-setup.ts",
   outputDir: "./test-results/e2e",
-  reporter: "line",
+  reporter: [
+    ["line"],
+    ["json", { outputFile: "./test-results/e2e-report.json" }],
+  ],
   retries: 0,
   workers: 1,
   use: {
@@ -26,19 +35,4 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     trace: "retain-on-failure",
   },
-  webServer: [
-    {
-      command: "node tests/e2e/support/start-stack.mjs",
-      reuseExistingServer: false,
-      timeout: 300_000,
-      url: `http://127.0.0.1:${apiPort}/api/v1/health/database`,
-    },
-    {
-      command: "node tests/e2e/support/start-web.mjs",
-      ignoreHTTPSErrors: true,
-      reuseExistingServer: false,
-      timeout: 300_000,
-      url: `https://127.0.0.1:${webPort}`,
-    },
-  ],
 });

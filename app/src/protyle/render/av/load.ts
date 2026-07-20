@@ -55,7 +55,7 @@ export const requestAVRender = <TResponse>(
     load: AVRenderLoad,
     path: string,
     body: unknown,
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity: load.identity,
     intent: "read",
     signal: load.signal,

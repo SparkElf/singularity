@@ -425,6 +425,8 @@ interface IHintData {
     value: string;
     filter?: string[];
     focus?: boolean;
+    slashItem?: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginSlashItem;
+    slashPluginName?: string;
 }
 
 interface IHintExtend {
@@ -526,6 +528,13 @@ type TProtyleRuntime = import("../../../enterprise/packages/protyle-browser/src/
     HTMLElement
 >;
 
+/** 旧壳的显式本地运行时；localAppId 只标识旧壳作用域，绝不映射为企业 spaceId。 */
+type TProtyleUpstreamLocalRuntime = Omit<TProtyleRuntime, "transport"> & {
+    readonly localAppId: string,
+    readonly transport:
+        import("../protyle/runtime/upstreamLocalTransport").UpstreamLocalProtyleTransport<IWebSocketData>,
+};
+
 /** Core 入口保留 Factory 的 Runtime 泛型；具体能力由 bound Session 的唯一实例提供。 */
 type TProtyleSession = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleSession<any>;
 
@@ -545,12 +554,10 @@ type ProtyleApplicationPort = import("../../../enterprise/packages/protyle-brows
     IProtyle
 >;
 
-/** 旧壳调用点的结构化过渡类型；缺少新设置时由 Core 显式拒绝，不回退到全局状态。 */
+/** 旧壳调用点的最小应用端口；内容能力必须由构造生命周期显式提供。 */
 type TProtyleLegacyApplicationPort = {
     readonly localization: TProtyleLocalizationPort;
-    readonly protyleEditors: TProtyleEditorRegistry;
-    readonly protyleHost: TProtyleHostPort;
-    readonly protylePlugins: TProtylePluginPort;
+    readonly settings: TProtyleApplicationSettingsPort;
 };
 
 type TProtyleHostPort = import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleHostPort;
@@ -583,15 +590,16 @@ type TProtyleBoundLifecycle = {
     onContentUnavailable?: () => void,
 };
 
-/** 旧构造点只用于迁移期类型检查；bound 实例没有 Session 时会在 Core 边界显式失败。 */
-type TProtyleLegacyBoundLifecycle = Omit<TProtyleBoundLifecycle, "session"> & {
+type TProtyleUpstreamBoundLifecycle = Omit<TProtyleBoundLifecycle, "session"> & {
     session?: never,
+    upstreamLocalRuntime: TProtyleUpstreamLocalRuntime,
 };
 
 type TProtyleLocalOnlyLifecycle = {
     surface: "embedded",
     participation: "detached",
     content: TProtyleLocalOnlyContent,
+    upstreamLocalRuntime: TProtyleUpstreamLocalRuntime,
 };
 
 interface IProtyle {
@@ -614,7 +622,7 @@ interface IProtyle {
     ownerSignal?: AbortSignal,
     requestSignal: AbortSignal,
     readonlyState: TProtyleReadOnlyState,
-    /** 旧调用方的类型视图；新的内容能力必须从 session/runtime 读取。 */
+    /** 旧调用方的类型视图；内容能力只从 runtime 读取。 */
     app: import("../index").App,
     application: ProtyleApplicationPort | TProtyleLegacyApplicationPort,
     localization: TProtyleLocalizationPort,
@@ -622,9 +630,8 @@ interface IProtyle {
     editors: TProtyleEditorRegistry,
     host: TProtyleEditorHostPort,
     plugins: TProtylePluginPort,
-    runtime?: TProtyleRuntime,
+    runtime: TProtyleRuntime | TProtyleUpstreamLocalRuntime,
     session?: TProtyleSession,
-    transport?: import("../../../enterprise/packages/protyle-browser/src/contracts").ProtyleTransport<IWebSocketData>,
     surface: TProtyleSurface,
     participation: TProtyleParticipation,
     content: TProtyleBoundContent | TProtyleLocalOnlyContent,

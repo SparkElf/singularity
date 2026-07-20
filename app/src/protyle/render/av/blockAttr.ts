@@ -278,8 +278,8 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                 ghostElement.innerHTML = target.nextElementSibling.outerHTML;
                 ghostElement.setAttribute("style", "width: 160px;position:fixed;opacity:.1;");
                 document.body.append(ghostElement);
-                const ghostHandle = protyle.session!.runtime.overlays.add(ghostElement);
-                protyle.session!.runtime.overlays.bringToFront(ghostElement);
+                const ghostHandle = protyle.runtime.overlays.add(ghostElement);
+                protyle.runtime.overlays.bringToFront(ghostElement);
                 event.dataTransfer.setDragImage(ghostElement, 0, 0);
                 if (touchDragOwner.active) {
                     touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
@@ -484,7 +484,7 @@ class="fn__flex-1 fn__flex${["url", "text", "number", "email", "phone", "block"]
                     };
                 }
                 const mutation = beginAVRenderLoad(protyle, item);
-                void protyle.transport!.request<IWebSocketData>("/api/av/setAttributeViewBlockAttr", {
+                void protyle.runtime.transport.request<IWebSocketData>("/api/av/setAttributeViewBlockAttr", {
                     avID: item.parentElement.dataset.avId,
                     keyID: item.parentElement.dataset.colId,
                     itemID: item.parentElement.dataset.rowId,

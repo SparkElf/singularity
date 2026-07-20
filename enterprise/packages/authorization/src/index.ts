@@ -12,6 +12,8 @@ export {
   type KernelContentMode,
   kernelContentModes,
   type KernelIdentityRequirement,
+  KERNEL_BACKUP_MAXIMUM_BYTES_HEADER,
+  KERNEL_BACKUP_MAXIMUM_FILES_HEADER,
   type KernelRoutePolicy,
   kernelRoutePolicies,
   spaceRoleAllowsKernelAction,

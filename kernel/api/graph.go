@@ -149,6 +149,11 @@ func getLocalGraph(c *gin.Context) {
 		ret.Msg = "graph configuration is unavailable"
 		return
 	}
+	if enterprise, supportsGraph := enterpriseDiscoveryGraphCapability(c); enterprise && !supportsGraph {
+		ret.Code = -1
+		ret.Msg = "document graph is unavailable for this notebook"
+		return
+	}
 
 	documentScope, enterprise, identityOK := enterpriseDiscoveryDocumentScopeFromRequest(c, arg, "id")
 	if enterprise && !identityOK {

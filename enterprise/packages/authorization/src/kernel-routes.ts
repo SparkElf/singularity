@@ -31,6 +31,11 @@ export interface KernelRoutePolicy {
   readonly responseHeaders: readonly string[];
 }
 
+export const KERNEL_BACKUP_MAXIMUM_BYTES_HEADER =
+  "x-singularity-backup-maximum-bytes";
+export const KERNEL_BACKUP_MAXIMUM_FILES_HEADER =
+  "x-singularity-backup-maximum-files";
+
 const JSON_REQUEST_HEADERS = ["accept", "content-type"] as const;
 const JSON_RESPONSE_HEADERS = ["content-type"] as const;
 const RESOURCE_REQUEST_HEADERS = [
@@ -333,7 +338,10 @@ export const kernelRoutePolicies: readonly KernelRoutePolicy[] = Object.freeze([
     identity: "service",
     method: "POST",
     path: "/internal/enterprise/backup",
-    requestHeaders: [],
+    requestHeaders: [
+      KERNEL_BACKUP_MAXIMUM_BYTES_HEADER,
+      KERNEL_BACKUP_MAXIMUM_FILES_HEADER,
+    ],
     responseHeaders: [
       "cache-control",
       "content-length",

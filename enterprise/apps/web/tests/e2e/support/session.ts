@@ -42,7 +42,7 @@ export async function sessionRequest(
   options: SessionRequestOptions,
 ): Promise<SessionRequestResult> {
   const csrfToken = await sessionCsrfToken(page);
-  return page.evaluate(async ({ body, headers: extraHeaders, method, path, csrfToken }) => {
+  const result = await page.evaluate(async ({ body, headers: extraHeaders, method, path, csrfToken }) => {
     const headers = new Headers({
       Accept: "application/json",
       "X-CSRF-Token": csrfToken,
@@ -58,17 +58,28 @@ export async function sessionRequest(
       headers,
       method,
     });
-    const text = await response.text();
-    let parsed: unknown = undefined;
-    if (text.length > 0) {
-      try {
-        parsed = JSON.parse(text) as unknown;
-      } catch {
-        parsed = text;
-      }
-    }
-    return { body: parsed, status: response.status };
+    return {
+      contentType: response.headers.get("content-type"),
+      status: response.status,
+      text: await response.text(),
+    };
   }, { ...options, csrfToken, path });
+  let body: unknown = undefined;
+  if (result.text.length > 0) {
+    const mediaType = result.contentType?.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType === "application/json" || mediaType?.endsWith("+json")) {
+      try {
+        body = JSON.parse(result.text) as unknown;
+      } catch (error) {
+        throw new Error(`P5 E2E ${path} returned malformed JSON`, {
+          cause: error,
+        });
+      }
+    } else {
+      body = result.text;
+    }
+  }
+  return { body, status: result.status };
 }
 
 export async function loginAs(
@@ -100,6 +111,15 @@ export async function openSpaceEditor(
     await spaceLink.click();
   }
   await expect(page).toHaveURL(targetUrl, { timeout: 20_000 });
+  const directory = page.getByRole("navigation", { name: "文档目录" });
+  const documentButton = directory.getByRole("button", {
+    exact: true,
+    name: state.documentTitle,
+  });
+  await expect(documentButton).toBeVisible({ timeout: 30_000 });
+  if (await documentButton.getAttribute("aria-current") !== "page") {
+    await documentButton.click();
+  }
   const editor = page.getByTestId("protyle-host");
   await expect(editor).toBeVisible({ timeout: 30_000 });
   await expect(editor.locator(".protyle-wysiwyg")).toBeVisible({ timeout: 30_000 });

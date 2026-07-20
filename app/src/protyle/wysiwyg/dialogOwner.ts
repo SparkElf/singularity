@@ -51,7 +51,7 @@ export const openProtyleDialog = (options: OpenProtyleDialogOptions): ProtyleDia
     container.append(closeButton, header, bodyElement);
     element.append(scrim, container);
 
-    const overlays = (options.protyle.session!.runtime as TProtyleRuntime).overlays;
+    const overlays = options.protyle.runtime.overlays;
     let overlayHandle!: ProtyleOverlayHandle;
     let closed = false;
     const close = () => {

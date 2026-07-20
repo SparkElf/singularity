@@ -11,8 +11,8 @@ import {
 } from "@singularity/contracts";
 
 export class AccessOperationInputError extends Error {
-  constructor() {
-    super("Access operation input is invalid");
+  constructor(options?: ErrorOptions) {
+    super("Access operation input is invalid", options);
     this.name = "AccessOperationInputError";
   }
 }
@@ -65,8 +65,8 @@ export async function parseAccessOperationInput(
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(payload);
     value = JSON.parse(text) as unknown;
-  } catch {
-    throw new AccessOperationInputError();
+  } catch (error) {
+    throw new AccessOperationInputError({ cause: error });
   } finally {
     payload.fill(0);
   }
@@ -113,7 +113,8 @@ export async function runAccessOperation(input: {
     }
     await writeLine(input.stdout, JSON.stringify(result.data));
     return accessOperationExitCodeByOutcome[result.data.outcome];
-  } catch {
+  } catch (error) {
+    console.error("[access-operation] execution failed", error);
     return writeFailedAccessOperation(input.stdout, input.stderr);
   }
 }

@@ -58,7 +58,7 @@ const requestEditorEvent = <TResponse>(
     body: unknown,
     intent: "read" | "write",
     identity = protyleContentIdentity(protyle),
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity,
     intent,
     signal: protyle.requestSignal,
@@ -743,8 +743,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                 document.body.append(ghostElement);
                 if (touchDragOwner.active) {
                     event.dataTransfer.setDragImage(ghostElement, 0, 0);
-                    const ghostHandle = protyle.runtime!.overlays.add(ghostElement);
-                    protyle.runtime!.overlays.bringToFront(ghostElement);
+                    const ghostHandle = protyle.runtime.overlays.add(ghostElement);
+                    protyle.runtime.overlays.bringToFront(ghostElement);
                     touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
                 } else {
                     // 桌面端隐藏原生 ghost，改用自定义双区跟随框
@@ -835,8 +835,8 @@ export const dropEvent = (protyle: IProtyle, editorElement: HTMLElement) => {
                     document.body.append(ghostElement);
                     event.dataTransfer.setDragImage(ghostElement, -10, -10);
                     if (touchDragOwner.active) {
-                        const ghostHandle = protyle.runtime!.overlays.add(ghostElement);
-                        protyle.runtime!.overlays.bringToFront(ghostElement);
+                        const ghostHandle = protyle.runtime.overlays.add(ghostElement);
+                        protyle.runtime.overlays.bringToFront(ghostElement);
                         touchDragOwner.registerGhost(ghostElement, ghostHandle, protyle.requestSignal);
                     } else {
                         setTimeout(() => {

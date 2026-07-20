@@ -11,6 +11,7 @@ import {
 } from "@singularity/database";
 import { z } from "zod";
 
+import { kernelErrorContext } from "./error-context.js";
 import { SpaceConnectionRegistry } from "./space-connection.registry.js";
 
 export const ACCESS_CHANGE_CHANNEL = "singularity_access_changed";
@@ -94,6 +95,7 @@ export class AccessChangedListener
   readonly #logger = new Logger("AccessChangedListener");
   #failed = false;
   #subscription: DatabaseNotificationSubscription | undefined;
+  #subscriptionClose: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly database: DatabaseRuntime,
@@ -105,15 +107,15 @@ export class AccessChangedListener
       this.#subscription = await this.database.listen(
         ACCESS_CHANGE_CHANNEL,
         (payload) => this.#consume(payload),
-        () => this.#fail("listener-failed"),
+        (error) => this.#fail("listener-failed", error),
       );
-    } catch {
-      this.#fail("listener-unavailable");
+    } catch (error) {
+      this.#fail("listener-unavailable", error);
       return;
     }
-    if (!this.connections.markNotificationListenerReady()) {
-      await this.#subscription.close();
-      this.#subscription = undefined;
+    if (!this.connections.markNotificationListenerReady("access")) {
+      this.#failed = true;
+      await this.#closeSubscription();
       return;
     }
     this.#logger.log({
@@ -124,10 +126,8 @@ export class AccessChangedListener
 
   async onApplicationShutdown(): Promise<void> {
     this.#failed = true;
-    this.connections.failNotificationListener();
-    const subscription = this.#subscription;
-    this.#subscription = undefined;
-    await subscription?.close();
+    this.connections.failNotificationListener("access");
+    await this.#closeSubscription();
   }
 
   #consume(payload: string): void {
@@ -137,12 +137,16 @@ export class AccessChangedListener
     let decoded: unknown;
     try {
       decoded = JSON.parse(payload);
-    } catch {
-      decoded = undefined;
+    } catch (error) {
+      this.#fail(
+        "invalid-event",
+        new Error("Access notification event is invalid", { cause: error }),
+      );
+      return;
     }
     const parsed = accessChangeNotificationSchema.safeParse(decoded);
     if (!parsed.success) {
-      this.#fail("invalid-event");
+      this.#fail("invalid-event", parsed.error);
       return;
     }
     if (parsed.data.kind === "close") {
@@ -183,15 +187,34 @@ export class AccessChangedListener
 
   #fail(
     outcome: "invalid-event" | "listener-failed" | "listener-unavailable",
+    error: unknown,
   ): void {
     if (this.#failed) {
       return;
     }
     this.#failed = true;
     this.#logger.error({
+      ...kernelErrorContext(error, "Access notification lifecycle failed"),
       event: "access.notification",
       outcome,
     });
-    this.connections.failNotificationListener();
+    this.connections.failNotificationListener("access");
+    void this.#closeSubscription();
+  }
+
+  #closeSubscription(): Promise<void> {
+    const subscription = this.#subscription;
+    this.#subscription = undefined;
+    if (subscription === undefined) {
+      return this.#subscriptionClose;
+    }
+    this.#subscriptionClose = subscription.close().catch((error: unknown) => {
+      this.#logger.error({
+        ...kernelErrorContext(error, "Access notification close failed"),
+        event: "access.notification",
+        outcome: "close-failed",
+      });
+    });
+    return this.#subscriptionClose;
   }
 }

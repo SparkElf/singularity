@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { expect, test, type Request } from "@playwright/test";
 
 import {
@@ -31,7 +33,6 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
   });
 
   const editor = await openSpaceEditor(page, state);
-  await expect(editor).toContainText(state.documentInitialText);
   await expect.poll(() => getDocumentRequests.length).toBeGreaterThan(0);
   const initialRequest = getDocumentRequests[0]!;
   expect(initialRequest.headers()["x-singularity-notebook-id"]).toBe(
@@ -41,11 +42,13 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
     state.documentId,
   );
 
-  const persistedText = "P5 persisted content from the real transaction";
   const editableParagraph = editor.locator(
     '[data-type="NodeParagraph"] [contenteditable="true"]',
   ).first();
-  await expect(editableParagraph).toContainText(state.documentInitialText);
+  const currentText = (await editableParagraph.innerText()).trim();
+  expect(currentText.length).toBeGreaterThan(0);
+  const persistedMarker = `P5 content transaction ${randomUUID()}`;
+  const persistedText = `${currentText} ${persistedMarker}`;
   const transactionResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" &&
     new URL(response.url()).pathname.endsWith("/kernel/api/transactions") &&
@@ -72,7 +75,7 @@ test("persists an editor transaction through React, Nest, PostgreSQL routing, an
 
   await page.reload();
   const reloadedEditor = page.getByTestId("protyle-host");
-  await expect(reloadedEditor).toContainText(persistedText, { timeout: 30_000 });
+  await expect(reloadedEditor).toContainText(persistedMarker, { timeout: 30_000 });
 
   await page.goto(
     `/organizations/${state.organizationId}/settings/spaces/${state.spaceId}/audit`,

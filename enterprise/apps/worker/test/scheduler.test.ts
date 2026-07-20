@@ -91,10 +91,19 @@ describe("WorkerJobScheduler declared producer cadence", () => {
       }).run(new AbortController().signal),
     ).rejects.toBe(persistenceFailure);
     expect(entries).toContainEqual({
+      error: persistenceFailure,
       event: "worker.producer",
       kind: "sample-kernel",
       outcome: "failed",
     });
+    const failureLog = entries.find(
+      (entry) =>
+        entry.event === "worker.producer" && entry.outcome === "failed",
+    );
+    expect(failureLog?.error).toBe(persistenceFailure);
+    expect((failureLog?.error as Error).stack).toContain(
+      "producer persistence unavailable",
+    );
     expect(entries).toContainEqual({
       event: "worker.scheduler",
       outcome: "stopped",

@@ -103,8 +103,8 @@ describe("createProtylePluginPort", () => {
       }),
     ]);
     const editor = { id: "editor-a" };
-    const event = new KeyboardEvent("keydown", { key: "K" });
-    const nodeElement = document.createElement("div");
+    const event = { key: "K", type: "keydown" } as unknown as KeyboardEvent;
+    const nodeElement = {} as HTMLElement;
     const slashItems: Array<{ item: object; pluginName: string }> = [];
 
     expect(port.runEditorCommand(
@@ -124,15 +124,15 @@ describe("createProtylePluginPort", () => {
     ]);
     expect(port.runSlashItem(
       "second",
-      "shared",
+      secondSlash,
       editor,
       nodeElement,
     )).toBe(true);
     expect(firstSlashRun).not.toHaveBeenCalled();
     expect(secondSlashRun).toHaveBeenCalledWith(editor, nodeElement);
     expect(port.runSlashItem(
-      "missing",
-      "shared",
+      "second",
+      firstSlash,
       editor,
       nodeElement,
     )).toBe(false);
@@ -155,7 +155,7 @@ describe("createProtylePluginPort", () => {
       return {
         pluginField: "from-first",
         textPlain: "first",
-      } as Partial<TPayload>;
+      } as unknown as Partial<TPayload>;
     };
     const secondPaste = <TPayload extends object>(
       _editor: TestEditor,
@@ -170,7 +170,7 @@ describe("createProtylePluginPort", () => {
         textPlain: "first",
       });
       order.push("second");
-      return { textPlain: "second" } as Partial<TPayload>;
+      return { textPlain: "second" } as unknown as Partial<TPayload>;
     };
     const port = createProtylePluginPort<TestOptions, TestToolbar, TestEditor>([
       contribution({ name: "first", transformPaste: firstPaste }),
@@ -225,5 +225,31 @@ describe("createProtylePluginPort", () => {
     expect(() => port.extendOptions({ order: [] })).toThrowError(
       /cannot use the plugin port after disposal/,
     );
+  });
+
+  it("logs the original disposal error and still releases later plugins", async () => {
+    const failure = new Error("plugin disposal sentinel");
+    const releaseLaterPlugin = vi.fn();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const port = createProtylePluginPort<TestOptions, TestToolbar, TestEditor>([
+      contribution({
+        dispose: () => {
+          throw failure;
+        },
+        name: "failing",
+      }),
+      contribution({ dispose: releaseLaterPlugin, name: "later" }),
+    ]);
+
+    try {
+      await expect(port.dispose()).rejects.toMatchObject({ errors: [failure] });
+      expect(errorLog).toHaveBeenCalledWith(
+        "[protyle.plugins] contribution disposal failed",
+        failure,
+      );
+      expect(releaseLaterPlugin).toHaveBeenCalledOnce();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });

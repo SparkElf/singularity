@@ -412,10 +412,12 @@ model KernelRuntimeEndpoint {
   port             Int
   serverName       String        @map("server_name")
   tlsProfile       String        @map("tls_profile")
+  runtimeOwner     String        @map("runtime_owner")
   kernelInstance   KernelInstance @relation(fields: [kernelInstanceId, spaceId], references: [id, spaceId], onDelete: Restrict, onUpdate: Cascade, map: "kernel_runtime_endpoints_kernel_instance_id_space_id_fkey")
 
   @@unique([kernelInstanceId, spaceId], map: "kernel_runtime_endpoints_kernel_instance_id_space_id_key")
   @@index([spaceId], map: "kernel_runtime_endpoints_space_id_idx")
+  @@index([runtimeOwner], map: "kernel_runtime_endpoints_runtime_owner_idx")
   @@map("kernel_runtime_endpoints")
 }
 
@@ -560,6 +562,9 @@ model SpaceBackup {
   kernelVersion       String?                @map("kernel_version")
   sha256              String?
   sizeBytes           BigInt?                @map("size_bytes")
+  stagedFormatVersion Int?                   @map("staged_format_version")
+  stagedKernelVersion String?                @map("staged_kernel_version")
+  stagedSha256        String?                @map("staged_sha256")
   createdByUserId     String                 @map("created_by_user_id") @db.Uuid
   createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   completedAt         DateTime?              @map("completed_at") @db.Timestamptz(3)

@@ -280,13 +280,16 @@ export const SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA =
 export const CREATE_SPACE_REQUEST_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   name: spaceNameOpenApiSchema,
 });
-export const UPDATE_SPACE_REQUEST_OPENAPI_SCHEMA = strictObjectOpenApiSchema(
-  {
-    name: spaceNameOpenApiSchema,
-    status: manageableSpaceStatusOpenApiSchema,
-  },
-  [],
-);
+export const UPDATE_SPACE_REQUEST_OPENAPI_SCHEMA = {
+  ...strictObjectOpenApiSchema(
+    {
+      name: spaceNameOpenApiSchema,
+      status: manageableSpaceStatusOpenApiSchema,
+    },
+    [],
+  ),
+  minProperties: 1,
+};
 export const MANAGED_SPACE_SUMMARY_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   organizationId: UUID_OPENAPI_SCHEMA,
   spaceId: UUID_OPENAPI_SCHEMA,

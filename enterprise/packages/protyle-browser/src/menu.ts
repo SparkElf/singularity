@@ -1,5 +1,6 @@
 import type { ProtyleMenuHandle, ProtyleMenuPort } from "./contracts.ts";
 
+/** 创建菜单能力端口，跟踪每个打开句柄并在会话销毁时关闭全部菜单。 */
 export function createProtyleMenuPort<TMenu>(
   openMenu: (close: () => void) => TMenu,
   closeMenu: (menu: TMenu) => void,
@@ -48,6 +49,7 @@ export function createProtyleMenuPort<TMenu>(
         try {
           handle.close();
         } catch (error) {
+          console.error("[protyle.menu] menu disposal failed", error);
           failures.push(error);
         }
       });

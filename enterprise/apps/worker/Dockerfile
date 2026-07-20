@@ -73,6 +73,7 @@ ENV HOME=/var/lib/singularity-worker/home
 ENV SINGULARITY_WORKER_OBJECT_STORE_ROOT=/var/lib/singularity-worker/objects
 ENV SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL=/opt/singularity-kernel/kernel
 ENV SINGULARITY_WORKER_RESTORE_KERNEL_BINARY=/opt/singularity-kernel/kernel
+ENV SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS=127.0.0.1
 ENV SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY=/opt/singularity-kernel
 ENV SINGULARITY_WORKER_RESTORE_RUNTIME_ROOT=/var/lib/singularity-worker/runtime
 
@@ -86,6 +87,6 @@ COPY --chown=65532:65532 LICENSE NOTICE /usr/share/licenses/singularity/
 
 USER 65532
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error();for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch{process.exit(1)}"]
+  CMD ["/nodejs/bin/node", "-e", "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error('Worker runtime is not Node 24');for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch(error){console.error(error);process.exit(1)}"]
 
 CMD ["dist/main.js"]

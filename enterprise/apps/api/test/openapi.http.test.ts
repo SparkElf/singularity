@@ -224,8 +224,13 @@ interface OpenApiResponse {
   >;
 }
 
+interface OpenApiRequestBody {
+  content?: Record<string, { schema: unknown }>;
+}
+
 interface OpenApiOperation {
   parameters?: OpenApiParameter[];
+  requestBody?: OpenApiRequestBody;
   responses: Record<string, OpenApiResponse>;
   security?: Array<Record<string, unknown[]>>;
 }
@@ -252,6 +257,10 @@ function operation(
 
 function responseSchema(response: OpenApiResponse | undefined): unknown {
   return response?.content?.["application/json"]?.schema;
+}
+
+function requestBodySchema(current: OpenApiOperation): unknown {
+  return current.requestBody?.content?.["application/json"]?.schema;
 }
 
 describe("generated OpenAPI HTTP contract", () => {
@@ -360,6 +369,18 @@ describe("generated OpenAPI HTTP contract", () => {
       schema: { minimum: 1, type: "integer" },
     });
 
+    const localInvitation = operation(
+      document,
+      AUTH_INVITATION_ACCEPT_LOCAL_PATH,
+      "post",
+    );
+    expect(
+      localInvitation.responses["429"]?.headers?.["Retry-After"],
+    ).toMatchObject({
+      required: true,
+      schema: { minimum: 1, type: "integer" },
+    });
+
     const logout = operation(document, AUTH_LOGOUT_PATH, "post");
     expect(logout.parameters).toContainEqual({
       in: "header",
@@ -375,7 +396,38 @@ describe("generated OpenAPI HTTP contract", () => {
     });
   });
 
+  test("publishes exact local invitation and partial update request schemas", () => {
+    expect(
+      requestBodySchema(
+        operation(document, AUTH_INVITATION_ACCEPT_LOCAL_PATH, "post"),
+      ),
+    ).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        password: { maxLength: 128, minLength: 12, type: "string" },
+      },
+      required: ["invitationToken", "password"],
+      type: "object",
+    });
+
+    for (const path of [
+      ORGANIZATION_MEMBER_PATH_TEMPLATE,
+      ORGANIZATION_GROUP_PATH_TEMPLATE,
+      ORGANIZATION_SPACE_PATH_TEMPLATE,
+    ]) {
+      expect(requestBodySchema(operation(document, path, "patch"))).toMatchObject({
+        minProperties: 1,
+        type: "object",
+      });
+    }
+  });
+
   test.each([
+    {
+      method: "post",
+      path: AUTH_INVITATION_ACCEPT_LOCAL_PATH,
+      statuses: [200, 400, 403, 404, 409, 429, 503],
+    },
     {
       method: "post",
       path: AUTH_LOGIN_PATH,
@@ -390,6 +442,16 @@ describe("generated OpenAPI HTTP contract", () => {
       method: "post",
       path: AUTH_LOGOUT_PATH,
       statuses: [204, 401, 403, 503],
+    },
+    {
+      method: "post",
+      path: ORGANIZATION_MEMBER_SESSIONS_PATH_TEMPLATE,
+      statuses: [204, 400, 401, 403, 404, 409, 503],
+    },
+    {
+      method: "delete",
+      path: ORGANIZATION_INVITATION_PATH_TEMPLATE,
+      statuses: [204, 400, 401, 403, 404, 409, 503],
     },
     {
       method: "get",

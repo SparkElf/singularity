@@ -11,6 +11,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,7 +31,7 @@ const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
 const SPACE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SPACE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
-const CSRF_TOKEN = "A".repeat(43);
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const MANAGEMENT_ACCESS_PATH = "/api/v1/enterprise-management-access";
 
 const createRouteTestProtyleFactory = vi.fn<SpaceProtyleFactoryProvider>(() => ({
@@ -173,6 +174,9 @@ describe("S1 identity and space routes", () => {
         });
         return jsonResponse({ csrfToken: CSRF_TOKEN });
       }
+      if (path === "/api/v1/auth/oidc/providers") {
+        return jsonResponse({ providers: [] });
+      }
       if (path === "/api/v1/spaces") {
         return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
       }
@@ -247,6 +251,99 @@ describe("S1 identity and space routes", () => {
     expect(startRequests).toBe(1);
   });
 
+  it("cancels an OIDC start when local login takes ownership", async () => {
+    const providerId = "33333333-3333-4333-8333-333333333333";
+    const oidcStart = deferred<Response>();
+    let oidcSignal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input, init) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({
+            providers: [{ name: "Corporate SSO", providerId }],
+          });
+        }
+        if (path === "/api/v1/auth/oidc/start") {
+          oidcSignal = init?.signal;
+          return oidcStart.promise;
+        }
+        if (path === "/api/v1/auth/login") {
+          return jsonResponse({ csrfToken: CSRF_TOKEN });
+        }
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [] });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/login");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Corporate SSO" }),
+    );
+    await waitFor(() => expect(oidcSignal).toBeDefined());
+    fireEvent.change(screen.getByLabelText("账号"), {
+      target: { value: "owner@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "尚未获得空间访问权限" }),
+    ).toBeVisible();
+    expect(oidcSignal?.aborted).toBe(true);
+    await act(async () => {
+      oidcStart.resolve(
+        jsonResponse({ authorizationUrl: "https://idp.example/authorize" }),
+      );
+      await oidcStart.promise;
+    });
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
+    expect(
+      screen.getByRole("heading", { name: "尚未获得空间访问权限" }),
+    ).toBeVisible();
+  });
+
+  it("aborts an in-flight OIDC start when the login page unmounts", async () => {
+    const providerId = "33333333-3333-4333-8333-333333333333";
+    const oidcStart = deferred<Response>();
+    let oidcSignal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input, init) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({
+            providers: [{ name: "Corporate SSO", providerId }],
+          });
+        }
+        if (path === "/api/v1/auth/oidc/start") {
+          oidcSignal = init?.signal;
+          return oidcStart.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    const { unmount } = renderApp("/login");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Corporate SSO" }),
+    );
+    await waitFor(() => expect(oidcSignal).toBeDefined());
+
+    unmount();
+    expect(oidcSignal?.aborted).toBe(true);
+    await act(async () => {
+      oidcStart.resolve(
+        jsonResponse({ authorizationUrl: "https://idp.example/authorize" }),
+      );
+      await oidcStart.promise;
+    });
+  });
+
   it("rejects an external returnTo and shows the authorized empty state", async () => {
     vi.stubGlobal(
       "fetch",
@@ -296,7 +393,7 @@ describe("S1 identity and space routes", () => {
     queryClient.setQueryData(authorizedSpacesQueryKey, {
       spaces: [SPACE_A_SUMMARY, SPACE_B_SUMMARY],
     });
-    useCsrfStore.setState({ csrfToken: "B".repeat(43) });
+    useCsrfStore.setState({ csrfToken: "B".repeat(42) + "I" });
 
     fireEvent.change(screen.getByLabelText("账号"), {
       target: { value: "new-owner@example.com" },
@@ -384,7 +481,7 @@ describe("S1 identity and space routes", () => {
     queryClient.setQueryData(["current-identity"], { active: true });
 
     await act(async () => {
-      firstLogin.resolve(jsonResponse({ csrfToken: "B".repeat(43) }));
+      firstLogin.resolve(jsonResponse({ csrfToken: "B".repeat(42) + "I" }));
       await firstLogin.promise;
     });
 
@@ -402,6 +499,9 @@ describe("S1 identity and space routes", () => {
       if (path === "/api/v1/auth/login") {
         firstSignal = init?.signal;
         return firstLogin.promise;
+      }
+      if (path === "/api/v1/auth/oidc/providers") {
+        return jsonResponse({ providers: [] });
       }
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -426,7 +526,11 @@ describe("S1 identity and space routes", () => {
 
     expect(await screen.findByText("请输入有效的账号和密码。")).toBeVisible();
     expect(firstSignal?.aborted).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => requestPath(input) === "/api/v1/auth/login",
+      ),
+    ).toHaveLength(1);
     queryClient.setQueryData(["current-page"], { active: true });
 
     await act(async () => {
@@ -754,7 +858,15 @@ describe("S1 identity and space routes", () => {
     expect(
       screen.getByRole("heading", { name: "无法加载空间" }),
     ).toBeVisible();
-    expect(screen.getByText("无法连接到服务，请检查网络后重试。")).toBeVisible();
+    const spaceFailure = screen
+      .getByRole("heading", { name: "无法加载空间" })
+      .closest('[data-slot="empty"]');
+    if (!(spaceFailure instanceof HTMLElement)) {
+      throw new Error("空间加载失败状态缺少 empty 容器");
+    }
+    expect(
+      within(spaceFailure).getByText("无法连接到服务，请检查网络后重试。"),
+    ).toBeVisible();
     expect(screen.queryByText("深空知识空间")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -911,9 +1023,164 @@ describe("S1 identity and space routes", () => {
 
     expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
     await waitFor(() => {
-      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
       expect(useCsrfStore.getState().csrfToken).toBeNull();
     });
+  });
+
+  it("keeps Query and CSRF state until an active space Session is disposed", async () => {
+    let runtimeUnauthenticated = false;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
+        }
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return runtimeUnauthenticated
+            ? jsonResponse(problem("unauthenticated", 401), 401)
+            : jsonResponse({
+                kernelState: "ready",
+                organizationId: ORGANIZATION_A,
+                role: "admin",
+                spaceId: SPACE_A,
+              });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    const queryClient = createTestQueryClient();
+    let observedDisposedSession = false;
+    let queryAtDisposal: unknown;
+    let csrfAtDisposal: string | null = null;
+    vi.spyOn(console, "info").mockImplementation((label, context) => {
+      const lifecycle = context as Record<string, unknown> | undefined;
+      if (
+        label === "[protyle.lifecycle]" &&
+        lifecycle?.phase === "dispose" &&
+        lifecycle.result === "completed"
+      ) {
+        observedDisposedSession = true;
+        queryAtDisposal = queryClient.getQueryData(["sensitive"]);
+        csrfAtDisposal = useCsrfStore.getState().csrfToken;
+      }
+    });
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A), queryClient);
+    expect(
+      await screen.findByRole("heading", { name: "选择文档" }),
+    ).toBeVisible();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+    useCsrfStore.setState({ csrfToken: CSRF_TOKEN });
+
+    runtimeUnauthenticated = true;
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        exact: true,
+        queryKey: spaceRuntimeQueryKey({
+          organizationId: ORGANIZATION_A,
+          spaceId: SPACE_A,
+        }),
+      });
+    });
+
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
+    expect(observedDisposedSession).toBe(true);
+    expect(queryAtDisposal).toEqual({ title: "private" });
+    expect(csrfAtDisposal).toBe(CSRF_TOKEN);
+    await waitFor(() => {
+      expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
+      expect(useCsrfStore.getState().csrfToken).toBeNull();
+    });
+  });
+
+  it("does not let an old logout dispose a new space Session in the same auth revision", async () => {
+    const logoutResponse = deferred<Response>();
+    let logoutRequests = 0;
+    const createdSpaces: string[] = [];
+    const disposedSpaces: string[] = [];
+    const logoutErrors: unknown[] = [];
+    vi.spyOn(console, "error").mockImplementation((label, _context, error) => {
+      if (label === "[auth.logout]") {
+        logoutErrors.push(error);
+      }
+    });
+    vi.spyOn(console, "info").mockImplementation((label, context) => {
+      const lifecycle = context as Record<string, unknown> | undefined;
+      if (label !== "[protyle.lifecycle]") {
+        return;
+      }
+      if (lifecycle?.phase === "create" && lifecycle.result === "completed") {
+        createdSpaces.push(String(lifecycle.spaceId));
+      }
+      if (lifecycle?.phase === "dispose" && lifecycle.result === "completed") {
+        disposedSpaces.push(String(lifecycle.spaceId));
+      }
+    });
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/spaces") {
+          return jsonResponse({ spaces: [SPACE_A_SUMMARY, SPACE_B_SUMMARY] });
+        }
+        if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
+          return jsonResponse({
+            kernelState: "ready",
+            organizationId: ORGANIZATION_A,
+            role: "admin",
+            spaceId: SPACE_A,
+          });
+        }
+        if (path === runtimePath(ORGANIZATION_B, SPACE_B)) {
+          return jsonResponse({
+            kernelState: "ready",
+            organizationId: ORGANIZATION_B,
+            role: "editor",
+            spaceId: SPACE_B,
+          });
+        }
+        if (path === "/api/v1/auth/logout") {
+          logoutRequests += 1;
+          return logoutResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    const queryClient = createTestQueryClient();
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    renderApp(spacePath(ORGANIZATION_A, SPACE_A), queryClient);
+    expect(
+      await screen.findByRole("heading", { name: "选择文档" }),
+    ).toBeVisible();
+    await waitFor(() => expect(createdSpaces).toContain(SPACE_A));
+
+    fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    await waitFor(() => expect(logoutRequests).toBe(1));
+    fireEvent.click(screen.getByRole("link", { name: /星际工程手册/ }));
+    await waitFor(() => expect(createdSpaces).toContain(SPACE_B));
+    expect(
+      await screen.findByRole("heading", { name: "选择文档" }),
+    ).toBeVisible();
+    queryClient.setQueryData(["space-b-sensitive"], { title: "New session" });
+
+    await act(async () => {
+      logoutResponse.resolve(new Response(null, { status: 204 }));
+      await logoutResponse.promise;
+    });
+
+    expect(await screen.findByText("无法退出")).toBeVisible();
+    expect(screen.getByText("编辑者")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "登录奇点" })).toBeNull();
+    expect(disposedSpaces).toContain(SPACE_A);
+    expect(disposedSpaces).not.toContain(SPACE_B);
+    expect(logoutErrors).toEqual([
+      expect.objectContaining({ name: "AbortError" }),
+    ]);
+    expect(queryClient.getQueryData(["space-b-sensitive"])).toEqual({
+      title: "New session",
+    });
+    expect(useCsrfStore.getState().csrfToken).toBe(CSRF_TOKEN);
   });
 
   it("shows an unavailable content service without creating ready UI", async () => {

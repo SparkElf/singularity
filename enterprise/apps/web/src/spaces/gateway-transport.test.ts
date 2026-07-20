@@ -55,7 +55,30 @@ function createTransport(onRuntimeError = vi.fn()) {
 interface UploadResult {
   readonly body?: unknown;
   readonly headers?: Readonly<Record<string, string>>;
+  readonly rawBody?: string;
   readonly status: number;
+}
+
+interface GatewayErrorLogEntry {
+  readonly context: Record<string, unknown>;
+  readonly error: unknown;
+}
+
+function captureGatewayErrors(): GatewayErrorLogEntry[] {
+  const entries: GatewayErrorLogEntry[] = [];
+  vi.spyOn(console, "error").mockImplementation((label, context, error) => {
+    if (
+      label === "[protyle.gateway]" &&
+      typeof context === "object" &&
+      context !== null
+    ) {
+      entries.push({
+        context: context as Record<string, unknown>,
+        error,
+      });
+    }
+  });
+  return entries;
 }
 
 class TestXMLHttpRequest {
@@ -88,9 +111,9 @@ class TestXMLHttpRequest {
       throw new Error("No test upload response was configured");
     }
     this.status = result.status;
-    this.responseText = result.body === undefined
+    this.responseText = result.rawBody ?? (result.body === undefined
       ? ""
-      : JSON.stringify(result.body);
+      : JSON.stringify(result.body));
     this.#responseHeaders = new Map(
       Object.entries(result.headers ?? {}).map(([name, value]) => [
         name.toLowerCase(),
@@ -106,13 +129,15 @@ class TestXMLHttpRequest {
 function uploadResult(accessLost: boolean): UploadResult {
   return {
     body: { code: "not-found", requestId: REQUEST_ID, status: 404 },
-    headers: accessLost
-      ? {
-          [RUNTIME_ACCESS_LOST_HEADER_NAME]:
-            RUNTIME_ACCESS_LOST_HEADER_VALUE,
-        }
-      : undefined,
     status: 404,
+    ...(accessLost
+      ? {
+          headers: {
+            [RUNTIME_ACCESS_LOST_HEADER_NAME]:
+              RUNTIME_ACCESS_LOST_HEADER_VALUE,
+          },
+        }
+      : {}),
   };
 }
 
@@ -206,7 +231,86 @@ describe("SpaceGatewayTransport runtime access loss", () => {
     });
   });
 
+  it("freezes on a malformed unauthenticated response and retains its parsing stack", async () => {
+    const loggedErrors = captureGatewayErrors();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{", {
+      headers: { "X-Request-Id": REQUEST_ID },
+      status: 401,
+    })));
+    const { onRuntimeError, transport } = createTransport();
+
+    const [result] = await Promise.allSettled([
+      transport.request("/api/filetree/getDoc", {}, requestOptions),
+    ]);
+
+    expect(result?.status).toBe("rejected");
+    if (result?.status !== "rejected") {
+      throw new Error("Expected the malformed response to be rejected");
+    }
+    expect(result.reason).toBeInstanceOf(GatewayResponseError);
+    expect(result.reason).toMatchObject({
+      status: 401,
+      triggeringRequestId: REQUEST_ID,
+    });
+    expect(onRuntimeError).toHaveBeenCalledWith({
+      category: "unauthenticated",
+      documentId: DOCUMENT_ID,
+      triggeringRequestId: REQUEST_ID,
+      type: "runtime-error",
+    });
+    const parseEntry = loggedErrors.find(
+      ({ context }) => context.phase === "problem-response-json",
+    );
+    const gatewayError = result.reason as unknown as { readonly cause?: unknown };
+    expect(parseEntry?.error).toBe(gatewayError.cause);
+    expect(parseEntry?.error).toBeInstanceOf(SyntaxError);
+    expect((parseEntry?.error as Error).stack).toContain(
+      (parseEntry?.error as Error).message,
+    );
+  });
+
+  it("freezes on a malformed forbidden upload and retains its parsing stack", async () => {
+    const loggedErrors = captureGatewayErrors();
+    TestXMLHttpRequest.results = [{
+      headers: { "X-Request-Id": REQUEST_ID },
+      rawBody: "{",
+      status: 403,
+    }];
+    vi.stubGlobal("XMLHttpRequest", TestXMLHttpRequest);
+    const { onRuntimeError, transport } = createTransport();
+
+    const [result] = await Promise.allSettled([
+      transport.upload(new FormData(), { identity: requestOptions.identity }),
+    ]);
+
+    expect(result?.status).toBe("rejected");
+    if (result?.status !== "rejected") {
+      throw new Error("Expected the malformed upload response to be rejected");
+    }
+    expect(result.reason).toBeInstanceOf(GatewayResponseError);
+    expect(result.reason).toMatchObject({
+      status: 403,
+      triggeringRequestId: REQUEST_ID,
+    });
+    expect(onRuntimeError).toHaveBeenCalledWith({
+      category: "forbidden",
+      documentId: DOCUMENT_ID,
+      triggeringRequestId: REQUEST_ID,
+      type: "runtime-error",
+    });
+    const parseEntry = loggedErrors.find(
+      ({ context }) => context.phase === "upload-response-json",
+    );
+    const uploadError = result.reason as unknown as { readonly cause?: unknown };
+    expect(parseEntry?.error).toBe(uploadError.cause);
+    expect(parseEntry?.error).toBeInstanceOf(SyntaxError);
+    expect((parseEntry?.error as Error).stack).toContain(
+      (parseEntry?.error as Error).message,
+    );
+  });
+
   it("does not invent a request ID for WebSocket message or close failures", () => {
+    const loggedErrors = captureGatewayErrors();
     class TestWebSocket {
       static readonly CONNECTING = 0;
       static readonly OPEN = 1;
@@ -244,11 +348,19 @@ describe("SpaceGatewayTransport runtime access loss", () => {
       type: "protyle",
     });
     TestWebSocket.instances[0]!.emitMessage("{");
+    expect(TestWebSocket.instances[0]!.readyState).toBe(TestWebSocket.CLOSED);
     expect(first.onRuntimeError).toHaveBeenCalledWith({
       category: "kernel-unavailable",
       documentId: DOCUMENT_ID,
       type: "runtime-error",
     });
+    const parseEntry = loggedErrors.find(
+      ({ context }) => context.phase === "websocket-message-json",
+    );
+    expect(parseEntry?.error).toBeInstanceOf(SyntaxError);
+    expect((parseEntry?.error as Error).stack).toContain(
+      (parseEntry?.error as Error).message,
+    );
 
     const second = createTransport();
     second.transport.subscribe({

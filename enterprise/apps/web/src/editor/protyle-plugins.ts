@@ -65,7 +65,7 @@ const transformPaste = async <TPayload extends object>(
   await Promise.resolve();
   return {
     textPlain: current.textPlain.replaceAll("\u00a0", " "),
-  } as Partial<TPayload>;
+  } as unknown as Partial<TPayload>;
 };
 
 function createReactProtylePlugin(): ReactProtylePlugin {

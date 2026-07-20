@@ -114,7 +114,7 @@ export const refreshUndoButtons = (protyle: IProtyle) => {
 const postUndoRequest = async (protyle: IProtyle, identity: ProtyleContentIdentity,
                                url: string, data: IObject, intent: "read" | "write",
                                signal: AbortSignal): Promise<IWebSocketData> => {
-    const response = await (protyle.session!.runtime as TProtyleRuntime).transport.request<IWebSocketData>(
+    const response = await protyle.runtime.transport.request<IWebSocketData>(
         url,
         data,
         {identity, intent, signal},
@@ -202,7 +202,7 @@ const confirmCrossDocumentUndo = (protyle: IProtyle, names: string[], signal: Ab
     container.append(title, body);
     overlay.append(scrim, container);
 
-    const overlays = (protyle.session!.runtime as TProtyleRuntime).overlays;
+    const overlays = protyle.runtime.overlays;
     return new Promise<boolean>((resolve, reject) => {
         const handle = overlays.add(overlay);
         let settled = false;

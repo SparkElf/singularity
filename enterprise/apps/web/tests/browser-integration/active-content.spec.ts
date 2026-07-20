@@ -16,6 +16,7 @@ const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NOTEBOOK_ID = "20260719000000-noteb01";
 const DOCUMENT_ID = "20260719000100-docum01";
 const BLOCK_ID = "20260719000200-block01";
+const PLANTUML_BLOCK_ID = "20260719000300-plant01";
 const CSRF_TOKEN = "A".repeat(43);
 const MAX_REQUEST_DURATION_MS = 5_000;
 const GATEWAY_BASE_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
@@ -149,11 +150,12 @@ function documentResponse(): object {
     ...ACTIVE_ASSETS.map((asset) => assetLink(asset)),
   ].join(" ");
   const image = `<span contenteditable="false" data-type="img" class="img"><span> </span><span><span class="protyle-action protyle-icons"></span><img src="${PNG_ASSET.path}" data-src="${PNG_ASSET.path}" alt="OCR 样例"><span class="protyle-action__drag"></span><span class="protyle-action__title"><span></span></span></span><span> </span></span>`;
+  const plantUml = `<div data-node-id="${PLANTUML_BLOCK_ID}" data-type="NodeCodeBlock" class="render-node" data-subtype="plantuml" data-content="@startuml&#10;Alice -&gt; Bob&#10;@enduml"><div spin="1"></div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`;
   return {
     code: 0,
     data: {
-      blockCount: 1,
-      content: `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">主动内容安全样例 ${links} ${image}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>`,
+      blockCount: 2,
+      content: `<div data-node-id="${BLOCK_ID}" data-type="NodeParagraph" class="p" updated="20260719000000"><div contenteditable="true" spellcheck="false">主动内容安全样例 ${links} ${image}</div><div class="protyle-attr" contenteditable="false">&#8203;</div></div>${plantUml}`,
       eof: false,
       id: DOCUMENT_ID,
       isBacklinkExpand: false,
@@ -223,6 +225,7 @@ async function installGatewayBoundary(page: Page): Promise<ActiveContentBoundary
           locked: false,
           name: "安全样例",
           notebookId: NOTEBOOK_ID,
+          supportsGraph: true,
         }],
       });
       return;
@@ -341,6 +344,28 @@ async function openWorkspace(page: Page) {
 }
 
 test.describe("active content and PDF preview", () => {
+  test("keeps PlantUML inert when production has no rendering endpoint", async ({
+    page,
+  }, testInfo) => {
+    requireDesktop(testInfo);
+    const diagnostics = collectBrowserDiagnostics(page);
+    const plantUmlRequests: string[] = [];
+    await page.route(/plantuml/i, async (route) => {
+      plantUmlRequests.push(route.request().url());
+      await route.abort("blockedbyclient");
+    });
+    await installGatewayBoundary(page);
+    const editor = await openWorkspace(page);
+    const plantUml = editor.locator(`[data-node-id="${PLANTUML_BLOCK_ID}"]`);
+
+    await expect(plantUml).toHaveAttribute("data-render", "true");
+    await expect(plantUml.locator('[spin="1"]')).toHaveText("未启用");
+    await expect(plantUml.locator("object, embed, img")).toHaveCount(0);
+    expect(plantUmlRequests).toEqual([]);
+    expect(await page.evaluate<unknown>(() => Reflect.get(window, "__activeContentExecuted"))).toBeUndefined();
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+  });
+
   test("renders an authorized PDF only through PDF.js canvas", async ({ page }, testInfo) => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
@@ -373,8 +398,8 @@ test.describe("active content and PDF preview", () => {
       const pixels = context.getImageData(0, 0, element.width, element.height).data;
       for (let index = 0; index < pixels.length; index += 4) {
         if (
-          pixels[index + 3] > 0 &&
-          (pixels[index] < 245 || pixels[index + 1] < 245 || pixels[index + 2] < 245)
+          pixels[index + 3]! > 0 &&
+          (pixels[index]! < 245 || pixels[index + 1]! < 245 || pixels[index + 2]! < 245)
         ) {
           return true;
         }
@@ -464,7 +489,7 @@ test.describe("active content and PDF preview", () => {
       const preview = page.locator("[data-asset-preview]");
       await expect(preview).toBeVisible();
       await expect(preview.locator("iframe, object, embed, script")).toHaveCount(0);
-      expect(await page.evaluate(() => Reflect.get(window, "__activeContentExecuted"))).toBeUndefined();
+      expect(await page.evaluate<unknown>(() => Reflect.get(window, "__activeContentExecuted"))).toBeUndefined();
       await page.getByRole("button", { name: "关闭" }).click();
       await expect(preview).toHaveCount(0);
     }

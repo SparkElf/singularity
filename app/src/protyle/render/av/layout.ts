@@ -260,7 +260,7 @@ export const updateLayout = async (options: {
     ]);
     let response: IWebSocketData;
     try {
-        response = await options.protyle.transport!.request<IWebSocketData>("/api/av/changeAttrViewLayout", {
+        response = await options.protyle.runtime.transport.request<IWebSocketData>("/api/av/changeAttrViewLayout", {
             blockID: options.nodeElement.getAttribute("data-node-id"),
             avID: options.nodeElement.getAttribute("data-av-id"),
             layoutType: options.target.getAttribute("data-view-type")

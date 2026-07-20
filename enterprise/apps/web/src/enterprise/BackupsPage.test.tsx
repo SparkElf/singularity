@@ -22,7 +22,7 @@ const TARGET_SPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const BACKUP_ID = "22222222-2222-4222-8222-222222222222";
 const SECOND_BACKUP_ID = "22222222-2222-4222-8222-222222222223";
 const RESTORE_ID = "33333333-3333-4333-8333-333333333333";
-const CSRF_TOKEN = "A".repeat(43);
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const BACKUPS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SOURCE_SPACE_ID}/backups`;
 const RESTORES_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SOURCE_SPACE_ID}/restores`;
 const ACTIVATION_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${TARGET_SPACE_ID}/restores/${RESTORE_ID}/activation`;
@@ -56,10 +56,10 @@ function restore(
   };
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
-    status: 200,
+    status,
   });
 }
 
@@ -88,6 +88,7 @@ function renderBackupsPage(): void {
               path="/organizations/:organizationId/settings/spaces/:spaceId/backups"
               element={<BackupsPage />}
             />
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
@@ -103,6 +104,57 @@ afterEach(() => {
 });
 
 describe("BackupsPage restore discovery", () => {
+  it("prioritizes a later unauthenticated query over an earlier service failure", async () => {
+    let resolveRestores!: (response: Response) => void;
+    const restoresResponse = new Promise<Response>((resolve) => {
+      resolveRestores = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === BACKUPS_PATH) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                code: "service-unavailable",
+                requestId: "44444444-4444-4444-8444-444444444444",
+                status: 503,
+              },
+              503,
+            ),
+          );
+        }
+        if (path === RESTORES_PATH) {
+          return restoresResponse;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+
+    renderBackupsPage();
+
+    expect(
+      await screen.findByRole("heading", { name: "无法加载数据" }),
+    ).toBeVisible();
+    resolveRestores(
+      jsonResponse(
+        {
+          code: "unauthenticated",
+          requestId: "55555555-5555-4555-8555-555555555555",
+          status: 401,
+        },
+        401,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "登录奇点" }),
+    ).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+  });
+
   it("keeps restore creation closed until the authoritative restore collection arrives", async () => {
     let resolveRestores!: (response: Response) => void;
     const restoresResponse = new Promise<Response>((resolve) => {
@@ -220,6 +272,9 @@ describe("BackupsPage restore discovery", () => {
     const startButtons = await screen.findAllByRole("button", {
       name: "开始恢复",
     });
+    fireEvent.change(screen.getAllByLabelText("恢复空间名称")[0]!, {
+      target: { value: "恢复空间一" },
+    });
     fireEvent.click(startButtons[0]!);
     await waitFor(() => expect(createRequests).toBe(1));
     expect(
@@ -267,9 +322,11 @@ describe("BackupsPage restore discovery", () => {
 
     renderBackupsPage();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "开始恢复" }),
-    );
+    await screen.findByRole("button", { name: "开始恢复" });
+    fireEvent.change(screen.getByLabelText("恢复空间名称"), {
+      target: { value: "恢复空间一" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始恢复" }));
     await waitFor(() => expect(createRequests).toBe(1));
     await waitFor(() =>
       expect(screen.getByText("请先完成当前恢复任务")).toBeVisible(),

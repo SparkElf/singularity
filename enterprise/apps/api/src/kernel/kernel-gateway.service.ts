@@ -67,17 +67,26 @@ function normalizedContentType(headers: IncomingHttpHeaders): string | null {
   return mediaType && mediaType.length > 0 ? mediaType : null;
 }
 
-function safeFileName(path: string): string {
+function safeFileName(path: string): {
+  readonly decodeError?: unknown;
+  readonly value: string;
+} {
   let decoded: string;
+  let decodeError: unknown;
   try {
     decoded = decodeURIComponent(basename(path.split("?", 1)[0] ?? "download"));
-  } catch {
+  } catch (error) {
+    decodeError = error;
     decoded = "download";
   }
   const sanitized = decoded.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
-  return sanitized.length === 0 || sanitized === "." || sanitized === ".."
-    ? "download"
-    : sanitized;
+  return {
+    ...(decodeError === undefined ? {} : { decodeError }),
+    value:
+      sanitized.length === 0 || sanitized === "." || sanitized === ".."
+        ? "download"
+        : sanitized,
+  };
 }
 
 function serializedBody(body: unknown): string | Uint8Array | undefined {
@@ -133,6 +142,7 @@ function auditAction(
   return mode;
 }
 
+/** 读取有界的 Kernel JSON 响应；超限或解析失败时关闭上游流并把原始异常交给调用方。 */
 async function readKernelJsonResult(message: IncomingMessage): Promise<{
   readonly body: Buffer;
   readonly code: number;
@@ -144,23 +154,32 @@ async function readKernelJsonResult(message: IncomingMessage): Promise<{
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       sizeBytes += bytes.byteLength;
       if (sizeBytes > KERNEL_JSON_MAXIMUM_BODY_BYTES) {
+        const error = new Error("Kernel JSON response exceeded the size limit");
         message.destroy();
-        throw new ApiProblemError("service-unavailable", 502);
+        throw new ApiProblemError("service-unavailable", 502, undefined, {
+          cause: error,
+        });
       }
       chunks.push(bytes);
     }
   } catch (error) {
+    message.destroy();
     if (error instanceof ApiProblemError) {
       throw error;
     }
-    throw new ApiProblemError("service-unavailable", 502);
+    throw new ApiProblemError("service-unavailable", 502, undefined, {
+      cause: error,
+    });
   }
   const body = Buffer.concat(chunks);
   let value: unknown;
   try {
     value = JSON.parse(body.toString("utf8"));
-  } catch {
-    throw new ApiProblemError("service-unavailable", 502);
+  } catch (error) {
+    message.destroy();
+    throw new ApiProblemError("service-unavailable", 502, undefined, {
+      cause: error,
+    });
   }
   if (
     typeof value !== "object" ||
@@ -169,7 +188,11 @@ async function readKernelJsonResult(message: IncomingMessage): Promise<{
     typeof value.code !== "number" ||
     !Number.isInteger(value.code)
   ) {
-    throw new ApiProblemError("service-unavailable", 502);
+    const error = new Error("Kernel JSON response did not contain a valid code");
+    message.destroy();
+    throw new ApiProblemError("service-unavailable", 502, undefined, {
+      cause: error,
+    });
   }
   return { body, code: value.code };
 }
@@ -243,6 +266,7 @@ export class KernelGatewayService {
     private readonly contentAudit: ContentAuditIntentService,
   ) {}
 
+  /** 按路由策略完成授权、审计、Kernel 请求及响应转发，并维持流式响应的生命周期。 */
   async proxy(
     input: KernelGatewayProxyRequest,
     reply: KernelGatewayProxyReply,
@@ -287,6 +311,7 @@ export class KernelGatewayService {
         status,
         startedAt,
         authorized.deployment.kernelInstanceId,
+        error,
       );
       this.#deferContentAudit(
         input,
@@ -294,18 +319,22 @@ export class KernelGatewayService {
         "kernel-result-indeterminate",
         startedAt,
       );
-      throw new ApiProblemError("service-unavailable", status);
+      throw new ApiProblemError("service-unavailable", status, undefined, {
+        cause: error,
+      });
     }
 
     const problem = upstreamProblem(upstream.status);
     if (problem !== null) {
-      upstream.message.resume();
+      const cause = new Error(`Kernel returned HTTP ${upstream.status}`);
+      upstream.message.destroy();
       this.#log(
         input,
         "upstream-rejected",
         problem.status,
         startedAt,
         authorized.deployment.kernelInstanceId,
+        cause,
       );
       if (isExplicitKernelHttpRejection(upstream.status)) {
         await this.#resolveContentAudit(
@@ -322,20 +351,27 @@ export class KernelGatewayService {
           startedAt,
         );
       }
-      throw problem;
+      throw new ApiProblemError(
+        problem.code,
+        problem.status,
+        problem.retryAfter,
+        { cause },
+      );
     }
     if (
       (input.target.surface === "api" || input.target.surface === "upload") &&
       upstream.status !== 204 &&
       normalizedContentType(upstream.headers) !== "application/json"
     ) {
-      upstream.message.resume();
+      const cause = new Error("Kernel returned a non-JSON response");
+      upstream.message.destroy();
       this.#log(
         input,
         "upstream-rejected",
         502,
         startedAt,
         authorized.deployment.kernelInstanceId,
+        cause,
       );
       this.#deferContentAudit(
         input,
@@ -343,7 +379,9 @@ export class KernelGatewayService {
         "kernel-response-invalid",
         startedAt,
       );
-      throw new ApiProblemError("service-unavailable", 502);
+      throw new ApiProblemError("service-unavailable", 502, undefined, {
+        cause,
+      });
     }
     if (
       (input.target.surface === "api" || input.target.surface === "upload") &&
@@ -359,6 +397,7 @@ export class KernelGatewayService {
           502,
           startedAt,
           authorized.deployment.kernelInstanceId,
+          error,
         );
         this.#deferContentAudit(
           input,
@@ -366,7 +405,11 @@ export class KernelGatewayService {
           "kernel-response-invalid",
           startedAt,
         );
-        throw error;
+        throw error instanceof ApiProblemError
+          ? error
+          : new ApiProblemError("service-unavailable", 502, undefined, {
+              cause: error,
+            });
       }
       const resultProblem = kernelResultProblem(result.code);
       if (resultProblem !== null) {
@@ -427,7 +470,20 @@ export class KernelGatewayService {
       response,
       input.requestId,
     );
-    upstream.message.once("error", () => response.destroy());
+    upstream.message.once("error", (error) => {
+      this.#logger.error({
+        canonicalRoute: input.target.policy.path,
+        durationMilliseconds: performance.now() - startedAt,
+        error,
+        event: "kernel.route-stream",
+        kernelInstanceId: authorized.deployment.kernelInstanceId,
+        outcome: "failed",
+        requestId: input.requestId,
+        spaceId: input.target.spaceId,
+        status: upstream.status,
+      });
+      response.destroy();
+    });
     response.once("close", () => upstream.message.destroy());
     upstream.message.pipe(response);
     this.#log(
@@ -439,6 +495,7 @@ export class KernelGatewayService {
     );
   }
 
+  /** 在写入请求发往 Kernel 前登记待解析的审计意图，失败时阻止请求继续执行。 */
   async #prepareContentAudit(
     input: KernelGatewayProxyRequest,
     action: ContentAuditAction,
@@ -453,20 +510,24 @@ export class KernelGatewayService {
         requestId: input.requestId,
         spaceId: input.target.spaceId,
       });
-    } catch {
+    } catch (error) {
       this.#logger.error({
         action,
         canonicalRoute: input.target.policy.path,
         durationMilliseconds: performance.now() - startedAt,
+        error,
         event: "content.audit-intent",
         outcome: "unavailable",
         requestId: input.requestId,
         spaceId: input.target.spaceId,
       });
-      throw new ApiProblemError("service-unavailable", 503);
+      throw new ApiProblemError("service-unavailable", 503, undefined, {
+        cause: error,
+      });
     }
   }
 
+  /** 用最终可观察的 Kernel 结果收敛审计意图；审计写入失败只记录并保留主请求结果。 */
   async #resolveContentAudit(
     input: KernelGatewayProxyRequest,
     action: ContentAuditAction | null,
@@ -478,11 +539,12 @@ export class KernelGatewayService {
     }
     try {
       await this.contentAudit.resolve({ outcome, requestId: input.requestId });
-    } catch {
+    } catch (error) {
       this.#logger.error({
         action,
         canonicalRoute: input.target.policy.path,
         durationMilliseconds: performance.now() - startedAt,
+        error,
         event: "content.audit-resolution",
         outcome: "deferred",
         requestId: input.requestId,
@@ -512,6 +574,7 @@ export class KernelGatewayService {
     });
   }
 
+  /** 将已校验且已缓冲的 JSON 响应写回客户端，避免再次读取或推断内容身份。 */
   #sendBufferedResponse(
     input: KernelGatewayProxyRequest,
     reply: KernelGatewayProxyReply,
@@ -534,6 +597,7 @@ export class KernelGatewayService {
     this.#log(input, "proxied", status, startedAt, kernelInstanceId);
   }
 
+  /** 复制允许的上游头并按资源类型设置安全响应头，避免下载内容被浏览器当作页面执行。 */
   #applyResponseHeaders(
     target: KernelGatewayTarget,
     headers: IncomingHttpHeaders,
@@ -567,9 +631,19 @@ export class KernelGatewayService {
     }
 
     const fileName = safeFileName(target.upstreamPath);
+    if (fileName.decodeError !== undefined) {
+      this.#logger.warn({
+        canonicalRoute: target.policy.path,
+        error: fileName.decodeError,
+        event: "kernel.response-filename",
+        outcome: "decode-failed",
+        requestId,
+        spaceId: target.spaceId,
+      });
+    }
     response.setHeader(
       "Content-Disposition",
-      `attachment; filename="${fileName}"`,
+      `attachment; filename="${fileName.value}"`,
     );
     response.setHeader(
       "Content-Security-Policy",
@@ -589,10 +663,12 @@ export class KernelGatewayService {
     status: number,
     startedAt: number,
     kernelInstanceId: string,
+    error?: unknown,
   ): void {
     const context = {
       canonicalRoute: input.target.policy.path,
       durationMilliseconds: performance.now() - startedAt,
+      ...(error === undefined ? {} : { error }),
       event: "kernel.route",
       kernelInstanceId,
       outcome,

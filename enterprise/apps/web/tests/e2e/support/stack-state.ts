@@ -4,7 +4,6 @@ export interface P5E2EStackState {
   readonly apiOrigin: string;
   readonly certificateFile: string;
   readonly documentId: string;
-  readonly documentInitialText: string;
   readonly documentTitle: string;
   readonly editor: {
     readonly loginIdentifier: string;
@@ -18,7 +17,10 @@ export interface P5E2EStackState {
   readonly organizationId: string;
   readonly organizationName: string;
   readonly privateKeyFile: string;
+  readonly referenceDocumentId: string;
+  readonly referenceDocumentTitle: string;
   readonly schema: string;
+  readonly searchMarker: string;
   readonly spaceId: string;
   readonly spaceName: string;
   readonly stateVersion: 1;
@@ -82,10 +84,6 @@ export function parseP5E2EStackState(value: unknown): P5E2EStackState {
     apiOrigin: requiredString(state.apiOrigin, "apiOrigin"),
     certificateFile: requiredString(state.certificateFile, "certificateFile"),
     documentId: requiredString(state.documentId, "documentId"),
-    documentInitialText: requiredString(
-      state.documentInitialText,
-      "documentInitialText",
-    ),
     documentTitle: requiredString(state.documentTitle, "documentTitle"),
     editor: requiredCredentials(state.editor, "editor"),
     kernelInstanceId: requiredString(state.kernelInstanceId, "kernelInstanceId"),
@@ -95,7 +93,16 @@ export function parseP5E2EStackState(value: unknown): P5E2EStackState {
     organizationId: requiredString(state.organizationId, "organizationId"),
     organizationName: requiredString(state.organizationName, "organizationName"),
     privateKeyFile: requiredString(state.privateKeyFile, "privateKeyFile"),
+    referenceDocumentId: requiredString(
+      state.referenceDocumentId,
+      "referenceDocumentId",
+    ),
+    referenceDocumentTitle: requiredString(
+      state.referenceDocumentTitle,
+      "referenceDocumentTitle",
+    ),
     schema: requiredString(state.schema, "schema"),
+    searchMarker: requiredString(state.searchMarker, "searchMarker"),
     spaceId: requiredString(state.spaceId, "spaceId"),
     spaceName: requiredString(state.spaceName, "spaceName"),
     stateVersion: 1,

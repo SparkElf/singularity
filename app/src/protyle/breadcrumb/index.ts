@@ -27,7 +27,7 @@ const requestBreadcrumb = <TResponse>(
     path: string,
     body: unknown,
     intent: "read" | "write" = "read",
-) => protyle.session!.runtime.transport.request<TResponse>(path, body, {
+) => protyle.runtime.transport.request<TResponse>(path, body, {
     identity: protyleContentIdentity(protyle),
     intent,
     signal: protyle.requestSignal,
@@ -62,7 +62,7 @@ export class Breadcrumb {
 
     private openMenu(protyle: IProtyle) {
         this.closeMenu();
-        const handle = protyle.runtime!.menu.open();
+        const handle = protyle.runtime.menu.open();
         this.menuHandle = handle;
         handle.menu.removeCB = () => {
             if (this.menuHandle === handle) {
@@ -267,9 +267,9 @@ ${padHTML}
         element.innerHTML = `<span class="fn__flex-center">${protyle.localization.text("recording")}</span><span class="fn__space"></span>
 <button class="b3-button b3-button--white">${protyle.localization.text("endRecord")}</button>`;
         protyle.element.append(element);
-        const handle = protyle.session!.runtime.overlays.add(element);
+        const handle = protyle.runtime.overlays.add(element);
         this.recordingOverlay = {element, handle};
-        protyle.session!.runtime.overlays.bringToFront(element);
+        protyle.runtime.overlays.bringToFront(element);
         element.querySelector("button").addEventListener("click", () => this.finishRecord(protyle), {once: true});
         this.mediaRecorder.startRecordingNewWavFile();
     }

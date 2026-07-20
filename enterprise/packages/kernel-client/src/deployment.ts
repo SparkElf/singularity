@@ -9,12 +9,12 @@ const UUID_PATTERN =
 const DNS_NAME_PATTERN =
   /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$/;
 
-const hostnameSchema = z.string().refine(
+export const kernelDeploymentHostnameSchema = z.string().refine(
   (value) => isIP(value) !== 0 || DNS_NAME_PATTERN.test(value),
   "hostname must be an IP address or DNS name",
 );
 
-const serverNameSchema = z.string().refine(
+export const kernelDeploymentServerNameSchema = z.string().refine(
   (value) => isIP(value) === 0 && DNS_NAME_PATTERN.test(value),
   "serverName must be a DNS name",
 );
@@ -40,10 +40,10 @@ export const kernelDeploymentSchema = z
     clientCertificateFile: z.string(),
     clientPrivateKeyFile: z.string(),
     handle: kernelDeploymentHandleSchema,
-    hostname: hostnameSchema,
+    hostname: kernelDeploymentHostnameSchema,
     kernelInstanceId: kernelDeploymentInstanceIdSchema,
     port: z.number().int().min(1).max(65_535),
-    serverName: serverNameSchema,
+    serverName: kernelDeploymentServerNameSchema,
     spaceId: kernelDeploymentInstanceIdSchema,
   })
   .strict();
@@ -74,10 +74,10 @@ export type KernelDeploymentEndpoint = Pick<
 export const kernelRuntimeEndpointSchema = z
   .object({
     handle: kernelDeploymentHandleSchema,
-    hostname: hostnameSchema,
+    hostname: kernelDeploymentHostnameSchema,
     kernelInstanceId: kernelDeploymentInstanceIdSchema,
     port: z.number().int().min(1).max(65_535),
-    serverName: serverNameSchema,
+    serverName: kernelDeploymentServerNameSchema,
     spaceId: kernelDeploymentInstanceIdSchema,
     tlsProfile: kernelDeploymentProfileSchema,
   })
@@ -118,7 +118,7 @@ export class KernelDeploymentConfigurationError extends Error {
   }
 }
 
-/** Parse the external JSON value once at the process configuration boundary. */
+/** 在进程配置边界只解析一次外部 JSON，向下游传递已满足 schema 的部署文档。 */
 export function parseKernelDeploymentsDocument(
   value: unknown,
 ): KernelDeploymentsDocument {
@@ -195,19 +195,6 @@ export class RuntimeKernelDeploymentRegistry implements KernelDeploymentRegistry
 
   register(deployment: KernelDeployment): void {
     if (this.#deployments.has(deployment.handle)) {
-      throw new Error("Kernel deployment registration conflicts");
-    }
-    this.#deployments.set(deployment.handle, deployment);
-  }
-
-  /** Replace an endpoint after its persisted identity has been re-read. */
-  replace(deployment: KernelDeployment): void {
-    const existing = this.#deployments.get(deployment.handle);
-    if (
-      existing !== undefined &&
-      (existing.kernelInstanceId !== deployment.kernelInstanceId ||
-        existing.spaceId !== deployment.spaceId)
-    ) {
       throw new Error("Kernel deployment registration conflicts");
     }
     this.#deployments.set(deployment.handle, deployment);

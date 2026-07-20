@@ -6,6 +6,7 @@ import type {
   ProtyleWorkspaceCoreFactory,
 } from "./contracts.ts";
 
+/** 创建绑定 notebook/document 身份的编辑器工厂，禁止调用方通过默认选项绕过身份合同。 */
 export function createProtyleFactory<
   TOptions extends ProtyleCoreDocumentOptions,
   TRuntime,

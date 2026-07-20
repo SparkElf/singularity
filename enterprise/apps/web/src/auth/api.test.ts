@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NetworkFailureError } from "@/api/http.ts";
+import { ApiProblemError } from "@/api/http.ts";
 import { getOrFetchCsrfToken } from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 
-const FIRST_CSRF_TOKEN = "A".repeat(43);
-const SECOND_CSRF_TOKEN = "B".repeat(43);
+const FIRST_CSRF_TOKEN = "A".repeat(42) + "E";
+const SECOND_CSRF_TOKEN = "B".repeat(42) + "I";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -25,6 +25,20 @@ function csrfResponse(csrfToken: string): Response {
     headers: { "Content-Type": "application/json" },
     status: 200,
   });
+}
+
+function unauthenticatedResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      code: "unauthenticated",
+      requestId: "99999999-9999-4999-8999-999999999999",
+      status: 401,
+    }),
+    {
+      headers: { "Content-Type": "application/json" },
+      status: 401,
+    },
+  );
 }
 
 beforeEach(() => {
@@ -49,7 +63,7 @@ describe("getOrFetchCsrfToken", () => {
     const second = getOrFetchCsrfToken(secondController.signal);
     firstController.abort();
 
-    await expect(first).rejects.toBeInstanceOf(NetworkFailureError);
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
 
@@ -79,7 +93,7 @@ describe("getOrFetchCsrfToken", () => {
     useCsrfStore.getState().clearCsrfToken();
     staleResponse.resolve(csrfResponse(FIRST_CSRF_TOKEN));
 
-    await expect(staleRequest).rejects.toBeInstanceOf(NetworkFailureError);
+    await expect(staleRequest).rejects.toMatchObject({ name: "AbortError" });
     expect(useCsrfStore.getState().csrfToken).toBeNull();
     await expect(getOrFetchCsrfToken()).resolves.toBe(SECOND_CSRF_TOKEN);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -91,7 +105,14 @@ describe("getOrFetchCsrfToken", () => {
       .mockImplementationOnce((_input, init) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
-          const rejectAbort = () => reject(signal?.reason);
+          const rejectAbort = () => {
+            const reason: unknown = signal?.reason;
+            reject(
+              reason instanceof Error
+                ? reason
+                : new Error(String(reason), { cause: reason }),
+            );
+          };
           signal?.addEventListener("abort", rejectAbort, { once: true });
           if (signal?.aborted) {
             rejectAbort();
@@ -105,8 +126,33 @@ describe("getOrFetchCsrfToken", () => {
     controller.abort();
     const replacement = getOrFetchCsrfToken();
 
-    await expect(abandoned).rejects.toBeInstanceOf(NetworkFailureError);
+    await expect(abandoned).rejects.toMatchObject({ name: "AbortError" });
     await expect(replacement).resolves.toBe(SECOND_CSRF_TOKEN);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an old session 401 without clearing the newly authenticated token", async () => {
+    const staleResponse = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(() => staleResponse.promise));
+
+    const staleRequest = getOrFetchCsrfToken();
+    useCsrfStore.getState().setCsrfToken(SECOND_CSRF_TOKEN);
+    staleResponse.resolve(unauthenticatedResponse());
+
+    await expect(staleRequest).rejects.toMatchObject({
+      cause: expect.any(ApiProblemError) as unknown,
+      name: "AbortError",
+    });
+    expect(useCsrfStore.getState().csrfToken).toBe(SECOND_CSRF_TOKEN);
+  });
+
+  it("honors an already aborted caller when the token is cached", async () => {
+    useCsrfStore.getState().setCsrfToken(FIRST_CSRF_TOKEN);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(getOrFetchCsrfToken(controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
   });
 });

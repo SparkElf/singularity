@@ -5,6 +5,11 @@ import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import { createApiApplication } from "../../src/application.js";
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 import type { Clock } from "../../src/identity/clock.js";
+import type {
+  OidcClientSecretResolver,
+  OidcHttpTransport,
+} from "../../src/identity/oidc.service.js";
+import { OidcHttpTransportError } from "../../src/identity/oidc-http-transport.js";
 import { testAuditConfiguration } from "./audit-configuration.js";
 import {
   TEST_TLS_CERTIFICATE,
@@ -26,8 +31,34 @@ export interface TestApiApplicationOptions {
   https?: boolean;
   kernelGateway?: KernelGatewayRuntimeConfiguration;
   logger?: LoggerService;
+  oidcClientSecretResolver?: OidcClientSecretResolver;
+  oidcHttpTransport?: OidcHttpTransport;
   trustedProxyCidrs?: string;
 }
+
+const testOidcClientSecretResolver: OidcClientSecretResolver = {
+  assertBound: () => undefined,
+  resolve: async () => "test-oidc-client-secret",
+};
+
+const testOidcHttpTransport: OidcHttpTransport = {
+  async request(input) {
+    const response = await fetch(input.url, {
+      body: input.body,
+      headers: input.headers,
+      method: input.method,
+      redirect: "error",
+      signal: AbortSignal.timeout(input.timeoutMilliseconds),
+    });
+    const body = Buffer.from(await response.arrayBuffer());
+    if (body.byteLength > input.maximumBodyBytes) {
+      throw new OidcHttpTransportError(
+        "OIDC response exceeded the byte limit",
+      );
+    }
+    return { body, status: response.status };
+  },
+};
 
 export async function startTestApiApplication(
   options: TestApiApplicationOptions = {},
@@ -53,6 +84,9 @@ export async function startTestApiApplication(
     kernelGateway:
       options.kernelGateway ?? testKernelGatewayConfiguration(),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    oidcClientSecretResolver:
+      options.oidcClientSecretResolver ?? testOidcClientSecretResolver,
+    oidcHttpTransport: options.oidcHttpTransport ?? testOidcHttpTransport,
     publicOrigin: `${TEST_PUBLIC_ORIGIN}/`,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
     ...(options.trustedProxyCidrs === undefined

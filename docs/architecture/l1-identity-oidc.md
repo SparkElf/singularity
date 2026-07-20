@@ -3,7 +3,7 @@ title: "L1身份、OIDC与会话失效"
 description: "奇点企业版本地身份、OIDC登录、会话撤销与强制下线的实现合同"
 author: "Codex"
 date: "2026-07-19"
-version: "1.2.0"
+version: "1.3.0"
 status: "working"
 tags: ["l1", "identity", "oidc", "session", "security"]
 ---
@@ -16,6 +16,7 @@ tags: ["l1", "identity", "oidc", "session", "security"]
 
 | 版本 | 日期 | 作者 | 变更 |
 | --- | --- | --- | --- |
+| 1.3.0 | 2026-07-20 | Codex | 固定 OIDC 部署 secret 绑定、外连边界、授权启动准入与 attempt 清理 owner |
 | 1.2.0 | 2026-07-19 | Codex | 收敛浏览器 CSRF 获取、缓存、并发与会话失效边界的唯一 owner |
 | 1.1.0 | 2026-07-19 | Codex | 固定既有 OIDC identity 显式邀请消费、并发唯一性与 React 会话失效清理 owner |
 | 1.0.0 | 2026-07-19 | Codex | 建立身份与 OIDC 实现合同 |
@@ -51,7 +52,7 @@ PostgreSQL Prisma 模型是用户、Provider、OIDC identity、授权尝试和 A
 
 HTTP 访问模式由 `@SameOrigin()`、`@Authenticated()` 和 `@SessionMutation()` 声明；Controller 不自行读取会话或重复解析 body。输入 schema 在 HTTP 参数边界解析一次，Service 只接收规范化值。
 
-外部 OIDC 字节的唯一解析 owner 是 `FetchOidcProviderClient`：discovery/JWKS 的网络或格式故障映射为 `service-unavailable`，IdP 返回的无效 token、nonce 或签名映射为 `unauthenticated`。下游不重复解析同一响应。
+外部 OIDC 字节的唯一解析 owner 是 `FetchOidcProviderClient`：discovery、token 与 JWKS 分别具有固定字节上限，拒绝压缩响应和重定向；网络或 discovery/JWKS 格式故障映射为 `service-unavailable`，IdP 返回的无效 token、nonce 或签名映射为 `unauthenticated`。生产 `SecureOidcHttpTransport` 在每次请求前解析全部 DNS 结果，拒绝任一非公网 IPv4/IPv6 地址，并将 HTTPS 连接固定到已复核地址且保留原 hostname 的 SNI 与证书校验，避免 DNS 重绑定。下游不重复解析同一响应。
 
 ## 3. 本地身份与会话
 
@@ -69,11 +70,11 @@ AuthSession 具有 30 分钟 idle 期限和 12 小时 absolute 期限。`Clock` 
 
 ## 4. OIDC协议
 
-Provider 管理在组织 owner HTTP 路由完成。名称及 `(organizationId, issuer, clientId)` 的数据库唯一冲突统一返回 409，更新和创建保持相同错误合同。Provider secret 只保存引用，不由 API 或浏览器回显 secret 内容。
+Provider 管理在组织 owner HTTP 路由完成。名称及 `(organizationId, issuer, clientId)` 的数据库唯一冲突统一返回 409，更新和创建保持相同错误合同。Provider secret 只保存引用，不由 API 或浏览器回显 secret 内容。生产环境变量 `SINGULARITY_OIDC_CLIENT_SECRET_BINDINGS` 只接受由部署方声明的严格记录数组，每个全局唯一 reference 同时绑定 `organizationId + canonical issuer + clientId + absolute secretFile`；管理者改变组织、issuer 或 clientId 后不能继续解析同一 secret，创建、更新、启动和换码均 fail closed，不保留旧的全局 `reference -> file` 格式。
 
-登录启动生成随机 `state`、`nonce`、PKCE verifier 和浏览器绑定 flow token。数据库只保存 state、nonce 和 flow token 的域隔离摘要，以及短期授权尝试；flow token 通过 `__Host-singularity_oidc_flow` HttpOnly Cookie 绑定浏览器。
+登录启动先按来源地址与 Provider 执行 15 分钟速率限制，并受全局与单 Provider 并发上限约束；拒绝统一返回带 `Retry-After` 的 429，且不访问 IdP、不创建 attempt。通过准入后生成随机 `state`、`nonce`、PKCE verifier 和浏览器绑定 flow token。数据库只保存 state、nonce 和 flow token 的域隔离摘要，以及短期授权尝试；flow token 通过 `__Host-singularity_oidc_flow` HttpOnly Cookie 绑定浏览器。`OidcService.start` 是唯一清理 owner，每次通过准入后用 `FOR UPDATE SKIP LOCKED` 有界删除最多 100 条到期 attempt；单次清理能力大于单次新增量，因此持续流量不会造成无界堆积。
 
-回调先在事务中锁定并消费授权尝试，再向 IdP 换取 code。即使 token endpoint 或 JWKS 暂时不可用，已消费的 state 也不能 replay。签名校验支持 RS256/ES256，并检查 issuer、audience、azp、nonce、exp 与 iat。回调 query 允许 IdP 附加标准参数，但只把 `code` 和 `state` 传入领域服务。
+回调先在事务中锁定并消费授权尝试，再向 IdP 换取 code。未知 state 或错误浏览器绑定不清理当前 flow Cookie；一旦匹配 attempt 已确认消费，无论后续成功或失败都清理 Cookie。即使 token endpoint 或 JWKS 暂时不可用，已消费的 state 也不能 replay。签名校验支持 RS256/ES256，绑定 key type、curve、size、use 与 key operations，并在 JWKS 网络完成后读取新鲜 `Clock` 检查 issuer、audience、azp、nonce、exp 与 iat。回调 query 允许 IdP 附加标准参数，但只把 `code` 和 `state` 传入领域服务。
 
 邀请 OIDC 首次登录按 `User -> Organization -> OrganizationMembership -> Invitation` 顺序锁定并重新检查组织、用户、邀请和 Provider 状态；创建用户、接受邀请和创建 OIDC identity 在同一事务中完成。已有 identity 且授权尝试未绑定邀请时只完成登录；已有 identity 且授权尝试显式绑定邀请时，必须在同一事务中确认邀请登录标识与 identity 用户一致，再消费邀请并激活或更新组织成员关系。并发回调由同一邀请行锁和终态拥有唯一成功者，其他回调返回稳定 `409 conflict`，不得跳过邀请、创建第二个会话或重复审计。
 
@@ -92,6 +93,8 @@ Provider 管理在组织 owner HTTP 路由完成。名称及 `(organizationId, i
 | 本地登录、Cookie、CSRF、限流、期限、撤销 | `enterprise/apps/api/test/identity.http.test.ts` | HTTP contract |
 | CSRF 首次请求合并、cache 命中、caller 取消与清理后迟到响应隔离 | `enterprise/apps/web/src/auth/api.test.ts` | Web API client unit |
 | OIDC Provider CRUD、PKCE、state/nonce、JWKS、邀请 | `enterprise/apps/api/test/identity.http.test.ts` | HTTP contract |
+| OIDC secret 绑定、OAuth/JOSE、外连地址与响应上限 | `enterprise/apps/api/test/oidc-provider-client.unit.test.ts` | Unit / external boundary |
+| OIDC start 来源/Provider 速率与并发释放 | `enterprise/apps/api/test/oidc-start-admission.unit.test.ts` | Unit |
 | 登录页 OIDC provider 加载与启动错误 | `enterprise/apps/web/src/app/App.test.tsx` | React component |
 | 主动退出成功或 401 后的 Query/CSRF 清理 | `enterprise/apps/web/src/auth/use-logout.test.tsx` | React hook/component |
 | 被动 401 跳转前的 Query/CSRF 清理 | `enterprise/apps/web/src/auth/SessionRedirect.test.tsx` | React component |

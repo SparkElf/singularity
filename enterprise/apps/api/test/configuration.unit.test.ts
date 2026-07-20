@@ -8,7 +8,7 @@ import {
   ApiConfigurationError,
   DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
   parseContentAuditIndeterminateAfterMilliseconds,
-  parseOidcClientSecretFiles,
+  parseOidcClientSecretBindings,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "../src/configuration.js";
@@ -61,21 +61,61 @@ describe("API deployment configuration", () => {
     },
   );
 
-  test("parses the OIDC secret mapping at the application boundary", () => {
-    expect(parseOidcClientSecretFiles(JSON.stringify({
-      "organization-oidc": "/run/secrets/organization-oidc",
-    }))).toEqual({
-      "organization-oidc": "/run/secrets/organization-oidc",
-    });
-    expect(parseOidcClientSecretFiles(undefined)).toEqual({});
+  test("binds each OIDC secret to one deployment-approved client tuple", () => {
+    expect(parseOidcClientSecretBindings(JSON.stringify([
+      {
+        clientId: "singularity-enterprise",
+        issuer: "https://IDENTITY.example.test/tenant",
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        reference: "organization-oidc",
+        secretFile: "/run/secrets/organization-oidc",
+      },
+    ]))).toEqual([
+      {
+        clientId: "singularity-enterprise",
+        issuer: "https://identity.example.test/tenant",
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        reference: "organization-oidc",
+        secretFile: "/run/secrets/organization-oidc",
+      },
+    ]);
+    expect(parseOidcClientSecretBindings(undefined)).toEqual([]);
   });
 
   test.each([
-    "[]",
-    JSON.stringify({ "organization-oidc": "relative-secret" }),
-    JSON.stringify({ "invalid reference": "/run/secrets/oidc" }),
-  ])("rejects an unsafe OIDC secret mapping: %s", (value) => {
-    expect(() => parseOidcClientSecretFiles(value)).toThrow(
+    "{}",
+    JSON.stringify([{
+      clientId: "client",
+      issuer: "https://identity.example.test",
+      organizationId: "11111111-1111-4111-8111-111111111111",
+      reference: "organization-oidc",
+      secretFile: "relative-secret",
+    }]),
+    JSON.stringify([{
+      clientId: "client",
+      issuer: "http://identity.example.test",
+      organizationId: "11111111-1111-4111-8111-111111111111",
+      reference: "organization-oidc",
+      secretFile: "/run/secrets/oidc",
+    }]),
+    JSON.stringify([
+      {
+        clientId: "first",
+        issuer: "https://first.example.test",
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        reference: "duplicate",
+        secretFile: "/run/secrets/first",
+      },
+      {
+        clientId: "second",
+        issuer: "https://second.example.test",
+        organizationId: "22222222-2222-4222-8222-222222222222",
+        reference: "duplicate",
+        secretFile: "/run/secrets/second",
+      },
+    ]),
+  ])("rejects an unsafe OIDC secret binding: %s", (value) => {
+    expect(() => parseOidcClientSecretBindings(value)).toThrow(
       ApiConfigurationError,
     );
   });

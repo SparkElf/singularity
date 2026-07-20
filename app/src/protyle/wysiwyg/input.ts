@@ -143,7 +143,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
     if (refElement && refElement.getAttribute("data-subtype") === "d") {
         const target = getBlockRefContentTarget(refElement);
         if (target) {
-            const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+            const response = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                 id: target.blockId,
                 notebook: target.notebookId,
             }, {
@@ -304,7 +304,7 @@ export const input = async (protyle: IProtyle, blockElement: HTMLElement, range:
                         if (!target) {
                             return;
                         }
-                        void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
+                        void protyle.runtime.transport.request<IWebSocketData>("/api/block/getRefText", {
                             id: target.blockId,
                             notebook: target.notebookId,
                         }, {

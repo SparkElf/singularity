@@ -21,15 +21,48 @@ export class ApiProblemError extends Error {
     readonly code: ApiProblemCode,
     readonly status: number,
     readonly retryAfter?: number,
+    options?: ErrorOptions,
   ) {
-    super(code);
+    super(code, options);
     this.name = "ApiProblemError";
   }
 }
 
+interface LoggedError {
+  readonly message: string;
+  readonly name: string;
+  readonly stack?: string;
+}
+
+/** 将异常及其 cause 链投影为可检索日志字段，同时保留原始 Error 对象和完整堆栈。 */
+function loggedErrorContext(exception: unknown): {
+  readonly error: Error;
+  readonly errors: readonly LoggedError[];
+} {
+  const first =
+    exception instanceof Error
+      ? exception
+      : new Error("Non-Error exception reached the HTTP boundary", {
+          cause: exception,
+        });
+  const chain: LoggedError[] = [];
+  const visited = new Set<Error>();
+  let current: Error | undefined = first;
+  while (current !== undefined && !visited.has(current)) {
+    visited.add(current);
+    chain.push({
+      message: current.message,
+      name: current.name,
+      ...(current.stack === undefined ? {} : { stack: current.stack }),
+    });
+    current = current.cause instanceof Error ? current.cause : undefined;
+  }
+  return { error: first, errors: chain };
+}
+
 class RuntimeAccessLostError extends ApiProblemError {
-  constructor() {
-    super("not-found", 404);
+  constructor(options?: ErrorOptions) {
+    super("not-found", 404, undefined, options);
     this.name = "RuntimeAccessLostError";
   }
 }
@@ -71,22 +104,16 @@ function codeForStatus(status: number): ApiProblemCode {
 export class ApiProblemFilter implements ExceptionFilter {
   readonly #logger = new Logger("ApiProblemFilter");
 
+  /** 把框架异常统一映射为公开 Problem 响应，并在响应前记录原始异常链。 */
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
     const request = context.getRequest<HttpRequestBoundary>();
     const reply = context.getResponse<HttpReplyBoundary>();
 
-    if (
+    const databaseReadinessFailure =
       request.url.split("?", 1)[0] === DATABASE_READINESS_PATH &&
       exception instanceof HttpException &&
-      exception.getStatus() === 503
-    ) {
-      reply
-        .status(503)
-        .header("Cache-Control", "no-store")
-        .send(DATABASE_UNAVAILABLE_RESPONSE);
-      return;
-    }
+      exception.getStatus() === 503;
 
     let status: number;
     let code: ApiProblemCode;
@@ -131,7 +158,12 @@ export class ApiProblemFilter implements ExceptionFilter {
       code = "service-unavailable";
     }
 
-    const logContext = { code, requestId: request.id, status };
+    const logContext = {
+      code,
+      ...loggedErrorContext(exception),
+      requestId: request.id,
+      status,
+    };
     if (status >= 500) {
       this.#logger.error(logContext);
     } else {
@@ -139,6 +171,10 @@ export class ApiProblemFilter implements ExceptionFilter {
     }
 
     reply.status(status).header("Cache-Control", "no-store");
+    if (databaseReadinessFailure) {
+      reply.send(DATABASE_UNAVAILABLE_RESPONSE);
+      return;
+    }
     if (exception instanceof RuntimeAccessLostError) {
       reply.header(
         RUNTIME_ACCESS_LOST_HEADER_NAME,
@@ -152,30 +188,30 @@ export class ApiProblemFilter implements ExceptionFilter {
   }
 }
 
-export function unauthenticated(): ApiProblemError {
-  return new ApiProblemError("unauthenticated", 401);
+export function unauthenticated(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("unauthenticated", 401, undefined, options);
 }
 
-export function forbidden(): ApiProblemError {
-  return new ApiProblemError("forbidden", 403);
+export function forbidden(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("forbidden", 403, undefined, options);
 }
 
-export function notFound(): ApiProblemError {
-  return new ApiProblemError("not-found", 404);
+export function notFound(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("not-found", 404, undefined, options);
 }
 
-export function runtimeAccessLost(): ApiProblemError {
-  return new RuntimeAccessLostError();
+export function runtimeAccessLost(options?: ErrorOptions): ApiProblemError {
+  return new RuntimeAccessLostError(options);
 }
 
-export function validationFailed(): ApiProblemError {
-  return new ApiProblemError("validation-failed", 400);
+export function validationFailed(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("validation-failed", 400, undefined, options);
 }
 
-export function conflict(): ApiProblemError {
-  return new ApiProblemError("conflict", 409);
+export function conflict(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("conflict", 409, undefined, options);
 }
 
-export function serviceUnavailable(): ApiProblemError {
-  return new ApiProblemError("service-unavailable", 503);
+export function serviceUnavailable(options?: ErrorOptions): ApiProblemError {
+  return new ApiProblemError("service-unavailable", 503, undefined, options);
 }

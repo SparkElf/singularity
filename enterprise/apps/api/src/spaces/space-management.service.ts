@@ -35,31 +35,53 @@ export class SpaceManagementService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
+  /** 列出当前组织中操作者可见的空间及其角色摘要。 */
   async listSpaces(
     actorUserId: string,
     organizationId: string,
   ): Promise<ManagedSpaceSummary[]> {
-    await this.organizations.requireManager(actorUserId, organizationId);
-    const spaces = await this.database.client.space.findMany({
-      where: {
-        organizationId,
-        targetRestores: {
-          none: {
-            status: { in: [...unactivatedSpaceRestorePersistenceStatuses] },
+    return this.database.client.$transaction(
+      async (transaction) => {
+        const membership = await transaction.organizationMembership.findFirst({
+          where: {
+            organizationId,
+            status: "active",
+            userId: actorUserId,
+            user: { status: "active" },
+            organization: { status: "active" },
           },
-        },
+          select: { role: true },
+        });
+        if (membership === null) {
+          throw notFound();
+        }
+        if (membership.role === "member") {
+          throw forbidden();
+        }
+        const spaces = await transaction.space.findMany({
+          where: {
+            organizationId,
+            targetRestores: {
+              none: {
+                status: { in: [...unactivatedSpaceRestorePersistenceStatuses] },
+              },
+            },
+          },
+          select: { id: true, name: true, organizationId: true, status: true },
+          orderBy: [{ name: "asc" }, { id: "asc" }],
+        });
+        return spaces.map((space) => ({
+          organizationId: space.organizationId,
+          spaceId: space.id,
+          spaceName: space.name,
+          status: space.status,
+        }));
       },
-      select: { id: true, name: true, organizationId: true, status: true },
-      orderBy: [{ name: "asc" }, { id: "asc" }],
-    });
-    return spaces.map((space) => ({
-      organizationId: space.organizationId,
-      spaceId: space.id,
-      spaceName: space.name,
-      status: space.status,
-    }));
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 
+  /** 创建空间、Kernel 实例和初始成员关系，并发布部署同步事件。 */
   async createSpace(
     actorUserId: string,
     organizationId: string,
@@ -98,23 +120,94 @@ export class SpaceManagementService {
     });
   }
 
+  /** 返回单个空间的管理视图，所有字段先经过组织和空间归属过滤。 */
   async getSpace(
     actorUserId: string,
     organizationId: string,
     spaceId: string,
   ): Promise<ManagedSpaceSummary> {
-    await this.requireSpaceManager(actorUserId, organizationId, spaceId);
     const space = await this.database.client.space.findFirst({
       where: {
         id: spaceId,
         organizationId,
         organization: { status: "active" },
         status: { in: ["active", "archived"] },
+        targetRestores: {
+          none: {
+            status: { in: [...unactivatedSpaceRestorePersistenceStatuses] },
+          },
+        },
       },
-      select: { id: true, name: true, organizationId: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        organizationId: true,
+        status: true,
+        organization: {
+          select: {
+            memberships: {
+              where: {
+                status: "active",
+                userId: actorUserId,
+                user: { status: "active" },
+              },
+              select: { role: true },
+              take: 1,
+            },
+          },
+        },
+        memberships: {
+          where: {
+            status: "active",
+            userId: actorUserId,
+            organizationMembership: {
+              status: "active",
+              user: { status: "active" },
+            },
+          },
+          select: { role: true },
+        },
+        groupGrants: {
+          where: {
+            group: {
+              status: "active",
+              memberships: {
+                some: {
+                  organizationId,
+                  userId: actorUserId,
+                  organizationMembership: {
+                    status: "active",
+                    user: { status: "active" },
+                  },
+                },
+              },
+            },
+          },
+          select: { role: true },
+        },
+      },
     });
     if (space === null) {
       throw notFound();
+    }
+    const organizationRole = space.organization.memberships[0]?.role;
+    const delegatedRoles = [
+      ...space.memberships.map(({ role }) => role),
+      ...space.groupGrants.map(({ role }) => role),
+    ];
+    if (
+      organizationRole !== "owner" &&
+      organizationRole !== "admin" &&
+      delegatedRoles.length === 0
+    ) {
+      throw notFound();
+    }
+    if (
+      organizationRole !== "owner" &&
+      organizationRole !== "admin" &&
+      !delegatedRoles.includes("admin")
+    ) {
+      throw forbidden();
     }
     return {
       organizationId: space.organizationId,
@@ -124,6 +217,7 @@ export class SpaceManagementService {
     };
   }
 
+  /** 更新空间元数据或状态，并在影响内容访问时触发连接重新校验。 */
   async updateSpace(
     actorUserId: string,
     organizationId: string,
@@ -137,9 +231,12 @@ export class SpaceManagementService {
         actorUserId,
         organizationId,
       );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "spaces" WHERE "id" = ${spaceId} AND "organization_id" = ${organizationId} FOR UPDATE`,
+      );
       const existing = await transaction.space.findFirst({
         where: { id: spaceId, organizationId },
-        select: { status: true },
+        select: { id: true, name: true, organizationId: true, status: true },
       });
       if (existing === null) {
         throw notFound();
@@ -156,6 +253,19 @@ export class SpaceManagementService {
       });
       if (restoreTarget !== null) {
         throw conflict();
+      }
+      const requestedName = update.name ?? existing.name;
+      const requestedStatus = update.status ?? existing.status;
+      if (
+        requestedName === existing.name &&
+        requestedStatus === existing.status
+      ) {
+        return {
+          organizationId: existing.organizationId,
+          spaceId: existing.id,
+          spaceName: existing.name,
+          status: existing.status,
+        };
       }
       const space = await transaction.space.update({
         where: { id: spaceId },
@@ -191,6 +301,7 @@ export class SpaceManagementService {
     });
   }
 
+  /** 列出空间成员及其组织状态，避免返回不属于当前组织的身份。 */
   async listMembers(
     actorUserId: string,
     organizationId: string,
@@ -238,6 +349,7 @@ export class SpaceManagementService {
     }));
   }
 
+  /** 以幂等方式设置空间成员角色或状态，并发布访问变化事件。 */
   async setMember(
     actorUserId: string,
     organizationId: string,
@@ -311,6 +423,7 @@ export class SpaceManagementService {
     });
   }
 
+  /** 删除空间成员关系并撤销其空间连接，阻断权限变更后的迟到请求。 */
   async revokeMember(
     actorUserId: string,
     organizationId: string,
@@ -353,6 +466,7 @@ export class SpaceManagementService {
     });
   }
 
+  /** 列出空间的群组授权，返回实际生效角色而非底层关系表。 */
   async listGroupGrants(
     actorUserId: string,
     organizationId: string,
@@ -393,6 +507,7 @@ export class SpaceManagementService {
     }));
   }
 
+  /** 以幂等方式设置群组空间角色，并通知所有受影响的运行时。 */
   async setGroupGrant(
     actorUserId: string,
     organizationId: string,
@@ -430,17 +545,27 @@ export class SpaceManagementService {
       if (existingGrants[0]?.role === role) {
         return;
       }
+      const affectedUserIds = await this.#activeGroupMemberIds(
+        transaction,
+        organizationId,
+        groupId,
+      );
       await transaction.spaceGroupGrant.upsert({
         where: { spaceId_groupId: { groupId, spaceId } },
         create: { groupId, organizationId, role, spaceId },
         update: { role },
       });
-      await this.accessChanges.publish(transaction, {
-        kind: "close",
-        reason: "forbidden",
-        requestId,
-        selectors: [{ kind: "space", value: spaceId }],
-      });
+      for (const affectedUserId of affectedUserIds) {
+        await this.accessChanges.publish(transaction, {
+          kind: "close",
+          reason: "forbidden",
+          requestId,
+          selectors: [
+            { kind: "space", value: spaceId },
+            { kind: "user", value: affectedUserId },
+          ],
+        });
+      }
       await this.audit.appendPermissionChange(transaction, {
         actorUserId,
         occurredAt: this.clock.now(),
@@ -453,6 +578,7 @@ export class SpaceManagementService {
     });
   }
 
+  /** 撤销群组空间授权并使旧连接在下一次访问前失效。 */
   async revokeGroupGrant(
     actorUserId: string,
     organizationId: string,
@@ -467,16 +593,26 @@ export class SpaceManagementService {
         organizationId,
         spaceId,
       );
+      const affectedUserIds = await this.#activeGroupMemberIds(
+        transaction,
+        organizationId,
+        groupId,
+      );
       const revoked = await transaction.spaceGroupGrant.deleteMany({
         where: { groupId, organizationId, spaceId },
       });
       if (revoked.count > 0) {
-        await this.accessChanges.publish(transaction, {
-          kind: "close",
-          reason: "forbidden",
-          requestId,
-          selectors: [{ kind: "space", value: spaceId }],
-        });
+        for (const affectedUserId of affectedUserIds) {
+          await this.accessChanges.publish(transaction, {
+            kind: "close",
+            reason: "forbidden",
+            requestId,
+            selectors: [
+              { kind: "space", value: spaceId },
+              { kind: "user", value: affectedUserId },
+            ],
+          });
+        }
         await this.audit.appendPermissionChange(transaction, {
           actorUserId,
           occurredAt: this.clock.now(),
@@ -490,6 +626,7 @@ export class SpaceManagementService {
     });
   }
 
+  /** 校验操作者具备空间管理员角色，返回带组织归属的空间事实。 */
   async requireSpaceManager(
     actorUserId: string,
     organizationId: string,
@@ -546,6 +683,7 @@ export class SpaceManagementService {
     }
   }
 
+  /** 在事务内锁定空间管理员关系，保证权限判定与空间写入使用同一快照。 */
   async requireSpaceManagerInTransaction(
     transaction: Transaction,
     actorUserId: string,
@@ -603,11 +741,10 @@ export class SpaceManagementService {
     if (organizationManager !== null) {
       return;
     }
-    const [directAdmin, groupAdmin] = await Promise.all([
+    const [directMembership, groupGrant] = await Promise.all([
       transaction.spaceMembership.findFirst({
         where: {
           organizationId,
-          role: "admin",
           spaceId,
           status: "active",
           userId: actorUserId,
@@ -616,12 +753,11 @@ export class SpaceManagementService {
             user: { status: "active" },
           },
         },
-        select: { id: true },
+        select: { role: true },
       }),
       transaction.spaceGroupGrant.findFirst({
         where: {
           organizationId,
-          role: "admin",
           spaceId,
           group: {
             status: "active",
@@ -637,11 +773,39 @@ export class SpaceManagementService {
             },
           },
         },
-        select: { id: true },
+        orderBy: { role: "asc" },
+        select: { role: true },
       }),
     ]);
-    if (directAdmin === null && groupAdmin === null) {
+    if (directMembership === null && groupGrant === null) {
+      throw notFound();
+    }
+    if (
+      directMembership?.role !== "admin" &&
+      groupGrant?.role !== "admin"
+    ) {
       throw forbidden();
     }
+  }
+
+  async #activeGroupMemberIds(
+    transaction: Transaction,
+    organizationId: string,
+    groupId: string,
+  ): Promise<readonly string[]> {
+    const memberships = await transaction.userGroupMembership.findMany({
+      where: {
+        groupId,
+        organizationId,
+        group: { status: "active" },
+        organizationMembership: {
+          status: "active",
+          user: { status: "active" },
+        },
+      },
+      orderBy: { userId: "asc" },
+      select: { userId: true },
+    });
+    return memberships.map(({ userId }) => userId);
   }
 }

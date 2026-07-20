@@ -10,6 +10,7 @@ package model
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	stdsql "database/sql"
 	"encoding/hex"
@@ -35,7 +36,11 @@ import (
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
-const EnterpriseBackupFormatVersion = 1
+const (
+	EnterpriseBackupFormatVersion = 1
+	EnterpriseBackupMaximumBytes  = 8 * 1024 * 1024 * 1024
+	EnterpriseBackupMaximumFiles  = 100_000
+)
 
 var ErrEnterpriseBackupInvalid = errors.New("enterprise backup is invalid")
 
@@ -63,6 +68,11 @@ type EnterpriseBackupArchive struct {
 	SizeBytes   int64
 }
 
+type EnterpriseBackupLimits struct {
+	MaximumBytes int64
+	MaximumFiles int64
+}
+
 type EnterpriseRestoreLimits struct {
 	MaximumArchiveBytes int64
 	MaximumEntryBytes   int64
@@ -70,9 +80,20 @@ type EnterpriseRestoreLimits struct {
 	MaximumTotalBytes   int64
 }
 
-func CreateEnterpriseBackupArchive(sourceSpaceID string) (*EnterpriseBackupArchive, error) {
+// CreateEnterpriseBackupArchive 在事务排空后生成有界、可校验且可取消的企业空间归档。
+func CreateEnterpriseBackupArchive(
+	ctx context.Context,
+	sourceSpaceID string,
+	limits EnterpriseBackupLimits,
+) (*EnterpriseBackupArchive, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("create enterprise backup archive: %w", err)
+	}
 	if strings.TrimSpace(sourceSpaceID) == "" {
 		return nil, fmt.Errorf("%w: source space is empty", ErrEnterpriseBackupInvalid)
+	}
+	if err := validateEnterpriseBackupLimits(limits); err != nil {
+		return nil, err
 	}
 	backupRoot := filepath.Join(util.TempDir, "enterprise-backups")
 	if err := os.MkdirAll(backupRoot, 0700); err != nil {
@@ -94,21 +115,34 @@ func CreateEnterpriseBackupArchive(sourceSpaceID string) (*EnterpriseBackupArchi
 
 	lockSync()
 	defer unlockSync()
+	if err = ctx.Err(); err != nil {
+		return nil, fmt.Errorf("create enterprise backup archive: %w", err)
+	}
 	drain := transactionAdmission.close("")
 	defer drain.release()
 	drain.wait()
+	if err = ctx.Err(); err != nil {
+		return nil, fmt.Errorf("create enterprise backup archive: %w", err)
+	}
 	queueOwner := sql.AcquireExclusiveQueueAdmission(nil)
 	defer queueOwner.Release()
 	if err = queueOwner.FlushQueue(); err != nil {
 		return nil, fmt.Errorf("flush accepted work before enterprise backup: %w", err)
 	}
 
-	manifest, err := buildEnterpriseBackupManifest(sourceSpaceID)
+	if err = ctx.Err(); err != nil {
+		return nil, fmt.Errorf("create enterprise backup archive: %w", err)
+	}
+	manifest, err := buildEnterpriseBackupManifest(ctx, sourceSpaceID, limits)
 	if err != nil {
 		return nil, err
 	}
-	writer := zip.NewWriter(file)
-	if err = writeEnterpriseBackupArchive(writer, manifest); err != nil {
+	archiveWriter := &enterpriseBackupArchiveWriter{
+		maximumBytes: limits.MaximumBytes,
+		writer:       file,
+	}
+	writer := zip.NewWriter(archiveWriter)
+	if err = writeEnterpriseBackupArchive(ctx, writer, manifest, limits); err != nil {
 		_ = writer.Close()
 		return nil, err
 	}
@@ -122,13 +156,20 @@ func CreateEnterpriseBackupArchive(sourceSpaceID string) (*EnterpriseBackupArchi
 		return nil, fmt.Errorf("close enterprise backup file: %w", err)
 	}
 	closed = true
+	if err = ctx.Err(); err != nil {
+		return nil, fmt.Errorf("create enterprise backup archive: %w", err)
+	}
 	if err = os.Rename(partialPath, finalPath); err != nil {
 		return nil, fmt.Errorf("publish enterprise backup archive: %w", err)
 	}
-	digest, size, err := enterpriseFileDigest(finalPath)
+	digest, size, err := enterpriseFileDigestContext(ctx, finalPath)
 	if err != nil {
 		_ = os.Remove(finalPath)
 		return nil, err
+	}
+	if size > limits.MaximumBytes {
+		_ = os.Remove(finalPath)
+		return nil, fmt.Errorf("%w: backup archive exceeds byte limit", ErrEnterpriseBackupInvalid)
 	}
 	return &EnterpriseBackupArchive{
 		ArchivePath: finalPath,
@@ -138,6 +179,7 @@ func CreateEnterpriseBackupArchive(sourceSpaceID string) (*EnterpriseBackupArchi
 	}, nil
 }
 
+// ValidateEnterpriseBackupArchive 校验归档摘要、manifest、条目数量和内容完整性，不写入工作区。
 func ValidateEnterpriseBackupArchive(
 	archivePath, expectedSHA256 string,
 	limits EnterpriseRestoreLimits,
@@ -149,6 +191,7 @@ func ValidateEnterpriseBackupArchive(
 	return manifest, err
 }
 
+// ExtractEnterpriseBackupArchive 将已校验归档解包到隔离目录，并完成SQLite、.sy和引用一致性检查。
 func ExtractEnterpriseBackupArchive(
 	archivePath, destinationRoot, expectedSHA256 string,
 	limits EnterpriseRestoreLimits,
@@ -213,12 +256,8 @@ func ExtractEnterpriseBackupArchive(
 	return manifest, nil
 }
 
-type enterpriseRestoredReference struct {
-	boxID   string
-	blockID string
-}
-
 // ValidateEnterpriseRestoredWorkspace 校验解包后的文件结构；加密 .sy 只验信封，不尝试按 JSON 解密。
+// ValidateEnterpriseRestoredWorkspace 检查恢复目录的文件边界、笔记本信封、块结构和引用目标。
 func ValidateEnterpriseRestoredWorkspace(
 	workspaceRoot string,
 	limits EnterpriseRestoreLimits,
@@ -241,8 +280,7 @@ func ValidateEnterpriseRestoredWorkspace(
 		return err
 	}
 	blockIDs := make(map[string]string)
-	blockIDsByBox := make(map[string]struct{})
-	var references []enterpriseRestoredReference
+	var references []string
 	luteEngine := util.NewLute()
 	err = filepath.WalkDir(dataRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -305,7 +343,6 @@ func ValidateEnterpriseRestoredWorkspace(
 					return ast.WalkStop
 				}
 				blockIDs[node.ID] = filePath
-				blockIDsByBox[boxID+"\x00"+node.ID] = struct{}{}
 			}
 			if treenode.IsBlockRef(node) {
 				defID, _, _ := treenode.GetBlockRef(node)
@@ -316,14 +353,14 @@ func ValidateEnterpriseRestoredWorkspace(
 					parseErr = fmt.Errorf("invalid block reference ID [%s]", defID)
 					return ast.WalkStop
 				}
-				references = append(references, enterpriseRestoredReference{boxID: boxID, blockID: defID})
+				references = append(references, defID)
 			} else if treenode.IsEmbedBlockRef(node) {
 				defID := treenode.GetEmbedBlockRef(node)
 				if !ast.IsNodeIDPattern(defID) {
 					parseErr = fmt.Errorf("invalid embed reference ID [%s]", defID)
 					return ast.WalkStop
 				}
-				references = append(references, enterpriseRestoredReference{boxID: boxID, blockID: defID})
+				references = append(references, defID)
 			}
 			return ast.WalkContinue
 		})
@@ -336,11 +373,8 @@ func ValidateEnterpriseRestoredWorkspace(
 		return err
 	}
 	for _, reference := range references {
-		if encryptedBoxes[reference.boxID] {
-			continue
-		}
-		if _, exists := blockIDsByBox[reference.boxID+"\x00"+reference.blockID]; !exists {
-			return fmt.Errorf("%w: restored reference target [%s] is missing", ErrEnterpriseBackupInvalid, reference.blockID)
+		if _, exists := blockIDs[reference]; !exists {
+			return fmt.Errorf("%w: restored reference target [%s] is missing", ErrEnterpriseBackupInvalid, reference)
 		}
 	}
 	if err = validateEnterpriseRestoredSQLite(workspaceRoot); err != nil {
@@ -446,7 +480,7 @@ func validateEnterpriseSQLiteFile(filePath string) error {
 			SELECT COUNT(*)
 			FROM refs AS refs
 			LEFT JOIN blocks AS blocks
-			  ON blocks.id = refs.def_block_id AND blocks.box = refs.box
+				  ON blocks.id = refs.def_block_id
 			WHERE blocks.id IS NULL
 		`).Scan(&orphanRefs); err != nil {
 			return fmt.Errorf("%w: inspect restored SQLite references: %v", ErrEnterpriseBackupInvalid, err)
@@ -458,7 +492,22 @@ func validateEnterpriseSQLiteFile(filePath string) error {
 	return nil
 }
 
-func buildEnterpriseBackupManifest(sourceSpaceID string) (*EnterpriseBackupManifest, error) {
+func validateEnterpriseBackupLimits(limits EnterpriseBackupLimits) error {
+	if limits.MaximumBytes < 1 || limits.MaximumBytes > EnterpriseBackupMaximumBytes ||
+		limits.MaximumFiles < 1 || limits.MaximumFiles > EnterpriseBackupMaximumFiles {
+		return fmt.Errorf("%w: backup limits are invalid", ErrEnterpriseBackupInvalid)
+	}
+	return nil
+}
+
+func buildEnterpriseBackupManifest(
+	ctx context.Context,
+	sourceSpaceID string,
+	limits EnterpriseBackupLimits,
+) (*EnterpriseBackupManifest, error) {
+	if err := validateEnterpriseBackupLimits(limits); err != nil {
+		return nil, err
+	}
 	manifest := &EnterpriseBackupManifest{
 		CreatedAt:     time.Now().UTC(),
 		Entries:       []*EnterpriseBackupEntry{},
@@ -467,6 +516,9 @@ func buildEnterpriseBackupManifest(sourceSpaceID string) (*EnterpriseBackupManif
 		SourceSpaceID: sourceSpaceID,
 	}
 	err := filepath.WalkDir(util.DataDir, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -492,7 +544,13 @@ func buildEnterpriseBackupManifest(sourceSpaceID string) (*EnterpriseBackupManif
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: backup contains a non-regular file", ErrEnterpriseBackupInvalid)
 		}
-		digest, size, digestErr := enterpriseFileDigest(filePath)
+		remainingBytes := limits.MaximumBytes - manifest.TotalSizeBytes
+		if info.Size() > remainingBytes ||
+			manifest.FileCount >= limits.MaximumFiles ||
+			remainingBytes < 0 {
+			return fmt.Errorf("%w: backup source exceeds limits", ErrEnterpriseBackupInvalid)
+		}
+		digest, size, digestErr := enterpriseFileDigestContextLimited(ctx, filePath, remainingBytes)
 		if digestErr != nil {
 			return digestErr
 		}
@@ -510,7 +568,18 @@ func buildEnterpriseBackupManifest(sourceSpaceID string) (*EnterpriseBackupManif
 	return manifest, nil
 }
 
-func writeEnterpriseBackupArchive(writer *zip.Writer, manifest *EnterpriseBackupManifest) error {
+func writeEnterpriseBackupArchive(
+	ctx context.Context,
+	writer *zip.Writer,
+	manifest *EnterpriseBackupManifest,
+	limits EnterpriseBackupLimits,
+) error {
+	if err := validateEnterpriseBackupLimits(limits); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("write enterprise backup archive: %w", err)
+	}
 	manifestHeader := &zip.FileHeader{Name: "manifest.json", Method: zip.Deflate}
 	manifestHeader.SetMode(0600)
 	manifestWriter, err := writer.CreateHeader(manifestHeader)
@@ -522,7 +591,11 @@ func writeEnterpriseBackupArchive(writer *zip.Writer, manifest *EnterpriseBackup
 	if err = encoder.Encode(manifest); err != nil {
 		return fmt.Errorf("write enterprise backup manifest: %w", err)
 	}
+	var fileCount, totalSize int64
 	for _, entry := range manifest.Entries {
+		if err = ctx.Err(); err != nil {
+			return fmt.Errorf("write enterprise backup archive: %w", err)
+		}
 		header := &zip.FileHeader{Name: entry.Path, Method: zip.Deflate}
 		if entry.Type == "directory" {
 			header.SetMode(0700 | fs.ModeDir)
@@ -531,27 +604,36 @@ func writeEnterpriseBackupArchive(writer *zip.Writer, manifest *EnterpriseBackup
 			}
 			continue
 		}
+		if entry.Type != "file" || entry.SizeBytes < 0 || entry.SizeBytes > limits.MaximumBytes ||
+			fileCount >= limits.MaximumFiles || totalSize > limits.MaximumBytes-entry.SizeBytes {
+			return fmt.Errorf("%w: backup manifest exceeds limits", ErrEnterpriseBackupInvalid)
+		}
+		fileCount++
+		totalSize += entry.SizeBytes
 		header.SetMode(0600)
 		entryWriter, createErr := writer.CreateHeader(header)
 		if createErr != nil {
 			return fmt.Errorf("create enterprise backup file entry: %w", createErr)
 		}
 		sourcePath := filepath.Join(util.DataDir, filepath.FromSlash(strings.TrimPrefix(entry.Path, "data/")))
-		if err = copyEnterpriseBackupFile(sourcePath, entryWriter, entry); err != nil {
+		if err = copyEnterpriseBackupFile(ctx, sourcePath, entryWriter, entry); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func copyEnterpriseBackupFile(sourcePath string, destination io.Writer, expected *EnterpriseBackupEntry) error {
+func copyEnterpriseBackupFile(ctx context.Context, sourcePath string, destination io.Writer, expected *EnterpriseBackupEntry) error {
 	file, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open enterprise backup source: %w", err)
 	}
 	defer file.Close()
 	digest := sha256.New()
-	size, err := io.Copy(io.MultiWriter(destination, digest), file)
+	size, err := io.Copy(
+		io.MultiWriter(destination, digest),
+		io.LimitReader(enterpriseContextReader{ctx: ctx, reader: file}, expected.SizeBytes+1),
+	)
 	if err != nil {
 		return fmt.Errorf("copy enterprise backup source: %w", err)
 	}
@@ -640,7 +722,7 @@ func decodeEnterpriseBackupManifest(entry *zip.File) (*EnterpriseBackupManifest,
 	if decoder.Decode(&trailing) != io.EOF {
 		return nil, fmt.Errorf("%w: manifest has trailing data", ErrEnterpriseBackupInvalid)
 	}
-	if manifest.FormatVersion != EnterpriseBackupFormatVersion || manifest.KernelVersion != util.Ver || manifest.SourceSpaceID == "" || manifest.CreatedAt.IsZero() {
+	if manifest.FormatVersion != EnterpriseBackupFormatVersion || strings.TrimSpace(manifest.KernelVersion) == "" || manifest.SourceSpaceID == "" || manifest.CreatedAt.IsZero() {
 		return nil, fmt.Errorf("%w: manifest version is incompatible", ErrEnterpriseBackupInvalid)
 	}
 	return manifest, nil
@@ -745,15 +827,61 @@ func extractEnterpriseBackupFile(entry *zip.File, target string, expected *Enter
 }
 
 func enterpriseFileDigest(filePath string) (string, int64, error) {
+	return enterpriseFileDigestContext(context.Background(), filePath)
+}
+
+func enterpriseFileDigestContext(ctx context.Context, filePath string) (string, int64, error) {
+	return enterpriseFileDigestContextLimited(ctx, filePath, int64(^uint64(0)>>1))
+}
+
+func enterpriseFileDigestContextLimited(ctx context.Context, filePath string, maximumBytes int64) (string, int64, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", 0, fmt.Errorf("open enterprise file for digest: %w", err)
 	}
 	defer file.Close()
 	digest := sha256.New()
-	size, err := io.Copy(digest, file)
+	reader := io.Reader(enterpriseContextReader{ctx: ctx, reader: file})
+	const maximumInt64 = int64(^uint64(0) >> 1)
+	if maximumBytes < maximumInt64 {
+		reader = io.LimitReader(reader, maximumBytes+1)
+	}
+	size, err := io.Copy(
+		digest,
+		reader,
+	)
 	if err != nil {
 		return "", 0, fmt.Errorf("digest enterprise file: %w", err)
 	}
+	if size > maximumBytes {
+		return "", 0, fmt.Errorf("%w: enterprise file exceeds byte limit", ErrEnterpriseBackupInvalid)
+	}
 	return hex.EncodeToString(digest.Sum(nil)), size, nil
+}
+
+type enterpriseBackupArchiveWriter struct {
+	maximumBytes int64
+	writtenBytes int64
+	writer       io.Writer
+}
+
+func (w *enterpriseBackupArchiveWriter) Write(buffer []byte) (int, error) {
+	if int64(len(buffer)) > w.maximumBytes-w.writtenBytes {
+		return 0, fmt.Errorf("%w: backup archive exceeds byte limit", ErrEnterpriseBackupInvalid)
+	}
+	written, err := w.writer.Write(buffer)
+	w.writtenBytes += int64(written)
+	return written, err
+}
+
+type enterpriseContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r enterpriseContextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }

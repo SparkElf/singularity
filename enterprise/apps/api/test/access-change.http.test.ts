@@ -7,6 +7,8 @@ import {
   AUTH_LOGOUT_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  DATABASE_READINESS_PATH,
+  DATABASE_UNAVAILABLE_RESPONSE,
   type AccessOperation,
   type AccessOperationResult,
   accessOperationResultSchemaByOperation,
@@ -19,12 +21,18 @@ import {
 } from "@singularity/database";
 import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import {
+  KERNEL_DEPLOYMENT_CHANGED_CHANNEL,
+  RuntimeKernelDeploymentRegistry,
+  type KernelDeploymentChangedEvent,
+} from "@singularity/kernel-client";
+import {
   afterEach,
   beforeAll,
   beforeEach,
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 import WebSocket from "ws";
 
@@ -683,6 +691,13 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     await expect(openBrowserSocket(testApi.baseUrl, graph)).rejects.toMatchObject(
       new WebSocketUpgradeError(503),
     );
+    const readiness = await requestHttps(
+      testApi.baseUrl,
+      DATABASE_READINESS_PATH,
+      { method: "GET" },
+    );
+    expect(readiness.statusCode).toBe(503);
+    expect(JSON.parse(readiness.body)).toEqual(DATABASE_UNAVAILABLE_RESPONSE);
   });
 
   test("fails closed on an invalid notification without logging its payload", async () => {
@@ -712,7 +727,204 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
     });
     await upstreamClosePromise;
     expect(logger.output).toContain("invalid-event");
+    expect(logger.output).toMatch(/\n\s+at /);
     expect(logger.output).not.toContain(sensitiveSentinel);
+  });
+
+  test("records the original JSON parsing stack for a malformed notification", async () => {
+    const graph = await createGraph(database, passwordDigest, testApi, kernel);
+    const socket = await openBrowserSocket(testApi.baseUrl, graph);
+    socket.on("error", () => undefined);
+    const upstream = await kernel.websocket.nextConnection();
+    const upstreamClose = closed(upstream);
+    const browserClose = closed(socket);
+    const malformedPayload = '{"kind":';
+    logger.clear();
+
+    await database.$queryRaw(
+      Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${malformedPayload})`,
+    );
+
+    await expect(browserClose).resolves.toEqual({
+      code: 1011,
+      reason: "service-unavailable",
+    });
+    await upstreamClose;
+    expect(logger.output).toContain("Access notification event is invalid");
+    expect(logger.output).toContain("SyntaxError");
+    expect(logger.output).toContain("at JSON.parse");
+  });
+
+  test("applies a committed runtime deployment removal to real WSS connections", async () => {
+    const runtimeKernel = await startTestKernelGateway({
+      deploymentHandle: `runtime-${randomUUID()}`,
+    });
+    const runtimeDeployments = new RuntimeKernelDeploymentRegistry([]);
+    let runtimeApi: TestApiApplication | undefined;
+    let browser: WebSocket | undefined;
+    let upstream: WebSocket | undefined;
+    let rejectedBrowser: WebSocket | undefined;
+    try {
+      runtimeApi = await startTestApiApplication({
+        https: true,
+        kernelGateway: {
+          credentials: runtimeKernel.configuration.credentials,
+          deployments: runtimeDeployments,
+          runtimeDeployment: runtimeKernel.configuration.runtimeDeployment,
+        },
+      });
+      const graph = await createGraph(
+        database,
+        passwordDigest,
+        runtimeApi,
+        runtimeKernel,
+      );
+      const endpoint = runtimeKernel.configuration.deployments.resolve(
+        runtimeKernel.deployment,
+      );
+      const upsert = {
+        kernelInstanceId: endpoint.kernelInstanceId,
+        kind: "upsert" as const,
+        requestId: randomUUID(),
+        spaceId: endpoint.spaceId,
+      } satisfies KernelDeploymentChangedEvent;
+      await database.$transaction(async (transaction) => {
+        await transaction.kernelRuntimeEndpoint.create({
+          data: {
+            hostname: endpoint.hostname,
+            kernelInstanceId: endpoint.kernelInstanceId,
+            port: endpoint.port,
+            runtimeOwner: "gateway-wss-test",
+            serverName: endpoint.serverName,
+            spaceId: endpoint.spaceId,
+            tlsProfile:
+              runtimeKernel.configuration.runtimeDeployment.tlsProfile,
+          },
+        });
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(upsert)})`,
+        );
+      });
+      await vi.waitFor(() => {
+        expect(runtimeDeployments.resolve(runtimeKernel.deployment)).toMatchObject({
+          hostname: endpoint.hostname,
+          port: endpoint.port,
+        });
+      });
+
+      browser = await openBrowserSocket(runtimeApi.baseUrl, graph);
+      browser.on("error", () => undefined);
+      upstream = await runtimeKernel.websocket.nextConnection();
+      const upstreamConnectionCount =
+        runtimeKernel.websocket.connectionCount;
+      const browserClose = closed(browser);
+      const upstreamClose = closed(upstream);
+      const received: string[] = [];
+      browser.on("message", (data) => received.push(data.toString()));
+      const remove = {
+        ...upsert,
+        kind: "remove" as const,
+        requestId: randomUUID(),
+      } satisfies KernelDeploymentChangedEvent;
+
+      await database.$transaction(async (transaction) => {
+        await transaction.kernelRuntimeEndpoint.delete({
+          where: { kernelInstanceId: endpoint.kernelInstanceId },
+        });
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT pg_notify(${KERNEL_DEPLOYMENT_CHANGED_CHANNEL}, ${JSON.stringify(remove)})`,
+        );
+      });
+
+      await expect(browserClose).resolves.toEqual({
+        code: 1011,
+        reason: "kernel-unavailable",
+      });
+      await upstreamClose;
+      runtimeKernel.websocket.broadcast("late-deployment-push");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toEqual([]);
+      await vi.waitFor(() => {
+        expect(() =>
+          runtimeDeployments.resolve(runtimeKernel.deployment),
+        ).toThrow("Kernel deployment is unavailable");
+      });
+
+      rejectedBrowser = createBrowserSocket(runtimeApi.baseUrl, graph);
+      rejectedBrowser.on("error", () => undefined);
+      await expect(closed(rejectedBrowser)).resolves.toEqual({
+        code: 1011,
+        reason: "kernel-unavailable",
+      });
+      expect(runtimeKernel.websocket.connectionCount).toBe(
+        upstreamConnectionCount,
+      );
+    } finally {
+      rejectedBrowser?.terminate();
+      browser?.terminate();
+      upstream?.terminate();
+      try {
+        await runtimeApi?.dispose();
+      } finally {
+        await runtimeKernel.dispose();
+      }
+    }
+  });
+
+  test("closes an active upgraded WSS before Fastify shutdown", async () => {
+    const shutdownKernel = await startTestKernelGateway({
+      deploymentHandle: `shutdown-${randomUUID()}`,
+    });
+    let shutdownApi: TestApiApplication | undefined;
+    let browser: WebSocket | undefined;
+    let upstream: WebSocket | undefined;
+    let shutdown: Promise<void> | undefined;
+    try {
+      shutdownApi = await startTestApiApplication({
+        https: true,
+        kernelGateway: shutdownKernel.configuration,
+      });
+      const graph = await createGraph(
+        database,
+        passwordDigest,
+        shutdownApi,
+        shutdownKernel,
+      );
+      browser = await openBrowserSocket(shutdownApi.baseUrl, graph);
+      browser.on("error", () => undefined);
+      upstream = await shutdownKernel.websocket.nextConnection();
+      const upstreamConnectionCount =
+        shutdownKernel.websocket.connectionCount;
+      const browserClose = closed(browser);
+      const upstreamClose = closed(upstream);
+      const received: string[] = [];
+      browser.on("message", (data) => received.push(data.toString()));
+
+      shutdown = shutdownApi.dispose();
+      await withTimeout(
+        shutdown,
+        "Fastify shutdown stayed blocked by active WSS",
+      );
+
+      await expect(browserClose).resolves.toEqual({
+        code: 1011,
+        reason: "kernel-unavailable",
+      });
+      await upstreamClose;
+      shutdownKernel.websocket.broadcast("late-shutdown-push");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toEqual([]);
+      expect(shutdownKernel.websocket.connectionCount).toBe(
+        upstreamConnectionCount,
+      );
+    } finally {
+      browser?.terminate();
+      upstream?.terminate();
+      await Promise.allSettled([
+        shutdown ?? shutdownApi?.dispose() ?? Promise.resolve(),
+      ]);
+      await shutdownKernel.dispose();
+    }
   });
 
   test("terminates active and pending WebSocket work before late pushes during shutdown", async () => {
@@ -736,7 +948,9 @@ describe("ADR-018 PostgreSQL access-change integration", () => {
       const pendingBrowserClose = closed(pendingSocket);
       await waitForBlockedBackend(database, lock.lockerPid);
 
-      testApi.app.get(KernelWebSocketGateway).onApplicationShutdown();
+      await testApi.app
+        .get(KernelWebSocketGateway)
+        .beforeApplicationShutdown();
       kernel.websocket.broadcast(Buffer.from("late-shutdown-push"));
 
       await expect(

@@ -13,7 +13,7 @@ import { KernelRoutePolicyRegistry } from "./policy.js";
 
 export interface KernelPrivateWebSocketRequest {
   readonly deployment: KernelDeploymentIdentity;
-  readonly onClose: () => void;
+  readonly onClose: (error?: Error) => void;
   readonly onMessage: (data: Buffer, binary: boolean) => void;
   readonly path: string;
   readonly requestId: string;
@@ -101,18 +101,37 @@ export class KernelPrivateWebSocketClient {
       };
       const socket = new WebSocket(address, socketOptions);
       let settled = false;
+      let closeNotified = false;
+      let abort: (() => void) | undefined;
+      const removeAbortListener = (): void => {
+        if (abort !== undefined) {
+          input.signal?.removeEventListener("abort", abort);
+        }
+      };
+      const notifyClose = (error?: Error): void => {
+        if (closeNotified) {
+          return;
+        }
+        closeNotified = true;
+        removeAbortListener();
+        input.onClose(error);
+      };
       const fail = (error: unknown) => {
         const pending = !settled;
         settled = true;
+        const transportError =
+          error instanceof KernelTransportError
+            ? error
+            : new KernelTransportError("unavailable", { cause: error });
         socket.terminate();
         if (pending) {
-          reject(
-            error instanceof KernelTransportError
-              ? error
-              : new KernelTransportError("unavailable", { cause: error }),
-          );
+          removeAbortListener();
+          reject(transportError);
+        } else {
+          notifyClose(transportError);
         }
       };
+      abort = (): void => fail(input.signal?.reason);
       socket.on("message", (data, binary) =>
         input.onMessage(rawDataBuffer(data), binary),
       );
@@ -120,7 +139,7 @@ export class KernelPrivateWebSocketClient {
         if (!settled) {
           fail(new KernelTransportError("unavailable"));
         } else {
-          input.onClose();
+          notifyClose();
         }
       });
       socket.once("open", () => {
@@ -132,17 +151,15 @@ export class KernelPrivateWebSocketClient {
       });
       socket.on("error", fail);
       socket.once("unexpected-response", (_request, response) => {
-        response.resume();
+        response.destroy();
         fail(new KernelTransportError("unavailable"));
       });
 
       if (input.signal) {
         if (input.signal.aborted) {
-          fail(input.signal.reason);
+          abort();
         } else {
-          input.signal.addEventListener("abort", () => fail(input.signal?.reason), {
-            once: true,
-          });
+          input.signal.addEventListener("abort", abort, { once: true });
         }
       }
     });

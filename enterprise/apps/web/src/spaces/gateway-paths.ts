@@ -27,8 +27,15 @@ function encodeResourcePath(path: string): string {
     let decoded: string;
     try {
       decoded = decodeURIComponent(segment);
-    } catch {
-      throw new Error("[protyle.gateway] resource path is not canonical");
+    } catch (error) {
+      console.error(
+        "[protyle.gateway]",
+        { phase: "resource-path-decode" },
+        error,
+      );
+      throw new Error("[protyle.gateway] resource path is not canonical", {
+        cause: error,
+      });
     }
     if (
       decoded === "" ||

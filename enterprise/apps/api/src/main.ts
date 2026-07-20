@@ -9,7 +9,8 @@ const app = await createApiApplication({
     process.env.SINGULARITY_CONTENT_AUDIT_INDETERMINATE_AFTER_MS,
   databaseUrl: process.env.DATABASE_URL,
   kernelGateway: loadKernelGatewayConfiguration(process.env),
-  oidcClientSecretFiles: process.env.SINGULARITY_OIDC_CLIENT_SECRET_FILES,
+  oidcClientSecretBindings:
+    process.env.SINGULARITY_OIDC_CLIENT_SECRET_BINDINGS,
   publicOrigin: process.env.SINGULARITY_PUBLIC_ORIGIN,
   trustedProxyCidrs: process.env.SINGULARITY_TRUSTED_PROXY_CIDRS,
 });

@@ -125,6 +125,7 @@ const assets = {
             surface: "embedded",
             participation: "detached",
             content: {mode: "local-only"},
+            upstreamLocalRuntime: app.upstreamLocalRuntime,
         });
         disabledProtyle(editor.protyle);
         removeLoading(editor.protyle);

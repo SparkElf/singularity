@@ -53,6 +53,7 @@ export class EmbeddedProtyleOwner {
             initialLoad: "owner",
             hostReadOnly: this.hostReadOnly,
             onContentUnavailable: () => this.clear(),
+            upstreamLocalRuntime: this.app.upstreamLocalRuntime,
         });
         if (style !== null) {
             editor.protyle.element.setAttribute("style", style);

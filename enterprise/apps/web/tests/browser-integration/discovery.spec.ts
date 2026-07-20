@@ -130,6 +130,7 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
           locked: false,
           name: "Discovery 笔记本",
           notebookId: NOTEBOOK_ID,
+          supportsGraph: true,
         }],
       });
       return;
@@ -259,7 +260,7 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
               label: "第一文档",
               notebookId: NOTEBOOK_ID,
             },
-            { documentId: null, id: "#标签", label: "#标签", notebookId: null },
+            { documentId: null, id: "tag:#标签", label: "#标签", notebookId: null },
           ],
         },
         msg: "",

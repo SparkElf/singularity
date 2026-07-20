@@ -13,8 +13,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { InvitationAcceptPage } from "@/enterprise/InvitationAcceptPage.tsx";
 
-const INVITATION_TOKEN = "I".repeat(43);
-const CSRF_TOKEN = "A".repeat(43);
+const INVITATION_TOKEN = "I".repeat(42) + "E";
+const CSRF_TOKEN = "A".repeat(42) + "E";
+const NEW_CSRF_TOKEN = "B".repeat(42) + "I";
 const PASSWORD = "correct horse battery staple";
 const CSRF_PATH = "/api/v1/auth/csrf";
 const PROVIDERS_PATH = "/api/v1/auth/oidc/providers";
@@ -39,7 +40,7 @@ function requestPath(input: RequestInfo | URL): string {
   return new URL(value, window.location.origin).pathname;
 }
 
-function renderInvitationAcceptPage(): void {
+function renderInvitationAcceptPage(): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
@@ -63,6 +64,7 @@ function renderInvitationAcceptPage(): void {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -244,5 +246,90 @@ describe("InvitationAcceptPage account workflows", () => {
       await screen.findByText("登录状态已失效。 请求编号：99999999-9999-4999-8999-999999999999"),
     ).toBeVisible();
     expect(useCsrfStore.getState().csrfToken).toBeNull();
+  });
+
+  it("does not let an old current-account rejection clear a newer login", async () => {
+    let resolveAccept!: (response: Response) => void;
+    const acceptResponse = new Promise<Response>((resolve) => {
+      resolveAccept = resolve;
+    });
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = requestPath(input);
+      if (path === PROVIDERS_PATH) {
+        return Promise.resolve(jsonResponse({ providers: [] }));
+      }
+      if (path === ACCEPT_PATH && init?.method === "POST") {
+        return acceptResponse;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = renderInvitationAcceptPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "使用当前账号" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    useCsrfStore.getState().setCsrfToken(NEW_CSRF_TOKEN);
+    queryClient.setQueryData(["new-session"], { user: "new" });
+    resolveAccept(
+      new Response(
+        JSON.stringify({
+          code: "unauthenticated",
+          requestId: "99999999-9999-4999-8999-999999999999",
+          status: 401,
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 401,
+        },
+      ),
+    );
+
+    expect(
+      await screen.findByText(
+        "登录状态已失效。 请求编号：99999999-9999-4999-8999-999999999999",
+      ),
+    ).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBe(NEW_CSRF_TOKEN);
+    expect(queryClient.getQueryData(["new-session"])).toEqual({ user: "new" });
+  });
+
+  it("does not let an old local-account success replace a newer login", async () => {
+    let resolveAccept!: (response: Response) => void;
+    const acceptResponse = new Promise<Response>((resolve) => {
+      resolveAccept = resolve;
+    });
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = requestPath(input);
+      if (path === PROVIDERS_PATH) {
+        return Promise.resolve(jsonResponse({ providers: [] }));
+      }
+      if (path === ACCEPT_LOCAL_PATH && init?.method === "POST") {
+        return acceptResponse;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = renderInvitationAcceptPage();
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: PASSWORD },
+    });
+    fireEvent.change(screen.getByLabelText("确认密码"), {
+      target: { value: PASSWORD },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "创建并接受邀请" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    useCsrfStore.getState().setCsrfToken(NEW_CSRF_TOKEN);
+    queryClient.setQueryData(["new-session"], { user: "new" });
+    resolveAccept(jsonResponse({ csrfToken: "C".repeat(42) + "U" }));
+
+    expect(screen.queryByText("邀请已接受")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "知识空间入口" })).toBeNull();
+    expect(useCsrfStore.getState().csrfToken).toBe(NEW_CSRF_TOKEN);
+    expect(queryClient.getQueryData(["new-session"])).toEqual({ user: "new" });
   });
 });
