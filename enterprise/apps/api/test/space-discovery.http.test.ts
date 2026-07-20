@@ -22,8 +22,8 @@ import {
   type TestApiApplication,
 } from "./support/test-app.js";
 import {
-  combineTestKernelGatewayConfigurations,
   startTestKernelGateway,
+  testKernelGatewayConfiguration,
   type TestKernelGateway,
   type TestKernelRequest,
   type TestKernelResponse,
@@ -255,10 +255,18 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
       });
       try {
         testApi = await startTestApiApplication({
-          kernelGateway: combineTestKernelGatewayConfigurations(
-            kernel,
-            secondKernel,
-          ),
+          kernelGateway: (() => {
+            const configuration = testKernelGatewayConfiguration();
+            configuration.deployments.register(
+              kernel.configuration.deployments.resolve(kernel.deployment),
+            );
+            configuration.deployments.register(
+              secondKernel.configuration.deployments.resolve(
+                secondKernel.deployment,
+              ),
+            );
+            return configuration;
+          })(),
         });
         database = testApi.app.get(DatabaseRuntime).client;
         passwordDigest = await testApi.app

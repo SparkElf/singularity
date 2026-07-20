@@ -1442,7 +1442,7 @@ export class ArchiveAuditHandler implements WorkerJobHandler<ArchiveAuditJob> {
       }
     }
     const key = createObjectKey();
-    async function* jsonLines(): AsyncGenerator<Uint8Array> {
+    function* jsonLines(): Generator<Uint8Array> {
       for (const row of rows) {
         signal.throwIfAborted();
         yield Buffer.from(

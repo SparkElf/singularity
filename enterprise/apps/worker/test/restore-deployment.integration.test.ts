@@ -297,7 +297,7 @@ describe("ProcessRestoreDeployment startup reconciliation with PostgreSQL", () =
         createdByUserId: user.id,
         organizationId: organization.id,
         sourceSpaceId: sourceSpace.id,
-        status: "ready-for-activation",
+        status: "ready_for_activation",
         targetSpaceId: fixture.spaceId,
       },
     });

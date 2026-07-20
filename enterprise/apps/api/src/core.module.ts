@@ -157,6 +157,7 @@ export class CoreModule {
         IdentityService,
         OidcService,
         OrganizationManagementService,
+        PasswordHasher,
         SpaceAccessService,
         SpaceManagementService,
         AuditService,

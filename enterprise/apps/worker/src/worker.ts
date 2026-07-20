@@ -391,11 +391,11 @@ export class BoundedJobWorker {
     job: ClaimedWorkerJob,
     signal: AbortSignal,
   ): Promise<void> {
-    const execute = handler.execute as (
+    const execute = handler.execute.bind(handler) as (
       job: ClaimedWorkerJob,
       signal: AbortSignal,
     ) => Promise<void>;
-    await execute.call(handler, job, signal);
+    await execute(job, signal);
   }
 
   async #maintainLease(

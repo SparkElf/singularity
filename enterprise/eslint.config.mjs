@@ -10,10 +10,12 @@ const browserTypescriptFiles = [
 ];
 const nodeTypescriptFiles = [
   "apps/api/**/*.ts",
+  "apps/worker/**/*.ts",
   "packages/authorization/**/*.ts",
   "packages/contracts/**/*.ts",
   "packages/database/**/*.ts",
   "packages/kernel-client/**/*.ts",
+  "packages/object-store/**/*.ts",
 ];
 const typescriptFiles = [...browserTypescriptFiles, ...nodeTypescriptFiles];
 const reactFiles = ["apps/web/src/**/*.{ts,tsx}"];
@@ -77,7 +79,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/web/tests/e2e/**/*.mjs"],
+    files: [
+      "apps/web/tests/e2e/**/*.mjs",
+      "apps/api/test/**/*.mjs",
+      "apps/worker/test/**/*.mjs",
+      "packages/**/test/**/*.mjs",
+    ],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -96,6 +103,25 @@ export default tseslint.config(
     files: ["apps/web/**/*.test.{ts,tsx}", "apps/web/tests/**/*.spec.ts"],
     rules: {
       "@typescript-eslint/no-base-to-string": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
+  {
+    files: [
+      "apps/api/test/**/*.ts",
+      "apps/worker/test/**/*.ts",
+      "packages/**/test/**/*.ts",
+    ],
+    rules: {
+      "@typescript-eslint/no-base-to-string": "off",
+      "@typescript-eslint/no-misused-promises": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/prefer-promise-reject-errors": "off",
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/unbound-method": "off",
     },

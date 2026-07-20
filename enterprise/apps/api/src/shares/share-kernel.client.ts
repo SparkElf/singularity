@@ -106,7 +106,7 @@ async function readJson(message: IncomingMessage): Promise<unknown> {
         exceeded = true;
         break;
       }
-      chunks.push(bytes);
+      chunks.push(bytes as Buffer<ArrayBufferLike>);
     }
   } catch (error) {
     message.destroy();

@@ -118,7 +118,11 @@ function waitWithinDeadline<T>(
       },
       (error: unknown) => {
         signal.removeEventListener("abort", abort);
-        reject(error);
+        reject(
+          error instanceof Error
+            ? error
+            : new Error("OIDC HTTP operation failed", { cause: error }),
+        );
       },
     );
   });

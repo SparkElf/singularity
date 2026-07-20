@@ -54,7 +54,7 @@ function fetchTransport(): OidcHttpTransport {
   return {
     async request(input) {
       const response = await fetch(input.url, {
-        body: input.body,
+        ...(input.body === undefined ? {} : { body: input.body }),
         headers: input.headers,
         method: input.method,
       });

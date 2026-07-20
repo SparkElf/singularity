@@ -82,7 +82,7 @@ export class AccessChangedPublisher {
     notification: AccessChangeNotification,
   ): Promise<void> {
     const payload = JSON.stringify(notification);
-    await transaction.$queryRaw(
+    await transaction.$executeRaw(
       Prisma.sql`SELECT pg_notify(${ACCESS_CHANGE_CHANNEL}, ${payload})`,
     );
   }

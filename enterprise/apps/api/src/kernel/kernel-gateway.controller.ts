@@ -22,11 +22,11 @@ import {
 } from "./kernel-gateway.service.js";
 
 const GATEWAY_CONTROLLER_PATHS: string[] = [
-  "/api/v1/organizations/:organizationId/spaces/:spaceId/kernel/api/*path",
-  "/api/v1/organizations/:organizationId/spaces/:spaceId/assets/*path",
-  "/api/v1/organizations/:organizationId/spaces/:spaceId/emojis/*path",
+  "/api/v1/organizations/:organizationId/spaces/:spaceId/kernel/api/*",
+  "/api/v1/organizations/:organizationId/spaces/:spaceId/assets/*",
+  "/api/v1/organizations/:organizationId/spaces/:spaceId/emojis/*",
   "/api/v1/organizations/:organizationId/spaces/:spaceId/upload",
-  "/api/v1/organizations/:organizationId/spaces/:spaceId/exports/*path",
+  "/api/v1/organizations/:organizationId/spaces/:spaceId/exports/*",
 ];
 
 interface KernelGatewayHttpRequest {

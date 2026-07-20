@@ -72,10 +72,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import {
-  ProcessRestoreDeployment,
-  RestoreDeploymentError,
-} from "../src/restore-deployment.js";
+import { ProcessRestoreDeployment } from "../src/restore-deployment.js";
 import type { RestoreSpaceJob } from "../src/worker.js";
 import {
   CapturingWorkerLogger,
@@ -153,13 +150,15 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     await expect(
       deployment.restore(
         {
-          archive: [Buffer.from("not the expected archive", "utf8")],
+          archive: (async function* () {
+            yield Buffer.from("not the expected archive", "utf8");
+          })(),
           expectedSha256: "0".repeat(64),
           job,
         },
         new AbortController().signal,
       ),
-    ).rejects.toMatchObject<Partial<RestoreDeploymentError>>({
+    ).rejects.toMatchObject({
       code: "archive-digest-mismatch",
     });
 
@@ -215,9 +214,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     });
     processInspection.rootUnavailable = true;
 
-    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-cleanup-failed" });
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject({ code: "target-cleanup-failed" });
     expect((await readdir(root)).sort()).toEqual(
       [`.${workspaceDirectoryName}.json`, workspaceDirectoryName].sort(),
     );
@@ -316,9 +313,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
       "SINGULARITY_KERNEL_RUNTIME_OWNER=restore-test-worker",
       `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
     ].join("\u0000");
-    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-runtime-invalid" });
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject({ code: "target-runtime-invalid" });
 
     processInspection.commandLine = [
       configuration.kernelBinaryPath,
@@ -335,9 +330,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
       "SINGULARITY_KERNEL_RUNTIME_OWNER=restore-test-worker",
       `SINGULARITY_KERNEL_SPACE_ID=${job.targetSpaceId}`,
     ].join("\u0000");
-    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-runtime-invalid" });
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject({ code: "target-runtime-invalid" });
     expect((await readdir(root)).sort()).toEqual(
       [`.${workspaceDirectoryName}.json`, workspaceDirectoryName].sort(),
     );
@@ -363,9 +356,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     );
     processInspection.unreadablePid = process.pid;
 
-    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-cleanup-failed" });
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject({ code: "target-cleanup-failed" });
     expect((await readdir(root)).sort()).toEqual(
       [`.${workspaceDirectoryName}.json`, workspaceDirectoryName].sort(),
     );
@@ -387,9 +378,7 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     });
     await link(metadataPath, join(root, "metadata-hardlink.json"));
 
-    await expect(deployment.destroyTarget(job)).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-runtime-invalid" });
+    await expect(deployment.destroyTarget(job)).rejects.toMatchObject({ code: "target-runtime-invalid" });
   });
 
   it("rejects a prefixed runtime artifact that is not a directory", async () => {
@@ -405,8 +394,6 @@ describe("ProcessRestoreDeployment archive boundary", () => {
     const { workspaceDirectory } = targetPaths(root, job);
     await writeFile(workspaceDirectory, "not a workspace", { mode: 0o600 });
 
-    await expect(deployment.onModuleInit()).rejects.toMatchObject<
-      Partial<RestoreDeploymentError>
-    >({ code: "target-runtime-invalid" });
+    await expect(deployment.onModuleInit()).rejects.toMatchObject({ code: "target-runtime-invalid" });
   });
 });

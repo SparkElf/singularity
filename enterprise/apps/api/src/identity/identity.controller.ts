@@ -186,9 +186,9 @@ export class IdentityController {
     status: 503,
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
   })
-  async getCsrf(
+  getCsrf(
     @CurrentSession() session: AuthenticatedSession,
-  ): Promise<CsrfResponse> {
+  ): CsrfResponse {
     return { csrfToken: session.csrfToken };
   }
 

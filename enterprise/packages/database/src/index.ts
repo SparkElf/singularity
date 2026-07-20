@@ -122,7 +122,10 @@ export class DatabaseRuntime {
     onFailure: (error: Error) => void,
   ): Promise<DatabaseNotificationSubscription> {
     if (this.#notificationConfig === undefined) {
-      throw this.#state;
+      if (this.#state instanceof DatabaseConfigurationError) {
+        throw this.#state;
+      }
+      throw new DatabaseConfigurationError();
     }
 
     const client = new Client(this.#notificationConfig);
@@ -130,7 +133,6 @@ export class DatabaseRuntime {
       "opening";
     let openingFailure: Error | undefined;
     let closePromise: Promise<void> | undefined;
-    let subscription: DatabaseNotificationSubscription;
     const close = async (): Promise<void> => {
       if (closePromise !== undefined) {
         await closePromise;
@@ -148,7 +150,7 @@ export class DatabaseRuntime {
       })();
       await closePromise;
     };
-    subscription = { close };
+    const subscription: DatabaseNotificationSubscription = { close };
     const fail = (error: Error): void => {
       if (state === "opening") {
         openingFailure ??= error;

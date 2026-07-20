@@ -28,6 +28,12 @@ const ENDPOINT = {
   tlsProfile: "test-runtime",
 } as const;
 
+const ENDPOINT_IDENTITY = {
+  handle: ENDPOINT.deploymentHandle,
+  kernelInstanceId: ENDPOINT.kernelInstanceId,
+  spaceId: ENDPOINT.spaceId,
+} as const;
+
 const UPDATED_ENDPOINT = {
   ...ENDPOINT,
   hostname: "runtime-kernel.internal",
@@ -162,7 +168,7 @@ describe("Kernel runtime deployment synchronization", () => {
         userId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       }),
     ).toThrow("Access notification listener is unavailable");
-    expect(() => deployments.resolve(ENDPOINT)).toThrow(
+    expect(() => deployments.resolve(ENDPOINT_IDENTITY)).toThrow(
       "Kernel deployment is unavailable",
     );
   });
@@ -187,7 +193,7 @@ describe("Kernel runtime deployment synchronization", () => {
     );
 
     await synchronizer.onApplicationBootstrap();
-    expect(deployments.resolve(ENDPOINT)).toMatchObject({
+    expect(deployments.resolve(ENDPOINT_IDENTITY)).toMatchObject({
       hostname: ENDPOINT.hostname,
       port: ENDPOINT.port,
       serverName: ENDPOINT.serverName,
@@ -259,7 +265,7 @@ describe("Kernel runtime deployment synchronization", () => {
       connections,
     );
     await synchronizer.onApplicationBootstrap();
-    expect(deployments.resolve(ENDPOINT)).toBeDefined();
+    expect(deployments.resolve(ENDPOINT_IDENTITY)).toBeDefined();
     if (notification === undefined) {
       throw new Error("Synchronizer notification callback was not installed");
     }
@@ -272,7 +278,7 @@ describe("Kernel runtime deployment synchronization", () => {
       "upstream",
       "browser:1011:kernel-unavailable",
     ]);
-    expect(() => deployments.resolve(ENDPOINT)).toThrow(
+    expect(() => deployments.resolve(ENDPOINT_IDENTITY)).toThrow(
       "Kernel deployment is unavailable",
     );
     expect(() =>
@@ -359,13 +365,13 @@ describe("Kernel runtime deployment synchronization", () => {
     );
     firstRead.resolve([ENDPOINT]);
     await secondReadStarted.promise;
-    expect(() => deployments.resolve(ENDPOINT)).toThrow(
+    expect(() => deployments.resolve(ENDPOINT_IDENTITY)).toThrow(
       "Kernel deployment is unavailable",
     );
     secondRead.resolve([UPDATED_ENDPOINT]);
 
     await vi.waitFor(() => {
-      expect(deployments.resolve(ENDPOINT)).toMatchObject({
+      expect(deployments.resolve(ENDPOINT_IDENTITY)).toMatchObject({
         hostname: UPDATED_ENDPOINT.hostname,
         port: UPDATED_ENDPOINT.port,
       });
@@ -418,13 +424,13 @@ describe("Kernel runtime deployment synchronization", () => {
     notification(JSON.stringify(deploymentEvent()));
     hydration.resolve([ENDPOINT]);
     await eventReadStarted.promise;
-    expect(() => deployments.resolve(ENDPOINT)).toThrow(
+    expect(() => deployments.resolve(ENDPOINT_IDENTITY)).toThrow(
       "Kernel deployment is unavailable",
     );
     eventRead.resolve([UPDATED_ENDPOINT]);
     await bootstrap;
 
-    expect(deployments.resolve(ENDPOINT)).toMatchObject({
+    expect(deployments.resolve(ENDPOINT_IDENTITY)).toMatchObject({
       hostname: UPDATED_ENDPOINT.hostname,
       port: UPDATED_ENDPOINT.port,
     });
@@ -461,7 +467,7 @@ describe("Kernel runtime deployment synchronization", () => {
     await expect(synchronizer.onApplicationBootstrap()).rejects.toThrow(
       "Kernel deployment registration conflicts",
     );
-    expect(deployments.resolve(ENDPOINT)).toBe(staticDeployment);
+    expect(deployments.resolve(ENDPOINT_IDENTITY)).toBe(staticDeployment);
     expect(closeSubscription).toHaveBeenCalledOnce();
   });
 
