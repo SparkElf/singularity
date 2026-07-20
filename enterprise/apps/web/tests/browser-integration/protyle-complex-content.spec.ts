@@ -554,6 +554,7 @@ test.describe("Protyle complex-content identity integration", () => {
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
+      range.collapse(false);
       const clipboardData = new DataTransfer();
       clipboardData.setData(
         "text/siyuan",
