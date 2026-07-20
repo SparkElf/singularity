@@ -72,9 +72,9 @@ export const createAppProtylePluginPort = (app: App): ProtylePluginPort<
             });
         });
     },
-    runSlashItem: (pluginName, itemId, editor, nodeElement) => {
+    runSlashItem: (pluginName, selectedItem, editor, nodeElement) => {
         const plugin = app.plugins.find((item) => item.name === pluginName);
-        const slashItem = plugin?.protyleSlash.find((item) => item.id === itemId);
+        const slashItem = plugin?.protyleSlash.find((item) => item === selectedItem);
         if (!slashItem) {
             return false;
         }

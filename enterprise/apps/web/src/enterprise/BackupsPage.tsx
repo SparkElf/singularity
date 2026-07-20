@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useParams } from "react-router";
 
+import { isApiProblem } from "@/api/http.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -195,7 +196,21 @@ function BackupsPageContent({
     },
   });
 
-  const queryError = backupsQuery.error ?? restoresQuery.error;
+  const queryErrors = [backupsQuery.error, restoresQuery.error];
+  const mutationErrors = [
+    createBackupMutation.error,
+    createRestoreMutation.error,
+    activateRestoreMutation.error,
+  ];
+  const authenticationError = [...queryErrors, ...mutationErrors].find((error) =>
+    isApiProblem(error, "unauthenticated"),
+  );
+  if (authenticationError) {
+    return <PageFailure error={authenticationError} />;
+  }
+  const queryError = queryErrors.find(
+    (error) => error !== null && error !== undefined,
+  );
   if (queryError) {
     return (
       <PageFailure
@@ -216,10 +231,9 @@ function BackupsPageContent({
     !restoresQuery.isPaused;
   const restoreSubmissionAvailable =
     restoreCollectionReady && !restoreIsRunning(restores);
-  const mutationError =
-    createBackupMutation.error ??
-    createRestoreMutation.error ??
-    activateRestoreMutation.error;
+  const mutationError = mutationErrors.find(
+    (error) => error !== null && error !== undefined,
+  );
 
   return (
     <div className="flex flex-col">

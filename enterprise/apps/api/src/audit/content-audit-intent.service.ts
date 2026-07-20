@@ -18,6 +18,7 @@ export class ContentAuditIntentService {
     private readonly database: DatabaseRuntime,
   ) {}
 
+  /** 为内容写操作建立待解析审计意图，后续由 Gateway 按真实结果收敛状态。 */
   async prepare(input: {
     action: ContentAuditAction;
     actorUserId: string;
@@ -57,6 +58,7 @@ export class ContentAuditIntentService {
     });
   }
 
+  /** 将待解析意图原子更新为成功、失败或不确定，防止迟到结果覆盖已收敛记录。 */
   async resolve(input: {
     outcome: ObservedContentAuditOutcome;
     requestId: string;

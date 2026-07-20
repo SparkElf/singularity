@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useOutletContext, useParams } from "react-router";
 
+import { isApiProblem } from "@/api/http.ts";
 import {
   Alert,
   AlertDescription,
@@ -48,6 +49,7 @@ import {
   PageFailure,
   PageHeader,
   SectionHeading,
+  prioritizedError,
 } from "@/enterprise/components.tsx";
 import {
   createOrganizationInvitation,
@@ -166,7 +168,25 @@ export function MembersPage() {
     },
   });
 
-  const queryError = membersQuery.error ?? invitationsQuery.error;
+  const queryErrors = [membersQuery.error, invitationsQuery.error];
+  const mutationErrors = [
+    updateMemberMutation.error,
+    revokeSessionsMutation.error,
+    transferOwnershipMutation.error,
+    createInvitationMutation.error,
+    revokeInvitationMutation.error,
+  ];
+  const currentErrors = [
+    ...queryErrors,
+    ...mutationErrors,
+  ];
+  const authenticationError = currentErrors.find((error) =>
+    isApiProblem(error, "unauthenticated"),
+  );
+  if (authenticationError) {
+    return <PageFailure error={authenticationError} />;
+  }
+  const queryError = prioritizedError(queryErrors);
   if (queryError) {
     return (
       <PageFailure
@@ -179,12 +199,7 @@ export function MembersPage() {
     );
   }
 
-  const mutationError =
-    updateMemberMutation.error ??
-    revokeSessionsMutation.error ??
-    transferOwnershipMutation.error ??
-    createInvitationMutation.error ??
-    revokeInvitationMutation.error;
+  const mutationError = prioritizedError(mutationErrors);
   const members = membersQuery.data?.members ?? [];
   const invitations = invitationsQuery.data?.invitations ?? [];
   const createdInvitationUrl = createInvitationMutation.data
@@ -201,15 +216,14 @@ export function MembersPage() {
       await navigator.clipboard.writeText(createdInvitationUrl);
       setCopied(true);
       setCopyError(false);
-    } catch {
+    } catch (error) {
+      console.error("[organization.invitation] clipboard write failed", error);
       setCopied(false);
       setCopyError(true);
     }
   };
 
-  const handleInvitationSubmit = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ) => {
+  const handleInvitationSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
@@ -223,12 +237,9 @@ export function MembersPage() {
       return;
     }
     setFormError(null);
-    try {
-      await createInvitationMutation.mutateAsync(request.data);
-      form.reset();
-    } catch {
-      return;
-    }
+    createInvitationMutation.mutate(request.data, {
+      onSuccess: () => form.reset(),
+    });
   };
 
   return (
@@ -292,7 +303,11 @@ export function MembersPage() {
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline">
-                              {member.status === "active" ? "活跃" : "停用"}
+                              {member.accountStatus === "disabled"
+                                ? "账号停用"
+                                : member.status === "active"
+                                  ? "活跃"
+                                  : "成员停用"}
                             </Badge>
                           </TableCell>
                           <TableCell />
@@ -354,7 +369,9 @@ export function MembersPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex min-w-[250px] justify-end gap-2">
-                              {canTransferOwnership && member.status === "active" ? (
+                              {canTransferOwnership &&
+                              member.accountStatus === "active" &&
+                              member.status === "active" ? (
                                 <ConfirmAction
                                   confirmLabel="转移所有权"
                                   description={`组织所有权将转移给 ${member.loginIdentifier}，当前所有者将变为管理员。`}
@@ -412,7 +429,7 @@ export function MembersPage() {
         <form
           className="grid grid-cols-[minmax(180px,1fr)_140px_140px_auto] items-end gap-3 border-b bg-muted/25 p-3 max-lg:grid-cols-2 max-sm:grid-cols-1"
           onInput={() => setFormError(null)}
-          onSubmit={(event) => void handleInvitationSubmit(event)}
+          onSubmit={handleInvitationSubmit}
         >
           <label className="flex min-w-0 flex-col gap-1 text-sm">
             <span className="font-medium">账号</span>
@@ -499,7 +516,9 @@ export function MembersPage() {
             ) : (
               invitations.map((invitation) => {
                 const status = invitationStatus(invitation);
-                const canRevoke = status === "等待接受";
+                const canRevoke =
+                  status === "等待接受" &&
+                  (invitation.role === "member" || canTransferOwnership);
                 const revoking =
                   revokeInvitationMutation.isPending &&
                   revokeInvitationMutation.variables === invitation.invitationId;

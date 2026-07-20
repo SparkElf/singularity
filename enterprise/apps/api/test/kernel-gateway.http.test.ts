@@ -90,6 +90,19 @@ function cookiePair(response: Response): string {
   return pair;
 }
 
+function expectLoggedContentAuditStack(
+  output: string,
+  event: "content.audit-intent" | "content.audit-resolution",
+): void {
+  const eventOffset = output.indexOf(`event: '${event}'`);
+  expect(eventOffset).toBeGreaterThanOrEqual(0);
+  const errorOffset = output.lastIndexOf("error:", eventOffset);
+  expect(errorOffset).toBeGreaterThanOrEqual(0);
+  const error = output.slice(errorOffset, eventOffset);
+  expect(error).toContain("content audit test failure");
+  expect(error).toMatch(/\n\s+at /);
+}
+
 describe("Kernel Gateway business responses and runtime access loss", () => {
   let database: DatabaseClient;
   let deployments: RuntimeKernelDeploymentRegistry;
@@ -604,12 +617,14 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     const graph = await createAuthenticatedGraph();
     const requestCount = kernel.requests.length;
     const disposeTrigger = await installContentAuditFailureTrigger("insert");
+    logger.clear();
     try {
       const response = await requestContent(graph, KERNEL_TRANSACTION_PATH);
       expect(response.status).toBe(503);
-      expect(apiProblemSchema.parse(await response.json()).code).toBe(
-        "service-unavailable",
-      );
+      const problem = apiProblemSchema.parse(await response.json());
+      expect(problem.code).toBe("service-unavailable");
+      expect(logger.output).toContain(`requestId: '${problem.requestId}'`);
+      expectLoggedContentAuditStack(logger.output, "content.audit-intent");
     } finally {
       await disposeTrigger();
     }
@@ -620,10 +635,17 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
   test("keeps a successful Kernel response when intent resolution fails", async () => {
     const graph = await createAuthenticatedGraph();
     const disposeTrigger = await installContentAuditFailureTrigger("update");
+    logger.clear();
     try {
       const response = await requestContent(graph, KERNEL_TRANSACTION_PATH);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ code: 0, data: null, msg: "" });
+      const requestId = response.headers.get("x-request-id");
+      expect(requestId).not.toBeNull();
+      expect(logger.output).toContain(
+        `requestId: '${String(requestId)}'`,
+      );
+      expectLoggedContentAuditStack(logger.output, "content.audit-resolution");
     } finally {
       await disposeTrigger();
     }
@@ -859,6 +881,7 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
           hostname: endpoint.hostname,
           kernelInstanceId: endpoint.kernelInstanceId,
           port: endpoint.port,
+          runtimeOwner: "kernel-gateway-test",
           serverName: endpoint.serverName,
           spaceId: endpoint.spaceId,
           tlsProfile:

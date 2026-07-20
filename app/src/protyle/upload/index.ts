@@ -11,6 +11,7 @@ import {transaction} from "../wysiwyg/transaction";
 import * as dayjs from "dayjs";
 import {protyleContentIdentity} from "../util/contentLoad";
 import {openProtyleConfirm} from "../wysiwyg/dialogOwner";
+import {canWriteProtyleContent} from "../runtime/readOnly";
 
 interface UploadResponse extends Omit<IWebSocketData, "data"> {
     data: {
@@ -50,6 +51,7 @@ export class Upload {
     }
 }
 
+/** 在上传请求前按大小、类型和命名策略筛选文件，并返回可展示的状态文案。 */
 const validateFile = (protyle: IProtyle, files: File[]) => {
     const uploadFileList = [];
     const errors: string[] = [];
@@ -105,6 +107,7 @@ const validateFile = (protyle: IProtyle, files: File[]) => {
     return {files: uploadFileList, statusMessages: uploading};
 };
 
+/** 处理上传结果并把资源写入当前编辑器或属性视图，迟到响应不得操作已销毁编辑器。 */
 const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => {
     if (!isUploadCurrent(protyle)) {
         return;
@@ -148,7 +151,7 @@ const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => 
         }
     }
     let successFileText = "";
-    // 插入多个资源文件时按文件名自然升序排列 Use natural ascending order when inserting multiple assets https://github.com/siyuan-note/siyuan/issues/14643
+    // 插入多个资源文件时按文件名自然升序排列 https://github.com/siyuan-note/siyuan/issues/14643
     keys.sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
     const avAssets: IAVCellAssetValue[] = [];
     let hasImage = false;
@@ -283,8 +286,12 @@ const genUploadedLabel = async (response: UploadResponse, protyle: IProtyle) => 
     }, hasImage ? 0 : Constants.TIMEOUT_LOAD);
 };
 
+/** 校验并上传文件，统一绑定当前编辑器的身份、取消信号和事务插入边界。 */
 export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferItemList | File[], element?: HTMLInputElement, successCB?: (res: string) => void) => {
-    // FileList | DataTransferItemList | File[] => File[]
+    if (!canWriteProtyleContent(protyle.readonlyState)) {
+        return;
+    }
+    // 将 FileList、DataTransferItemList 和 File[] 统一转换为普通文件数组。
     let fileList = [];
     let hasLocalPath = false;
     for (let i = 0; i < files.length; i++) {
@@ -350,7 +357,7 @@ export const uploadFiles = (protyle: IProtyle, files: FileList | DataTransferIte
         }
         notifyUpload(protyle, "info", validated.statusMessages.join("\n"));
         protyle.upload.isUploading = true;
-        void protyle.session!.runtime.transport.upload<UploadResponse>(formData, {
+        void protyle.runtime.transport.upload<UploadResponse>(formData, {
             identity: protyleContentIdentity(protyle),
             signal: protyle.requestSignal,
             onProgress: ({loadedBytes, totalBytes}) => {

@@ -18,7 +18,8 @@ import { GroupsPage } from "@/enterprise/GroupsPage.tsx";
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const GROUP_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
-const CSRF_TOKEN = "A".repeat(43);
+const DISABLED_MEMBER_ID = "44444444-4444-4444-8444-444444444444";
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const GROUPS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/groups`;
 const MEMBERS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/members`;
 const GROUP_MEMBERS_PATH = `${GROUPS_PATH}/${GROUP_ID}/members`;
@@ -33,17 +34,26 @@ const group = {
 };
 
 const member = {
+  accountStatus: "active" as const,
   loginIdentifier: "reader@example.test",
   role: "member" as const,
   status: "active" as const,
   userId: MEMBER_ID,
 };
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
-    status: 200,
+    status,
   });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 function noContentResponse(): Response {
@@ -64,9 +74,11 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderGroupsPage(): void {
+function renderGroupsPage(
+  queryClient = createTestQueryClient(),
+): QueryClient {
   render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter
           initialEntries={[`/organizations/${ORGANIZATION_ID}/settings/groups`]}
@@ -76,11 +88,13 @@ function renderGroupsPage(): void {
               path="/organizations/:organizationId/settings/groups"
               element={<GroupsPage />}
             />
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -91,6 +105,57 @@ afterEach(() => {
 });
 
 describe("GroupsPage management workflows", () => {
+  it("prioritizes a later unauthenticated query over an earlier ordinary error", async () => {
+    const membersResponse = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === GROUPS_PATH) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                code: "conflict",
+                requestId: "55555555-5555-4555-8555-555555555555",
+                status: 409,
+              },
+              409,
+            ),
+          );
+        }
+        if (path === MEMBERS_PATH) {
+          return membersResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderGroupsPage(queryClient);
+
+    expect(
+      await screen.findByRole("heading", { name: "无法加载数据" }),
+    ).toBeVisible();
+    membersResponse.resolve(
+      jsonResponse(
+        {
+          code: "unauthenticated",
+          requestId: "66666666-6666-4666-8666-666666666666",
+          status: 401,
+        },
+        401,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "登录奇点" }),
+    ).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
+  });
+
   it("creates, renames, and disables a user group", async () => {
     let groups: Array<{
       groupId: string;
@@ -257,5 +322,49 @@ describe("GroupsPage management workflows", () => {
     await waitFor(() => {
       expect(screen.queryByText(MEMBER_ID)).not.toBeInTheDocument();
     });
+  });
+
+  it("excludes disabled accounts from group membership candidates", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === GROUPS_PATH) {
+          return Promise.resolve(jsonResponse({ groups: [group] }));
+        }
+        if (path === MEMBERS_PATH) {
+          return Promise.resolve(
+            jsonResponse({
+              members: [
+                member,
+                {
+                  accountStatus: "disabled",
+                  loginIdentifier: "disabled@example.test",
+                  role: "member",
+                  status: "active",
+                  userId: DISABLED_MEMBER_ID,
+                },
+              ],
+            }),
+          );
+        }
+        if (path === GROUP_MEMBERS_PATH) {
+          return Promise.resolve(jsonResponse({ members: [] }));
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderGroupsPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理成员" }),
+    );
+    expect(
+      await screen.findByRole("option", { name: member.loginIdentifier }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "disabled@example.test" }),
+    ).not.toBeInTheDocument();
   });
 });

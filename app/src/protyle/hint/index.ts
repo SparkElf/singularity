@@ -61,6 +61,7 @@ export class Hint {
     public lastIndex = -1;
     private source: THintSource;
     private readonly menus: HintMenuOwner;
+    private data: IHintData[] = [];
 
     constructor(protyle: IProtyle) {
         this.menus = new HintMenuOwner(protyle);
@@ -76,7 +77,8 @@ export class Hint {
             const btnElement = hasClosestByTag(eventTarget, "BUTTON");
             if (btnElement && !btnElement.classList.contains("emojis__item") && !btnElement.classList.contains("emojis__type")) {
                 this.fill(decodeURIComponent(btnElement.getAttribute("data-value")), protyle, false,
-                    this.source === "search" ? isNotCtrl(event) : isOnlyMeta(event), btnElement.dataset.avBlockTarget);
+                    this.source === "search" ? isNotCtrl(event) : isOnlyMeta(event), btnElement.dataset.avBlockTarget,
+                    this.getDataByElement(btnElement));
                 event.preventDefault();
                 event.stopPropagation(); // https://github.com/siyuan-note/siyuan/issues/3710
                 return;
@@ -275,9 +277,9 @@ export class Hint {
                 focusClass = " b3-list-item--focus";
             }
             if (hintData.html === "separator") {
-                hintsHTML += `<button data-id="${hintData.id || ""}" class="b3-menu__separator"></button>`;
+                hintsHTML += `<button data-index="${i}" data-id="${hintData.id || ""}" class="b3-menu__separator"></button>`;
             } else {
-                hintsHTML += `<button data-id="${hintData.id || ""}"${hintData.avBlockTarget ? ` data-av-block-target="${escapeAttr(hintData.avBlockTarget)}"` : ""} style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${focusClass}" data-value="${encodeURIComponent(hintData.value)}">${hintData.html}</button>`;
+                hintsHTML += `<button data-index="${i}" data-id="${hintData.id || ""}"${hintData.avBlockTarget ? ` data-av-block-target="${escapeAttr(hintData.avBlockTarget)}"` : ""} style="width: calc(100% - 16px)" class="b3-list-item b3-list-item--two${focusClass}" data-value="${encodeURIComponent(hintData.value)}">${hintData.html}</button>`;
             }
         });
         return `${hintsHTML}</div>`;
@@ -286,12 +288,14 @@ export class Hint {
     public genHTML(data: IHintData[], protyle: IProtyle, hide = false, source: THintSource) {
         this.source = source;
         if (data.length === 0) {
+            this.data = [];
             if (!this.element.querySelector(".fn__loading") || hide) {
                 this.element.classList.add("fn__none");
             }
             return;
         }
 
+        this.data = data;
         this.element.innerHTML = this.getHTMLByData(data);
         this.element.classList.remove("fn__none");
         // https://github.com/siyuan-note/siyuan/issues/4575
@@ -335,7 +339,7 @@ export class Hint {
                 if (event.key === "Enter") {
                     const current = this.element.querySelector<HTMLElement>(".b3-list-item--focus")!;
                     this.fill(decodeURIComponent(current.getAttribute("data-value")), protyle, false, isNotCtrl(event),
-                        current.dataset.avBlockTarget);
+                        current.dataset.avBlockTarget, this.getDataByElement(current));
                     event.preventDefault();
                 } else if (event.key === "Escape") {
                     this.element.classList.add("fn__none");
@@ -453,7 +457,8 @@ ${genHintItemHTML(item, protyle)}
         }
     }
 
-    public fill(value: string, protyle: IProtyle, updateRange = true, refIsS = false, avBlockTarget?: string) {
+    public fill(value: string, protyle: IProtyle, updateRange = true, refIsS = false, avBlockTarget?: string,
+                hintData?: IHintData) {
         this.menus.close();
         hideElements(["hint", "toolbar"], protyle);
         if (updateRange && this.source !== "av") {
@@ -692,9 +697,8 @@ ${genHintItemHTML(item, protyle)}
                 nodeElement.setAttribute("style", value.split(Constants.ZWSP)[1] || "");
                 updateTransaction(protyle, nodeElement, html);
                 return;
-            } else if (value.startsWith("plugin")) {
-                const ids = value.split(Constants.ZWSP);
-                protyle.plugins.runSlashItem(ids[1], ids[2], protyle, nodeElement);
+            } else if (hintData?.slashItem && hintData.slashPluginName) {
+                protyle.plugins.runSlashItem(hintData.slashPluginName, hintData.slashItem, protyle, nodeElement);
                 return;
             } else {
                 range.deleteContents();
@@ -931,7 +935,8 @@ ${genHintItemHTML(item, protyle)}
                     (this.element.querySelector(".b3-list-item--focus input") as HTMLElement).click();
                 } else {
                     const current = this.element.querySelector<HTMLElement>(".b3-list-item--focus")!;
-                    this.fill(mark, protyle, true, isOnlyMeta(event), current.dataset.avBlockTarget);
+                    this.fill(mark, protyle, true, isOnlyMeta(event), current.dataset.avBlockTarget,
+                        this.getDataByElement(current));
                 }
             }
             event.preventDefault();
@@ -1034,6 +1039,13 @@ ${genHintItemHTML(item, protyle)}
                 range.collapse(false);
             }
         }
+    }
+
+    private getDataByElement(element: HTMLElement) {
+        if (typeof element.dataset.index === "undefined") {
+            return undefined;
+        }
+        return this.data[Number(element.dataset.index)];
     }
 
     private getKey(currentLineValue: string, extend: IHintExtend[]) {

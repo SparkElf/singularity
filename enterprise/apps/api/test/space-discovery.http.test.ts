@@ -130,7 +130,7 @@ const DOCUMENT_RESPONSES = new Map<string, unknown>([
   [
     DOCUMENT_GRAPH_PATH,
     {
-      links: [{ from: BLOCK_ID, to: "knowledge/tag" }],
+      links: [{ from: BLOCK_ID, to: "tag:knowledge/tag" }],
       nodes: [
         {
           documentId: DOCUMENT_ID,
@@ -140,7 +140,7 @@ const DOCUMENT_RESPONSES = new Map<string, unknown>([
         },
         {
           documentId: null,
-          id: "knowledge/tag",
+          id: "tag:knowledge/tag",
           label: "knowledge/tag",
           notebookId: null,
         },

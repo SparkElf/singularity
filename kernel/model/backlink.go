@@ -1137,8 +1137,12 @@ func getContainStr(str string, strs []string) string {
 // forwardlinks：正向链接关系 refs
 // backlinks：反向链接关系 defs
 func buildFullLinks(condition string) (forwardlinks, backlinks []*Block) {
+	return buildFullLinksInBox(condition, "")
+}
+
+func buildFullLinksInBox(condition, boxID string) (forwardlinks, backlinks []*Block) {
 	forwardlinks, backlinks = []*Block{}, []*Block{}
-	defs := buildDefsAndRefs(condition)
+	defs := buildDefsAndRefsInBox(condition, boxID)
 	backlinks = append(backlinks, defs...)
 	for _, def := range defs {
 		for _, ref := range def.Refs {
@@ -1149,9 +1153,13 @@ func buildFullLinks(condition string) (forwardlinks, backlinks []*Block) {
 }
 
 func buildDefsAndRefs(condition string) (defBlocks []*Block) {
+	return buildDefsAndRefsInBox(condition, "")
+}
+
+func buildDefsAndRefsInBox(condition, boxID string) (defBlocks []*Block) {
 	defBlockMap := map[string]*Block{}
 	refBlockMap := map[string]*Block{}
-	defRefs := sql.DefRefs(condition, Conf.Graph.MaxBlocks)
+	defRefs := sql.DefRefsInBox(condition, Conf.Graph.MaxBlocks, boxID)
 
 	// 将 sql block 转为 block
 	for _, row := range defRefs {

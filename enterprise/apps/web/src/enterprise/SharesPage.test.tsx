@@ -29,7 +29,7 @@ const DOCUMENT_A_ID = "20260718000100-docum01";
 const DOCUMENT_B_ID = "20260718000101-docum02";
 const SHARE_ID = "22222222-2222-4222-8222-222222222222";
 const SHARE_TOKEN = "A".repeat(43);
-const CSRF_TOKEN = "B".repeat(43);
+const CSRF_TOKEN = "B".repeat(42) + "I";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const SHARES_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/shares`;
 const NOTEBOOKS_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/content-directory/notebooks`;
@@ -126,7 +126,13 @@ describe("SharesPage document selection", () => {
       if (path === NOTEBOOKS_PATH) {
         return Promise.resolve(jsonResponse({
           notebooks: [
-            { icon: "", locked: false, name: "项目资料", notebookId: NOTEBOOK_ID },
+            {
+              icon: "",
+              locked: false,
+              name: "项目资料",
+              notebookId: NOTEBOOK_ID,
+              supportsGraph: true,
+            },
           ],
         }));
       }
@@ -179,7 +185,7 @@ describe("SharesPage document selection", () => {
     expect(await screen.findByText("分享已创建")).toBeVisible();
   });
 
-  it("uses only the selection owned by its current directory scope", async () => {
+  it("does not activate or consume the global content selection scope", async () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
       const path = requestPath(input);
       if (path === SHARES_PATH) {
@@ -191,9 +197,6 @@ describe("SharesPage document selection", () => {
       throw new Error(`Unexpected request: ${path}`);
     }));
 
-    renderSharesPage();
-
-    expect(await screen.findByText("暂无笔记本")).toBeVisible();
     act(() => {
       const scope = activateContentSelectionScope({
         organizationId: ORGANIZATION_ID,
@@ -203,10 +206,101 @@ describe("SharesPage document selection", () => {
       selectContentDocument(scope, {
         documentId: DOCUMENT_A_ID,
         notebookId: NOTEBOOK_ID,
+        supportsGraph: true,
       });
     });
+    renderSharesPage();
+
+    expect(await screen.findByText("暂无笔记本")).toBeVisible();
     expect(screen.getByRole("button", { name: "创建分享" })).toBeDisabled();
     expect(screen.queryByText(DOCUMENT_A_ID)).not.toBeInTheDocument();
+    act(() => {
+      expect(selectContentDocument(externalSelectionScope!, {
+        documentId: DOCUMENT_B_ID,
+        notebookId: NOTEBOOK_ID,
+        supportsGraph: true,
+      })).toBe(true);
+    });
+    expect(useContentSelectionStore.getState().selection?.documentId).toBe(
+      DOCUMENT_B_ID,
+    );
+    expect(screen.queryByText(DOCUMENT_B_ID)).not.toBeInTheDocument();
+  });
+
+  it("prioritizes a later unauthenticated mutation over an earlier ordinary error", async () => {
+    const passwordPath = `${SHARES_PATH}/${SHARE_ID}/password`;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
+      const path = requestPath(input);
+      if (path === SHARES_PATH && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          code: "conflict",
+          requestId: REQUEST_ID,
+          status: 409,
+        }, 409));
+      }
+      if (path === passwordPath && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({
+          code: "unauthenticated",
+          requestId: REQUEST_ID,
+          status: 401,
+        }, 401));
+      }
+      if (path === SHARES_PATH) {
+        return Promise.resolve(jsonResponse({
+          shares: [{
+            createdAt: "2026-07-18T00:00:00.000Z",
+            documentId: DOCUMENT_A_ID,
+            expiresAt: "2027-07-25T00:00:00.000Z",
+            hasPassword: false,
+            notebookId: NOTEBOOK_ID,
+            organizationId: ORGANIZATION_ID,
+            revokedAt: null,
+            shareId: SHARE_ID,
+            spaceId: SPACE_ID,
+          }],
+        }));
+      }
+      if (path === NOTEBOOKS_PATH) {
+        return Promise.resolve(jsonResponse({
+          notebooks: [
+            {
+              icon: "",
+              locked: false,
+              name: "项目资料",
+              notebookId: NOTEBOOK_ID,
+              supportsGraph: true,
+            },
+          ],
+        }));
+      }
+      if (path === DOCUMENTS_PATH) {
+        return Promise.resolve(jsonResponse({
+          documents: [{
+            documentId: DOCUMENT_A_ID,
+            hasChildren: false,
+            icon: "",
+            notebookId: NOTEBOOK_ID,
+            title: "方案草稿",
+          }],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+
+    renderSharesPage();
+
+    expect((await screen.findAllByText(DOCUMENT_A_ID))[0]).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "创建分享" }));
+    expect(await screen.findByText("操作未完成")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("新分享密码"), {
+      target: { value: "replacement password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
   });
 
   it("returns to login when the directory reports unauthenticated before selecting a document", async () => {
@@ -232,7 +326,7 @@ describe("SharesPage document selection", () => {
 
     await waitFor(() => {
       expect(useCsrfStore.getState().csrfToken).toBeNull();
-      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
       expect(useContentSelectionStore.getState().selection).toBeNull();
     });
     expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
@@ -261,7 +355,7 @@ describe("SharesPage document selection", () => {
 
     await waitFor(() => {
       expect(useCsrfStore.getState().csrfToken).toBeNull();
-      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
     });
     expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
   });

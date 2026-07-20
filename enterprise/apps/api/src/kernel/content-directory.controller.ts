@@ -11,10 +11,12 @@ import {
 import {
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiQuery,
   ApiTags,
 } from "@nestjs/swagger";
 import {
+  CONTENT_ID_PATTERN,
   CONTENT_DIRECTORY_CHILD_DOCUMENTS_CONTROLLER_PATH,
   CONTENT_DIRECTORY_DOCUMENTS_RESPONSE_OPENAPI_SCHEMA,
   CONTENT_DIRECTORY_MAX_OFFSET,
@@ -26,6 +28,7 @@ import {
   contentDirectoryNotebooksQuerySchema,
   contentDirectoryQuerySchema,
   contentDirectorySpacePathParametersSchema,
+  UUID_OPENAPI_SCHEMA,
   type ContentDirectoryChildDocumentsPathParameters,
   type ContentDirectoryDocumentsResponse,
   type ContentDirectoryNotebooksPathParameters,
@@ -36,6 +39,7 @@ import {
 } from "@singularity/contracts";
 
 import type { HttpRequestBoundary } from "../http-boundary.js";
+import { bindHttpRequestAbortSignal } from "../http-request-signal.js";
 import {
   Authenticated,
   ApiProblemResponses,
@@ -70,10 +74,13 @@ export class ContentDirectoryController {
   @Header("Cache-Control", "no-store")
   @ApiProblemResponses(400, 401, 404, 503)
   @ApiOperation({ summary: "List visible notebooks in an authorized space" })
+  @ApiParam({ name: "organizationId", schema: UUID_OPENAPI_SCHEMA })
+  @ApiParam({ name: "spaceId", schema: UUID_OPENAPI_SCHEMA })
   @ApiOkResponse({
     schema: CONTENT_DIRECTORY_NOTEBOOKS_RESPONSE_OPENAPI_SCHEMA,
   })
-  listNotebooks(
+  /** 建立请求 AbortSignal，调用目录服务并在响应完成后释放 socket 监听。 */
+  async listNotebooks(
     @Param(new ZodValidationPipe(contentDirectorySpacePathParametersSchema))
     parameters: ContentDirectoryNotebooksPathParameters,
     @Query(new ZodValidationPipe(contentDirectoryNotebooksQuerySchema))
@@ -81,15 +88,18 @@ export class ContentDirectoryController {
     @Req() request: ContentDirectoryHttpRequest,
     @CurrentSession() session: AuthenticatedSession,
   ): Promise<ContentDirectoryNotebooksResponse> {
-    return this.#withRequestSignal(request, (signal) =>
-      this.directory.listNotebooks({
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    try {
+      return await this.directory.listNotebooks({
         actorUserId: session.userId,
         organizationId: parameters.organizationId,
         requestId: request.id,
-        signal,
+        signal: abortScope.signal,
         spaceId: parameters.spaceId,
-      }),
-    );
+      });
+    } finally {
+      abortScope.dispose();
+    }
   }
 
   @Get(CONTENT_DIRECTORY_ROOT_DOCUMENTS_CONTROLLER_PATH)
@@ -97,11 +107,18 @@ export class ContentDirectoryController {
   @Header("Cache-Control", "no-store")
   @ApiProblemResponses(400, 401, 404, 503)
   @ApiOperation({ summary: "List one page of root documents" })
+  @ApiParam({
+    name: "notebookId",
+    schema: { pattern: CONTENT_ID_PATTERN.source, type: "string" },
+  })
+  @ApiParam({ name: "organizationId", schema: UUID_OPENAPI_SCHEMA })
+  @ApiParam({ name: "spaceId", schema: UUID_OPENAPI_SCHEMA })
   @ApiQuery(DIRECTORY_OFFSET_QUERY)
   @ApiOkResponse({
     schema: CONTENT_DIRECTORY_DOCUMENTS_RESPONSE_OPENAPI_SCHEMA,
   })
-  listRootDocuments(
+  /** 获取根文档页；文档身份只来自当前路由目录参数。 */
+  async listRootDocuments(
     @Param(new ZodValidationPipe(contentDirectoryNotebookPathParametersSchema))
     parameters: Omit<ContentDirectoryRootDocumentsPathParameters, "offset">,
     @Query(new ZodValidationPipe(contentDirectoryQuerySchema))
@@ -109,17 +126,20 @@ export class ContentDirectoryController {
     @Req() request: ContentDirectoryHttpRequest,
     @CurrentSession() session: AuthenticatedSession,
   ): Promise<ContentDirectoryDocumentsResponse> {
-    return this.#withRequestSignal(request, (signal) =>
-      this.directory.listDocuments({
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    try {
+      return await this.directory.listDocuments({
         actorUserId: session.userId,
         notebookId: parameters.notebookId,
         offset: query.offset,
         organizationId: parameters.organizationId,
         requestId: request.id,
-        signal,
+        signal: abortScope.signal,
         spaceId: parameters.spaceId,
-      }),
-    );
+      });
+    } finally {
+      abortScope.dispose();
+    }
   }
 
   @Get(CONTENT_DIRECTORY_CHILD_DOCUMENTS_CONTROLLER_PATH)
@@ -127,11 +147,22 @@ export class ContentDirectoryController {
   @Header("Cache-Control", "no-store")
   @ApiProblemResponses(400, 401, 404, 503)
   @ApiOperation({ summary: "List one page of direct child documents" })
+  @ApiParam({
+    name: "documentId",
+    schema: { pattern: CONTENT_ID_PATTERN.source, type: "string" },
+  })
+  @ApiParam({
+    name: "notebookId",
+    schema: { pattern: CONTENT_ID_PATTERN.source, type: "string" },
+  })
+  @ApiParam({ name: "organizationId", schema: UUID_OPENAPI_SCHEMA })
+  @ApiParam({ name: "spaceId", schema: UUID_OPENAPI_SCHEMA })
   @ApiQuery(DIRECTORY_OFFSET_QUERY)
   @ApiOkResponse({
     schema: CONTENT_DIRECTORY_DOCUMENTS_RESPONSE_OPENAPI_SCHEMA,
   })
-  listChildDocuments(
+  /** 获取指定 notebook/document 下的直接子文档页，不从响应或编辑器推断身份。 */
+  async listChildDocuments(
     @Param(new ZodValidationPipe(contentDirectoryChildPathParametersSchema))
     parameters: Omit<ContentDirectoryChildDocumentsPathParameters, "offset">,
     @Query(new ZodValidationPipe(contentDirectoryQuerySchema))
@@ -139,36 +170,20 @@ export class ContentDirectoryController {
     @Req() request: ContentDirectoryHttpRequest,
     @CurrentSession() session: AuthenticatedSession,
   ): Promise<ContentDirectoryDocumentsResponse> {
-    return this.#withRequestSignal(request, (signal) =>
-      this.directory.listDocuments({
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    try {
+      return await this.directory.listDocuments({
         actorUserId: session.userId,
         notebookId: parameters.notebookId,
         offset: query.offset,
         organizationId: parameters.organizationId,
         parentDocumentId: parameters.documentId,
         requestId: request.id,
-        signal,
+        signal: abortScope.signal,
         spaceId: parameters.spaceId,
-      }),
-    );
-  }
-
-  async #withRequestSignal<Result>(
-    request: ContentDirectoryHttpRequest,
-    operation: (signal: AbortSignal) => Promise<Result>,
-  ): Promise<Result> {
-    const abortController = new AbortController();
-    const abort = () =>
-      abortController.abort(new Error("Browser directory request closed"));
-    if (request.raw.aborted) {
-      abort();
-    } else {
-      request.raw.once("aborted", abort);
-    }
-    try {
-      return await operation(abortController.signal);
+      });
     } finally {
-      request.raw.off("aborted", abort);
+      abortScope.dispose();
     }
   }
 }

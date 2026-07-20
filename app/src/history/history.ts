@@ -648,6 +648,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
         surface: "embedded",
         participation: "detached",
         content: {mode: "local-only"},
+        upstreamLocalRuntime: app.upstreamLocalRuntime,
     });
     disabledProtyle(historyEditor.protyle);
     const repoElement = element.querySelector('#historyContainer [data-type="repo"]');
@@ -796,6 +797,7 @@ const bindEvent = (app: App, element: Element, dialog?: Dialog) => {
                             surface: "embedded",
                             participation: "detached",
                             content: {mode: "local-only"},
+                            upstreamLocalRuntime: app.upstreamLocalRuntime,
                         });
                         disabledProtyle(viewEditor.protyle);
                         onGet({

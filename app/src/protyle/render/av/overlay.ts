@@ -63,7 +63,7 @@ export const currentAVOverlaySignal = (protyle: IProtyle, kind: AVOverlayKind) =
 
 export const registerAVOverlay = (protyle: IProtyle, kind: AVOverlayKind, element: HTMLElement) => {
     closeAVOverlay(protyle, kind);
-    const overlays = protyle.session!.runtime.overlays;
+    const overlays = protyle.runtime.overlays;
     const registration = {
         controller: new AbortController(),
         element,

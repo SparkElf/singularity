@@ -1,7 +1,4 @@
-/**
- * Format a document name for the editor surface without consulting workspace
- * paths or application globals.
- */
+/** 为编辑器生成文档显示名，只处理传入名称，不读取工作区路径或应用全局状态。 */
 export const getProtyleDocumentDisplayName = (
     name: string,
     titleEmpty = false,

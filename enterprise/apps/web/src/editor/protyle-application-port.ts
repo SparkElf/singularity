@@ -21,10 +21,10 @@ const attributeViewDictionary = language._attrView as Readonly<Record<string, st
 const kernelDictionary = language._kernel as Readonly<Record<string, string>>;
 
 export const protyleLocalization: ProtyleLocalizationPort = {
-  attributeViewText: (key) => attributeViewDictionary[key],
+  attributeViewText: (key) => attributeViewDictionary[key]!,
   language: "zh_CN",
-  kernelText: (index) => kernelDictionary[index],
-  text: (key) => textDictionary[key],
+  kernelText: (index) => kernelDictionary[index]!,
+  text: (key) => textDictionary[key]!,
 };
 
 interface PersistedApplicationState {
@@ -137,7 +137,7 @@ export function createProtyleApplicationPort(
       inlineUnderscore: true,
     },
     persist,
-    plantUMLServePath: "https://www.plantuml.com/plantuml/svg/~1",
+    plantUMLServePath: "",
     get readOnly() {
       return readOnly;
     },

@@ -26,6 +26,7 @@ export interface ShareKernelPort {
     notebookId: string;
     organizationId: string;
     requestId: string;
+    signal: AbortSignal;
     spaceId: string;
   }): Promise<SharedAssetPayload | null>;
   readDocument(input: {
@@ -33,6 +34,7 @@ export interface ShareKernelPort {
     notebookId: string;
     organizationId: string;
     requestId: string;
+    signal: AbortSignal;
     spaceId: string;
   }): Promise<SharedDocumentPayload | null>;
   verifyDocument(input: {

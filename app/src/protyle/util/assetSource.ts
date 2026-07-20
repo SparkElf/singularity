@@ -5,17 +5,18 @@ const thumbnailAssetSource = (path: string) =>
         ? `${path}?style=thumb`
         : path;
 
-/** Preserve persisted AV paths while routing browser-readable assets through the bound Session. */
+/** 保留持久化资源路径，并将浏览器可读资源通过绑定 Session 路由。 */
 export const resolveProtyleAssetSource = (protyle: IProtyle, path: string): string => {
     if (!path.startsWith("assets/")) {
         return path;
     }
     if (protyle.content.mode === "bound") {
-        return protyle.session!.runtime.resources.resolveAsset(protyleContentIdentity(protyle), path);
+        return protyle.runtime.resources.resolveAsset(protyleContentIdentity(protyle), path);
     }
     return thumbnailAssetSource(path);
 };
 
+/** 将内容树中待解析的图片资源替换为当前编辑器身份对应的可读地址。 */
 export const resolveProtyleContentAssetSources = (protyle: IProtyle, root: ParentNode): void => {
     root.querySelectorAll<HTMLImageElement>(".img img[data-src]").forEach((image) => {
         const persistedSource = image.getAttribute("data-src");
@@ -25,6 +26,7 @@ export const resolveProtyleContentAssetSources = (protyle: IProtyle, root: Paren
     });
 };
 
+/** 解析背景样式中的资源路径，并通过当前编辑器身份生成安全地址。 */
 export const resolveProtyleAssetBackground = (protyle: IProtyle, cssText: string): string => {
     const style = protyle.wysiwyg.element.ownerDocument.createElement("span").style;
     style.cssText = cssText;

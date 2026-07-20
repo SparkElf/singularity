@@ -9,6 +9,8 @@ import { CONTENT_ID_PATTERN, contentIdSchema } from "./shares.js";
 export const SPACE_DISCOVERY_QUERY_MAX_LENGTH = 512;
 export const SPACE_DISCOVERY_BLOCK_CONTENT_MAX_LENGTH = 4096;
 export const SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH = 512;
+export const DOCUMENT_DISCOVERY_GRAPH_NODE_ID_MAX_LENGTH =
+  SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH + "tag:".length;
 export const SPACE_DISCOVERY_MAX_SEARCH_BLOCKS = 64;
 export const SPACE_DISCOVERY_MAX_GRAPH_NODES = 2048;
 export const SPACE_DISCOVERY_MAX_GRAPH_LINKS = 4096;
@@ -194,7 +196,7 @@ export const documentDiscoveryOutlineDataSchema = z.array(
 );
 
 const documentDiscoveryGraphNodeIdSchema = unicodeCodePointStringSchema(
-  SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+  DOCUMENT_DISCOVERY_GRAPH_NODE_ID_MAX_LENGTH,
   1,
 );
 

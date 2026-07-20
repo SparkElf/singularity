@@ -53,6 +53,7 @@ async function createReadyKernel(
   database: DatabaseClient,
   organizationId: string,
   spaceStatus: "active" | "archived",
+  runtimeOwner = "restore-test-worker",
 ) {
   const handle = `restore-test-${randomUUID()}`;
   const space = await database.space.create({
@@ -78,6 +79,7 @@ async function createReadyKernel(
       hostname: "127.0.0.1",
       kernelInstanceId: space.kernelInstance.id,
       port: 58_443,
+      runtimeOwner,
       serverName: "kernel.test",
       spaceId: space.id,
       tlsProfile: "restore-test",
@@ -197,6 +199,41 @@ describe("ProcessRestoreDeployment startup reconciliation with PostgreSQL", () =
       requestId: lifecycle.requestId,
       spaceId: fixture.spaceId,
     });
+  });
+
+  it("does not reconcile a runtime endpoint owned by another Worker", async () => {
+    const organization = await database.client.organization.create({
+      data: { name: `Reconcile ${randomUUID()}`, status: "active" },
+    });
+    const fixture = await createReadyKernel(
+      database.client,
+      organization.id,
+      "active",
+      "another-restore-worker",
+    );
+    const deployment = new ProcessRestoreDeployment(
+      restoreDeploymentConfiguration(rootDirectory),
+      database,
+      new RuntimeKernelDeploymentRegistry([]),
+      logger,
+    );
+
+    await deployment.onModuleInit();
+
+    await expect(
+      database.client.kernelRuntimeEndpoint.findUniqueOrThrow({
+        where: { kernelInstanceId: fixture.kernelInstanceId },
+      }),
+    ).resolves.toMatchObject({
+      runtimeOwner: "another-restore-worker",
+      spaceId: fixture.spaceId,
+    });
+    await expect(
+      database.client.kernelInstance.findUniqueOrThrow({
+        where: { id: fixture.kernelInstanceId },
+      }),
+    ).resolves.toMatchObject({ status: "ready" });
+    expect(logger.entries).toEqual([]);
   });
 
   it("fails a ready restore and removes its isolated target once", async () => {

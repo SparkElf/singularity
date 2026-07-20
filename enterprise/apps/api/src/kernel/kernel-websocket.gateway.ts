@@ -7,7 +7,7 @@ import {
   Inject,
   Injectable,
   Logger,
-  type OnApplicationShutdown,
+  type BeforeApplicationShutdown,
 } from "@nestjs/common";
 import { AUTH_SESSION_COOKIE_NAME } from "@singularity/contracts";
 import {
@@ -27,6 +27,7 @@ import {
   parseKernelWebSocketTarget,
   type KernelWebSocketTarget,
 } from "./gateway-path.js";
+import { kernelErrorContext } from "./error-context.js";
 import { KernelAccessService } from "./kernel-access.service.js";
 import type { SpaceConnectionHandle } from "./space-connection.registry.js";
 import { SpaceConnectionRegistry } from "./space-connection.registry.js";
@@ -47,8 +48,10 @@ function statusText(status: number): string {
   return "Service Unavailable";
 }
 
+const WEBSOCKET_SHUTDOWN_GRACE_MILLISECONDS = 2_000;
+
 @Injectable()
-export class KernelWebSocketGateway implements OnApplicationShutdown {
+export class KernelWebSocketGateway implements BeforeApplicationShutdown {
   readonly #logger = new Logger("KernelWebSocketGateway");
   readonly #server = new WebSocketServer({
     clientTracking: true,
@@ -58,6 +61,7 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
   });
   #httpServer: HttpServer | undefined;
   readonly #pendingUpgradeSockets = new Set<Duplex>();
+  #shutdownPromise: Promise<void> | undefined;
   #shuttingDown = false;
 
   constructor(
@@ -70,6 +74,7 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     private readonly upstream: KernelPrivateWebSocketClient,
   ) {}
 
+  /** 把升级入口挂到 Nest 管理的 HTTP server；只有通知链可用后才接受连接。 */
   attach(server: HttpServer): void {
     if (this.#httpServer !== undefined || this.#shuttingDown) {
       throw new Error("Kernel WebSocket gateway is already attached");
@@ -78,10 +83,15 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     server.on("upgrade", this.#handleUpgrade);
   }
 
-  onApplicationShutdown(): void {
-    if (this.#shuttingDown) {
-      return;
+  /** 在 HTTP server 关闭前撤销升级监听并排空 pending/active WebSocket。 */
+  beforeApplicationShutdown(): Promise<void> {
+    if (this.#shutdownPromise === undefined) {
+      this.#shutdownPromise = this.#shutdown();
     }
+    return this.#shutdownPromise;
+  }
+
+  async #shutdown(): Promise<void> {
     this.#shuttingDown = true;
     if (this.#httpServer !== undefined) {
       this.#httpServer.off("upgrade", this.#handleUpgrade);
@@ -93,11 +103,14 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     }
     this.#pendingUpgradeSockets.clear();
     for (const socket of this.#server.clients) {
-      socket.close(1001, "server-shutdown");
+      if (socket.readyState < WebSocket.CLOSING) {
+        socket.close(1001, "server-shutdown");
+      }
     }
-    this.#server.close();
+    await this.#closeWebSocketServer();
   }
 
+  /** 认证并登记浏览器升级请求，随后由独立激活流程完成授权复验和上游握手。 */
   readonly #handleUpgrade = (
     request: IncomingMessage,
     socket: Duplex,
@@ -132,14 +145,42 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
               spaceId: target.spaceId,
               userId: session.userId,
             });
-          } catch {
+          } catch (error) {
+            this.#logger.error({
+              ...kernelErrorContext(
+                error,
+                "Kernel WebSocket registration failed",
+              ),
+              event: "kernel.route",
+              outcome: "websocket-registration-failed",
+              requestId,
+              spaceId: target.spaceId,
+            });
             browser.close(1011, "service-unavailable");
             return;
           }
-          browser.on("error", () => handle.browserClosed());
+          browser.on("error", (error) => {
+            this.#logger.warn({
+              ...kernelErrorContext(error, "Browser WebSocket failed"),
+              connectionId: handle.connectionId,
+              event: "kernel.route",
+              outcome: "browser-websocket-failed",
+              requestId,
+              spaceId: target.spaceId,
+            });
+            handle.browserClosed();
+          });
           browser.on("close", () => handle.browserClosed());
           browser.on("message", () => handle.clientMessageReceived());
-          void this.#activate(handle, target, session, requestId).catch(() => {
+          void this.#activate(handle, target, session, requestId).catch((error) => {
+            this.#logger.error({
+              ...kernelErrorContext(error, "Kernel WebSocket activation failed"),
+              connectionId: handle.connectionId,
+              event: "kernel.route",
+              outcome: "websocket-activation-failed",
+              requestId,
+              spaceId: target.spaceId,
+            });
             handle.reject("kernel-unavailable");
           });
         });
@@ -164,11 +205,19 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
                 : status === 400
                   ? "validation-failed"
                   : "service-unavailable";
+        this.#logger.warn({
+          ...kernelErrorContext(error, "Kernel WebSocket upgrade failed"),
+          event: "kernel.route",
+          outcome: "websocket-upgrade-rejected",
+          requestId,
+          status,
+        });
         this.#rejectUpgrade(socket, status, code, requestId);
       })
       .finally(() => this.#pendingUpgradeSockets.delete(socket));
   };
 
+  /** 校验同源、路由策略和浏览器会话，返回后续激活所需的最小身份。 */
   async #authorizeUpgrade(request: IncomingMessage, requestId: string) {
     if (!this.connections.available) {
       throw new ApiProblemError("service-unavailable", 503);
@@ -192,6 +241,7 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     return { session, target };
   }
 
+  /** 重新检查空间授权、绑定期限与 mTLS 上游；任何迟到状态都关闭连接而不发送数据。 */
   async #activate(
     handle: SpaceConnectionHandle,
     target: KernelWebSocketTarget,
@@ -221,13 +271,36 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
     try {
       upstream = await this.upstream.connect({
         deployment: authorization.target.deployment,
-        onClose: () => handle.upstreamClosed(),
+        onClose: (error) => {
+          if (error !== undefined && !handle.signal.aborted) {
+            this.#logger.warn({
+              ...kernelErrorContext(error, "Kernel upstream WebSocket failed"),
+              connectionId: handle.connectionId,
+              event: "kernel.route",
+              kernelInstanceId:
+                authorization.target.deployment.kernelInstanceId,
+              outcome: "upstream-websocket-failed",
+              requestId,
+              spaceId: target.spaceId,
+            });
+          }
+          handle.upstreamClosed();
+        },
         onMessage: (data, binary) => handle.upstreamMessage(data, binary),
         path: target.upstreamPath,
         requestId,
         signal: handle.signal,
       });
-    } catch {
+    } catch (error) {
+      this.#logger.warn({
+        ...kernelErrorContext(error, "Kernel upstream WebSocket connect failed"),
+        connectionId: handle.connectionId,
+        event: "kernel.route",
+        kernelInstanceId: authorization.target.deployment.kernelInstanceId,
+        outcome: "upstream-connect-failed",
+        requestId,
+        spaceId: target.spaceId,
+      });
       handle.reject("kernel-unavailable");
       return;
     }
@@ -241,6 +314,54 @@ export class KernelWebSocketGateway implements OnApplicationShutdown {
       outcome: "websocket-active",
       requestId,
       spaceId: target.spaceId,
+    });
+  }
+
+  #closeWebSocketServer(): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const finish = (error?: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
+        }
+        if (
+          error !== undefined &&
+          error.message !== "The server is not running"
+        ) {
+          this.#logger.warn({
+            ...kernelErrorContext(error, "Kernel WebSocket server close failed"),
+            event: "kernel.route",
+            outcome: "websocket-server-close-failed",
+          });
+        }
+        resolve();
+      };
+      timeout = setTimeout(() => {
+        for (const socket of this.#server.clients) {
+          socket.terminate();
+        }
+        finish();
+      }, WEBSOCKET_SHUTDOWN_GRACE_MILLISECONDS);
+      timeout.unref();
+      try {
+        this.#server.close(finish);
+      } catch (error) {
+        for (const socket of this.#server.clients) {
+          socket.terminate();
+        }
+        finish(
+          error instanceof Error
+            ? error
+            : new Error("Kernel WebSocket server close failed", {
+                cause: error,
+              }),
+        );
+      }
     });
   }
 

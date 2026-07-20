@@ -72,16 +72,17 @@ function safeDownloadName(value: string | null, source: string): string {
   let decoded = candidate ?? "download";
   try {
     decoded = decodeURIComponent(decoded.trim());
-  } catch {
+  } catch (error) {
+    console.error(
+      "[asset.preview]",
+      { operation: "decode-download-name", result: "failed" },
+      error,
+    );
     decoded = "download";
   }
-  if (decoded === "download") {
-    try {
-      const pathName = new URL(source, window.location.href).pathname;
-      decoded = pathName.split("/").at(-1) ?? decoded;
-    } catch {
-      // 下载名只是用户界面字段；无法解析时使用稳定默认名。
-    }
+  if (decoded === "download" && URL.canParse(source, window.location.href)) {
+    const pathName = new URL(source, window.location.href).pathname;
+    decoded = pathName.split("/").at(-1) ?? decoded;
   }
   const sanitized = decoded.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
   return sanitized.length > 0 && sanitized !== "." && sanitized !== ".."
@@ -136,6 +137,8 @@ export function AssetPreview({ downloadSrc, initialPage, src }: AssetPreviewProp
     const controller = new AbortController();
     let disposed = false;
     let objectUrl: string | null = null;
+    // 源地址变化时先清除旧媒体状态，随后只接受当前请求的结果。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState({ kind: "loading" });
 
     void fetch(src, {
@@ -178,7 +181,13 @@ export function AssetPreview({ downloadSrc, initialPage, src }: AssetPreviewProp
         const kind = mediaKind(mediaType);
         if (!kind) {
           if (response.body) {
-            void response.body.cancel().catch(() => undefined);
+            void response.body.cancel().catch((error: unknown) => {
+              console.error(
+                "[asset.preview]",
+                { operation: "discard-active-content", result: "failed" },
+                error,
+              );
+            });
           }
           setState({
             downloadName,
@@ -204,8 +213,13 @@ export function AssetPreview({ downloadSrc, initialPage, src }: AssetPreviewProp
           url: objectUrl,
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!disposed && !controller.signal.aborted) {
+          console.error(
+            "[asset.preview]",
+            { operation: "fetch", result: "failed" },
+            error,
+          );
           setState({
             kind: "error",
             message: "服务未返回可用附件。",

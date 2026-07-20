@@ -535,7 +535,7 @@ export interface ProtylePluginPort<TOptions, TToolbar, TEditor> {
   ) => void;
   runSlashItem: (
     pluginName: string,
-    itemId: string,
+    item: ProtylePluginSlashItem,
     editor: TEditor,
     nodeElement: HTMLElement,
   ) => boolean;

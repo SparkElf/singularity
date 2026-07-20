@@ -6,7 +6,9 @@ import {
   AUTH_LOGOUT_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  ORGANIZATION_SPACE_PATH_TEMPLATE,
   type AccessOperationResult,
+  apiProblemSchema,
   loginResponseSchema,
 } from "@singularity/contracts";
 import {
@@ -18,6 +20,7 @@ import { describe, expect, test } from "vitest";
 
 import { PasswordHasher } from "../src/identity/password-hasher.js";
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
+import { captureAccessChanges } from "./support/access-change-barrier.js";
 import {
   startTestApiApplication,
   TEST_PUBLIC_ORIGIN,
@@ -31,6 +34,7 @@ const lockObservationWindowMilliseconds = 3_000;
 interface ConcurrencyTestContext {
   baseUrl: string;
   database: DatabaseClient;
+  databaseRuntime: DatabaseRuntime;
   operations: AccessOperationsService;
   passwordHasher: PasswordHasher;
 }
@@ -45,11 +49,13 @@ async function withTestApplication(
   run: (context: ConcurrencyTestContext) => Promise<void>,
 ): Promise<void> {
   const testApi = await startTestApiApplication();
-  const database = testApi.app.get(DatabaseRuntime).client;
+  const databaseRuntime = testApi.app.get(DatabaseRuntime);
+  const database = databaseRuntime.client;
   try {
     await run({
       baseUrl: testApi.baseUrl,
       database,
+      databaseRuntime,
       operations: testApi.app.get(AccessOperationsService),
       passwordHasher: testApi.app.get(PasswordHasher),
     });
@@ -270,6 +276,22 @@ function holdSpaceRow(
       FOR UPDATE
     `,
     "The space row lock target does not exist",
+  );
+}
+
+function holdOrganizationRow(
+  database: DatabaseClient,
+  organizationId: string,
+): Promise<HeldRowLock> {
+  return holdRow(
+    database,
+    Prisma.sql`
+      SELECT pg_backend_pid() AS "pid"
+      FROM "organizations"
+      WHERE "id" = ${organizationId}
+      FOR UPDATE
+    `,
+    "The organization row lock target does not exist",
   );
 }
 
@@ -751,6 +773,127 @@ describe("access concurrency invariants with PostgreSQL", () => {
             },
           }),
         ).resolves.toMatchObject({ status: "inactive" });
+      });
+    },
+    caseTimeoutMilliseconds,
+  );
+
+  test(
+    "lets disable-space win over an HTTP lifecycle patch without a deadlock",
+    async () => {
+      await withTestApplication(async (context) => {
+        const owner = await createAuthenticatedUser(context);
+        const organization = await context.database.organization.create({
+          data: {
+            name: `Lifecycle organization ${randomUUID()}`,
+            status: "active",
+          },
+          select: { id: true },
+        });
+        await context.database.organizationMembership.create({
+          data: {
+            organizationId: organization.id,
+            role: "owner",
+            status: "active",
+            userId: owner.userId,
+          },
+        });
+        const space = await context.database.space.create({
+          data: {
+            name: "Lifecycle space",
+            organizationId: organization.id,
+            status: "active",
+          },
+          select: { id: true },
+        });
+        const heldLock = await holdOrganizationRow(
+          context.database,
+          organization.id,
+        );
+        let disable: Promise<AccessOperationResult> | undefined;
+        let patch: Promise<Response> | undefined;
+
+        const captured = await captureAccessChanges(
+          context.databaseRuntime,
+          async () => {
+            try {
+              disable = context.operations.execute({
+                operation: "disable-space",
+                spaceId: space.id,
+              });
+              void disable.catch(() => undefined);
+              await waitForBlockedBackendCount(
+                context.database,
+                heldLock.lockerPid,
+                1,
+                Date.now() + lockObservationWindowMilliseconds,
+              );
+              const path = ORGANIZATION_SPACE_PATH_TEMPLATE
+                .replace("{organizationId}", organization.id)
+                .replace("{spaceId}", space.id);
+              patch = fetch(`${context.baseUrl}${path}`, {
+                body: JSON.stringify({ status: "archived" }),
+                headers: {
+                  [CSRF_HEADER_NAME]: owner.csrfToken,
+                  "Content-Type": "application/json",
+                  Cookie: owner.cookie,
+                  Origin: TEST_PUBLIC_ORIGIN,
+                },
+                method: "PATCH",
+              });
+              void patch.catch(() => undefined);
+              await waitForBlockedBackendCount(
+                context.database,
+                heldLock.lockerPid,
+                2,
+                Date.now() + lockObservationWindowMilliseconds,
+              );
+
+              heldLock.release();
+              await heldLock.completed;
+              return {
+                disable: await disable,
+                patch: await patch,
+              };
+            } finally {
+              heldLock.release();
+              await Promise.allSettled([
+                heldLock.completed,
+                ...(disable === undefined ? [] : [disable]),
+                ...(patch === undefined ? [] : [patch]),
+              ]);
+            }
+          },
+        );
+
+        expect(captured.result.disable.outcome).toBe("updated");
+        expect(captured.result.patch.status).toBe(409);
+        expect(
+          apiProblemSchema.parse(await captured.result.patch.json()).code,
+        ).toBe("conflict");
+        expect(captured.events).toEqual([
+          expect.objectContaining({
+            kind: "close",
+            reason: "forbidden",
+            selectors: [{ kind: "space", value: space.id }],
+          }),
+        ]);
+        await expect(
+          context.database.space.findUniqueOrThrow({
+            where: { id: space.id },
+            select: { status: true },
+          }),
+        ).resolves.toEqual({ status: "disabled" });
+        await expect(
+          context.database.auditEvent.count({
+            where: {
+              organizationId: organization.id,
+              spaceId: space.id,
+              targetId: space.id,
+              targetType: "space",
+            },
+          }),
+        ).resolves.toBe(1);
       });
     },
     caseTimeoutMilliseconds,

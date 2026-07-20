@@ -285,6 +285,8 @@ describe("PdfCanvasPreview", () => {
   it("destroys a loading task immediately when PDF parsing fails", async () => {
     const fixture = createPdfFixture();
     const failedDocument = createDeferred<PdfDocument>();
+    const failure = new Error("invalid PDF");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const loadingTask: PdfLoadingTask = {
       destroy: vi.fn(async () => undefined),
       promise: failedDocument.promise,
@@ -297,12 +299,18 @@ describe("PdfCanvasPreview", () => {
     );
     await waitFor(() => expect(pdfRuntime.openPdfDocument).toHaveBeenCalledOnce());
     await act(async () => {
-      failedDocument.reject(new Error("invalid PDF"));
+      failedDocument.reject(failure);
       await Promise.resolve();
     });
 
     expect(await screen.findByText("无法预览 PDF")).toBeVisible();
     expect(loadingTask.destroy).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[asset.preview]",
+      { operation: "pdf-load", result: "failed" },
+      failure,
+    );
+    expect(failure.stack).toMatch(/Error: invalid PDF\n\s+at /);
     unmount();
     expect(loadingTask.destroy).toHaveBeenCalledOnce();
   });

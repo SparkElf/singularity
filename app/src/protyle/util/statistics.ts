@@ -38,6 +38,7 @@ const stateFor = (protyle: IProtyle) => {
     return state;
 };
 
+/** 按编辑器代次合并统计请求，旧请求完成后不得覆盖新统计结果。 */
 const scheduleStatistics = (protyle: IProtyle, request: StatisticsRequest) => {
     if (protyle.content.mode !== "bound" || protyle.surface !== "workspace") {
         return;
@@ -54,7 +55,7 @@ const scheduleStatistics = (protyle: IProtyle, request: StatisticsRequest) => {
         state.timeout = undefined;
         const signal = combineAbortSignals([protyle.requestSignal, controller.signal]);
         const identity = protyleContentIdentity(protyle);
-        void protyle.session!.runtime.transport.request<StatisticsResponse>(request.path, request.body, {
+        void protyle.runtime.transport.request<StatisticsResponse>(request.path, request.body, {
             identity,
             intent: "read",
             signal,
@@ -80,6 +81,7 @@ const scheduleStatistics = (protyle: IProtyle, request: StatisticsRequest) => {
     }, Constants.TIMEOUT_COUNT);
 };
 
+/** 统计当前选择文本并异步通知编辑器宿主。 */
 export const countSelectionStatistics = (protyle: IProtyle, range: Range) => {
     scheduleStatistics(protyle, {
         path: "/api/block/getContentWordCount",
@@ -87,6 +89,7 @@ export const countSelectionStatistics = (protyle: IProtyle, range: Range) => {
     });
 };
 
+/** 统计选中块、选中文本或整篇文档，具体来源由输入内容决定。 */
 export const countBlockStatistics = (protyle: IProtyle, ids: readonly string[]) => {
     if (ids.length > 0) {
         scheduleStatistics(protyle, {

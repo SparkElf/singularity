@@ -18,7 +18,7 @@ const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEMBER_ID = "22222222-2222-4222-8222-222222222222";
 const GROUP_ID = "33333333-3333-4333-8333-333333333333";
-const CSRF_TOKEN = "A".repeat(43);
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const REQUEST_ID = "99999999-9999-4999-8999-999999999999";
 const SPACE_BASE_PATH =
   `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}`;
@@ -32,6 +32,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function noContentResponse(): Response {
   return new Response(null, { status: 204 });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 function createTestQueryClient(): QueryClient {
@@ -206,6 +214,11 @@ describe("SpaceAccessPage delegated administration", () => {
         },
       ]);
     });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: "reader@example.test" }),
+      ).not.toBeInTheDocument();
+    });
 
     fireEvent.change(screen.getByLabelText("用户组"), {
       target: { value: GROUP_ID },
@@ -225,6 +238,11 @@ describe("SpaceAccessPage delegated administration", () => {
         },
       ]);
     });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: "资料阅读组" }),
+      ).not.toBeInTheDocument();
+    });
     expect(requestedPaths).toEqual(
       expect.arrayContaining([
         `${SPACE_BASE_PATH}/member-candidates`,
@@ -239,7 +257,8 @@ describe("SpaceAccessPage delegated administration", () => {
     );
   });
 
-  it("clears the client session and returns to login when a candidate query is unauthenticated", async () => {
+  it("prioritizes a late unauthenticated query and clears the client session", async () => {
+    const candidateResponse = deferred<Response>();
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>((input) => {
@@ -251,13 +270,13 @@ describe("SpaceAccessPage delegated administration", () => {
           case `${SPACE_BASE_PATH}/members`:
             return Promise.resolve(jsonResponse({ members: [] }));
           case `${SPACE_BASE_PATH}/groups`:
-            return Promise.resolve(jsonResponse({ grants: [] }));
-          case `${SPACE_BASE_PATH}/member-candidates`:
             return Promise.resolve(jsonResponse({
-              code: "unauthenticated",
-              requestId: REQUEST_ID,
-              status: 401,
-            }, 401));
+              code: "conflict",
+              requestId: "88888888-8888-4888-8888-888888888888",
+              status: 409,
+            }, 409));
+          case `${SPACE_BASE_PATH}/member-candidates`:
+            return candidateResponse.promise;
           case `${SPACE_BASE_PATH}/group-candidates`:
             return Promise.resolve(jsonResponse({ groups: [] }));
           default:
@@ -271,8 +290,16 @@ describe("SpaceAccessPage delegated administration", () => {
 
     renderSpaceAccessPage(queryClient);
 
+    expect(
+      await screen.findByRole("heading", { name: "无法加载数据" }),
+    ).toBeVisible();
+    candidateResponse.resolve(jsonResponse({
+      code: "unauthenticated",
+      requestId: REQUEST_ID,
+      status: 401,
+    }, 401));
     expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
     expect(useCsrfStore.getState().csrfToken).toBeNull();
-    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
   });
 });

@@ -87,7 +87,8 @@ export class Files extends Model {
                     event.preventDefault();
                     event.stopPropagation();
                     const rect = target.getBoundingClientRect();
-                    openEmojiPanel(target.parentElement.getAttribute("data-url"), "notebook", {
+                    const notebookId = target.parentElement.getAttribute("data-url");
+                    openEmojiPanel(notebookId, notebookId, "notebook", {
                         x: rect.left,
                         y: rect.bottom,
                         h: rect.height,
@@ -215,14 +216,15 @@ export class Files extends Model {
                         event.stopPropagation();
                         const rect = target.getBoundingClientRect();
                         if (target.parentElement.getAttribute("data-type") === "navigation-file") {
-                            openEmojiPanel(target.parentElement.getAttribute("data-node-id"), "doc", {
+                            openEmojiPanel(target.parentElement.getAttribute("data-node-id"), notebookId, "doc", {
                                 x: rect.left,
                                 y: rect.bottom,
                                 h: rect.height,
                                 w: rect.width,
                             }, undefined, target.querySelector("img"));
                         } else {
-                            openEmojiPanel(target.parentElement.parentElement.getAttribute("data-url"), "notebook", {
+                            const targetNotebookId = target.parentElement.parentElement.getAttribute("data-url");
+                            openEmojiPanel(targetNotebookId, targetNotebookId, "notebook", {
                                 x: rect.left,
                                 y: rect.bottom,
                                 h: rect.height,

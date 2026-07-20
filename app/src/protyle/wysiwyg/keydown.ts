@@ -167,7 +167,7 @@ export const getContentByInlineHTML = (protyle: IProtyle, range: Range, cb: (con
             html += item.outerHTML;
         }
     });
-    void protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getDOMText", {dom: html}, {
+    void protyle.runtime.transport.request<IWebSocketData>("/api/block/getDOMText", {dom: html}, {
         identity: protyleContentIdentity(protyle),
         intent: "read",
         signal: protyle.requestSignal,

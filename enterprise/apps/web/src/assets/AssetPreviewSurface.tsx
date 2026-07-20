@@ -50,7 +50,12 @@ export function AssetPreviewSurface({
         ),
         preview: buildSpaceGatewayAssetPath(space, identity, request.assetPath),
       };
-    } catch {
+    } catch (error) {
+      console.error(
+        "[asset.preview]",
+        { operation: "resolve-source", result: "failed" },
+        error,
+      );
       source = null;
     }
   }

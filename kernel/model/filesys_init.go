@@ -36,6 +36,7 @@ func init() {
 	av.AVLockRelease = ReleaseBoxReadLock
 	sql.IsEncryptedBoxFn = IsEncryptedBox
 	treenode.IsEncryptedBoxFn = IsEncryptedBox
+	util.IsEncryptedBoxFn = IsEncryptedBox
 	util.ContentStoreBroadcastExecutor = func(boxID string, broadcast func()) {
 		if !IsEncryptedBox(boxID) {
 			broadcast()

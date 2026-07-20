@@ -63,6 +63,7 @@ export class KernelAccessService {
     private readonly clock: Clock,
   ) {}
 
+  /** 校验组织、空间、角色和运行时部署，返回带完整身份的唯一 Kernel 路由目标。 */
   async authorizeHttp(input: {
     action: KernelAction;
     organizationId: string;
@@ -88,6 +89,7 @@ export class KernelAccessService {
     return { deployment: target, role: access.role };
   }
 
+  /** 在 WebSocket 连接存续期间重新校验访问和部署代次，权限变化时立即拒绝旧连接。 */
   async revalidateConnection(input: {
     action: KernelAction;
     authSessionId: string;
@@ -138,6 +140,7 @@ export class KernelAccessService {
     };
   }
 
+  /** 从数据库解析空间访问事实，集中拥有角色合并、状态和组织归属判断。 */
   async #resolveSpaceAccess(input: {
     organizationId: string;
     spaceId: string;

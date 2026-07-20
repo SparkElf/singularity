@@ -28,8 +28,8 @@ export function canonicalKernelPath(value: string): `/${string}` {
   let decodedSegments: string[];
   try {
     decodedSegments = rawPath.split("/").map((segment) => decodeURIComponent(segment));
-  } catch {
-    throw new Error("Kernel route is unavailable");
+  } catch (error) {
+    throw new Error("Kernel route is unavailable", { cause: error });
   }
   if (
     !value.startsWith("/") ||

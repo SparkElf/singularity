@@ -136,7 +136,7 @@ export class OrganizationsController {
   @HttpCode(204)
   @Header("Cache-Control", "no-store")
   @SessionMutation()
-  @ApiProblemResponses(400, 401, 403, 404, 503)
+  @ApiProblemResponses(400, 401, 403, 404, 409, 503)
   @ApiOperation({ summary: "Revoke every session for an organization member" })
   @ApiNoContentResponse()
   async revokeMemberSessions(
@@ -228,7 +228,7 @@ export class OrganizationsController {
   @HttpCode(204)
   @Header("Cache-Control", "no-store")
   @SessionMutation()
-  @ApiProblemResponses(400, 401, 403, 404, 503)
+  @ApiProblemResponses(400, 401, 403, 404, 409, 503)
   @ApiOperation({ summary: "Revoke an organization invitation" })
   @ApiNoContentResponse()
   async revokeInvitation(

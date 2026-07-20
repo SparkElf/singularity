@@ -105,7 +105,7 @@ func SetBlockReminder(id, timed string) (err error) {
 		node = treenode.FirstLeafBlock(node)
 	}
 
-	content := sql.NodeStaticContent(node, nil, false, false, false)
+	content := sql.NodeStaticContentWithoutOCR(node, nil, false, false, false)
 	content = gulu.Str.SubStr(content, 128)
 	content = strings.ReplaceAll(content, editor.Zwsp, "")
 	err = SetCloudBlockReminder(id, content, timedMills)

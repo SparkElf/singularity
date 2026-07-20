@@ -138,7 +138,7 @@ export class Title {
 
     private openMenu(protyle: IProtyle) {
         this.closeMenu();
-        const handle = protyle.runtime!.menu.open();
+        const handle = protyle.runtime.menu.open();
         this.menuHandle = handle;
         handle.menu.removeCB = () => {
             if (this.menuHandle === handle) {
@@ -461,7 +461,7 @@ export class Title {
         this.timeout = window.setTimeout(() => {
             const fileName = normalizeDocumentTitle(protyle, this.editElement.textContent, this.editElement);
             const identity = protyleContentIdentity(protyle);
-            void protyle.session!.runtime.transport.request<RenameDocumentResponse>("/api/filetree/renameDoc", {
+            void protyle.runtime.transport.request<RenameDocumentResponse>("/api/filetree/renameDoc", {
                 notebook: protyle.notebookId,
                 path: protyle.path,
                 title: fileName,

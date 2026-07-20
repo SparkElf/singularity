@@ -136,12 +136,10 @@ const ALLOWED_ATTRIBUTES = new Set([
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
 function assetIdFromUrl(value: string, shareToken: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value, window.location.origin);
-  } catch {
+  if (!URL.canParse(value, window.location.origin)) {
     return null;
   }
+  const url = new URL(value, window.location.origin);
   const assetId = url.pathname.split("/").at(-1);
   if (
     assetId === undefined ||
@@ -157,25 +155,21 @@ function assetIdFromUrl(value: string, shareToken: string): string | null {
 }
 
 function isSafeExternalUrl(value: string): boolean {
-  if (value.startsWith("#")) {
-    return true;
-  }
-  try {
-    const url = new URL(value, window.location.origin);
-    if (!SAFE_EXTERNAL_PROTOCOLS.has(url.protocol)) {
-      return false;
-    }
-    if (url.protocol === "mailto:") {
-      return true;
-    }
-    return (
-      url.origin !== window.location.origin &&
-      url.username.length === 0 &&
-      url.password.length === 0
-    );
-  } catch {
+  if (!URL.canParse(value, window.location.origin)) {
     return false;
   }
+  const url = new URL(value, window.location.origin);
+  if (!SAFE_EXTERNAL_PROTOCOLS.has(url.protocol)) {
+    return false;
+  }
+  if (url.protocol === "mailto:") {
+    return true;
+  }
+  return (
+    url.origin !== window.location.origin &&
+    url.username.length === 0 &&
+    url.password.length === 0
+  );
 }
 
 function sanitizeSharedElement(

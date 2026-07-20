@@ -86,7 +86,8 @@ export const oidcIssuerSchema = z
       issuer.search.length === 0 &&
       issuer.hash.length === 0
     );
-  });
+  })
+  .transform((value) => new URL(value).toString());
 export const oidcClientIdSchema = z
   .string()
   .min(1)

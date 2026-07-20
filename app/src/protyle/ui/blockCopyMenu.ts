@@ -87,7 +87,7 @@ export const createBlockCopyMenu = ({
             label: protyle.localization.text("copyMarkdown"),
             click: async () => {
                 const identity = protyleContentIdentity(protyle);
-                const response = await protyle.session!.runtime.transport.request<{
+                const response = await protyle.runtime.transport.request<{
                     readonly data: {readonly content: string};
                 }>("/api/export/exportMdContent", {
                     id: standardMarkdownDocumentId,

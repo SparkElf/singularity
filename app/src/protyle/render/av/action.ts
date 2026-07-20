@@ -616,7 +616,7 @@ export const avContextmenu = (protyle: IProtyle, rowElement: HTMLElement, positi
                     if (!blockTarget) {
                         content = cellElement.querySelector(".av__celltext").textContent;
                     } else {
-                        const response = await protyle.transport!.request<IWebSocketData>("/api/filetree/getHPathByID", {
+                        const response = await protyle.runtime.transport.request<IWebSocketData>("/api/filetree/getHPathByID", {
                             id: blockTarget.blockId,
                             notebook: blockTarget.notebookId,
                         }, {
@@ -985,7 +985,7 @@ export const removeAttrViewColAnimation = (blockElement: Element, id: string) =>
 
 export const duplicateCompletely = (protyle: IProtyle, nodeElement: HTMLElement) => {
     const identity = protyleContentIdentity(protyle);
-    void protyle.transport!.request<IWebSocketData>("/api/av/duplicateAttributeViewBlock", {
+    void protyle.runtime.transport.request<IWebSocketData>("/api/av/duplicateAttributeViewBlock", {
         avID: nodeElement.getAttribute("data-av-id"),
     }, {
         identity,

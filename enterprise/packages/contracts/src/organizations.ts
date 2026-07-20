@@ -5,6 +5,8 @@ import {
   CSRF_TOKEN_OPENAPI_SCHEMA,
   LOGIN_IDENTIFIER_MAX_LENGTH,
   LOGIN_IDENTIFIER_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
   loginIdentifierSchema,
   passwordSchema,
   sessionTokenSchema,
@@ -20,6 +22,8 @@ export const organizationMembershipStatuses = ["active", "inactive"] as const;
 export const organizationMembershipStatusSchema = z.enum(
   organizationMembershipStatuses,
 );
+export const accountStatuses = ["active", "disabled"] as const;
+export const accountStatusSchema = z.enum(accountStatuses);
 export const organizationRoleSchema = z.enum(organizationRoles);
 export const assignableOrganizationRoles = ["admin", "member"] as const;
 export const assignableOrganizationRoleSchema = z.enum(
@@ -98,6 +102,7 @@ export const organizationInvitationPathParametersSchema = z
 
 export const organizationMemberSummarySchema = z
   .object({
+    accountStatus: accountStatusSchema,
     loginIdentifier: loginIdentifierSchema,
     role: organizationRoleSchema,
     status: organizationMembershipStatusSchema,
@@ -200,6 +205,10 @@ const MEMBERSHIP_STATUS_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   enum: [...organizationMembershipStatuses],
 };
+const ACCOUNT_STATUS_OPENAPI_SCHEMA: OpenApiSchema = {
+  type: "string",
+  enum: [...accountStatuses],
+};
 const ORGANIZATION_MANAGEMENT_CAPABILITY_OPENAPI_SCHEMA: OpenApiSchema = {
   type: "string",
   enum: [...organizationManagementCapabilities],
@@ -217,6 +226,7 @@ export const INVITATION_TOKEN_OPENAPI_SCHEMA: OpenApiSchema =
 
 export const ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({
+    accountStatus: ACCOUNT_STATUS_OPENAPI_SCHEMA,
     loginIdentifier: { type: "string" },
     role: ORGANIZATION_ROLE_OPENAPI_SCHEMA,
     status: MEMBERSHIP_STATUS_OPENAPI_SCHEMA,
@@ -307,13 +317,16 @@ export const ORGANIZATION_INVITATIONS_RESPONSE_OPENAPI_SCHEMA =
     },
   });
 export const UPDATE_ORGANIZATION_MEMBER_REQUEST_OPENAPI_SCHEMA =
-  strictObjectOpenApiSchema(
-    {
-      role: ASSIGNABLE_ORGANIZATION_ROLE_OPENAPI_SCHEMA,
-      status: MEMBERSHIP_STATUS_OPENAPI_SCHEMA,
-    },
-    [],
-  );
+  {
+    ...strictObjectOpenApiSchema(
+      {
+        role: ASSIGNABLE_ORGANIZATION_ROLE_OPENAPI_SCHEMA,
+        status: MEMBERSHIP_STATUS_OPENAPI_SCHEMA,
+      },
+      [],
+    ),
+    minProperties: 1,
+  };
 export const TRANSFER_ORGANIZATION_OWNERSHIP_REQUEST_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({ newOwnerUserId: UUID_OPENAPI_SCHEMA });
 export const ACCEPT_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA =
@@ -323,5 +336,9 @@ export const ACCEPT_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA =
 export const ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({
     invitationToken: INVITATION_TOKEN_OPENAPI_SCHEMA,
-    password: { type: "string" },
+    password: {
+      type: "string",
+      minLength: PASSWORD_MIN_LENGTH,
+      maxLength: PASSWORD_MAX_LENGTH,
+    },
   });

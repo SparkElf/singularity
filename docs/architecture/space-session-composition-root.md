@@ -158,9 +158,9 @@ React空间路由是浏览器唯一组合根，职责限定为：
 - B4才在同一组合根中把Session、目录选择的唯一`notebookId + documentId`和由角色派生的宿主`readOnly`交给`ProtyleHost`与公共Factory。
 - 在路由空间身份变化或组件卸载时按Session合同有序销毁。
 
-Session是带资源生命周期的非序列化对象，由空间路由组件直接拥有并以一个带`ContentSelectionScope`的直接render-prop交给唯一工作台owner，不进入Zustand或全局Context。Scope只属于当前授权空间路由代次，提供`selectDocument`和`clearSelection`能力；旧代次的迟到回调在写入点拒绝。Zustand只保存跨页面且不持久化的当前`spaceId + notebookId + documentId`选择与CSRF token，TanStack Query保存服务端返回的组织、空间、角色、启动状态和目录分页，目录数组、Session和Scope不复制进store。
+Session是带资源生命周期的非序列化对象，由空间路由组件直接拥有并以一个带`ContentSelectionScope`的直接render-prop交给唯一工作台owner，不进入Zustand或全局Context。Scope只属于当前授权空间路由代次，提供`selectDocument`和`clearSelection`能力；旧代次的迟到回调在写入点拒绝。Zustand只保存跨页面且不持久化的当前`spaceId + notebookId + documentId + supportsGraph`选择与CSRF token，`supportsGraph`只从当前notebook项复制；TanStack Query保存服务端返回的组织、空间、角色、启动状态和目录分页，目录数组、Session和Scope不复制进store。
 
-S1 React路由固定为`/login`、`/spaces`和`/organizations/:organizationId/spaces/:spaceId`。URL是当前空间唯一事实源；S1阶段TanStack Query拥有授权空间摘要与启动响应，Zustand只保存不持久化的CSRF token，S3再按4.2节增加当前三ID选择；退出或401同时清空两者，组织、空间、角色和Kernel状态不复制进store。登录深链以`returnTo`保存同源站内路径，解析后只接受以`/`开头且不以`//`开头的pathname、search与hash组合，拒绝凭据、外部origin和协议相对地址；主动退出不保留`returnTo`。授权空间与启动查询覆盖全局30秒`staleTime`，固定`staleTime: 0`及`refetchOnMount: "always"`，退出或401清空整个QueryClient；独立空间查询按路由键隔离，工作台名称从当前授权空间摘要就近派生，启动响应继续只承载ID、角色与状态。
+S1 React路由固定为`/login`、`/spaces`和`/organizations/:organizationId/spaces/:spaceId`。URL是当前空间唯一事实源；S1阶段TanStack Query拥有授权空间摘要与启动响应，Zustand只保存不持久化的CSRF token，S3再按4.2节增加当前三ID与图谱能力选择；退出或401同时清空两者，组织、空间、角色和Kernel状态不复制进store。登录深链以`returnTo`保存同源站内路径，解析后只接受以`/`开头且不以`//`开头的pathname、search与hash组合，拒绝凭据、外部origin和协议相对地址；主动退出不保留`returnTo`。授权空间与启动查询覆盖全局30秒`staleTime`，固定`staleTime: 0`及`refetchOnMount: "always"`，退出或401清空整个QueryClient；独立空间查询按路由键隔离，工作台名称从当前授权空间摘要就近派生，启动响应继续只承载ID、角色与状态。
 
 TanStack Query在后台重验失败后会保留旧`data`，因此页面只消费当前查询已成功且`isFetching`为false的数据；重验中、错误后或路由不匹配时，旧角色、空间名、Badge和ready状态都不参与渲染。runtime隐藏式404是当前空间授权失效的权威证据：页面立即从本轮派生列表隐藏该空间并invalidate授权空间query，等待列表重读，不把404改写成旧缓存可用态。单空间自动进入只发生在普通访问`/spaces`时；工作台显式“返回空间列表”通过Router navigation state保留选择页并显示唯一空间，不建立第二个持久化状态源。
 
@@ -333,7 +333,7 @@ interface ApiProblem {
 /api/v1/organizations/{organizationId}/spaces/{spaceId}/content-directory/notebooks/{notebookId}/documents/{documentId}/children?offset=N
 ```
 
-第一条返回按Kernel权威顺序排列的`{ notebookId, name, icon, locked }`。后两条每页固定最多128项，返回`{ locked, documents, nextOffset }`；每个文档项为`{ notebookId, documentId, title, icon, hasChildren }`。`nextOffset`只取下一页非负整数或`null`，请求缺省offset为0。根层由第二条路由表达，第三条只接受真实父文档ID；不传空ID、路径、正文、摘要、内部地址、文档数量或同义身份字段。锁定加密笔记本返回`locked: true`和空documents，普通空目录返回`locked: false`和空documents，两者不可混淆。
+第一条返回按Kernel权威顺序排列的`{ notebookId, name, icon, locked, supportsGraph }`。`supportsGraph`只存在于notebook项并由Kernel笔记本事实产生，Selection从当前notebook项取得它；document DTO不得复制该字段，下游不得从`locked`或其他字段推断。后两条每页固定最多128项，返回`{ locked, documents, nextOffset }`；每个文档项为`{ notebookId, documentId, title, icon, hasChildren }`。`nextOffset`只取下一页非负整数或`null`，请求缺省offset为0。根层由第二条路由表达，第三条只接受真实父文档ID；不传空ID、路径、正文、摘要、内部地址、文档数量或同义身份字段。锁定加密笔记本返回`locked: true`、`supportsGraph: false`和空documents，不能产生document selection；普通空目录返回`locked: false`和空documents，两者不可混淆。
 
 目录Controller先通过现有HTTP Guard取得当前AuthSession，再由`KernelAccessService`以`action: read`复验User、Organization、OrganizationMembership、Space及直接/用户组空间角色和ready Kernel部署。目录Service经`KernelPrivateClient`调用`/internal/enterprise/directory/notebooks`或`/internal/enterprise/directory/documents`；这两项在唯一`kernelRoutePolicies`中声明`identity: service`且仍使用mTLS、服务JWT、禁代理/重定向和响应头允许集。Go Kernel由同一声明同时注册Gin路由和身份要求：readyz、directory、backup与observation使用服务身份，share路由继续要求内容身份，未知路由默认要求内容身份；目录不会出现在浏览器Gateway策略中。
 
@@ -422,7 +422,7 @@ interface ProtyleResourcePort {
   -> Protyle Core
 ```
 
-每个事实只有一个所有者。SystemInstallation只表达初始化是否完成，PostgreSQL拥有账号、会话、空间和角色，路由参数只定位查询，TanStack Query拥有浏览器服务端目录视图，Zustand只拥有内存CSRF和当前三ID选择，ContentSelectionScope拥有该选择的可提交代次，Kernel实例注册表拥有内部路由，Session拥有浏览器运行时资源，Kernel拥有内容。
+每个事实只有一个所有者。SystemInstallation只表达初始化是否完成，PostgreSQL拥有账号、会话、空间和角色，路由参数只定位查询，TanStack Query拥有浏览器服务端目录视图，Zustand只拥有内存CSRF和当前三ID与图谱能力选择，ContentSelectionScope拥有该选择的可提交代次，Kernel实例注册表拥有内部路由，Session拥有浏览器运行时资源，Kernel拥有内容。
 
 ### 6.2 状态与失效
 
@@ -683,7 +683,7 @@ Browser integration允许拦截外部身份/空间HTTP，配置只启动Vite Web
 1. 在contracts声明三个目录路径、Zod/OpenAPI schema、128项分页与最小字段；在authorization的唯一策略表声明两个`identity: service` Kernel内部目录路由，重复键启动失败。
 2. 在Kernel实现开放笔记本与一层文档目录模型、真实父文档内容库校验、加密响应门、锁态和最小JSON投影；同一声明同时注册内部路由与身份要求，目录使用服务身份，分享继续强制内容身份，WebSocket使用查询身份。
 3. 在现有Kernel Gateway模块用原生`@Controller/@Get`、认证metadata、Pipe、singleton Service与构造器DI实现公共目录；先复验空间读取权限，再以mTLS/JWT调用私网目录并有界解析响应，不增加自定义registry。
-4. 在Web实现TanStack Query目录分页、最小Zustand三ID选择、树owner与自动首文档选择；`SpaceSessionRoot`激活唯一`ContentSelectionScope`并通过render-prop交付Session、选择和有代次的选择命令，目录数组、Scope、Session和Core不进store。
+4. 在Web实现TanStack Query目录分页、最小Zustand三ID与图谱能力选择、树owner与自动首文档选择；`SpaceSessionRoot`激活唯一`ContentSelectionScope`并通过render-prop交付Session、选择和有代次的选择命令，目录数组、Scope、Session和Core不进store。
 5. 实现生产HostPort、正式零插件PluginPort、Registry、绑定空间Gateway的Transport、ResourcePort、Menu、Overlay、完整Runtime和Session组合，不接入编辑器Core。
 6. 仅在授权启动状态为`ready`时创建Session，切空间和撤权按“冻结命令、等待dispose、清DOM、失效目录与选择、代次校验”顺序销毁。
 7. 以非编辑器就绪状态证明完整Runtime和真实Session可由路由持有，并证明目录能产出完整身份；不使用占位能力、测试Session、测试Factory、硬编码空间ID、空文档ID或旧路径。
@@ -735,7 +735,7 @@ Browser integration允许拦截外部身份/空间HTTP，配置只启动Vite Web
 - **可观测性**：稳定标签具有owner、级别和统一`requestId`链，覆盖身份、启动、授权、路由和编辑器生命周期，不记录正文、令牌和内部路径。
 - **运行时校验**：只在HTTP、Kernel私网JSON、stdin、配置、Cookie/CSRF和数据库状态转换信任边界做有界校验；每类输入在进入内部链路时解析一次，后续层消费已收敛的类型，不重复拦截同一非法值。只有跨进程、外部字节、持久化或安全生命周期边界需要重新验证其自身合同；控制面载荷至多16KiB，目录响应至多1MiB且单页128项，均不进入编辑热路径，静态类型不能替代Go进程、代理和浏览器收到的不可信字节。用户已批准对应安全、运维与目录产品合同。
 - **拷贝与转换**：不复制正文或全量Prisma对象；网络边界只把已解析合同转成最小公开载荷，授权搜索在当前数组就近派生。`PasswordHasher`承担PHC、密码学和资源准入差异，`kernel-client`承担私网协议与错误语义，均非改名透传Adapter。
-- **前端系统**：radix-nova、Tailwind语义token和shadcn组件是唯一视觉事实源；TanStack Query拥有服务端视图，Zustand只拥有内存CSRF与当前三ID选择，目录数组和Session不进store。
+- **前端系统**：radix-nova、Tailwind语义token和shadcn组件是唯一视觉事实源；TanStack Query拥有服务端视图，Zustand只拥有内存CSRF与当前三ID和图谱能力选择，目录数组和Session不进store。
 - **测试治理**：数据库、unit、HTTP、HTTPS/WSS、Go unit、组件、production build、browser integration与未来E2E按最低充分层级分离，由分阶段非空`verify:s0-s3`发现；空E2E入口在S1删除，support只复用稳定技术生命周期并返回原始证据。
 - **并发协作**：10.1节固定目录owner、编辑顺序、无冲突任务和共享文件恢复条件；冲突只通过`/root/projects/mailbox.md`协调。
 - **产物边界**：文档、日志、fixture和快照只保存合同、结果与必要诊断，不写入正文、凭证、内部提示或隐藏推理。

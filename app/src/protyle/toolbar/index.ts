@@ -55,7 +55,7 @@ const requestToolbar = <TData>(
     path: string,
     body: unknown,
     intent: "read" | "write",
-) => protyle.transport!.request<ToolbarResponse<TData>>(path, body, {
+) => protyle.runtime.transport.request<ToolbarResponse<TData>>(path, body, {
     identity: {
         documentId: protyle.options.blockId!,
         notebookId: protyle.notebookId,
@@ -1141,11 +1141,14 @@ export class Toolbar {
         const exportImg = () => {
             protyle.host.dispatch({type: "notify", level: "info", message: text(protyle, "export")});
             if (renderElement.getAttribute("data-subtype") === "plantuml") {
-                fetch(renderElement.querySelector("object").getAttribute("data")).then(function (response) {
-                    return response.blob();
-                }).then(function (blob) {
-                    downloadToolbarBlob(blob, `${id}.svg`);
-                });
+                const imageElement = renderElement.querySelector("img");
+                if (imageElement) {
+                    void fetch(imageElement.src).then((response) => response.blob()).then((blob) => {
+                        downloadToolbarBlob(blob, `${id}.svg`);
+                    }).catch((error) => {
+                        console.error("[protyle.render] PlantUML export failed", error);
+                    });
+                }
                 return;
             }
             setTimeout(() => {

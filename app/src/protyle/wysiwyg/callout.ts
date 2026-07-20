@@ -181,7 +181,7 @@ export const updateCalloutType = (blockElements: HTMLElement[], protyle: IProtyl
             return;
         }
         closeActiveMenu();
-        const runtime = protyle.session!.runtime as TProtyleRuntime;
+        const runtime = protyle.runtime;
         const state = ownMenu(runtime.menu.open(), "type");
         CALLOUT_TYPES.forEach((item) => {
             state.handle.menu.addItem({

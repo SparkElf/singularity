@@ -17,7 +17,10 @@ import {
 import {
   createKernelDeployment,
   KernelCredentialService,
+  kernelDeploymentHostnameSchema,
   kernelDeploymentProfileSchema,
+  kernelDeploymentServerNameSchema,
+  kernelRequestTimeoutSchema,
   KernelRoutePolicyRegistry,
   parseKernelDeploymentsDocument,
   RuntimeKernelDeploymentRegistry,
@@ -30,22 +33,24 @@ import {
 import { MAXIMUM_AUDIT_ARCHIVE_EVENTS } from "./worker.js";
 
 const DEFAULT_ARCHIVE_AUDIT_INTERVAL_MILLISECONDS = 5 * 60_000;
+const DEFAULT_BACKUP_REQUEST_TIMEOUT_MILLISECONDS = 6 * 60 * 60_000;
 const DEFAULT_CLAIM_BATCH_SIZE = 16;
 const DEFAULT_CONTENT_AUDIT_BATCH_SIZE = 100;
 const DEFAULT_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MILLISECONDS = 5_000;
 const DEFAULT_LEASE_DURATION_MILLISECONDS = 30_000;
 const DEFAULT_LEASE_RENEWAL_MILLISECONDS = 10_000;
 const DEFAULT_MAXIMUM_AUDIT_ARCHIVE_BYTES = 256 * 1_024 * 1_024;
-const DEFAULT_MAXIMUM_BACKUP_BYTES = 8 * 1_024 * 1_024 * 1_024;
+const MAXIMUM_BACKUP_BYTES = 8 * 1_024 * 1_024 * 1_024;
+const MAXIMUM_BACKUP_FILES = 100_000;
 const DEFAULT_MAXIMUM_CONCURRENT_JOBS = 4;
-const DEFAULT_MAXIMUM_OBJECT_BYTES = DEFAULT_MAXIMUM_BACKUP_BYTES;
+const DEFAULT_MAXIMUM_OBJECT_BYTES = MAXIMUM_BACKUP_BYTES;
 const DEFAULT_POLL_INTERVAL_MILLISECONDS = 1_000;
 const DEFAULT_SAMPLE_KERNEL_INTERVAL_MILLISECONDS = 60_000;
 const MAXIMUM_CONTENT_AUDIT_BATCH_SIZE = 1_000;
 
 export class WorkerConfigurationError extends Error {
-  constructor() {
-    super("Worker deployment configuration is unavailable");
+  constructor(options?: ErrorOptions) {
+    super("Worker deployment configuration is unavailable", options);
     this.name = "WorkerConfigurationError";
   }
 }
@@ -53,6 +58,7 @@ export class WorkerConfigurationError extends Error {
 export interface WorkerConfiguration {
   readonly archiveAuditIntervalMilliseconds: number;
   readonly audit: AuditConfiguration;
+  readonly backupRequestTimeoutMilliseconds: number;
   readonly claimBatchSize: number;
   readonly contentAuditBatchSize: number;
   readonly contentAuditReconciliationIntervalMilliseconds: number;
@@ -87,11 +93,13 @@ export interface RestoreDeploymentTlsConfiguration {
 }
 
 export interface RestoreDeploymentConfiguration {
+  readonly archiveTimeoutMilliseconds: number;
   readonly archiveToolPath: string;
   readonly credentials: KernelCredentialService;
   readonly gatewayHostname: string;
   readonly handlePrefix: string;
   readonly kernelBinaryPath: string;
+  readonly kernelListenAddress: string;
   readonly kernelWorkingDirectory: string;
   readonly maximumArchiveBytes: number;
   readonly maximumEntryBytes: number;
@@ -103,6 +111,7 @@ export interface RestoreDeploymentConfiguration {
   };
   readonly readinessPollMilliseconds: number;
   readonly runtimeRootDirectory: string;
+  readonly runtimeOwner: string;
   readonly startupTimeoutMilliseconds: number;
   readonly tls: RestoreDeploymentTlsConfiguration;
 }
@@ -112,6 +121,7 @@ export interface WorkerEnvironment extends AuditConfigurationEnvironment {
   readonly SINGULARITY_KERNEL_SERVICE_KEY_ID?: string;
   readonly SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE?: string;
   readonly SINGULARITY_WORKER_ARCHIVE_AUDIT_INTERVAL_MS?: string;
+  readonly SINGULARITY_WORKER_BACKUP_REQUEST_TIMEOUT_MS?: string;
   readonly SINGULARITY_WORKER_CLAIM_BATCH_SIZE?: string;
   readonly SINGULARITY_WORKER_CONTENT_AUDIT_BATCH_SIZE?: string;
   readonly SINGULARITY_WORKER_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MS?: string;
@@ -126,6 +136,7 @@ export interface WorkerEnvironment extends AuditConfigurationEnvironment {
   readonly SINGULARITY_WORKER_OBJECT_STORE_ROOT?: string;
   readonly SINGULARITY_WORKER_POLL_INTERVAL_MS?: string;
   readonly SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL?: string;
+  readonly SINGULARITY_WORKER_RESTORE_ARCHIVE_TIMEOUT_MS?: string;
   readonly SINGULARITY_WORKER_RESTORE_CLIENT_CA_FILE?: string;
   readonly SINGULARITY_WORKER_RESTORE_CLIENT_CERT_FILE?: string;
   readonly SINGULARITY_WORKER_RESTORE_CLIENT_KEY_FILE?: string;
@@ -133,6 +144,7 @@ export interface WorkerEnvironment extends AuditConfigurationEnvironment {
   readonly SINGULARITY_WORKER_RESTORE_GATEWAY_HOSTNAME?: string;
   readonly SINGULARITY_WORKER_RESTORE_HANDLE_PREFIX?: string;
   readonly SINGULARITY_WORKER_RESTORE_KERNEL_BINARY?: string;
+  readonly SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS?: string;
   readonly SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY?: string;
   readonly SINGULARITY_WORKER_RESTORE_MAXIMUM_ARCHIVE_BYTES?: string;
   readonly SINGULARITY_WORKER_RESTORE_MAXIMUM_ENTRY_BYTES?: string;
@@ -158,12 +170,9 @@ function required(value: string | undefined): string {
   return value;
 }
 
-const DNS_NAME_PATTERN =
-  /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$/;
-
 function requiredHostname(value: string | undefined): string {
   const hostname = required(value);
-  if (isIP(hostname) === 0 && !DNS_NAME_PATTERN.test(hostname)) {
+  if (!kernelDeploymentHostnameSchema.safeParse(hostname).success) {
     throw new WorkerConfigurationError();
   }
   return hostname;
@@ -196,7 +205,7 @@ function requiredRegularFile(
     if (error instanceof WorkerConfigurationError) {
       throw error;
     }
-    throw new WorkerConfigurationError();
+    throw new WorkerConfigurationError({ cause: error });
   }
 }
 
@@ -217,7 +226,7 @@ function requiredDirectory(value: string | undefined): string {
     if (error instanceof WorkerConfigurationError) {
       throw error;
     }
-    throw new WorkerConfigurationError();
+    throw new WorkerConfigurationError({ cause: error });
   }
 }
 
@@ -247,8 +256,8 @@ function requiredInteger(value: string | undefined): number {
 function readSecret(path: string): Buffer {
   try {
     return readFileSync(path);
-  } catch {
-    throw new WorkerConfigurationError();
+  } catch (error) {
+    throw new WorkerConfigurationError({ cause: error });
   }
 }
 
@@ -276,7 +285,11 @@ export function loadWorkerConfiguration(
   );
   const maximumBackupBytes = integer(
     environment.SINGULARITY_WORKER_MAXIMUM_BACKUP_BYTES,
-    DEFAULT_MAXIMUM_BACKUP_BYTES,
+    MAXIMUM_BACKUP_BYTES,
+  );
+  const backupRequestTimeoutMilliseconds = integer(
+    environment.SINGULARITY_WORKER_BACKUP_REQUEST_TIMEOUT_MS,
+    DEFAULT_BACKUP_REQUEST_TIMEOUT_MILLISECONDS,
   );
   const maximumObjectBytes = integer(
     environment.SINGULARITY_WORKER_MAXIMUM_OBJECT_BYTES,
@@ -292,9 +305,12 @@ export function loadWorkerConfiguration(
   );
   if (
     contentAuditBatchSize > MAXIMUM_CONTENT_AUDIT_BATCH_SIZE ||
+    maximumBackupBytes > MAXIMUM_BACKUP_BYTES ||
     maximumObjectBytes < maximumAuditArchiveBytes ||
     maximumObjectBytes < maximumBackupBytes ||
-    maximumAuditArchiveEvents > MAXIMUM_AUDIT_ARCHIVE_EVENTS
+    maximumAuditArchiveEvents > MAXIMUM_AUDIT_ARCHIVE_EVENTS ||
+    !kernelRequestTimeoutSchema.safeParse(backupRequestTimeoutMilliseconds)
+      .success
   ) {
     throw new WorkerConfigurationError();
   }
@@ -340,6 +356,12 @@ export function loadWorkerConfiguration(
       environment.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY,
       true,
     );
+    const kernelListenAddress = required(
+      environment.SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS,
+    );
+    if (isIP(kernelListenAddress) === 0) {
+      throw new WorkerConfigurationError();
+    }
     const runtimeRootDirectory = requiredDirectory(
       environment.SINGULARITY_WORKER_RESTORE_RUNTIME_ROOT,
     );
@@ -365,7 +387,7 @@ export function loadWorkerConfiguration(
     );
     const maximumRestoreFiles = integer(
       environment.SINGULARITY_WORKER_RESTORE_MAXIMUM_FILES,
-      100_000,
+      MAXIMUM_BACKUP_FILES,
     );
     const maximumRestoreTotalBytes = integer(
       environment.SINGULARITY_WORKER_RESTORE_MAXIMUM_TOTAL_BYTES,
@@ -374,7 +396,8 @@ export function loadWorkerConfiguration(
     if (
       maximumRestoreArchiveBytes > maximumBackupBytes ||
       maximumRestoreEntryBytes > maximumRestoreTotalBytes ||
-      maximumRestoreTotalBytes < 1
+      maximumRestoreFiles > MAXIMUM_BACKUP_FILES ||
+      maximumRestoreTotalBytes > maximumBackupBytes
     ) {
       throw new WorkerConfigurationError();
     }
@@ -382,13 +405,18 @@ export function loadWorkerConfiguration(
       environment.SINGULARITY_WORKER_RESTORE_STARTUP_TIMEOUT_MS,
       60_000,
     );
+    const archiveTimeoutMilliseconds = integer(
+      environment.SINGULARITY_WORKER_RESTORE_ARCHIVE_TIMEOUT_MS,
+      DEFAULT_BACKUP_REQUEST_TIMEOUT_MILLISECONDS,
+    );
     const readinessPollMilliseconds = integer(
       environment.SINGULARITY_WORKER_RESTORE_READINESS_POLL_MS,
       250,
     );
     if (
       startupTimeoutMilliseconds > 300_000 ||
-      readinessPollMilliseconds > startupTimeoutMilliseconds
+      readinessPollMilliseconds > startupTimeoutMilliseconds ||
+      !kernelRequestTimeoutSchema.safeParse(archiveTimeoutMilliseconds).success
     ) {
       throw new WorkerConfigurationError();
     }
@@ -430,17 +458,21 @@ export function loadWorkerConfiguration(
       environment.SINGULARITY_WORKER_RESTORE_SERVICE_KEYS_FILE,
       false,
     );
-    const gatewayClientDnsName = required(
-      environment.SINGULARITY_WORKER_RESTORE_GATEWAY_CLIENT_DNS_NAME,
+    const gatewayClientDnsName = kernelDeploymentServerNameSchema.safeParse(
+      required(environment.SINGULARITY_WORKER_RESTORE_GATEWAY_CLIENT_DNS_NAME),
     );
-    const serverName = required(
-      environment.SINGULARITY_WORKER_RESTORE_SERVER_NAME,
+    const serverName = kernelDeploymentServerNameSchema.safeParse(
+      required(environment.SINGULARITY_WORKER_RESTORE_SERVER_NAME),
     );
+    if (!gatewayClientDnsName.success || !serverName.success) {
+      throw new WorkerConfigurationError();
+    }
     return {
       archiveAuditIntervalMilliseconds: integer(
         environment.SINGULARITY_WORKER_ARCHIVE_AUDIT_INTERVAL_MS,
         DEFAULT_ARCHIVE_AUDIT_INTERVAL_MILLISECONDS,
       ),
+      backupRequestTimeoutMilliseconds,
       audit: parseAuditConfiguration(environment),
       claimBatchSize: integer(
         environment.SINGULARITY_WORKER_CLAIM_BATCH_SIZE,
@@ -476,11 +508,13 @@ export function loadWorkerConfiguration(
         DEFAULT_POLL_INTERVAL_MILLISECONDS,
       ),
       restore: {
+        archiveTimeoutMilliseconds,
         archiveToolPath,
         credentials,
         gatewayHostname,
         handlePrefix,
         kernelBinaryPath,
+        kernelListenAddress,
         kernelWorkingDirectory,
         maximumArchiveBytes: maximumRestoreArchiveBytes,
         maximumEntryBytes: maximumRestoreEntryBytes,
@@ -489,6 +523,7 @@ export function loadWorkerConfiguration(
         portRange: { first: portFirst, last: portLast },
         readinessPollMilliseconds,
         runtimeRootDirectory,
+        runtimeOwner: workerId,
         startupTimeoutMilliseconds,
         tls: {
           caCertificate: readSecret(clientCaCertificateFile),
@@ -496,9 +531,9 @@ export function loadWorkerConfiguration(
           clientPrivateKey: readSecret(clientPrivateKeyFile),
           clientCaCertificateFile,
           deploymentProfile: deploymentProfile.data,
-          gatewayClientDnsName,
+          gatewayClientDnsName: gatewayClientDnsName.data,
           serverCertificateFile,
-          serverName,
+          serverName: serverName.data,
           serverPrivateKeyFile,
           servicePublicKeysFile,
         },
@@ -513,6 +548,6 @@ export function loadWorkerConfiguration(
     if (error instanceof WorkerConfigurationError) {
       throw error;
     }
-    throw new WorkerConfigurationError();
+    throw new WorkerConfigurationError({ cause: error });
   }
 }

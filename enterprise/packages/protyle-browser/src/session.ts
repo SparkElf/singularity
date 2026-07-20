@@ -4,6 +4,7 @@ import type {
   ProtyleSessionRuntime,
 } from "./contracts.ts";
 
+/** 组装 Protyle 会话并定义能力销毁顺序，dispose 幂等且会汇总所有清理异常。 */
 export function createProtyleSession<TRuntime extends ProtyleSessionRuntime>(
   options: CreateProtyleSessionOptions<TRuntime>,
 ): ProtyleSession<TRuntime> {
@@ -31,6 +32,7 @@ export function createProtyleSession<TRuntime extends ProtyleSessionRuntime>(
           try {
             dispose();
           } catch (error) {
+            console.error("[protyle.session] capability disposal failed", error);
             errors.push(error);
           }
         };
@@ -46,6 +48,7 @@ export function createProtyleSession<TRuntime extends ProtyleSessionRuntime>(
         try {
           await options.runtime.plugins.dispose();
         } catch (error) {
+          console.error("[protyle.session] plugin disposal failed", error);
           errors.push(error);
         }
 

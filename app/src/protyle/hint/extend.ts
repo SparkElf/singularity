@@ -366,8 +366,10 @@ export const hintSlash = (key: string, protyle: IProtyle) => {
         allList.push({
             filter: slashItem.filter,
             id: slashItem.id,
-            value: `plugin${Constants.ZWSP}${pluginName}${Constants.ZWSP}${slashItem.id}`,
-            html: slashItem.html
+            value: "",
+            html: slashItem.html,
+            slashItem,
+            slashPluginName: pluginName,
         });
         hasPlugin = true;
     });

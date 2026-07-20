@@ -145,4 +145,20 @@ describe("AssetPreview", () => {
       DOWNLOAD_URL,
     );
   });
+
+  it("records the original request error before showing the unavailable state", async () => {
+    const failure = new Error("asset transport unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fetchMock.mockRejectedValue(failure);
+
+    render(<AssetPreview downloadSrc={DOWNLOAD_URL} src={PREVIEW_URL} />);
+
+    expect(await screen.findByText("附件无法加载")).toBeVisible();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[asset.preview]",
+      { operation: "fetch", result: "failed" },
+      failure,
+    );
+    expect(failure.stack).toMatch(/Error: asset transport unavailable\n\s+at /);
+  });
 });

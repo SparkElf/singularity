@@ -63,6 +63,7 @@ export const contentDirectoryNotebookSchema = z
     locked: z.boolean(),
     name: z.string(),
     notebookId: contentIdSchema,
+    supportsGraph: z.boolean(),
   })
   .strict();
 export type ContentDirectoryNotebook = z.infer<
@@ -129,6 +130,7 @@ export const CONTENT_DIRECTORY_NOTEBOOK_OPENAPI_SCHEMA =
     locked: { type: "boolean" },
     name: { type: "string" },
     notebookId: CONTENT_ID_OPENAPI_SCHEMA,
+    supportsGraph: { type: "boolean" },
   });
 
 export const CONTENT_DIRECTORY_DOCUMENT_OPENAPI_SCHEMA =

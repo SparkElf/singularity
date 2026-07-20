@@ -54,6 +54,7 @@ describe("createProtyleApplicationPort", () => {
       documentMove: false,
       flashcardDeck: false,
       fullscreen: false,
+      navigationHistory: false,
       quickFlashcard: false,
       tableMenu: false,
       webBlockLink: false,

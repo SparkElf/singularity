@@ -641,8 +641,8 @@ export const openMenuPanel = (options: {
                     ghostElement.setAttribute("id", "dragGhost");
                     ghostElement.style.pointerEvents = "none";
                     ghostElement.style.position = "fixed";
-                    const ghostHandle = options.protyle.session!.runtime.overlays.add(ghostElement);
-                    options.protyle.session!.runtime.overlays.bringToFront(ghostElement);
+                    const ghostHandle = options.protyle.runtime.overlays.add(ghostElement);
+                    options.protyle.runtime.overlays.bringToFront(ghostElement);
                     if (touchDragOwner.active) {
                         touchDragOwner.registerGhost(ghostElement, ghostHandle, options.protyle.requestSignal);
                     } else {

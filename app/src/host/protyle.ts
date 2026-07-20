@@ -30,7 +30,6 @@ import {
     getDisplayName,
     getNotebookName,
     isEncryptedBox,
-    isSameNotebookContentDomain,
     movePathTo,
     moveToPath,
     pathPosix,
@@ -54,6 +53,10 @@ import {needSubscribe} from "../util/needSubscribe";
 import {getCloudURL} from "../config/util/about";
 import {resize} from "../protyle/util/resize";
 import {pushBackLocation} from "../util/backForward";
+import {
+    forEachProtyleDocumentInstance,
+    isProtyleDocumentInstance,
+} from "../protyle/runtime/documentIdentity";
 
 const handleHostRequestError = (response: IWebSocketData) => {
     if (response.code === 0) {
@@ -173,8 +176,7 @@ const rejectUnsupportedEncryptedOperation = (notebookId: string) => {
 const isCurrentWorkspaceDocument = (app: App, notebookId: string, documentId: string) => {
     const activeEditor = app.protyleEditors.getActive();
     return activeEditor?.surface === "workspace" &&
-        activeEditor.block.rootID === documentId &&
-        isSameNotebookContentDomain(activeEditor.notebookId, notebookId);
+        isProtyleDocumentInstance(activeEditor, {notebookId, documentId});
 };
 
 const requireSourceEditor = (
@@ -436,7 +438,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
         case "open-block-attributes": {
             const editor = requireSourceEditor(app, event);
             requireEditorBlock(editor, event.blockId);
-            void editor.session!.runtime.transport.request<IWebSocketData>(
+            void editor.runtime.transport.request<IWebSocketData>(
                 "/api/attr/getBlockAttrs",
                 {id: event.blockId},
                 {
@@ -472,7 +474,7 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
             openBlockRefTransfer(event.blockId, async (targetId) => {
                 const currentEditor = requireSourceEditor(app, event);
                 requireEditorBlock(currentEditor, event.blockId);
-                await currentEditor.session!.runtime.transport.request<IWebSocketData>(
+                await currentEditor.runtime.transport.request<IWebSocketData>(
                     "/api/block/transferBlockRef",
                     {fromID: event.blockId, toID: targetId},
                     {
@@ -514,9 +516,8 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
             openByMobile(event.url);
             return;
         case "close-document":
-            app.protyleEditors.forEach((editor) => {
-                if (editor.block.rootID === event.documentId &&
-                    isSameNotebookContentDomain(editor.notebookId, event.notebookId) && editor.model) {
+            forEachProtyleDocumentInstance(app.protyleEditors, event, (editor) => {
+                if (editor.model) {
                     editor.model.parent.parent.removeTab(editor.model.parent.id);
                 }
             });
@@ -570,16 +571,15 @@ const dispatchAppHostEvent = (app: App, event: ProtyleHostDispatchEvent) => {
             }
             return;
         case "set-document-icon":
-            updateFileTreeEmoji(event.icon, event.documentId);
-            updateOutlineEmoji(event.icon, event.documentId);
+            updateFileTreeEmoji(event.icon, event.notebookId, event.documentId);
+            updateOutlineEmoji(event.icon, event.notebookId, event.documentId);
+            forEachProtyleDocumentInstance(app.protyleEditors, event, (editor) => {
+                editor.model?.parent.setDocIcon(event.icon);
+            });
             return;
         case "set-document-title":
-            app.protyleEditors.forEach((editor) => {
-                if (editor.content.mode === "bound" &&
-                    editor.content.notebookId === event.notebookId &&
-                    editor.options.blockId === event.documentId) {
-                    editor.model?.parent.updateTitle(event.title);
-                }
+            forEachProtyleDocumentInstance(app.protyleEditors, event, (editor) => {
+                editor.model?.parent.updateTitle(event.title);
             });
             return;
         case "toggle-document-fullscreen":

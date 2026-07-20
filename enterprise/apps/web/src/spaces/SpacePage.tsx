@@ -3,6 +3,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import type {
   AuthorizedSpaceSummary,
+  ContentDirectoryNotebooksResponse,
   SpaceRuntimePathParameters,
   SpaceRuntimeBootstrap,
 } from "@singularity/contracts";
@@ -74,6 +76,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip.tsx";
 import {
+  getAuthorizedSpaces,
   getSpaceRuntime,
   authorizedSpacesQueryKey,
   spaceRuntimeQueryKey,
@@ -98,6 +101,7 @@ import type {
   SpaceProtyleMenuSurfaceFactory,
   SpaceProtyleRuntime,
   SpaceSessionComposition,
+  SpaceSessionTerminalEvent,
 } from "@/spaces/space-session.ts";
 import {
   ProtyleHost,
@@ -108,7 +112,11 @@ import type {
   ProtyleFactory,
 } from "@singularity/protyle-browser";
 import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
-import { contentDirectorySpaceQueryKey } from "@/spaces/content-directory-api.ts";
+import {
+  contentDirectoryNotebooksQueryKey,
+  contentDirectorySpaceQueryKey,
+} from "@/spaces/content-directory-api.ts";
+import type { ContentSelectionTarget } from "@/spaces/content-selection.ts";
 import {
   DiscoveryPanel,
   type DiscoveryNavigationTarget,
@@ -154,6 +162,86 @@ function isActiveSpaceComposition(
     composition.session !== null;
 }
 
+function resolveContentSelectionTarget(
+  queryClient: ReturnType<typeof useQueryClient>,
+  identity: SpaceRuntimePathParameters,
+  target: Pick<ContentSelectionTarget, "documentId" | "notebookId">,
+): ContentSelectionTarget | null {
+  const directory = queryClient.getQueryData<ContentDirectoryNotebooksResponse>(
+    contentDirectoryNotebooksQueryKey(identity),
+  );
+  const notebook = directory?.notebooks.find(
+    (candidate) => candidate.notebookId === target.notebookId,
+  );
+  if (!notebook || notebook.locked) {
+    return null;
+  }
+  return {
+    ...target,
+    supportsGraph: notebook.supportsGraph,
+  };
+}
+
+function SessionTerminalBoundary({
+  composition,
+  event,
+}: {
+  readonly composition: SpaceSessionComposition | null;
+  readonly event: SpaceSessionTerminalEvent;
+}) {
+  useEffect(() => {
+    if (composition === null) {
+      return;
+    }
+    let cancelled = false;
+    void composition.requestTerminal(event).then((accepted) => {
+      if (!cancelled && !accepted) {
+        console.warn("[protyle.lifecycle]", {
+          generation: composition.scope.generation,
+          phase: "terminal",
+          result: "stale-query-terminal-rejected",
+          spaceId: composition.scope.spaceId,
+          ...(event.triggeringRequestId
+            ? { triggeringRequestId: event.triggeringRequestId }
+            : {}),
+        });
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        console.error("[protyle.lifecycle]", {
+          error,
+          generation: composition.scope.generation,
+          phase: "terminal",
+          result: "query-terminal-failed",
+          spaceId: composition.scope.spaceId,
+          ...(event.triggeringRequestId
+            ? { triggeringRequestId: event.triggeringRequestId }
+            : {}),
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  // composition 是当前终止快照，依赖对象变化时必须重新绑定清理函数。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    composition?.requestTerminal,
+    composition?.scope.generation,
+    composition?.scope.spaceId,
+    event.category,
+    event.triggeringRequestId,
+  ]);
+
+  return (
+    <WorkspaceState
+      description="正在安全关闭当前内容会话。"
+      media={<Spinner aria-label="正在关闭内容会话" />}
+      title="正在更新访问状态"
+    />
+  );
+}
+
 function createSpaceHostMediator(
   queryClient: ReturnType<typeof useQueryClient>,
   composition: SpaceSessionComposition | null,
@@ -175,11 +263,23 @@ function createSpaceHostMediator(
     return;
   }
   switch (event.type) {
-    case "open-document":
-      if (!composition.selectDocument({
+    case "open-document": {
+      const target = resolveContentSelectionTarget(queryClient, bootstrap, {
         documentId: event.documentId,
         notebookId: event.notebookId,
-      })) {
+      });
+      if (!target) {
+        console.warn("[protyle.host]", {
+          documentId: event.documentId,
+          eventType: event.type,
+          notebookId: event.notebookId,
+          phase: "selection",
+          result: "notebook-capability-rejected",
+          spaceId: bootstrap.spaceId,
+        });
+        return;
+      }
+      if (!composition.selectDocument(target)) {
         return;
       }
       queueNavigation(bootstrap.spaceId, {
@@ -193,6 +293,7 @@ function createSpaceHostMediator(
         zoom: event.zoom,
       });
       return;
+    }
     case "close-document": {
       const selection = composition.selection;
       if (
@@ -289,23 +390,41 @@ function createSpaceHostMediator(
         spaceId: bootstrap.spaceId,
       });
       return;
-    case "open-graph":
-      useDiscoveryStore.getState().open(
-        event.scope === "space"
-          ? {
-              kind: "space-graph",
-              query: "",
-              spaceId: bootstrap.spaceId,
-            }
-          : {
-              documentId: event.documentId,
-              kind: "document-graph",
-              notebookId: event.notebookId,
-              query: "",
-              spaceId: bootstrap.spaceId,
-            },
-      );
+    case "open-graph": {
+      if (event.scope === "space") {
+        useDiscoveryStore.getState().open({
+          kind: "space-graph",
+          query: "",
+          spaceId: bootstrap.spaceId,
+        });
+        return;
+      }
+      const selection = composition.selection;
+      if (
+        selection?.spaceId !== bootstrap.spaceId ||
+        selection.notebookId !== event.notebookId ||
+        selection.documentId !== event.documentId ||
+        !selection.supportsGraph
+      ) {
+        console.warn("[protyle.host]", {
+          documentId: event.documentId,
+          eventType: event.type,
+          notebookId: event.notebookId,
+          phase: "discovery",
+          result: "document-graph-capability-rejected",
+          spaceId: bootstrap.spaceId,
+        });
+        return;
+      }
+      useDiscoveryStore.getState().open({
+        documentId: event.documentId,
+        kind: "document-graph",
+        notebookId: event.notebookId,
+        query: "",
+        spaceId: bootstrap.spaceId,
+      });
       return;
+    }
     case "open-external":
       window.open(event.url, "_blank", "noopener,noreferrer");
       return;
@@ -437,6 +556,8 @@ function ReadyWorkspace({
   const [editorRetrying, setEditorRetrying] = useState(false);
 
   useEffect(() => {
+    // 文档身份变化时清除上一个编辑器的重试状态，避免错误沿用到新文档。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditorAttempt(0);
     setEditorError(false);
   }, [selection?.documentId, selection?.notebookId, session?.spaceId]);
@@ -466,7 +587,15 @@ function ReadyWorkspace({
       await session.retrySubmission();
       setEditorError(false);
       setEditorAttempt((current) => current + 1);
-    } catch {
+    } catch (error) {
+      console.error("[protyle.lifecycle]", {
+        documentId: selection?.documentId,
+        error,
+        notebookId: selection?.notebookId,
+        phase: "editor-retry",
+        result: "failed",
+        spaceId: identity.spaceId,
+      });
       setEditorError(true);
     } finally {
       setEditorRetrying(false);
@@ -479,9 +608,12 @@ function ReadyWorkspace({
       data-content-directory-status={status}
     >
       <ContentDirectory
+        identity={composition.scope}
         onAccessLost={onDirectoryAccessLost}
+        onClear={composition.clearSelection}
+        onSelect={composition.selectDocument}
         onStatusChange={onDirectoryStatusChange}
-        scope={composition.scope}
+        selection={composition.selection}
       />
       <main className="min-h-0 min-w-0 flex-1" data-content-workspace>
         {session && selection ? (
@@ -492,7 +624,17 @@ function ReadyWorkspace({
               factory={factory}
               navigationCommand={navigationCommand}
               notebookId={selection.notebookId}
-              onError={() => setEditorError(true)}
+              onError={(error) => {
+                console.error("[protyle.lifecycle]", {
+                  documentId: selection.documentId,
+                  error,
+                  notebookId: selection.notebookId,
+                  phase: "editor",
+                  result: "failed",
+                  spaceId: identity.spaceId,
+                });
+                setEditorError(true);
+              }}
               onNavigationCommandComplete={onNavigationCommandComplete}
               readOnly={readOnly}
               session={session}
@@ -703,10 +845,19 @@ export function SpacePage({
   const params = useParams();
   const organizationId = params.organizationId ?? "";
   const spaceId = params.spaceId ?? "";
-  const identity: SpaceRuntimePathParameters = { organizationId, spaceId };
+  const routeKey = `${organizationId}:${spaceId}`;
+  const identity = useMemo<SpaceRuntimePathParameters>(
+    () => ({ organizationId, spaceId }),
+    [organizationId, spaceId],
+  );
   const queryClient = useQueryClient();
   const compositionRef = useRef<SpaceSessionComposition | null>(null);
+  const logoutTerminalRef = useRef(false);
   const navigationSequenceRef = useRef(0);
+  const routeKeyRef = useRef(routeKey);
+  useLayoutEffect(() => {
+    routeKeyRef.current = routeKey;
+  }, [routeKey]);
   const [navigationCommand, setNavigationCommand] = useState<SpaceNavigationCommand | null>(null);
   const spacesQuery = useAuthorizedSpaces();
   const runtimeQuery = useQuery({
@@ -728,12 +879,71 @@ export function SpacePage({
   const runtimeIsFetching = runtimeQuery.isFetching;
   const runtimeKernelState = runtime?.kernelState;
   const refetchRuntime = runtimeQuery.refetch;
-  const logoutMutation = useLogout();
+  /** 捕获退出发起时的空间 scope 和 generation，防止迟到 logout 终止后来建立的 Session。 */
+  const captureLogoutTermination = useCallback(() => {
+    const capturedRouteKey = routeKey;
+    const capturedComposition = compositionRef.current;
+    const capturedScope = isCurrentSpaceComposition(
+      capturedComposition,
+      { organizationId, spaceId },
+    )
+      ? capturedComposition.scope
+      : null;
+    const capturedGeneration = capturedScope?.generation ?? null;
+
+    return async () => {
+      const composition = compositionRef.current;
+      if (capturedScope === null) {
+        if (
+          capturedComposition === null &&
+          routeKeyRef.current === capturedRouteKey &&
+          composition === null
+        ) {
+          return;
+        }
+        throw new DOMException(
+          "The active space session changed during logout",
+          "AbortError",
+        );
+      }
+      if (
+        routeKeyRef.current !== capturedRouteKey ||
+        composition === null ||
+        composition.scope !== capturedScope ||
+        composition.scope.generation !== capturedGeneration ||
+        !isCurrentSpaceComposition(composition, { organizationId, spaceId })
+      ) {
+        throw new DOMException(
+          "The active space session changed during logout",
+          "AbortError",
+        );
+      }
+      logoutTerminalRef.current = true;
+      try {
+        const accepted = await composition.requestTerminal({
+          category: "unauthenticated",
+          type: "runtime-error",
+        });
+        if (!accepted) {
+          throw new DOMException(
+            "The active space session changed during logout",
+            "AbortError",
+          );
+        }
+      } finally {
+        logoutTerminalRef.current = false;
+      }
+    };
+  }, [organizationId, routeKey, spaceId]);
+  const logoutMutation = useLogout(captureLogoutTermination);
   const pageVisible = usePageVisible();
-  const routeKey = `${organizationId}:${spaceId}`;
   const [pollState, setPollState] = useState({ attempts: 0, routeKey });
   const [sessionFailure, setSessionFailure] = useState<{
     readonly category: "forbidden" | "unauthenticated";
+    readonly routeKey: string;
+  } | null>(null);
+  const [acceptedSession, setAcceptedSession] = useState<{
+    readonly bootstrap: ReadySpaceRuntimeBootstrap;
     readonly routeKey: string;
   } | null>(null);
   const [directoryStatus, setDirectoryStatus] = useState<ContentDirectoryStatus>("loading");
@@ -742,10 +952,13 @@ export function SpacePage({
   >(null);
 
   useEffect(() => {
+    // 空间路由切换时清除旧导航、预览和组合根，阻断迟到响应回写。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNavigationCommand(null);
     setAssetPreviewRequest(null);
     setDirectoryStatus("loading");
     compositionRef.current = null;
+    logoutTerminalRef.current = false;
     useDiscoveryStore.getState().reset();
   }, [routeKey]);
 
@@ -764,38 +977,98 @@ export function SpacePage({
       ? "unauthenticated"
       : "forbidden";
     compositionRef.current = null;
-    setSessionFailure({ category, routeKey: failedRouteKey });
+    queryClient.removeQueries({
+      queryKey: contentDirectorySpaceQueryKey(failedBootstrap),
+    });
     setAssetPreviewRequest((current) =>
       current?.spaceId === failedBootstrap.spaceId ? null : current
     );
     useDiscoveryStore.getState().close(failedBootstrap.spaceId);
+    if (routeKeyRef.current !== failedRouteKey) {
+      return;
+    }
+    if (category === "unauthenticated" && logoutTerminalRef.current) {
+      return;
+    }
+    setSessionFailure({ category, routeKey: failedRouteKey });
     if (category === "unauthenticated") {
       return;
     }
-    await Promise.all([
-      queryClient.invalidateQueries({
-        exact: true,
+    const [spacesResult, runtimeResult] = await Promise.allSettled([
+      queryClient.fetchQuery({
+        queryFn: ({ signal }) => getAuthorizedSpaces(signal),
         queryKey: authorizedSpacesQueryKey,
+        staleTime: 0,
       }),
-      queryClient.invalidateQueries({
-        exact: true,
+      queryClient.fetchQuery({
+        queryFn: ({ signal }) => getSpaceRuntime(failedBootstrap, signal),
         queryKey: spaceRuntimeQueryKey(failedBootstrap),
+        staleTime: 0,
       }),
     ]);
+    if (spacesResult.status === "rejected") {
+      const spacesError: unknown = spacesResult.reason;
+      console.warn("[protyle.lifecycle]", {
+        error: spacesError,
+        phase: "reauthorize",
+        result: "spaces-failed",
+        spaceId: failedBootstrap.spaceId,
+      });
+    }
+    if (runtimeResult.status === "rejected") {
+      const runtimeError: unknown = runtimeResult.reason;
+      console.warn("[protyle.lifecycle]", {
+        error: runtimeError,
+        phase: "reauthorize",
+        result: "runtime-failed",
+        spaceId: failedBootstrap.spaceId,
+      });
+    }
+    if (
+      spacesResult.status !== "fulfilled" ||
+      runtimeResult.status !== "fulfilled" ||
+      !isReadySpaceRuntime(runtimeResult.value) ||
+      runtimeResult.value.organizationId !== failedBootstrap.organizationId ||
+      runtimeResult.value.spaceId !== failedBootstrap.spaceId ||
+      !spacesResult.value.spaces.some(
+        (space) =>
+          space.organizationId === failedBootstrap.organizationId &&
+          space.spaceId === failedBootstrap.spaceId,
+      ) ||
+      routeKeyRef.current !== failedRouteKey
+    ) {
+      return;
+    }
+    setAcceptedSession({
+      bootstrap: runtimeResult.value,
+      routeKey: failedRouteKey,
+    });
+    setSessionFailure((current) =>
+      current?.category === "forbidden" && current.routeKey === failedRouteKey
+        ? null
+        : current,
+    );
   }, [queryClient]);
   const handleDirectoryAccessLost = useCallback(async (
     event: ContentDirectoryAccessLoss,
   ) => {
     const composition = compositionRef.current;
-    if (!isCurrentSpaceComposition(composition, identity)) {
+    if (!isCurrentSpaceComposition(composition, { organizationId, spaceId })) {
       return;
     }
-    if (composition.session) {
-      composition.session.runtime.host.dispatch(event);
-      return;
+    const accepted = await composition.requestTerminal(event);
+    if (!accepted) {
+      console.warn("[content.directory]", {
+        generation: composition.scope.generation,
+        phase: "access",
+        result: "stale-terminal-rejected",
+        spaceId: composition.scope.spaceId,
+        ...(event.triggeringRequestId
+          ? { triggeringRequestId: event.triggeringRequestId }
+          : {}),
+      });
     }
-    await handleSessionAccessLost(event, composition.bootstrap);
-  }, [handleSessionAccessLost, identity]);
+  }, [organizationId, spaceId]);
   const queueNavigation = useCallback((
     targetSpaceId: string,
     navigation: ProtyleDocumentNavigation,
@@ -805,12 +1078,13 @@ export function SpacePage({
       sequence: ++navigationSequenceRef.current,
       spaceId: targetSpaceId,
     });
-  }, []);
+  }, [setNavigationCommand]);
   const completeNavigationCommand = useCallback((sequence: number) => {
     setNavigationCommand((current) =>
       current?.sequence === sequence ? null : current,
     );
-  }, []);
+  }, [setNavigationCommand]);
+  // 该回调读取组合根的可变句柄，必须保留稳定引用供面板事件使用。
   const handleDiscoveryNavigate = useCallback((target: DiscoveryNavigationTarget) => {
     const composition = compositionRef.current;
     if (
@@ -827,10 +1101,25 @@ export function SpacePage({
       });
       return;
     }
-    if (!composition.selectDocument({
-      documentId: target.documentId,
-      notebookId: target.notebookId,
-    })) {
+    const selectionTarget = resolveContentSelectionTarget(
+      queryClient,
+      identity,
+      {
+        documentId: target.documentId,
+        notebookId: target.notebookId,
+      },
+    );
+    if (!selectionTarget) {
+      console.warn("[discovery.panel]", {
+        documentId: target.documentId,
+        notebookId: target.notebookId,
+        phase: "navigation",
+        result: "notebook-capability-rejected",
+        spaceId,
+      });
+      return;
+    }
+    if (!composition.selectDocument(selectionTarget)) {
       return;
     }
     queueNavigation(runtime.spaceId, {
@@ -843,7 +1132,15 @@ export function SpacePage({
       scroll: "auto",
       zoom: false,
     });
-  }, [currentSessionFailure, identity, organizationId, queueNavigation, runtime, spaceId]);
+  }, [
+    currentSessionFailure,
+    identity,
+    organizationId,
+    queryClient,
+    queueNavigation,
+    runtime,
+    spaceId,
+  ]);
   const openSpaceSearch = useCallback(() => {
     if (
       !isReadySpaceRuntime(runtime) ||
@@ -898,6 +1195,22 @@ export function SpacePage({
     !runtimeQuery.isFetching &&
     !runtimeQuery.isPaused &&
     isApiProblem(runtimeQuery.error, "not-found");
+  useEffect(() => {
+    if (!runtimeNotFound) {
+      return;
+    }
+    // 运行时明确返回 404 后重新确认授权列表，避免继续展示已撤销的空间。
+    void queryClient.invalidateQueries({ queryKey: authorizedSpacesQueryKey }).catch(
+      (error: unknown) => {
+        console.warn("[protyle.lifecycle]", {
+          error,
+          phase: "authorization-refresh",
+          result: "failed",
+          routeKey,
+        });
+      },
+    );
+  }, [queryClient, routeKey, runtimeNotFound]);
   const hasCurrentAuthorization =
     spacesQuery.isSuccess &&
     spacesQuery.isFetchedAfterMount &&
@@ -917,17 +1230,66 @@ export function SpacePage({
       (space) =>
         space.organizationId === organizationId && space.spaceId === spaceId,
     ) ?? null;
-
+  const freshReadyBootstrap =
+    isReadySpaceRuntime(runtime) &&
+    runtime.organizationId === organizationId &&
+    runtime.spaceId === spaceId &&
+    currentSpace !== null &&
+    currentSessionFailure === null
+      ? runtime
+      : null;
   useEffect(() => {
-    if (!runtimeNotFound) {
+    if (freshReadyBootstrap === null) {
       return;
     }
-
-    void queryClient.invalidateQueries({
-      exact: true,
-      queryKey: authorizedSpacesQueryKey,
+    // 该状态保存已通过授权检查的 bootstrap，避免异步刷新覆盖当前 Session。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAcceptedSession((current) => {
+      if (
+        current?.routeKey === routeKey &&
+        current.bootstrap.role === freshReadyBootstrap.role
+      ) {
+        return current;
+      }
+      return { bootstrap: freshReadyBootstrap, routeKey };
     });
-  }, [organizationId, queryClient, runtimeNotFound, spaceId]);
+  }, [freshReadyBootstrap, routeKey]);
+  const acceptedBootstrap = acceptedSession?.routeKey === routeKey
+    ? acceptedSession.bootstrap
+    : freshReadyBootstrap;
+  const sessionBootstrap = currentSessionFailure === null
+    ? acceptedBootstrap
+    : null;
+  let queryTerminalEvent: SpaceSessionTerminalEvent | null = null;
+  if (
+    isApiProblem(spacesQuery.error, "unauthenticated") ||
+    isApiProblem(runtimeQuery.error, "unauthenticated")
+  ) {
+    const error = isApiProblem(runtimeQuery.error, "unauthenticated")
+      ? runtimeQuery.error
+      : isApiProblem(spacesQuery.error, "unauthenticated")
+        ? spacesQuery.error
+        : null;
+    queryTerminalEvent = {
+      category: "unauthenticated",
+      ...(error ? { triggeringRequestId: error.problem.requestId } : {}),
+      type: "runtime-error",
+    };
+  } else if (
+    runtimeNotFound ||
+    isApiProblem(runtimeQuery.error, "forbidden") ||
+    (hasCurrentAuthorization && currentSpace === null)
+  ) {
+    const error = isApiProblem(runtimeQuery.error, "not-found") ||
+      isApiProblem(runtimeQuery.error, "forbidden")
+      ? runtimeQuery.error
+      : null;
+    queryTerminalEvent = {
+      category: "forbidden",
+      ...(error ? { triggeringRequestId: error.problem.requestId } : {}),
+      type: "runtime-error",
+    };
+  }
 
   useEffect(() => {
     if (
@@ -971,24 +1333,15 @@ export function SpacePage({
 
   if (
     currentSessionFailure?.category === "unauthenticated" ||
-    isApiProblem(spacesQuery.error, "unauthenticated") ||
-    isApiProblem(runtimeQuery.error, "unauthenticated")
+    (queryTerminalEvent?.category === "unauthenticated" &&
+      acceptedBootstrap === null)
   ) {
     return <SessionRedirect returnTo={locationTarget(location)} />;
   }
 
   const runtimeMatchesRoute =
     runtime?.organizationId === organizationId && runtime.spaceId === spaceId;
-  const role = runtime && runtimeMatchesRoute && currentSpace && !currentSessionFailure
-    ? runtime.role
-    : null;
-  const readyBootstrap =
-    isReadySpaceRuntime(runtime) &&
-    runtimeMatchesRoute &&
-    currentSpace &&
-    !currentSessionFailure
-      ? runtime
-      : null;
+  const role = sessionBootstrap?.role ?? null;
   const retryRuntime = () => {
     setPollState({ attempts: 0, routeKey });
     void refetchRuntime();
@@ -1172,14 +1525,14 @@ export function SpacePage({
         !isApiProblem(logoutMutation.error, "unauthenticated")
       }
       logoutPending={logoutMutation.isPending}
-      onOpenSpaceGraph={readyBootstrap ? openSpaceGraph : null}
-      onOpenSpaceSearch={readyBootstrap ? openSpaceSearch : null}
+      onOpenSpaceGraph={sessionBootstrap ? openSpaceGraph : null}
+      onOpenSpaceSearch={sessionBootstrap ? openSpaceSearch : null}
       onLogout={() => logoutMutation.mutate()}
       role={role}
       spaces={spaces}
     >
       <SpaceSessionRoot
-        bootstrap={readyBootstrap}
+        bootstrap={sessionBootstrap}
         createProtyleMenuSurface={createProtyleMenuSurface}
         onAccessLost={handleSessionAccessLost}
         onHostEvent={handleHostEvent}
@@ -1187,10 +1540,18 @@ export function SpacePage({
       >
         {(composition) => {
           compositionRef.current = composition;
-          if (!readyBootstrap) {
+          if (sessionBootstrap && queryTerminalEvent) {
+            return (
+              <SessionTerminalBoundary
+                composition={composition}
+                event={queryTerminalEvent}
+              />
+            );
+          }
+          if (!sessionBootstrap) {
             return content;
           }
-          if (!isCurrentSpaceComposition(composition, readyBootstrap)) {
+          if (!isCurrentSpaceComposition(composition, sessionBootstrap)) {
             return (
               <WorkspaceState
                 description="正在准备当前空间的内容会话。"
@@ -1203,17 +1564,19 @@ export function SpacePage({
             <ReadyWorkspace
               composition={composition}
               createProtyleFactoryForSpace={createProtyleFactoryForSpace}
-              identity={readyBootstrap}
+              identity={sessionBootstrap}
               navigationCommand={
-                navigationCommand?.spaceId === readyBootstrap.spaceId
+                navigationCommand?.spaceId === sessionBootstrap.spaceId
                   ? navigationCommand
                   : null
               }
-              onDirectoryAccessLost={handleDirectoryAccessLost}
+              onDirectoryAccessLost={(event) => {
+                void handleDirectoryAccessLost(event);
+              }}
               onDirectoryStatusChange={setDirectoryStatus}
               onDiscoveryNavigate={handleDiscoveryNavigate}
               onNavigationCommandComplete={completeNavigationCommand}
-              readOnly={readyBootstrap.role === "viewer"}
+              readOnly={sessionBootstrap.role === "viewer"}
               status={directoryStatus}
             />
           );

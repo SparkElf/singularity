@@ -29,14 +29,31 @@ import {setBodyHighlight} from "../util/assets";
 import {reloadSync} from "../util/reloadSync";
 import {setTitle} from "../util/processTitle";
 import {createProtyleEditorRegistry} from "../../../enterprise/packages/protyle-browser/src";
+import {createAppProtyleApplicationSettings} from "../host/protyle-settings";
+import {createAppProtyleLocalization} from "../host/protyle-localization";
+import {createUpstreamLocalProtyleRuntime} from "../protyle/runtime/upstreamLocal";
 
 class App {
     public plugins: import("../plugin").Plugin[] = [];
     public readonly protyleEditors: TProtyleEditorRegistry;
+    public readonly protyleHost: TProtyleHostPort;
+    public readonly protylePlugins: TProtylePluginPort;
+    public readonly localization: TProtyleLocalizationPort;
+    public readonly settings: TProtyleApplicationSettingsPort;
+    public readonly upstreamLocalRuntime: TProtyleUpstreamLocalRuntime;
     public appId: string;
 
     constructor() {
         this.protyleEditors = createProtyleEditorRegistry<IProtyle>();
+        this.localization = createAppProtyleLocalization();
+        this.settings = createAppProtyleApplicationSettings();
+        this.upstreamLocalRuntime = createUpstreamLocalProtyleRuntime(this, {
+            editors: this.protyleEditors,
+            localAppId: Constants.SIYUAN_APPID,
+            localization: this.localization,
+        });
+        this.protyleHost = this.upstreamLocalRuntime.host;
+        this.protylePlugins = this.upstreamLocalRuntime.plugins;
         addBaseURL();
         this.appId = Constants.SIYUAN_APPID;
 

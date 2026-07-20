@@ -91,7 +91,7 @@ class BlockPanelOwner implements BlockPanelHandle {
     private readonly position?: OpenBlockPanelOptions["position"];
     private readonly isBacklink: boolean;
     private readonly originalRefBlockIDs?: IObject;
-    private readonly runtime: TProtyleRuntime;
+    private readonly runtime: TProtyleRuntime | TProtyleUpstreamLocalRuntime;
     private readonly ownerController = new AbortController();
     private readonly overlayHandle: ProtyleOverlayHandle;
     private readonly editors: Protyle[] = [];
@@ -111,7 +111,7 @@ class BlockPanelOwner implements BlockPanelHandle {
         this.position = options.position;
         this.isBacklink = options.isBacklink;
         this.originalRefBlockIDs = options.originalRefBlockIDs;
-        this.runtime = this.sourceProtyle.session!.runtime;
+        this.runtime = this.sourceProtyle.runtime;
 
         this.element = document.createElement("div");
         this.element.className = "block__popover";
@@ -350,7 +350,7 @@ class BlockPanelOwner implements BlockPanelHandle {
 
         let editor: Protyle;
         try {
-            editor = new Protyle(this.sourceProtyle.application, editorElement, {
+            const editorOptions = {
                 blockId: reference.documentId,
                 defIds: [...(reference.definitionIds ?? [])],
                 originalRefBlockIDs: this.isBacklink ? this.originalRefBlockIDs : undefined,
@@ -362,16 +362,29 @@ class BlockPanelOwner implements BlockPanelHandle {
                     title: targetIsDocument,
                 },
                 typewriterMode: false,
-            }, {
+            };
+            const lifecycle = {
                 surface: "embedded",
                 participation: "live",
                 content: {mode: "bound", notebookId: reference.notebookId},
                 initialLoad: "owner",
-                session: this.sourceProtyle.session!,
                 hostReadOnly: this.sourceProtyle.readonlyState.host,
                 signal: this.ownerController.signal,
                 onContentUnavailable: this.close,
-            });
+            } as const;
+            if (this.sourceProtyle.session) {
+                editor = new Protyle(this.sourceProtyle.application, editorElement, editorOptions, {
+                    ...lifecycle,
+                    session: this.sourceProtyle.session,
+                });
+            } else if ("localAppId" in this.runtime) {
+                editor = new Protyle(this.sourceProtyle.application, editorElement, editorOptions, {
+                    ...lifecycle,
+                    upstreamLocalRuntime: this.runtime,
+                });
+            } else {
+                throw new Error("[protyle.runtime] BlockPanel source has no Runtime binding");
+            }
         } catch (error) {
             this.reportLoadFailure(error, reference);
             if (index === 0) {

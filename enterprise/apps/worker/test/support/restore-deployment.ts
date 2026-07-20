@@ -41,6 +41,7 @@ export function restoreDeploymentConfiguration(
   const certificate = readFileSync(certificateFile);
   const tlsPrivateKey = readFileSync(privateKeyFile);
   return {
+    archiveTimeoutMilliseconds: 1_000,
     archiveToolPath: process.execPath,
     credentials: new KernelCredentialService({
       keyId: "restore-test",
@@ -49,6 +50,7 @@ export function restoreDeploymentConfiguration(
     gatewayHostname: "127.0.0.1",
     handlePrefix: "restore-test",
     kernelBinaryPath: process.execPath,
+    kernelListenAddress: "127.0.0.1",
     kernelWorkingDirectory: rootDirectory,
     maximumArchiveBytes: 1_024,
     maximumEntryBytes: 1_024,
@@ -57,6 +59,7 @@ export function restoreDeploymentConfiguration(
     portRange: { first: 49_152, last: 65_535 },
     readinessPollMilliseconds: 10,
     runtimeRootDirectory: rootDirectory,
+    runtimeOwner: "restore-test-worker",
     startupTimeoutMilliseconds: 100,
     tls: {
       caCertificate: certificate,

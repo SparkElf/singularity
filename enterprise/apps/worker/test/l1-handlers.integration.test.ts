@@ -5,10 +5,11 @@ import {
   randomUUID,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { TLSSocket } from "node:tls";
 
 import { kernelRoutePolicies } from "@singularity/authorization";
@@ -55,6 +56,7 @@ import {
 import { ContentAuditHandler } from "../src/content-audit-reconciliation.js";
 import {
   KernelWorkerClient,
+  WORKER_BACKUP_PATH,
   WORKER_OBSERVATION_PATH,
 } from "../src/kernel-worker-client.js";
 import { PostgresWorkerJobRepository } from "../src/postgres-job-repository.js";
@@ -85,27 +87,29 @@ const observationPrivateKey = readFileSync(
 );
 const OBSERVATION_SAMPLED_AT = "2026-07-19T10:00:00.000Z";
 
-interface ObservationKernelRequest {
+interface WorkerKernelRequest {
   authorized: boolean;
+  maximumBackupBytes: string | undefined;
+  maximumBackupFiles: string | undefined;
   method: string;
   path: string;
   requestId: string | undefined;
   serviceToken: string | undefined;
 }
 
-interface ObservationKernelFixture {
+interface WorkerKernelFixture {
   client: KernelPrivateClient;
   deploymentHandle: string;
   dispose(): Promise<void>;
-  requests: readonly ObservationKernelRequest[];
+  requests: readonly WorkerKernelRequest[];
 }
 
-async function startObservationKernel(input: {
+async function startWorkerKernel(input: {
   beforeResponse?: () => Promise<void>;
   kernelInstanceId: string;
   spaceId: string;
-}): Promise<ObservationKernelFixture> {
-  const requests: ObservationKernelRequest[] = [];
+}): Promise<WorkerKernelFixture> {
+  const requests: WorkerKernelRequest[] = [];
   const server = createServer(
     {
       ca: observationCertificate,
@@ -119,6 +123,16 @@ async function startObservationKernel(input: {
       requests.push({
         authorized:
           request.socket instanceof TLSSocket && request.socket.authorized,
+        maximumBackupBytes:
+          typeof request.headers["x-singularity-backup-maximum-bytes"] ===
+          "string"
+            ? request.headers["x-singularity-backup-maximum-bytes"]
+            : undefined,
+        maximumBackupFiles:
+          typeof request.headers["x-singularity-backup-maximum-files"] ===
+          "string"
+            ? request.headers["x-singularity-backup-maximum-files"]
+            : undefined,
         method: request.method ?? "",
         path: request.url ?? "",
         requestId:
@@ -132,6 +146,21 @@ async function startObservationKernel(input: {
       });
       try {
         await input.beforeResponse?.();
+        if (request.url === WORKER_BACKUP_PATH) {
+          const archive = Buffer.from(ARCHIVE_BODY_SENTINEL, "utf8");
+          response.statusCode = 200;
+          response.setHeader("cache-control", "no-store");
+          response.setHeader("content-length", String(archive.byteLength));
+          response.setHeader("content-type", "application/zip");
+          response.setHeader("x-singularity-backup-format-version", "1");
+          response.setHeader(
+            "x-singularity-backup-sha256",
+            createHash("sha256").update(archive).digest("hex"),
+          );
+          response.setHeader("x-singularity-kernel-version", "3.7.2");
+          response.end(archive);
+          return;
+        }
         response.statusCode = 200;
         response.setHeader("cache-control", "no-store");
         response.setHeader("content-type", "application/json");
@@ -304,6 +333,37 @@ function restoreJob(fixture: RestoreFixture): RestoreSpaceJob {
   };
 }
 
+async function persistRunningWorkerClaim(
+  database: DatabaseClient,
+  job: BackupSpaceJob | RestoreSpaceJob,
+  workerId = `test-${job.kind}`,
+): Promise<void> {
+  const payload =
+    job.kind === "backup-space"
+      ? { backupId: job.backupId, spaceId: job.spaceId }
+      : {
+          backupId: job.backupId,
+          restoreId: job.restoreId,
+          sourceSpaceId: job.sourceSpaceId,
+          targetKernelInstanceId: job.targetKernelInstanceId,
+          targetSpaceId: job.targetSpaceId,
+        };
+  await database.workerJob.create({
+    data: {
+      availableAt: new Date(),
+      attempt: job.attempt,
+      id: job.id,
+      kind: job.kind === "backup-space" ? "backup_space" : "restore_space",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      organizationId: job.organizationId,
+      payload,
+      requestId: job.requestId,
+      status: "running",
+      workerId,
+    },
+  });
+}
+
 async function createRestoreFixture(
   database: DatabaseClient,
   objects: FileObjectStore,
@@ -423,14 +483,13 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
       },
     });
     const job = backupJob(fixture, backup.id);
+    await persistRunningWorkerClaim(database.client, job);
     let backupCalls = 0;
     const kernel: BackupKernelPort = {
       async createBackup() {
         backupCalls += 1;
         return {
-          body: (async function* () {
-            yield archive;
-          })(),
+          body: Readable.from([archive]),
           formatVersion: 1,
           kernelVersion: "3.7.2",
           sha256,
@@ -496,23 +555,11 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     });
     const firstJob = backupJob(fixture, backup.id);
     const secondJob = { ...firstJob, attempt: 2 };
-    await database.client.workerJob.create({
-      data: {
-        availableAt: new Date("2026-07-19T09:00:00.000Z"),
-        attempt: 1,
-        id: firstJob.id,
-        kind: "backup_space",
-        leaseExpiresAt: new Date(Date.now() + 60_000),
-        organizationId: fixture.organizationId,
-        payload: {
-          backupId: backup.id,
-          spaceId: fixture.sourceSpaceId,
-        },
-        requestId: firstJob.requestId,
-        status: "running",
-        workerId: "backup-old-worker",
-      },
-    });
+    await persistRunningWorkerClaim(
+      database.client,
+      firstJob,
+      "backup-old-worker",
+    );
     let releaseFirst!: () => void;
     const firstRelease = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -521,18 +568,20 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     const firstStartedPromise = new Promise<void>((resolve) => {
       firstStarted = resolve;
     });
+    let backupCalls = 0;
     const kernel: BackupKernelPort = {
-      async createBackup(job) {
-        if (job.attempt === 1) {
-          firstStarted();
-          await firstRelease;
-        }
+      async createBackup() {
+        backupCalls += 1;
         return {
-          body: (async function* () {
-            yield archive;
-          })(),
+          body: Readable.from(
+            (async function* () {
+              yield archive;
+              firstStarted();
+              await firstRelease;
+            })(),
+          ),
           formatVersion: 1,
-          kernelVersion: job.attempt === 1 ? "old-attempt" : "new-attempt",
+          kernelVersion: "uploaded-attempt",
           sha256,
         };
       },
@@ -574,23 +623,21 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
         WHERE "id" = ${firstJob.id}::uuid
       `,
     );
-    try {
-      await handler.execute(secondJob, new AbortController().signal);
-    } finally {
-      releaseFirst();
-    }
+    releaseFirst();
     await expect(firstExecution).rejects.toMatchObject<Partial<WorkerJobError>>({
       code: "backup-state-conflict",
     });
+    await handler.execute(secondJob, new AbortController().signal);
 
     await expect(
       database.client.spaceBackup.findUniqueOrThrow({
         where: { id: backup.id },
       }),
     ).resolves.toMatchObject({
-      kernelVersion: "new-attempt",
+      kernelVersion: "uploaded-attempt",
       status: "succeeded",
     });
+    expect(backupCalls).toBe(1);
     const claim = await database.client.$queryRaw<
       Array<{ workerAttempt: number | null; workerJobId: string | null }>
     >(
@@ -605,11 +652,110 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     expect(claim[0]).toEqual({ workerAttempt: null, workerJobId: null });
   });
 
+  it("destroys the Kernel backup body when object staging cannot open", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const archive = Buffer.from(ARCHIVE_BODY_SENTINEL, "utf8");
+    const backup = await database.client.spaceBackup.create({
+      data: {
+        createdByUserId: fixture.userId,
+        organizationId: fixture.organizationId,
+        sourceSpaceId: fixture.sourceSpaceId,
+        status: "queued",
+      },
+    });
+    const job = backupJob(fixture, backup.id);
+    await persistRunningWorkerClaim(database.client, job);
+    const body = Readable.from([archive]);
+    const kernel: BackupKernelPort = {
+      async createBackup() {
+        return {
+          body,
+          formatVersion: 1,
+          kernelVersion: "3.7.2",
+          sha256: createHash("sha256").update(archive).digest("hex"),
+        };
+      },
+    };
+    const handler = new BackupSpaceHandler(
+      database,
+      kernel,
+      MAXIMUM_BACKUP_BYTES,
+      objects,
+      logger,
+    );
+    await rm(rootDirectory, { force: true, recursive: true });
+    await writeFile(rootDirectory, "not-a-directory", { mode: 0o600 });
+
+    await expect(
+      handler.execute(job, new AbortController().signal),
+    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "backup-execution-failed",
+    });
+    expect(body.destroyed).toBe(true);
+  });
+
+  it("sends bounded generation limits through the authenticated Kernel route", async () => {
+    const fixture = await createManagedSpace(database.client);
+    const kernelInstanceId = randomUUID();
+    const kernel = await startWorkerKernel({
+      kernelInstanceId,
+      spaceId: fixture.sourceSpaceId,
+    });
+    try {
+      await database.client.kernelInstance.create({
+        data: {
+          deploymentHandle: kernel.deploymentHandle,
+          id: kernelInstanceId,
+          spaceId: fixture.sourceSpaceId,
+          status: "ready",
+          version: "3.7.2",
+        },
+      });
+      const job = backupJob(fixture, randomUUID());
+      const client = new KernelWorkerClient(
+        database,
+        kernel.client,
+        10_000,
+        MAXIMUM_BACKUP_BYTES,
+        100_000,
+      );
+
+      const archive = await client.createBackup(
+        job,
+        new AbortController().signal,
+      );
+      await consume(archive.body);
+
+      expect(archive).toMatchObject({
+        formatVersion: 1,
+        kernelVersion: "3.7.2",
+        sha256: createHash("sha256")
+          .update(ARCHIVE_BODY_SENTINEL, "utf8")
+          .digest("hex"),
+      });
+      expect(kernel.requests).toEqual([
+        expect.objectContaining({
+          authorized: true,
+          maximumBackupBytes: String(MAXIMUM_BACKUP_BYTES),
+          maximumBackupFiles: "100000",
+          method: "POST",
+          path: WORKER_BACKUP_PATH,
+          requestId: job.requestId,
+          serviceToken: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await kernel.dispose();
+    }
+  });
+
   it("records restore validation and the committed Kernel transition once", async () => {
     const fixture = await createRestoreFixture(database.client, objects);
     const job = restoreJob(fixture);
+    await persistRunningWorkerClaim(database.client, job);
     let restoreCalls = 0;
     const deployment: RestoreDeploymentPort = {
+      async commitTarget() {},
       async destroyTarget() {
         throw new Error("Successful restore must not clean its target");
       },
@@ -627,6 +773,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
             tlsProfile: "restore-test",
           },
           kernelVersion: "3.7.2",
+          runtimeOwner: "test-restore-space",
         };
       },
     };
@@ -720,9 +867,108 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     expect(output).not.toContain(rootDirectory);
   });
 
+  it("fences late restore finalization after the worker claim is taken over", async () => {
+    const fixture = await createRestoreFixture(database.client, objects);
+    const firstJob = restoreJob(fixture);
+    const secondJob = { ...firstJob, attempt: 2 };
+    await persistRunningWorkerClaim(
+      database.client,
+      firstJob,
+      "restore-old-worker",
+    );
+    let releaseFirst!: () => void;
+    const firstRelease = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let destroyedTargets = 0;
+    const deployment: RestoreDeploymentPort = {
+      async commitTarget() {},
+      async destroyTarget() {
+        destroyedTargets += 1;
+      },
+      async restore(input) {
+        await consume(input.archive);
+        firstStarted();
+        await firstRelease;
+        return {
+          endpoint: {
+            handle: `restore-${fixture.targetKernelInstanceId}`,
+            hostname: "127.0.0.1",
+            kernelInstanceId: fixture.targetKernelInstanceId,
+            port: 8443,
+            serverName: "kernel.restore.test",
+            spaceId: fixture.targetSpaceId,
+            tlsProfile: "restore-test",
+          },
+          kernelVersion: "3.7.2",
+          runtimeOwner: "restore-old-worker",
+        };
+      },
+    };
+    const handler = new RestoreSpaceHandler(
+      database,
+      deployment,
+      MAXIMUM_BACKUP_BYTES,
+      objects,
+      logger,
+    );
+    const firstExecution = handler.execute(
+      firstJob,
+      new AbortController().signal,
+    );
+    void firstExecution.catch(() => undefined);
+    await firstStartedPromise;
+    await database.client.$executeRaw(
+      Prisma.sql`
+        UPDATE "worker_jobs"
+        SET
+          "attempt" = 2,
+          "worker_id" = 'restore-new-worker',
+          "lease_expires_at" = ${new Date(Date.now() + 60_000)}
+        WHERE "id" = ${firstJob.id}::uuid
+      `,
+    );
+    releaseFirst();
+
+    await expect(firstExecution).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "restore-claim-active",
+    });
+    await expect(
+      database.client.spaceRestoreJob.findUniqueOrThrow({
+        where: { id: fixture.restoreId },
+      }),
+    ).resolves.toMatchObject({
+      status: "restoring",
+      workerAttempt: 1,
+      workerJobId: firstJob.id,
+    });
+    await expect(
+      database.client.kernelRuntimeEndpoint.findUnique({
+        where: { kernelInstanceId: fixture.targetKernelInstanceId },
+      }),
+    ).resolves.toBeNull();
+
+    await expect(
+      handler.execute(secondJob, new AbortController().signal),
+    ).rejects.toMatchObject<Partial<WorkerJobError>>({
+      code: "restore-claim-expired",
+    });
+    expect(destroyedTargets).toBe(1);
+    await expect(
+      database.client.spaceRestoreJob.findUniqueOrThrow({
+        where: { id: fixture.restoreId },
+      }),
+    ).resolves.toMatchObject({ status: "failed", targetSpaceId: null });
+  });
+
   it("records the committed restoring state before revoked authorization cleanup", async () => {
     const fixture = await createRestoreFixture(database.client, objects);
     const job = restoreJob(fixture);
+    await persistRunningWorkerClaim(database.client, job);
     await database.client.organizationMembership.update({
       where: {
         organizationId_userId: {
@@ -734,6 +980,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     });
     let restoreCalls = 0;
     const deployment: RestoreDeploymentPort = {
+      async commitTarget() {},
       async destroyTarget() {},
       async restore() {
         restoreCalls += 1;
@@ -787,6 +1034,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
   it("resumes a committed restore cleanup marker with its opaque object key", async () => {
     const fixture = await createRestoreFixture(database.client, objects);
     const job = restoreJob(fixture);
+    await persistRunningWorkerClaim(database.client, job);
     await database.client.spaceRestoreJob.update({
       where: { id: fixture.restoreId },
       data: {
@@ -798,6 +1046,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     });
     let destroyedTargets = 0;
     const deployment: RestoreDeploymentPort = {
+      async commitTarget() {},
       async destroyTarget() {
         destroyedTargets += 1;
       },
@@ -844,13 +1093,16 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
   it("records failed restore cleanup without logging the thrown detail or host path", async () => {
     const fixture = await createRestoreFixture(database.client, objects);
     const job = restoreJob(fixture);
+    await persistRunningWorkerClaim(database.client, job);
     let destroyedTargets = 0;
+    let archiveStream: Readable | undefined;
     const deployment: RestoreDeploymentPort = {
+      async commitTarget() {},
       async destroyTarget() {
         destroyedTargets += 1;
       },
       async restore(input) {
-        await consume(input.archive);
+        archiveStream = input.archive as Readable;
         throw new Error(FAILURE_DETAIL_SENTINEL);
       },
     };
@@ -867,6 +1119,7 @@ describe("L1 backup and restore handler observability with PostgreSQL", () => {
     ).rejects.toMatchObject<Partial<WorkerJobError>>({
       code: "restore-execution-failed",
     });
+    expect(archiveStream?.destroyed).toBe(true);
     await expect(
       handler.execute(job, new AbortController().signal),
     ).resolves.toBeUndefined();
@@ -947,7 +1200,7 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
   it("schedules one sample per ready Kernel and persists the authenticated response", async () => {
     const fixture = await createManagedSpace(database.client);
     const kernelInstanceId = randomUUID();
-    const kernel = await startObservationKernel({
+    const kernel = await startWorkerKernel({
       kernelInstanceId,
       spaceId: fixture.sourceSpaceId,
     });
@@ -1030,7 +1283,13 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
       const repository = new PostgresWorkerJobRepository(database);
       const handler = new SampleKernelHandler(
         database,
-        new KernelWorkerClient(database, kernel.client),
+        new KernelWorkerClient(
+          database,
+          kernel.client,
+          10_000,
+          MAXIMUM_BACKUP_BYTES,
+          100_000,
+        ),
       );
       await new BoundedJobWorker({
         claimBatchSize: 1,
@@ -1112,7 +1371,7 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
     const fixture = await createManagedSpace(database.client);
     const kernelInstanceId = randomUUID();
     const replacementHandle = `replacement-${kernelInstanceId}`;
-    const kernel = await startObservationKernel({
+    const kernel = await startWorkerKernel({
       async beforeResponse() {
         await database.client.kernelInstance.update({
           data: { deploymentHandle: replacementHandle },
@@ -1166,7 +1425,13 @@ describe("L1 scheduled observation and audit archive chains with PostgreSQL", ()
         handlers: [
           new SampleKernelHandler(
             database,
-            new KernelWorkerClient(database, kernel.client),
+            new KernelWorkerClient(
+              database,
+              kernel.client,
+              10_000,
+              MAXIMUM_BACKUP_BYTES,
+              100_000,
+            ),
           ),
         ],
         leaseDurationMilliseconds: 30_000,

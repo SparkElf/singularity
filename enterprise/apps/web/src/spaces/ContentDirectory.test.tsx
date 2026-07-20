@@ -12,9 +12,13 @@ import {
   ContentDirectory,
   type ContentDirectoryStatus,
 } from "@/spaces/ContentDirectory.tsx";
+import { contentDirectoryDocumentsQueryKey } from "@/spaces/content-directory-api.ts";
 import {
   activateContentSelectionScope,
+  clearContentSelection,
+  getContentSelectionForScope,
   releaseContentSelectionScope,
+  selectContentDocument,
   useContentSelectionStore,
   type ContentSelectionScope,
 } from "@/spaces/content-selection.ts";
@@ -94,8 +98,12 @@ function notFoundResponse(runtimeAccessLost = false): Response {
   );
 }
 
-function notebook(notebookId: string, locked = false) {
-  return { icon: "", locked, name: notebookId, notebookId };
+function notebook(
+  notebookId: string,
+  locked = false,
+  supportsGraph = true,
+) {
+  return { icon: "", locked, name: notebookId, notebookId, supportsGraph };
 }
 
 function document(
@@ -125,7 +133,7 @@ function renderDirectory(
   const onStatusChange = vi.fn<(status: ContentDirectoryStatus) => void>();
   const result = render(
     <QueryClientProvider client={queryClient}>
-      <ContentDirectory
+      <ScopedContentDirectory
         onAccessLost={onAccessLost}
         onStatusChange={onStatusChange}
         scope={scope}
@@ -133,6 +141,31 @@ function renderDirectory(
     </QueryClientProvider>,
   );
   return { ...result, onAccessLost, onStatusChange, queryClient, scope };
+}
+
+function ScopedContentDirectory({
+  onAccessLost,
+  onStatusChange,
+  scope,
+}: {
+  readonly onAccessLost: (event: ContentDirectoryAccessLoss) => void;
+  readonly onStatusChange: (status: ContentDirectoryStatus) => void;
+  readonly scope: ContentSelectionScope;
+}) {
+  const storeSelection = useContentSelectionStore((state) => state.selection);
+  const selection = storeSelection?.spaceId === scope.spaceId
+    ? getContentSelectionForScope(scope)
+    : null;
+  return (
+    <ContentDirectory
+      identity={scope}
+      onAccessLost={onAccessLost}
+      onClear={() => clearContentSelection(scope)}
+      onSelect={(target) => selectContentDocument(scope, target)}
+      onStatusChange={onStatusChange}
+      selection={selection}
+    />
+  );
 }
 
 function deferred<T>() {
@@ -163,9 +196,9 @@ describe("ContentDirectory", () => {
       if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
         return Promise.resolve(jsonResponse({
           notebooks: [
-            notebook(LOCKED_NOTEBOOK, true),
+            notebook(LOCKED_NOTEBOOK, true, false),
             notebook(EMPTY_NOTEBOOK),
-            notebook(NOTEBOOK_A),
+            notebook(NOTEBOOK_A, false, false),
           ],
         }));
       }
@@ -196,6 +229,7 @@ describe("ContentDirectory", () => {
         documentId: DOCUMENT_A,
         notebookId: NOTEBOOK_A,
         spaceId: SPACE_A,
+        supportsGraph: false,
       });
     });
     expect(await screen.findByRole("button", { name: "第一份文档" })).toHaveAttribute(
@@ -214,7 +248,7 @@ describe("ContentDirectory", () => {
       if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
         return Promise.resolve(jsonResponse({
           notebooks: [
-            notebook(LOCKED_NOTEBOOK, true),
+            notebook(LOCKED_NOTEBOOK, true, false),
             notebook(EMPTY_NOTEBOOK),
           ],
         }));
@@ -287,6 +321,7 @@ describe("ContentDirectory", () => {
       documentId: DOCUMENT_A,
       notebookId: NOTEBOOK_A,
       spaceId: SPACE_A,
+      supportsGraph: true,
     });
   });
 
@@ -335,6 +370,7 @@ describe("ContentDirectory", () => {
       documentId: DOCUMENT_A,
       notebookId: NOTEBOOK_A,
       spaceId: SPACE_A,
+      supportsGraph: true,
     });
   });
 
@@ -389,6 +425,127 @@ describe("ContentDirectory", () => {
   });
 
   it("rejects a selection command from the directory generation replaced by refresh", async () => {
+    let notebookRequests = 0;
+    let rootRequests = 0;
+    const refreshedRoot = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        notebookRequests += 1;
+        return Promise.resolve(jsonResponse({
+          notebooks: [notebook(NOTEBOOK_A, false, notebookRequests === 1)],
+        }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        rootRequests += 1;
+        return rootRequests === 1
+          ? Promise.resolve(jsonResponse({
+              documents: [
+                document(NOTEBOOK_A, DOCUMENT_A, "旧代次首文档"),
+                document(NOTEBOOK_A, DOCUMENT_B, "旧代次第二文档"),
+              ],
+              locked: false,
+              nextOffset: null,
+            }))
+          : refreshedRoot.promise;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    renderDirectory({ organizationId: ORGANIZATION_A, spaceId: SPACE_A });
+    const staleDocumentButton = await screen.findByRole("button", {
+      name: "旧代次第二文档",
+    });
+
+    act(() => {
+      screen.getByRole("button", { name: "刷新文档目录" }).click();
+      staleDocumentButton.click();
+    });
+
+    expect(useContentSelectionStore.getState().selection?.documentId).toBe(
+      DOCUMENT_A,
+    );
+    await act(async () => {
+      refreshedRoot.resolve(jsonResponse({
+        documents: [document(NOTEBOOK_A, DOCUMENT_B, "刷新后文档")],
+        locked: false,
+        nextOffset: null,
+      }));
+      await refreshedRoot.promise;
+    });
+    await waitFor(() => {
+      expect(useContentSelectionStore.getState().selection).toEqual({
+        documentId: DOCUMENT_B,
+        notebookId: NOTEBOOK_A,
+        spaceId: SPACE_A,
+        supportsGraph: false,
+      });
+    });
+  });
+
+  it("retains cached nodes, expansion, and selection when refresh fails", async () => {
+    let rootRequests = 0;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        rootRequests += 1;
+        return Promise.resolve(
+          rootRequests === 1
+            ? jsonResponse({
+                documents: [
+                  document(NOTEBOOK_A, DOCUMENT_A, "保留文档", true),
+                ],
+                locked: false,
+                nextOffset: null,
+              })
+            : jsonResponse(problem(503), 503),
+        );
+      }
+      if (
+        path === childDocumentsPath(
+          ORGANIZATION_A,
+          SPACE_A,
+          NOTEBOOK_A,
+          DOCUMENT_A,
+        )
+      ) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, CHILD_DOCUMENT, "保留子文档")],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    const { scope } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "展开子文档" }));
+    expect(await screen.findByRole("button", { name: "保留子文档" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新文档目录" }));
+    expect(await screen.findByRole("button", { name: "重新加载目录" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "保留文档" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "保留子文档" })).toBeVisible();
+    expect(useContentSelectionStore.getState().selection?.documentId).toBe(
+      DOCUMENT_A,
+    );
+
+    act(() => {
+      expect(clearContentSelection(scope)).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保留子文档" }));
+    expect(useContentSelectionStore.getState().selection?.documentId).toBe(
+      CHILD_DOCUMENT,
+    );
+  });
+
+  it("invalidates old child and offset pages only after a successful refresh", async () => {
     let rootRequests = 0;
     vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
       const path = requestPath(input);
@@ -400,9 +557,30 @@ describe("ContentDirectory", () => {
         return Promise.resolve(jsonResponse({
           documents: [
             rootRequests === 1
-              ? document(NOTEBOOK_A, DOCUMENT_A, "旧代次文档")
-              : document(NOTEBOOK_A, DOCUMENT_B, "刷新后文档"),
+              ? document(NOTEBOOK_A, DOCUMENT_A, "旧根文档", true)
+              : document(NOTEBOOK_A, DOCUMENT_B, "新根文档"),
           ],
+          locked: false,
+          nextOffset: rootRequests === 1 ? 1 : null,
+        }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A, 1)) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, DOCUMENT_B, "旧偏移页")],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      if (
+        path === childDocumentsPath(
+          ORGANIZATION_A,
+          SPACE_A,
+          NOTEBOOK_A,
+          DOCUMENT_A,
+        )
+      ) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, CHILD_DOCUMENT, "旧子层")],
           locked: false,
           nextOffset: null,
         }));
@@ -410,24 +588,119 @@ describe("ContentDirectory", () => {
       throw new Error(`Unexpected request: ${path}`);
     }));
 
-    renderDirectory({ organizationId: ORGANIZATION_A, spaceId: SPACE_A });
-    const staleDocumentButton = await screen.findByRole("button", {
-      name: "旧代次文档",
+    const { queryClient } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
     });
+    fireEvent.click(await screen.findByRole("button", { name: "展开子文档" }));
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    expect(await screen.findByRole("button", { name: "旧子层" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "旧偏移页" })).toBeVisible();
 
-    act(() => {
-      screen.getByRole("button", { name: "刷新文档目录" }).click();
-      staleDocumentButton.click();
+    fireEvent.click(screen.getByRole("button", { name: "刷新文档目录" }));
+    expect(await screen.findByRole("button", { name: "新根文档" })).toBeVisible();
+
+    expect(queryClient.getQueryData(contentDirectoryDocumentsQueryKey({
+      level: { kind: "children", parentDocumentId: DOCUMENT_A },
+      notebookId: NOTEBOOK_A,
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    }, 0))).toBeUndefined();
+    expect(queryClient.getQueryData(contentDirectoryDocumentsQueryKey({
+      level: { kind: "root" },
+      notebookId: NOTEBOOK_A,
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    }, 1))).toBeUndefined();
+  });
+
+  it("quarantines every locked or disappeared notebook in one generation", async () => {
+    let notebookRequests = 0;
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        notebookRequests += 1;
+        return Promise.resolve(jsonResponse({
+          notebooks: notebookRequests === 1
+            ? [notebook(NOTEBOOK_A), notebook(NOTEBOOK_B)]
+            : [notebook(NOTEBOOK_A, true, false)],
+        }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_A, DOCUMENT_A, "锁前标题 A")],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_B)) {
+        return Promise.resolve(jsonResponse({
+          documents: [document(NOTEBOOK_B, DOCUMENT_B, "锁前标题 B")],
+          locked: false,
+          nextOffset: null,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    const { queryClient } = renderDirectory({
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
     });
+    const staleDocument = await screen.findByRole("button", { name: "锁前标题 A" });
+    const notebookExpanders = screen.getAllByRole("button", { name: "展开笔记本" });
+    fireEvent.click(notebookExpanders[0]!);
+    expect(await screen.findByRole("button", { name: "锁前标题 B" })).toBeVisible();
 
-    expect(useContentSelectionStore.getState().selection).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "刷新文档目录" }));
     await waitFor(() => {
-      expect(useContentSelectionStore.getState().selection).toEqual({
-        documentId: DOCUMENT_B,
-        notebookId: NOTEBOOK_A,
-        spaceId: SPACE_A,
-      });
+      expect(screen.queryByText("锁前标题 A")).not.toBeInTheDocument();
+      expect(screen.queryByText("锁前标题 B")).not.toBeInTheDocument();
+      expect(useContentSelectionStore.getState().selection).toBeNull();
     });
+    expect(queryClient.getQueryData(contentDirectoryDocumentsQueryKey({
+      level: { kind: "root" },
+      notebookId: NOTEBOOK_A,
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    }, 0))).toBeUndefined();
+    expect(queryClient.getQueryData(contentDirectoryDocumentsQueryKey({
+      level: { kind: "root" },
+      notebookId: NOTEBOOK_B,
+      organizationId: ORGANIZATION_A,
+      spaceId: SPACE_A,
+    }, 0))).toBeUndefined();
+
+    fireEvent.click(staleDocument);
+    expect(useContentSelectionStore.getState().selection).toBeNull();
+  });
+
+  it("records the original directory error object and stack", async () => {
+    const sentinel = new Error("directory-stack-sentinel");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+      const path = requestPath(input);
+      if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
+        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+      }
+      if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
+        return Promise.reject(sentinel);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    renderDirectory({ organizationId: ORGANIZATION_A, spaceId: SPACE_A });
+    await screen.findByRole("button", { name: "重新加载目录" });
+
+    expect(sentinel.stack).toContain("directory-stack-sentinel");
+    expect(warn).toHaveBeenCalledWith(
+      "[content.directory]",
+      expect.objectContaining({
+        error: expect.objectContaining({ cause: sentinel }) as unknown,
+        phase: "bootstrap",
+        result: "failed",
+      }),
+    );
   });
 
   it("rejects a late root page after switching to another space", async () => {
@@ -469,7 +742,7 @@ describe("ContentDirectory", () => {
     activeTestScope = secondScope;
     first.rerender(
       <QueryClientProvider client={queryClient}>
-        <ContentDirectory
+        <ScopedContentDirectory
           onAccessLost={first.onAccessLost}
           onStatusChange={first.onStatusChange}
           scope={secondScope}
@@ -482,6 +755,7 @@ describe("ContentDirectory", () => {
         documentId: DOCUMENT_B,
         notebookId: NOTEBOOK_B,
         spaceId: SPACE_B,
+        supportsGraph: true,
       });
     });
     await waitFor(() => expect(firstRootSignal?.aborted).toBe(true));
@@ -498,6 +772,7 @@ describe("ContentDirectory", () => {
       documentId: DOCUMENT_B,
       notebookId: NOTEBOOK_B,
       spaceId: SPACE_B,
+      supportsGraph: true,
     });
   });
 
@@ -532,6 +807,7 @@ describe("ContentDirectory", () => {
       "documentId",
       "notebookId",
       "spaceId",
+      "supportsGraph",
     ]);
   });
 
@@ -541,7 +817,9 @@ describe("ContentDirectory", () => {
       const path = requestPath(input);
       requested.push(path);
       if (path === notebooksPath(ORGANIZATION_A, SPACE_A)) {
-        return Promise.resolve(jsonResponse({ notebooks: [notebook(NOTEBOOK_A)] }));
+        return Promise.resolve(jsonResponse({
+          notebooks: [notebook(NOTEBOOK_A, false, false)],
+        }));
       }
       if (path === rootDocumentsPath(ORGANIZATION_A, SPACE_A, NOTEBOOK_A)) {
         return Promise.resolve(jsonResponse({
@@ -578,6 +856,7 @@ describe("ContentDirectory", () => {
       documentId: CHILD_DOCUMENT,
       notebookId: NOTEBOOK_A,
       spaceId: SPACE_A,
+      supportsGraph: false,
     });
     expect(requested).toContain(
       childDocumentsPath(

@@ -1,5 +1,6 @@
 import type { ProtyleOverlayHandle, ProtyleOverlayPort } from "./contracts.ts";
 
+/** 创建浮层能力端口，统一管理注册、置顶、关闭回调和批量销毁。 */
 export function createProtyleOverlayPort<TOverlay>(
   closeOverlay: (overlay: TOverlay) => void,
 ): ProtyleOverlayPort<TOverlay> {
@@ -72,6 +73,7 @@ export function createProtyleOverlayPort<TOverlay>(
         try {
           handle.close();
         } catch (error) {
+          console.error("[protyle.overlays] overlay disposal failed", error);
           failures.push(error);
         }
       });

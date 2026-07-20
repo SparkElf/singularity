@@ -170,7 +170,7 @@ func indexNode(tx *sql.Tx, id, boxID string) (err error) {
 		return
 	}
 
-	content := NodeStaticContent(node, nil, true, indexAssetPath, true)
+	content := nodeStaticContent(node, nil, true, indexAssetPath, true, tree.Box, tree.Path)
 	content = strings.ReplaceAll(content, editor.Zwsp, "")
 	var rowID int64
 	if rowID, err = blockRowIDByBlockID(tx, id); err != nil {
@@ -188,7 +188,11 @@ func indexNode(tx *sql.Tx, id, boxID string) (err error) {
 	return
 }
 
-func NodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATitleURL, includeAssetPath, fullAttrView bool) string {
+func NodeStaticContentWithoutOCR(node *ast.Node, excludeTypes []string, includeTextMarkATitleURL, includeAssetPath, fullAttrView bool) string {
+	return nodeStaticContent(node, excludeTypes, includeTextMarkATitleURL, includeAssetPath, fullAttrView, "", "")
+}
+
+func nodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATitleURL, includeAssetPath, fullAttrView bool, boxID, documentPath string) string {
 	if nil == node {
 		return ""
 	}
@@ -277,7 +281,9 @@ func NodeStaticContent(node *ast.Node, excludeTypes []string, includeTextMarkATi
 			var linkDestStr, ocrText string
 			if nil != linkDest {
 				linkDestStr = linkDest.TokensStr()
-				ocrText = util.GetAssetText(linkDestStr)
+				if boxID != "" && documentPath != "" && IsEncryptedBoxFn != nil && !IsEncryptedBoxFn(boxID) {
+					ocrText = util.GetAssetTextInDocument(linkDestStr, boxID, documentPath)
+				}
 			}
 
 			linkText := n.ChildByType(ast.NodeLinkText)

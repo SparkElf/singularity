@@ -48,6 +48,7 @@ import {
     type ProtyleDefRefCountData,
     type ProtyleRefDynamicTextData
 } from "./runtime/referencePush";
+import {resolveProtyleRuntimeBinding} from "./runtime/binding";
 
 type ProtyleTransactionsMessage = IWebSocketData & {
     cmd: "transactions";
@@ -161,18 +162,24 @@ export class Protyle {
      * @param id 要挂载 Protyle 的元素或者元素 ID。
      * @param options Protyle 参数
      */
-    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
+    constructor(application: ProtyleApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
-                lifecycle: (TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle) & { participation: "live" });
-    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
+                lifecycle: TProtyleBoundLifecycle & { participation: "live" });
+    constructor(application: TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
-                lifecycle: (TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle) & { participation: "detached" });
-    constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
+                lifecycle: TProtyleUpstreamBoundLifecycle & { participation: "live" });
+    constructor(application: ProtyleApplicationPort, id: HTMLElement,
+                options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
+                lifecycle: TProtyleBoundLifecycle & { participation: "detached" });
+    constructor(application: TProtyleLegacyApplicationPort, id: HTMLElement,
+                options: Omit<IProtyleOptions, "notebookId"> & { blockId: string },
+                lifecycle: TProtyleUpstreamBoundLifecycle & { participation: "detached" });
+    constructor(application: TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "blockId" | "notebookId"> & { blockId?: never },
                 lifecycle: TProtyleLocalOnlyLifecycle);
     constructor(application: ProtyleApplicationPort | TProtyleLegacyApplicationPort, id: HTMLElement,
                 options: Omit<IProtyleOptions, "notebookId">,
-                lifecycle: TProtyleBoundLifecycle | TProtyleLegacyBoundLifecycle | TProtyleLocalOnlyLifecycle) {
+                lifecycle: TProtyleBoundLifecycle | TProtyleUpstreamBoundLifecycle | TProtyleLocalOnlyLifecycle) {
         this.version = Constants.SIYUAN_VERSION;
         this.onBacklinkChange = "onBacklinkChange" in lifecycle ? lifecycle.onBacklinkChange : undefined;
         this.onContentUnavailable = "onContentUnavailable" in lifecycle ? lifecycle.onContentUnavailable : undefined;
@@ -180,29 +187,12 @@ export class Protyle {
             throw new Error("[protyle.application] Core requires explicit application settings");
         }
         this.settings = application.settings;
-        let runtime: TProtyleRuntime | undefined;
-        let editors: TProtyleEditorRegistry;
-        let hostPort: TProtyleHostPort;
-        let plugins: TProtylePluginPort;
-        if (lifecycle.content.mode === "bound") {
-            const session = "session" in lifecycle ? lifecycle.session : undefined;
-            if (!session) {
-                throw new Error("[protyle.runtime] bound Core requires a ProtyleSession");
-            }
-            this.session = session;
-            runtime = this.session.runtime;
-            editors = runtime.editors;
-            hostPort = runtime.host;
-            plugins = runtime.plugins;
-        } else {
-            this.session = undefined;
-            if (!application.protyleEditors || !application.protyleHost || !application.protylePlugins) {
-                throw new Error("[protyle.application] local-only Core requires explicit local capabilities");
-            }
-            editors = application.protyleEditors;
-            hostPort = application.protyleHost;
-            plugins = application.protylePlugins;
-        }
+        const binding = resolveProtyleRuntimeBinding(lifecycle);
+        this.session = binding.session;
+        const runtime: TProtyleRuntime | TProtyleUpstreamLocalRuntime = binding.runtime;
+        const editors = runtime.editors;
+        const hostPort = runtime.host;
+        const plugins = runtime.plugins;
         if (lifecycle.content.mode === "bound") {
             if (!lifecycle.content.notebookId) {
                 throw new Error("[protyle.content] bound Protyle requires a notebookId");
@@ -258,7 +248,6 @@ export class Protyle {
             plugins,
             runtime,
             session: this.session,
-            transport: runtime?.transport,
             surface: lifecycle.surface,
             participation: lifecycle.participation,
             content: lifecycle.content,
@@ -280,7 +269,9 @@ export class Protyle {
                 return lifecycle.content.notebookId;
             },
             options: mergedOptions,
-            block: {},
+            block: lifecycle.content.mode === "bound" ? {
+                rootID: options.rootId ?? options.blockId,
+            } : {},
             highlight: {
                 mark: isSupportCSSHL() ? new Highlight() : undefined,
                 markHL: isSupportCSSHL() ? new Highlight() : undefined,
@@ -348,17 +339,17 @@ export class Protyle {
         this.init();
         this.applyReadOnlyState();
         if (lifecycle.participation === "live") {
-            if (!runtime || lifecycle.content.mode !== "bound") {
-                throw new Error("[protyle.runtime] live Core requires a bound Session runtime");
+            if (lifecycle.content.mode !== "bound") {
+                throw new Error("[protyle.runtime] live Core requires a bound runtime");
             }
             this.protyle.editors.register(this.protyle);
             this.protyle.wysiwyg.element.addEventListener("focusin", () => {
                 this.protyle.editors.activate(this.protyle);
             });
-            this.subscription = runtime.transport.subscribe({
+            const subscriptionOptions = {
                 notebookId: lifecycle.content.notebookId,
-                documentId: options.blockId,
-                type: "protyle",
+                documentId: this.protyle.block.rootID!,
+                type: "protyle" as const,
                 onMessage: (data) => {
                     if (this.disposed) {
                         return;
@@ -552,7 +543,10 @@ export class Protyle {
                         }
                     }
                 }
-            });
+            };
+            this.subscription = "localAppId" in runtime
+                ? runtime.transport.subscribe({...subscriptionOptions, sourceEditorId: this.protyle.id})
+                : runtime.transport.subscribe(subscriptionOptions);
             if (options.backlinkData) {
                 this.protyle.block.rootID = options.blockId;
                 renderBacklink(this.protyle, options.backlinkData);
@@ -591,14 +585,11 @@ export class Protyle {
     }
 
     private request<TResponse>(path: string, body: unknown): Promise<TResponse> {
-        if (!this.session || this.protyle.content.mode !== "bound") {
-            return Promise.reject(new Error("[protyle.runtime] content request requires a bound Session"));
+        if (this.protyle.content.mode !== "bound") {
+            return Promise.reject(new Error("[protyle.runtime] content request requires a bound runtime"));
         }
-        return this.session.runtime.transport.request(path, body, {
-            identity: {
-                notebookId: this.protyle.content.notebookId,
-                documentId: this.protyle.options.blockId,
-            },
+        return this.protyle.runtime.transport.request(path, body, {
+            identity: protyleContentIdentity(this.protyle),
             intent: "read",
             signal: this.requestController.signal,
         }) as Promise<TResponse>;

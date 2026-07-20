@@ -80,6 +80,7 @@ function worker(
   jobHandler: WorkerJobHandler<SampleKernelJob>,
   overrides: Partial<{
     claimBatchSize: number;
+    jobLogger: WorkerJobLogger;
     maximumConcurrentJobs: number;
   }> = {},
 ): BoundedJobWorker {
@@ -88,7 +89,7 @@ function worker(
     handlers: [jobHandler],
     leaseDurationMilliseconds: 5_000,
     leaseRenewalMilliseconds: 1_000,
-    logger: logger(),
+    logger: overrides.jobLogger ?? logger(),
     maximumConcurrentJobs: overrides.maximumConcurrentJobs ?? 1,
     pollIntervalMilliseconds: 100,
     repository: jobRepository,
@@ -279,6 +280,8 @@ describe("BoundedJobWorker lease contract", () => {
   it("persists the declared retry time for a handler failure", async () => {
     const abort = new AbortController();
     const retryAt = new Date("2026-07-18T00:01:00.000Z");
+    const failure = new WorkerJobError("sample-failed", retryAt);
+    const jobLogger = logger();
     let claimed = false;
     const fail = vi.fn(async () => {
       abort.abort();
@@ -296,8 +299,9 @@ describe("BoundedJobWorker lease contract", () => {
         fail,
       }),
       handler(async () => {
-        throw new WorkerJobError("sample-failed", retryAt);
+        throw failure;
       }),
+      { jobLogger },
     ).run(abort.signal);
 
     expect(fail).toHaveBeenCalledWith(
@@ -306,6 +310,9 @@ describe("BoundedJobWorker lease contract", () => {
         retryAt,
       }),
     );
+    const failureLog = vi.mocked(jobLogger.warn).mock.calls.at(-1)?.[0];
+    expect(failureLog?.error).toBe(failure);
+    expect((failureLog?.error as Error).stack).toContain("sample-failed");
   });
 
   it("never claims more leases than it can begin concurrently", async () => {

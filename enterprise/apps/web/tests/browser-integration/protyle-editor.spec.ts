@@ -265,6 +265,7 @@ async function installGatewayBoundary(
             locked: false,
             name: fixture.notebookName,
             notebookId: fixture.notebookId,
+            supportsGraph: true,
           }],
         });
         return;
@@ -445,6 +446,8 @@ test.describe("real Protyle browser integration", () => {
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
     const editor = await openFirstDocument(page);
+    await expect.poll(() => socketFor(boundary, SPACE_A, DOCUMENT_A)).toBeDefined();
+    const workspaceSocket = socketFor(boundary, SPACE_A, DOCUMENT_A)!;
 
     await editor.getByText("打开同文档实例").click();
     const panel = page.locator('[data-protyle-block-panel="true"]');
@@ -453,22 +456,36 @@ test.describe("real Protyle browser integration", () => {
     await expect.poll(() => boundary.sockets.filter(
       (socket) => socket.spaceId === SPACE_A && socket.documentId === DOCUMENT_A,
     ).length).toBe(2);
-    const embeddedSocket = boundary.sockets.filter(
+    const matchingSockets = boundary.sockets.filter(
       (socket) => socket.spaceId === SPACE_A && socket.documentId === DOCUMENT_A,
-    ).at(-1)!;
+    );
+    expect(matchingSockets).toContain(workspaceSocket);
 
     const sourceEditable = editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`);
-    await sourceEditable.fill("来源实例唯一内容");
-    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(0);
-    const sourceTransaction = boundary.transactionRequests.at(-1)!;
-    const sourceEditorId = (sourceTransaction.body as { session?: unknown }).session;
-    expect(typeof sourceEditorId).toBe("string");
-    expect(sourceEditorId).not.toBe("");
+    const embeddedEditable = panel.locator(
+      `[data-node-id="${SAME_DOCUMENT_BLOCK}"] [contenteditable="true"]`,
+    );
+    const transactionsBeforeEmbeddedEdit = boundary.transactionRequests.length;
+    await embeddedEditable.fill("嵌入实例唯一内容");
+    await expect.poll(() => boundary.transactionRequests.length).toBeGreaterThan(
+      transactionsBeforeEmbeddedEdit,
+    );
+    const embeddedTransaction = boundary.transactionRequests.at(-1)!;
+    expect(embeddedTransaction.spaceId).toBe(SPACE_A);
+    expect(embeddedTransaction.notebookId).toBe(NOTEBOOK_A);
+    expect(embeddedTransaction.documentId).toBe(DOCUMENT_A);
+    expect(JSON.stringify(embeddedTransaction.body)).toContain("嵌入实例唯一内容");
+    const embeddedEditorId = (embeddedTransaction.body as { session?: unknown }).session;
+    expect(typeof embeddedEditorId).toBe("string");
+    expect(embeddedEditorId).not.toBe("");
+
+    await sourceEditable.click();
+    await expect(sourceEditable).toBeFocused();
     const fallbackRequests = boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/block/getBlockDOM",
     ).length;
 
-    embeddedSocket.route.send(JSON.stringify({
+    workspaceSocket.route.send(JSON.stringify({
       cmd: "transactions",
       code: 0,
       context: { rootIDs: [DOCUMENT_A] },
@@ -476,15 +493,20 @@ test.describe("real Protyle browser integration", () => {
         contentTargets: [{ documentId: DOCUMENT_A, notebookId: NOTEBOOK_A }],
         doOperations: [{
           action: "move",
-          id: BLOCK_A,
-          previousID: SAME_DOCUMENT_BLOCK,
+          id: SAME_DOCUMENT_BLOCK,
+          previousID: BLOCK_A,
         }],
         notebook: "",
       }],
       msg: "",
-      sid: sourceEditorId,
+      sid: embeddedEditorId,
     }));
-    await expect(panel.locator(`[data-node-id="${BLOCK_A}"]`)).toContainText("来源实例唯一内容");
+    await expect(editor.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText(
+      "嵌入实例唯一内容",
+    );
+    await expect(panel.locator(`[data-node-id="${SAME_DOCUMENT_BLOCK}"]`)).toContainText(
+      "嵌入实例唯一内容",
+    );
     expect(boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/block/getBlockDOM",
     )).toHaveLength(fallbackRequests);
@@ -501,15 +523,92 @@ test.describe("real Protyle browser integration", () => {
     const boundary = await installGatewayBoundary(page, "viewer");
     const editor = await openFirstDocument(page);
     const wysiwyg = editor.locator(".protyle-wysiwyg");
-    const paragraph = editor.locator(`[data-node-id="${BLOCK_A}"] [spellcheck]`);
+    const block = editor.locator(`[data-node-id="${BLOCK_A}"]`);
+    const paragraph = block.locator("[spellcheck]");
+    const background = editor.locator(".protyle-background");
 
     await expect(wysiwyg).toHaveAttribute("data-readonly", "true");
     await expect(wysiwyg).toHaveAttribute("contenteditable", "false");
     await expect(paragraph).toHaveAttribute("contenteditable", "false");
+    const initialContent = await wysiwyg.textContent();
+    const initialHTML = await wysiwyg.innerHTML();
+    const initialBackgroundHTML = await background.innerHTML();
+
     await paragraph.click();
     await page.keyboard.type("不会写入");
-    await expect(paragraph).toHaveText("第一文档初始内容打开嵌入式文档");
+    await expect.poll(async () => wysiwyg.textContent()).toBe(initialContent);
+    await expect.poll(async () => wysiwyg.innerHTML()).toBe(initialHTML);
+
+    await paragraph.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "只读文本粘贴");
+      element.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }));
+    });
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect.poll(async () => wysiwyg.textContent()).toBe(initialContent);
+    await expect.poll(async () => wysiwyg.innerHTML()).toBe(initialHTML);
+
+    await paragraph.evaluate((element) => {
+      const pastedFiles = new DataTransfer();
+      pastedFiles.items.add(new File(["paste"], "viewer-paste.txt", {
+        type: "text/plain",
+      }));
+      element.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: pastedFiles,
+      }));
+
+      const droppedFiles = new DataTransfer();
+      droppedFiles.items.add(new File(["drop"], "viewer-drop.txt", {
+        type: "text/plain",
+      }));
+      element.dispatchEvent(new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: droppedFiles,
+      }));
+    });
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect.poll(async () => wysiwyg.textContent()).toBe(initialContent);
+    await expect.poll(async () => wysiwyg.innerHTML()).toBe(initialHTML);
+
+    await background.evaluate((element) => {
+      const droppedFiles = new DataTransfer();
+      droppedFiles.items.add(new File(["image"], "viewer-background.png", {
+        type: "image/png",
+      }));
+      element.dispatchEvent(new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: droppedFiles,
+      }));
+    });
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect.poll(async () => background.innerHTML()).toBe(initialBackgroundHTML);
+
+    await paragraph.click({ button: "right" });
+    const pluginMenu = page.getByRole("menuitem", { name: "插件" });
+    await expect(pluginMenu).toBeVisible();
+    await pluginMenu.hover();
+    await page.getByRole("menuitem", { name: "聚焦当前块" }).click();
+    await expect(block).toHaveClass(/protyle-wysiwyg--hl/);
+    await expect.poll(async () => wysiwyg.textContent()).toBe(initialContent);
+
     expect(boundary.transactionRequests).toEqual([]);
+    expect(boundary.kernelRequests.filter(
+      (request) => request.kernelPath === "/api/asset/upload",
+    )).toEqual([]);
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);

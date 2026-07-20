@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   acceptLocalOrganizationInvitationRequestSchema,
   invitationTokenSchema,
@@ -44,6 +44,15 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 import { errorMessage } from "@/enterprise/components.tsx";
 
+interface AccountAction {
+  readonly controller: AbortController;
+  readonly generation: number;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export function InvitationAcceptPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -51,6 +60,34 @@ export function InvitationAcceptPage() {
   const queryClient = useQueryClient();
   const setCsrfToken = useCsrfStore((state) => state.setCsrfToken);
   const [passwordError, setPasswordError] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const accountActionRef = useRef<AccountAction | null>(null);
+  const accountGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      accountGenerationRef.current += 1;
+      accountActionRef.current?.controller.abort();
+      accountActionRef.current = null;
+    };
+  }, []);
+  const beginAccountAction = (): AccountAction => {
+    accountActionRef.current?.controller.abort();
+    const action = {
+      controller: new AbortController(),
+      generation: accountGenerationRef.current + 1,
+    };
+    accountGenerationRef.current = action.generation;
+    accountActionRef.current = action;
+    return action;
+  };
+  const isCurrentAccountAction = (action: AccountAction): boolean =>
+    mountedRef.current &&
+    !action.controller.signal.aborted &&
+    accountActionRef.current === action &&
+    accountGenerationRef.current === action.generation;
   const token = invitationTokenSchema.safeParse(searchParameters.get("token"));
   const providersQuery = useQuery({
     enabled: token.success,
@@ -58,6 +95,8 @@ export function InvitationAcceptPage() {
     queryFn: ({ signal }) => getOidcProviders(signal),
   });
   const finish = (csrfToken?: string) => {
+    // 只有仍属于当前会话代次的动作才能进入成功态并切换空间列表。
+    setAccepted(true);
     queryClient.clear();
     if (csrfToken !== undefined) {
       setCsrfToken(csrfToken);
@@ -66,26 +105,71 @@ export function InvitationAcceptPage() {
   };
   const currentAccountMutation = useMutation({
     mutationFn: async (invitationToken: string) => {
-      const csrfToken = await getOrFetchCsrfToken();
-      await acceptOrganizationInvitation({ invitationToken }, csrfToken);
+      const action = beginAccountAction();
+      const csrfToken = await getOrFetchCsrfToken(action.controller.signal);
+      const revision = useCsrfStore.getState().csrfRevision;
+      try {
+        await acceptOrganizationInvitation(
+          { invitationToken },
+          csrfToken,
+          action.controller.signal,
+        );
+      } catch (error) {
+        if (
+          isCurrentAccountAction(action) &&
+          isApiProblem(error, "unauthenticated") &&
+          useCsrfStore.getState().csrfRevision === revision
+        ) {
+          clearClientSession(queryClient);
+        }
+        throw error;
+      }
+      return { action, revision };
     },
-    onError: (error) => {
-      if (isApiProblem(error, "unauthenticated")) {
-        clearClientSession(queryClient);
+    onSuccess: ({ action, revision }) => {
+      if (
+        isCurrentAccountAction(action) &&
+        useCsrfStore.getState().csrfRevision === revision
+      ) {
+        finish();
       }
     },
-    onSuccess: () => finish(),
   });
   const localAccountMutation = useMutation({
-    mutationFn: (
+    mutationFn: async (
       request: Parameters<typeof acceptLocalOrganizationInvitation>[0],
-    ) => acceptLocalOrganizationInvitation(request),
-    onSuccess: ({ csrfToken }) => finish(csrfToken),
+    ) => {
+      const action = beginAccountAction();
+      const revision = useCsrfStore.getState().csrfRevision;
+      const result = await acceptLocalOrganizationInvitation(
+        request,
+        action.controller.signal,
+      );
+      return { action, result, revision };
+    },
+    onSuccess: ({ action, result, revision }) => {
+      if (
+        isCurrentAccountAction(action) &&
+        useCsrfStore.getState().csrfRevision === revision
+      ) {
+        finish(result.csrfToken);
+      }
+    },
   });
   const oidcMutation = useMutation({
-    mutationFn: (request: Parameters<typeof startOidc>[0]) => startOidc(request),
-    onSuccess: ({ authorizationUrl }) => {
-      window.location.assign(authorizationUrl);
+    mutationFn: async (request: Parameters<typeof startOidc>[0]) => {
+      const action = beginAccountAction();
+      const revision = useCsrfStore.getState().csrfRevision;
+      const result = await startOidc(request, action.controller.signal);
+      return { action, result, revision };
+    },
+    onSuccess: ({ action, result, revision }) => {
+      if (
+        isCurrentAccountAction(action) &&
+        useCsrfStore.getState().csrfRevision === revision
+      ) {
+        window.location.assign(result.authorizationUrl);
+      }
     },
   });
 
@@ -109,6 +193,21 @@ export function InvitationAcceptPage() {
 
   const invitationToken = token.data;
   const providers = providersQuery.data?.providers ?? [];
+  const accountErrors = [
+    currentAccountMutation.error,
+    localAccountMutation.error,
+    oidcMutation.error,
+  ];
+  const accountError =
+    accountErrors.find((error) => isApiProblem(error, "unauthenticated")) ??
+    accountErrors.find(
+      (error) => error !== null && !isAbortError(error),
+    ) ??
+    null;
+  const accountActionPending =
+    currentAccountMutation.isPending ||
+    localAccountMutation.isPending ||
+    oidcMutation.isPending;
   return (
     <main
       data-singularity-ui
@@ -124,7 +223,7 @@ export function InvitationAcceptPage() {
           <p className="text-sm text-muted-foreground">选择账号登录方式</p>
         </div>
 
-        {currentAccountMutation.isSuccess || localAccountMutation.isSuccess ? (
+        {accepted ? (
           <Alert>
             <CheckIcon aria-hidden="true" />
             <AlertTitle>邀请已接受</AlertTitle>
@@ -132,22 +231,18 @@ export function InvitationAcceptPage() {
           </Alert>
         ) : null}
 
-        {currentAccountMutation.error || localAccountMutation.error || oidcMutation.error ? (
+        {accountError !== null ? (
           <Alert className="mb-4" variant="destructive">
             <AlertTitle>无法接受邀请</AlertTitle>
             <AlertDescription>
-              {errorMessage(
-                currentAccountMutation.error ??
-                  localAccountMutation.error ??
-                  oidcMutation.error,
-              )}
+              {errorMessage(accountError)}
             </AlertDescription>
           </Alert>
         ) : null}
 
         <Button
           className="w-full"
-          disabled={currentAccountMutation.isPending}
+          disabled={accountActionPending}
           onClick={() => currentAccountMutation.mutate(invitationToken)}
           variant="outline"
         >
@@ -215,7 +310,7 @@ export function InvitationAcceptPage() {
               密码至少 12 个字符，且两次输入必须一致。
             </p>
           ) : null}
-          <Button disabled={localAccountMutation.isPending} type="submit">
+          <Button disabled={accountActionPending} type="submit">
             {localAccountMutation.isPending ? (
               <Spinner data-icon="inline-start" aria-label="正在创建账号" />
             ) : (
@@ -250,7 +345,7 @@ export function InvitationAcceptPage() {
               oidcMutation.variables?.providerId === provider.providerId;
             return (
               <Button
-                disabled={oidcMutation.isPending}
+                disabled={accountActionPending}
                 key={provider.providerId}
                 onClick={() => {
                   const request = oidcStartRequestSchema.safeParse({

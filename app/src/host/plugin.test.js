@@ -158,7 +158,7 @@ describe("createAppProtylePluginPort", () => {
         );
     });
 
-    it("preserves slash item order and resolves callbacks by plugin identity", () => {
+    it("preserves slash item order and resolves callbacks by object identity", () => {
         const slashCalls = [];
         const firstSlash = {
             callback: (...args) => slashCalls.push(["first", ...args]),
@@ -190,9 +190,9 @@ describe("createAppProtylePluginPort", () => {
         const instance = {};
         const editor = {getInstance: () => instance};
         const nodeElement = {};
-        assert.equal(port.runSlashItem("second", "shared", editor, nodeElement), true);
+        assert.equal(port.runSlashItem("second", secondSlash, editor, nodeElement), true);
         assert.deepEqual(slashCalls, [["second", instance, nodeElement]]);
-        assert.equal(port.runSlashItem("missing", "shared", editor, nodeElement), false);
+        assert.equal(port.runSlashItem("second", firstSlash, editor, nodeElement), false);
 
         let visited = false;
         createAppProtylePluginPort({plugins: []}).forEachSlashItem(() => {

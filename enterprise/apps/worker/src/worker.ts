@@ -126,8 +126,9 @@ export class WorkerJobError extends Error {
   constructor(
     readonly code: string,
     readonly retryAt: Date | null,
+    options?: ErrorOptions,
   ) {
-    super(code);
+    super(code, options);
     this.name = "WorkerJobError";
   }
 }
@@ -283,7 +284,7 @@ export class BoundedJobWorker {
       renewalAbort.signal,
     ).then(
       (held) => ({ held } as const),
-      () => ({ renewalFailed: true } as const),
+      (error: unknown) => ({ error, renewalFailed: true } as const),
     );
     this.#logger.info({
       attempt: record.attempt,
@@ -313,6 +314,7 @@ export class BoundedJobWorker {
     const lease = await leaseOutcome;
     if ("renewalFailed" in lease) {
       this.#logger.error({
+        error: lease.error,
         event: "worker.lease",
         jobId: record.id,
         kind: record.kind,
@@ -373,6 +375,7 @@ export class BoundedJobWorker {
       workerId: this.#workerId,
     });
     this.#logger.warn({
+      error: failure,
       errorCode,
       event: "worker.job",
       jobId: record.id,

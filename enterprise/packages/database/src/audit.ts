@@ -24,8 +24,8 @@ export interface AuditConfigurationEnvironment {
 }
 
 export class AuditConfigurationError extends Error {
-  constructor() {
-    super("Audit configuration is unavailable");
+  constructor(options?: ErrorOptions) {
+    super("Audit configuration is unavailable", options);
     this.name = "AuditConfigurationError";
   }
 }
@@ -46,8 +46,8 @@ export function parseAuditConfiguration(
   let key: Buffer;
   try {
     key = Buffer.from(encoded, "base64url");
-  } catch {
-    throw new AuditConfigurationError();
+  } catch (error) {
+    throw new AuditConfigurationError({ cause: error });
   }
   if (
     key.byteLength < 32 ||

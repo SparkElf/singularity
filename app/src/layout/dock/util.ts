@@ -22,7 +22,7 @@ export const refreshOutlinePanels = (
     getAllModels().outline.forEach((item) => {
         const isPinnedCurrentDocument = item.type === "pin" && isCurrentDocument();
         const isLocalDocument = item.type === "local" && item.blockId === documentId &&
-            isSameNotebookContentDomain(item.notebookId, notebookId);
+            item.notebookId === notebookId;
         if (!isPinnedCurrentDocument && !isLocalDocument) {
             return;
         }
@@ -36,7 +36,7 @@ export const refreshOutlinePanels = (
         fetchPost("/api/outline/getDocOutline", outlineParam, (response) => {
             if ((item.type === "pin" && !isCurrentDocument()) ||
                 (item.type === "local" && (item.blockId !== documentId ||
-                    !isSameNotebookContentDomain(item.notebookId, notebookId)))) {
+                    item.notebookId !== notebookId))) {
                 return;
             }
             item.update(response, documentId, notebookId);
@@ -53,13 +53,13 @@ export const refreshBacklinkPanels = (
     getAllModels().backlink.forEach((item) => {
         if (item.type === "pin" && isCurrentDocument()) {
             if (item.blockId === documentId &&
-                isSameNotebookContentDomain(item.notebookId, notebookId)) {
+                item.notebookId === notebookId) {
                 item.refresh();
             } else {
                 item.updateForCurrentEditor(documentId, isCurrentDocument, notebookId);
             }
         } else if (item.type === "local" && item.blockId === documentId &&
-            isSameNotebookContentDomain(item.notebookId, notebookId)) {
+            item.notebookId === notebookId) {
             item.refresh();
         }
     });

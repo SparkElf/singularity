@@ -10,7 +10,7 @@ export const previewTemplate = (
     }
     const generation = path;
     element.setAttribute("data-preview-path", generation);
-    void protyle.transport!.request<{data: {content: string}}>("/api/template/render", {
+    void protyle.runtime.transport.request<{data: {content: string}}>("/api/template/render", {
         id: parentId,
         path,
         preview: true,

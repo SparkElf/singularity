@@ -118,7 +118,7 @@ export const createMediaMenu = (
             id: "export",
             icon: "iconUpload",
             label: protyle.localization.text("export"),
-            click: () => downloadExportFile(protyle.session!.runtime.resources.resolveAsset(identity, source)),
+            click: () => downloadExportFile(protyle.runtime.resources.resolveAsset(identity, source)),
         });
     }
     return menu;

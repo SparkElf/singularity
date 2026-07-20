@@ -165,8 +165,12 @@ func QueryRootBlockRefCount(boxID string) (ret map[string]int) {
 }
 
 func QueryDefRootBlocksByRefRootID(refRootID string) (ret []*Block) {
+	return QueryDefRootBlocksByRefRootIDInBox(refRootID, "")
+}
+
+func QueryDefRootBlocksByRefRootIDInBox(refRootID, boxID string) (ret []*Block) {
 	queryEpoch := blockCacheQueryEpoch()
-	rows, err := query("SELECT * FROM blocks WHERE id IN (SELECT DISTINCT def_block_root_id FROM refs WHERE root_id = ?)", refRootID)
+	rows, err := queryForBox(boxID, "SELECT * FROM blocks WHERE id IN (SELECT DISTINCT def_block_root_id FROM refs WHERE root_id = ?)", refRootID)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -181,10 +185,17 @@ func QueryDefRootBlocksByRefRootID(refRootID string) (ret []*Block) {
 }
 
 func QueryRefRootBlocksByDefRootIDs(defRootIDs []string) (ret map[string][]*Block) {
+	return QueryRefRootBlocksByDefRootIDsInBox(defRootIDs, "")
+}
+
+func QueryRefRootBlocksByDefRootIDsInBox(defRootIDs []string, boxID string) (ret map[string][]*Block) {
 	ret = map[string][]*Block{}
+	if len(defRootIDs) == 0 {
+		return
+	}
 
 	stmt := "SELECT r.def_block_root_id, b.* FROM refs AS r, blocks AS b ON r.def_block_root_id IN ('" + strings.Join(defRootIDs, "','") + "')" + " AND b.id = r.root_id"
-	rows, err := query(stmt)
+	rows, err := queryForBox(boxID, stmt)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -462,13 +473,17 @@ func QueryRefsByDefIDRefID(defBlockID, refBlockID string) (ret []*Ref) {
 }
 
 func DefRefs(condition string, limit int) (ret []map[*Block]*Block) {
+	return DefRefsInBox(condition, limit, "")
+}
+
+func DefRefsInBox(condition string, limit int, boxID string) (ret []map[*Block]*Block) {
 	ret = []map[*Block]*Block{}
 	stmt := "SELECT ref.*, r.block_id || '@' || r.def_block_id AS rel FROM blocks AS ref, refs AS r WHERE ref.id = r.block_id"
 	if "" != condition {
 		stmt += " AND " + condition
 	}
 
-	rows, err := query(stmt)
+	rows, err := queryForBox(boxID, stmt)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return
@@ -487,7 +502,7 @@ func DefRefs(condition string, limit int) (ret []map[*Block]*Block) {
 	}
 
 	queryEpoch := blockCacheQueryEpoch()
-	rows, err = query("SELECT def.* FROM blocks AS def, refs AS r WHERE def.id = r.def_block_id LIMIT ?", limit)
+	rows, err = queryForBox(boxID, "SELECT def.* FROM blocks AS def, refs AS r WHERE def.id = r.def_block_id LIMIT ?", limit)
 	if err != nil {
 		logging.LogErrorf("sql query failed: %s", err)
 		return

@@ -17,7 +17,11 @@ import {
   managedDocumentSharesResponseSchema,
   sharedDocumentPayloadSchema,
 } from "@singularity/contracts";
-import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
+import {
+  DatabaseRuntime,
+  Prisma,
+  type DatabaseClient,
+} from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { PasswordHasher } from "../src/identity/password-hasher.js";
@@ -43,6 +47,12 @@ const DOCUMENT_ID = "20260718010102-hijklmn";
 const OTHER_DOCUMENT_ID = "20260718010103-opqrstu";
 const ASSET_ID = "a".repeat(64);
 const ASSET_BODY = Buffer.from("share asset", "utf8");
+
+type KernelResponseHandler = (
+  request: TestKernelRequest,
+) => Promise<TestKernelResponse> | TestKernelResponse;
+
+let kernelResponseOverride: KernelResponseHandler | null = null;
 
 interface AuthenticatedGraph {
   cookie: string;
@@ -79,7 +89,16 @@ function cookiePair(response: Response): string {
   return pair;
 }
 
-function kernelResponse(request: TestKernelRequest): TestKernelResponse {
+function kernelResponse(
+  request: TestKernelRequest,
+): Promise<TestKernelResponse> | TestKernelResponse {
+  if (kernelResponseOverride !== null) {
+    return kernelResponseOverride(request);
+  }
+  return defaultKernelResponse(request);
+}
+
+function defaultKernelResponse(request: TestKernelRequest): TestKernelResponse {
   if (request.path === "/internal/enterprise/share/verify") {
     return { headers: { "content-type": "application/json" }, status: 200 };
   }
@@ -119,6 +138,38 @@ function kernelResponse(request: TestKernelRequest): TestKernelResponse {
   return { status: 404 };
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+async function waitForBlockedShareMutation(
+  database: DatabaseClient,
+): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    const rows = await database.$queryRaw<Array<{ pid: number }>>(
+      Prisma.sql`
+        SELECT activity.pid AS "pid"
+        FROM pg_stat_activity AS activity
+        WHERE activity.wait_event_type = 'Lock'
+          AND cardinality(pg_blocking_pids(activity.pid)) > 0
+          AND activity.query ILIKE '%UPDATE "document_shares"%'
+      `,
+    );
+    if (rows.length > 0) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("The share mutation did not wait for the active public response");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () => {
   let database: DatabaseClient;
   let kernel: TestKernelGateway;
@@ -145,6 +196,7 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
   });
 
   afterEach(async () => {
+    kernelResponseOverride = null;
     await truncateTestDatabase(database);
     logger.clear();
   });
@@ -355,6 +407,21 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     expect(await database.documentShare.count()).toBe(0);
   });
 
+  test("applies public security headers before share path validation", async () => {
+    const response = await fetch(`${testApi.baseUrl}/api/v1/shares/invalid`);
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+    );
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-robots-tag")).toBe(
+      "noindex, nofollow, noarchive",
+    );
+  });
+
   test("rejects a Kernel projection whose document identity differs from the share", async () => {
     const graph = await createAuthenticatedGraph();
     const share = await createShare(graph, null, OTHER_DOCUMENT_ID);
@@ -373,6 +440,104 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
     expect(request?.headers["x-singularity-notebook-id"]).toBe(NOTEBOOK_ID);
     expect(request?.headers["x-singularity-document-id"]).toBe(
       OTHER_DOCUMENT_ID,
+    );
+    expect(logger.output).toContain("share.kernel");
+    expect(logger.output).toMatch(
+      /Error: Kernel shared document projection failed validation\n\s+at /,
+    );
+    expect(logger.output).not.toContain(share.shareToken);
+    expect(logger.output).not.toContain(NOTEBOOK_ID);
+    expect(logger.output).not.toContain(OTHER_DOCUMENT_ID);
+  });
+
+  test("logs malformed Kernel JSON without exposing shared content", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, null);
+    const privateContent = "PRIVATE-SHARED-CONTENT-SENTINEL";
+    kernelResponseOverride = (request) =>
+      request.path === "/internal/enterprise/share/document"
+        ? {
+            body: `{"html":"${privateContent}`,
+            headers: { "content-type": "application/json" },
+            status: 200,
+          }
+        : defaultKernelResponse(request);
+
+    const response = await fetch(
+      `${testApi.baseUrl}${buildPath(PUBLIC_SHARE_PATH_TEMPLATE, {
+        shareToken: share.shareToken,
+      })}`,
+    );
+
+    expect(response.status).toBe(503);
+    expect(logger.output).toMatch(
+      /Error: Kernel shared document JSON parsing failed\n\s+at /,
+    );
+    expect(logger.output).not.toContain(privateContent);
+    expect(logger.output).not.toContain(share.shareToken);
+    expect(logger.output).not.toContain(NOTEBOOK_ID);
+    expect(logger.output).not.toContain(DOCUMENT_ID);
+  });
+
+  test("terminates a shared asset response whose body ends before Content-Length", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, null);
+    kernelResponseOverride = (request) =>
+      request.path === `/internal/enterprise/share/asset?assetId=${ASSET_ID}`
+        ? {
+            body: ASSET_BODY,
+            headers: {
+              "content-length": ASSET_BODY.byteLength + 1,
+              "content-type": "image/png",
+              "x-singularity-asset-disposition": "inline",
+              "x-singularity-asset-filename": Buffer.from(
+                "diagram.png",
+              ).toString("base64url"),
+            },
+            status: 200,
+          }
+        : defaultKernelResponse(request);
+    const assetPath = buildPath(PUBLIC_SHARE_ASSET_PATH_TEMPLATE, {
+      assetId: ASSET_ID,
+      shareToken: share.shareToken,
+    });
+
+    await expect(
+      fetch(`${testApi.baseUrl}${assetPath}`).then((response) =>
+        response.arrayBuffer()
+      ),
+    ).rejects.toBeInstanceOf(Error);
+    expect(logger.output).toContain("share.kernel");
+    expect(logger.output).not.toContain(share.shareToken);
+  });
+
+  test("rejects a shared asset declaration above the byte limit", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, null);
+    kernelResponseOverride = (request) =>
+      request.path === `/internal/enterprise/share/asset?assetId=${ASSET_ID}`
+        ? {
+            body: ASSET_BODY,
+            headers: {
+              "content-length": 100 * 1_024 * 1_024 + 1,
+              "content-type": "image/png",
+              "x-singularity-asset-disposition": "inline",
+              "x-singularity-asset-filename": Buffer.from("diagram.png").toString(
+                "base64url",
+              ),
+            },
+            status: 200,
+          }
+        : defaultKernelResponse(request);
+    const assetPath = buildPath(PUBLIC_SHARE_ASSET_PATH_TEMPLATE, {
+      assetId: ASSET_ID,
+      shareToken: share.shareToken,
+    });
+
+    const response = await fetch(`${testApi.baseUrl}${assetPath}`);
+    expect(response.status).toBe(503);
+    expect(apiProblemSchema.parse(await response.json()).code).toBe(
+      "service-unavailable",
     );
   });
 
@@ -402,6 +567,154 @@ describe("sharing and audit HTTP contracts with PostgreSQL and mTLS Kernel", () 
       "not-found",
     );
     expect(kernel.requests).toHaveLength(requestCount);
+  });
+
+  test.each([
+    {
+      kernelPath: "/internal/enterprise/share/document",
+      publicPath: (shareToken: string) =>
+        buildPath(PUBLIC_SHARE_PATH_TEMPLATE, { shareToken }),
+      resource: "document",
+    },
+    {
+      kernelPath: `/internal/enterprise/share/asset?assetId=${ASSET_ID}`,
+      publicPath: (shareToken: string) =>
+        buildPath(PUBLIC_SHARE_ASSET_PATH_TEMPLATE, {
+          assetId: ASSET_ID,
+          shareToken,
+        }),
+      resource: "asset",
+    },
+  ])(
+    "holds revocation until the active $resource response finishes",
+    async ({ kernelPath, publicPath }) => {
+      const graph = await createAuthenticatedGraph();
+      const share = await createShare(graph, null);
+      const kernelReached = deferred();
+      const releaseKernel = deferred();
+      kernelResponseOverride = async (request) => {
+        if (request.path === kernelPath) {
+          kernelReached.resolve();
+          await releaseKernel.promise;
+        }
+        return defaultKernelResponse(request);
+      };
+
+      const publicUrl = `${testApi.baseUrl}${publicPath(share.shareToken)}`;
+      const read = fetch(publicUrl);
+      let revocation: Promise<Response> | undefined;
+      try {
+        await kernelReached.promise;
+        const sharePath = buildPath(ORGANIZATION_SPACE_SHARE_PATH_TEMPLATE, {
+          organizationId: graph.organizationId,
+          shareId: share.shareId,
+          spaceId: graph.spaceId,
+        });
+        revocation = fetch(`${testApi.baseUrl}${sharePath}`, {
+          headers: mutationHeaders(graph),
+          method: "DELETE",
+        });
+        await waitForBlockedShareMutation(database);
+        releaseKernel.resolve();
+
+        const response = await read;
+        expect(response.status).toBe(200);
+        await response.arrayBuffer();
+        expect((await revocation).status).toBe(204);
+
+        const afterRevocation = await fetch(publicUrl);
+        expect(afterRevocation.status).toBe(404);
+        expect(apiProblemSchema.parse(await afterRevocation.json()).code).toBe(
+          "not-found",
+        );
+      } finally {
+        releaseKernel.resolve();
+        await Promise.allSettled([
+          read.then(async (response) => {
+            if (!response.bodyUsed) {
+              await response.arrayBuffer();
+            }
+          }),
+          ...(revocation === undefined ? [] : [revocation]),
+        ]);
+      }
+    },
+  );
+
+  test("holds password rotation until the active response finishes", async () => {
+    const graph = await createAuthenticatedGraph();
+    const share = await createShare(graph, SHARE_PASSWORD);
+    const challengePath = buildPath(PUBLIC_SHARE_CHALLENGE_PATH_TEMPLATE, {
+      shareToken: share.shareToken,
+    });
+    const challenged = await fetch(`${testApi.baseUrl}${challengePath}`, {
+      body: JSON.stringify({ password: SHARE_PASSWORD }),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: TEST_PUBLIC_ORIGIN,
+      },
+      method: "POST",
+    });
+    expect(challenged.status).toBe(204);
+    const challengeCookie = cookiePair(challenged);
+    const kernelReached = deferred();
+    const releaseKernel = deferred();
+    kernelResponseOverride = async (request) => {
+      if (request.path === "/internal/enterprise/share/document") {
+        kernelReached.resolve();
+        await releaseKernel.promise;
+      }
+      return defaultKernelResponse(request);
+    };
+
+    const publicPath = buildPath(PUBLIC_SHARE_PATH_TEMPLATE, {
+      shareToken: share.shareToken,
+    });
+    const read = fetch(`${testApi.baseUrl}${publicPath}`, {
+      headers: { Cookie: challengeCookie },
+    });
+    let rotation: Promise<Response> | undefined;
+    try {
+      await kernelReached.promise;
+      const passwordPath = buildPath(
+        ORGANIZATION_SPACE_SHARE_PASSWORD_PATH_TEMPLATE,
+        {
+          organizationId: graph.organizationId,
+          shareId: share.shareId,
+          spaceId: graph.spaceId,
+        },
+      );
+      rotation = fetch(`${testApi.baseUrl}${passwordPath}`, {
+        body: JSON.stringify({ password: ROTATED_SHARE_PASSWORD }),
+        headers: mutationHeaders(graph),
+        method: "PATCH",
+      });
+      await waitForBlockedShareMutation(database);
+      releaseKernel.resolve();
+
+      const response = await read;
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+      expect((await rotation).status).toBe(204);
+
+      const afterRotation = await fetch(`${testApi.baseUrl}${publicPath}`, {
+        headers: { Cookie: challengeCookie },
+      });
+      expect(afterRotation.status).toBe(401);
+      expect(apiProblemSchema.parse(await afterRotation.json()).code).toBe(
+        "unauthenticated",
+      );
+    } finally {
+      releaseKernel.resolve();
+      await Promise.allSettled([
+        read.then(async (response) => {
+          if (!response.bodyUsed) {
+            await response.arrayBuffer();
+          }
+        }),
+        ...(rotation === undefined ? [] : [rotation]),
+      ]);
+    }
   });
 
   test("invalidates password challenges on rotation and revocation", async () => {

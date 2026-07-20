@@ -8,7 +8,7 @@
     "node": ">=24.0.0 <25.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @singularity/web build",
+    "build": "pnpm --filter @singularity/authorization build && pnpm --filter @singularity/contracts build && pnpm --filter @singularity/web build",
     "build:s0-s3": "pnpm --filter @singularity/authorization build && pnpm --filter @singularity/contracts build && pnpm --filter @singularity/kernel-client build && pnpm --filter @singularity/database build && pnpm --filter @singularity/object-store build && pnpm --filter @singularity/api build && pnpm --filter @singularity/worker build && pnpm --filter @singularity/web build",
     "dev": "pnpm --filter @singularity/web dev",
     "lint": "pnpm verify:protyle-platform && pnpm verify:protyle-boundary && pnpm verify:protyle-vite-closure && eslint apps/web packages/protyle-browser/src --config eslint.config.mjs --max-warnings=0",

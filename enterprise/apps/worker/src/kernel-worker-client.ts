@@ -1,6 +1,10 @@
 import type { IncomingMessage } from "node:http";
 
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import {
+  KERNEL_BACKUP_MAXIMUM_BYTES_HEADER,
+  KERNEL_BACKUP_MAXIMUM_FILES_HEADER,
+} from "@singularity/authorization";
 import { DatabaseRuntime } from "@singularity/database";
 import {
   KernelPrivateClient,
@@ -14,11 +18,18 @@ import type {
 } from "./l1-handlers.js";
 import type { BackupSpaceJob, SampleKernelJob } from "./worker.js";
 import { WorkerJobError } from "./worker.js";
+import {
+  BACKUP_REQUEST_TIMEOUT_MILLISECONDS,
+  MAXIMUM_BACKUP_BYTES,
+  MAXIMUM_BACKUP_FILES,
+} from "./tokens.js";
 
 export const WORKER_BACKUP_PATH = "/internal/enterprise/backup";
 export const WORKER_OBSERVATION_PATH = "/internal/enterprise/observation";
 const MAX_OBSERVATION_BYTES = 64 * 1_024;
+const MAXIMUM_OBSERVATION_CLOCK_SKEW_MILLISECONDS = 5 * 60_000;
 const POSTGRES_BIGINT_MAXIMUM = 9_223_372_036_854_775_807n;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const observationCountSchema = z
   .string()
   .regex(/^(0|[1-9][0-9]*)$/)
@@ -62,30 +73,49 @@ function header(message: IncomingMessage, name: string): string {
   return value;
 }
 
+/** 读取受限大小的 Kernel 观测响应；超限、截断或 JSON 无效时销毁流并保留原始 cause。 */
 async function readObservation(message: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of message) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.byteLength;
-    if (size > MAX_OBSERVATION_BYTES) {
-      message.destroy();
-      throw new WorkerJobError("kernel-response-invalid", null);
+  try {
+    for await (const chunk of message) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.byteLength;
+      if (size > MAX_OBSERVATION_BYTES) {
+        message.destroy();
+        throw new WorkerJobError("kernel-response-invalid", null);
+      }
+      chunks.push(bytes);
     }
-    chunks.push(bytes);
+  } catch (error) {
+    message.destroy();
+    if (error instanceof WorkerJobError) {
+      throw error;
+    }
+    throw new WorkerJobError("kernel-response-invalid", null, {
+      cause: error,
+    });
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new WorkerJobError("kernel-response-invalid", null);
+  } catch (error) {
+    throw new WorkerJobError("kernel-response-invalid", null, { cause: error });
   }
 }
 
+/** 校验观测响应的字段、时间一致性和数值范围，返回可安全写入数据库的快照。 */
 export function parseKernelObservationResponse(
   value: unknown,
 ): Awaited<ReturnType<KernelObservationPort["read"]>>["sample"] {
   const parsed = observationResponseSchema.safeParse(value);
   if (!parsed.success) {
+    throw new WorkerJobError("kernel-response-invalid", null);
+  }
+  const sampledAt = Date.parse(parsed.data.capacity.sampledAt);
+  if (
+    parsed.data.capacity.sampledAt !== parsed.data.health.sampledAt ||
+    sampledAt > Date.now() + MAXIMUM_OBSERVATION_CLOCK_SKEW_MILLISECONDS
+  ) {
     throw new WorkerJobError("kernel-response-invalid", null);
   }
   return parsed.data;
@@ -96,37 +126,66 @@ export class KernelWorkerClient implements BackupKernelPort, KernelObservationPo
   constructor(
     private readonly database: DatabaseRuntime,
     private readonly kernel: KernelPrivateClient,
+    @Inject(BACKUP_REQUEST_TIMEOUT_MILLISECONDS)
+    private readonly backupRequestTimeoutMilliseconds: number,
+    @Inject(MAXIMUM_BACKUP_BYTES)
+    private readonly maximumBackupBytes: number,
+    @Inject(MAXIMUM_BACKUP_FILES)
+    private readonly maximumBackupFiles: number,
   ) {}
 
+  /** 以当前空间的 ready 部署生成备份流，并在响应头边界校验元数据后把流所有权交给对象存储。 */
   async createBackup(job: BackupSpaceJob, signal: AbortSignal) {
     const deployment = await this.#deployment(job.spaceId);
     const response = await this.kernel.request({
       deployment,
-      headers: {},
+      headers: {
+        [KERNEL_BACKUP_MAXIMUM_BYTES_HEADER]: String(this.maximumBackupBytes),
+        [KERNEL_BACKUP_MAXIMUM_FILES_HEADER]: String(this.maximumBackupFiles),
+      },
       method: "POST",
       path: WORKER_BACKUP_PATH,
       requestId: job.requestId,
       signal,
+      timeoutMilliseconds: this.backupRequestTimeoutMilliseconds,
     });
     if (response.status !== 200) {
-      response.message.resume();
+      response.message.destroy();
       throw new WorkerJobError("kernel-backup-failed", null);
     }
-    const formatVersion = Number(
-      header(response.message, "x-singularity-backup-format-version"),
-    );
-    if (!Number.isSafeInteger(formatVersion) || formatVersion < 1) {
-      response.message.resume();
-      throw new WorkerJobError("kernel-response-invalid", null);
+    try {
+      const formatVersion = Number(
+        header(response.message, "x-singularity-backup-format-version"),
+      );
+      const kernelVersion = header(
+        response.message,
+        "x-singularity-kernel-version",
+      );
+      const sha256 = header(
+        response.message,
+        "x-singularity-backup-sha256",
+      );
+      if (
+        !Number.isSafeInteger(formatVersion) ||
+        formatVersion < 1 ||
+        kernelVersion.trim().length === 0 ||
+        !SHA256_PATTERN.test(sha256)
+      ) {
+        throw new WorkerJobError("kernel-response-invalid", null);
+      }
+      return {
+        body: response.message,
+        formatVersion,
+        kernelVersion,
+        sha256,
+      };
+    } catch (error) {
+      response.message.destroy();
+      throw error;
     }
-    return {
-      body: response.message,
-      formatVersion,
-      kernelVersion: header(response.message, "x-singularity-kernel-version"),
-      sha256: header(response.message, "x-singularity-backup-sha256"),
-    };
   }
 
+  /** 读取指定 Kernel 的健康与容量样本，返回本次请求实际使用的部署句柄供事务复验。 */
   async read(job: SampleKernelJob, signal: AbortSignal) {
     const deployment = await this.#deployment(job.spaceId, job.kernelInstanceId);
     const response = await this.kernel.request({
@@ -138,7 +197,7 @@ export class KernelWorkerClient implements BackupKernelPort, KernelObservationPo
       signal,
     });
     if (response.status !== 200) {
-      response.message.resume();
+      response.message.destroy();
       throw new WorkerJobError("kernel-observation-failed", null);
     }
     return {
@@ -149,6 +208,7 @@ export class KernelWorkerClient implements BackupKernelPort, KernelObservationPo
     };
   }
 
+  /** 从数据库解析当前空间 ready 部署，并可额外锁定预期 Kernel 实例身份。 */
   async #deployment(
     spaceId: string,
     expectedKernelInstanceId?: string,

@@ -5,12 +5,14 @@ import { spaceRoles } from "@singularity/authorization";
 
 import {
   ACCESS_OPERATION_INPUT_MAX_BYTES,
+  ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
   AUDIT_EVENT_OPENAPI_SCHEMA,
   API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
   ENTERPRISE_MANAGEMENT_ACCESS_PATH,
   INVITATION_TOKEN_OPENAPI_SCHEMA,
+  ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA,
   ORGANIZATION_AUDIT_EVENTS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_BACKUPS_CONTROLLER_PATH,
   ORGANIZATION_SPACE_RESTORES_CONTROLLER_PATH,
@@ -25,6 +27,10 @@ import {
   SPACE_RUNTIME_BOOTSTRAP_OPENAPI_SCHEMA,
   SPACE_RUNTIME_CONTROLLER_PATH,
   SPACE_RUNTIME_PATH_TEMPLATE,
+  UPDATE_ORGANIZATION_MEMBER_REQUEST_OPENAPI_SCHEMA,
+  UPDATE_SPACE_REQUEST_OPENAPI_SCHEMA,
+  UPDATE_USER_GROUP_REQUEST_OPENAPI_SCHEMA,
+  USER_GROUP_SUMMARY_OPENAPI_SCHEMA,
   accessOperationExitCodeByOutcome,
   accessOperationNames,
   accessOperationRejectionOutcomes,
@@ -44,6 +50,7 @@ import {
   kernelInstanceStates,
   loginRequestSchema,
   managedDocumentSharesResponseSchema,
+  organizationMemberSummarySchema,
   organizationManagementCapabilities,
   spaceBackupSchema,
   spaceManagementCapabilities,
@@ -52,6 +59,9 @@ import {
   spaceRestoresResponseSchema,
   spaceRuntimeBootstrapSchema,
   sharedDocumentPayloadSchema,
+  updateOrganizationMemberRequestSchema,
+  updateSpaceRequestSchema,
+  updateUserGroupRequestSchema,
   unactivatedSpaceRestoreStatuses,
 } from "../dist/index.js";
 
@@ -157,6 +167,51 @@ describe("HTTP contracts", () => {
         noncanonicalToken,
       ),
       false,
+    );
+  });
+
+  test("aligns management patch and member projection schemas with OpenAPI", () => {
+    const patchContracts = [
+      [
+        updateOrganizationMemberRequestSchema,
+        UPDATE_ORGANIZATION_MEMBER_REQUEST_OPENAPI_SCHEMA,
+      ],
+      [updateUserGroupRequestSchema, UPDATE_USER_GROUP_REQUEST_OPENAPI_SCHEMA],
+      [updateSpaceRequestSchema, UPDATE_SPACE_REQUEST_OPENAPI_SCHEMA],
+    ];
+    for (const [runtimeSchema, openApiSchema] of patchContracts) {
+      assert.equal(runtimeSchema.safeParse({}).success, false);
+      assert.equal(openApiSchema.minProperties, 1);
+    }
+
+    assert.deepEqual(
+      organizationMemberSummarySchema.parse({
+        accountStatus: "disabled",
+        loginIdentifier: "disabled@example.test",
+        role: "member",
+        status: "active",
+        userId,
+      }),
+      {
+        accountStatus: "disabled",
+        loginIdentifier: "disabled@example.test",
+        role: "member",
+        status: "active",
+        userId,
+      },
+    );
+    assert.deepEqual(
+      ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA.properties.accountStatus,
+      { enum: ["active", "disabled"], type: "string" },
+    );
+    assert.deepEqual(USER_GROUP_SUMMARY_OPENAPI_SCHEMA.properties.memberCount, {
+      minimum: 0,
+      type: "integer",
+    });
+    assert.deepEqual(
+      ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA.properties
+        .password,
+      { maxLength: 128, minLength: 12, type: "string" },
     );
   });
 

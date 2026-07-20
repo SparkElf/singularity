@@ -207,7 +207,8 @@ func enterpriseShareInlineMediaType(mediaType string) bool {
 	}
 	switch baseType {
 	case "image/avif", "image/gif", "image/jpeg", "image/png", "image/webp",
-		"audio/mpeg", "audio/ogg", "audio/wav", "video/mp4", "video/ogg", "video/webm":
+		"audio/aac", "audio/flac", "audio/mpeg", "audio/ogg", "audio/wav",
+		"video/mp4", "video/ogg", "video/webm":
 		return true
 	default:
 		return false
@@ -258,9 +259,6 @@ func rewriteEnterpriseSharedAssetNode(node *nethtml.Node, assetIDs map[string]st
 }
 
 func enterpriseShareExternalLink(value string) bool {
-	if strings.HasPrefix(value, "#") {
-		return true
-	}
 	parsed, err := url.Parse(value)
 	if err != nil || !parsed.IsAbs() {
 		return false

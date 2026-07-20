@@ -73,10 +73,12 @@ export class AccessOperationsService implements OnModuleInit {
     private readonly handlerDiscovery: AccessOperationDiscovery,
   ) {}
 
+  /** 在 Nest 装配完成后从声明式 handler discovery 建立唯一操作分派表。 */
   onModuleInit(): void {
     this.#handlers = this.handlerDiscovery.handlers();
   }
 
+  /** 执行控制面访问操作并统一返回公开结果；失败分支记录完整原始异常后再收敛状态。 */
   async execute(command: AccessOperation): Promise<AccessOperationResult> {
     const operationId = randomUUID();
     try {
@@ -84,7 +86,14 @@ export class AccessOperationsService implements OnModuleInit {
       const result = await handler.execute(operationId, command);
       this.#log(command, result);
       return result;
-    } catch {
+    } catch (error) {
+      this.#logger.error({
+        error,
+        event: "access.operation",
+        operation: command.operation,
+        operationId,
+        outcome: "failed",
+      });
       const result = { operationId, outcome: "failed" } as const;
       this.#log(command, result);
       return result;
@@ -608,6 +617,16 @@ export class AccessOperationsService implements OnModuleInit {
     command: Extract<AccessOperation, { operation: "disable-space" }>,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
+      const reference = await transaction.space.findUnique({
+        where: { id: command.spaceId },
+        select: { organizationId: true },
+      });
+      if (reference === null) {
+        return this.#result(operationId, "not-found");
+      }
+      if (!(await this.#lockOrganization(transaction, reference.organizationId))) {
+        return this.#result(operationId, "not-found");
+      }
       if (!(await this.#lockSpace(transaction, command.spaceId))) {
         return this.#result(operationId, "not-found");
       }
@@ -615,7 +634,10 @@ export class AccessOperationsService implements OnModuleInit {
         where: { id: command.spaceId },
         select: { organizationId: true },
       });
-      if (space === null) {
+      if (
+        space === null ||
+        space.organizationId !== reference.organizationId
+      ) {
         return this.#result(operationId, "not-found");
       }
       const disabled = await transaction.space.updateMany({

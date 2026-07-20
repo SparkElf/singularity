@@ -18,11 +18,12 @@ export interface BlockFoldTarget extends ProtyleContentIdentity {
     readonly blockId: string;
 }
 
+/** 查询指定块的折叠状态，并返回后续导航所需的最小动作集合。 */
 export const requestBlockFold = async (
     protyle: IProtyle,
     target: BlockFoldTarget,
 ): Promise<BlockFoldResult> => {
-    const response = await protyle.session!.runtime.transport.request<BlockFoldResponse>(
+    const response = await protyle.runtime.transport.request<BlockFoldResponse>(
         "/api/block/checkBlockFold",
         {id: target.blockId},
         {

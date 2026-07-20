@@ -21,7 +21,7 @@ COPY enterprise/packages/protyle-browser/package.json packages/protyle-browser/p
 RUN --mount=type=cache,id=singularity-pnpm,target=/pnpm/store \
     pnpm install --filter @singularity/web... --frozen-lockfile
 
-COPY app/package.json app/pnpm-lock.yaml app/.npmrc /workspace/app/
+COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc /workspace/app/
 RUN --mount=type=cache,id=singularity-pnpm,target=/pnpm/store \
     corepack pnpm@11.12.0 --dir /workspace/app install --frozen-lockfile --ignore-scripts
 

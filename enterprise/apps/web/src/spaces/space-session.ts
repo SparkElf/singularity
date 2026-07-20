@@ -9,6 +9,7 @@ import {
   type ProtyleHostDispatchEvent,
   type ProtyleMenuSurface,
   type ProtyleRuntime,
+  type ProtyleRuntimeErrorEvent,
   type ProtyleSession,
 } from "@singularity/protyle-browser";
 
@@ -26,6 +27,13 @@ import {
 
 export type ReadySpaceRuntimeBootstrap = SpaceRuntimeBootstrap & {
   readonly kernelState: "ready";
+};
+
+export type SpaceSessionTerminalEvent = Omit<
+  ProtyleRuntimeErrorEvent,
+  "category"
+> & {
+  readonly category: "forbidden" | "unauthenticated";
 };
 
 export interface SpaceProtyleMenuSurface extends ProtyleMenuSurface {
@@ -54,6 +62,9 @@ export type SpaceProtyleRuntime = Omit<
 export interface SpaceSessionComposition {
   readonly bootstrap: ReadySpaceRuntimeBootstrap;
   readonly clearSelection: () => boolean;
+  readonly requestTerminal: (
+    event: SpaceSessionTerminalEvent,
+  ) => Promise<boolean>;
   readonly scope: ContentSelectionScope;
   readonly selection: ContentSelection | null;
   readonly selectDocument: (target: ContentSelectionTarget) => boolean;
@@ -69,6 +80,7 @@ export interface CreateSpaceProtyleSessionOptions {
   readonly retryRuntime: () => Promise<SpaceRuntimeBootstrap>;
 }
 
+/** 组装单一空间的 Protyle 运行时，将编辑器、传输、资源、插件和菜单绑定到同一身份。 */
 export function createSpaceProtyleSession(
   options: CreateSpaceProtyleSessionOptions,
 ): ProtyleSession<SpaceProtyleRuntime> {

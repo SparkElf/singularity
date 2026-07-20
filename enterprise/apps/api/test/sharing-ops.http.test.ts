@@ -290,12 +290,31 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
       organizationId: graph.organizationId,
       spaceId: graph.spaceId,
     });
-    const response = await fetch(`${testApi.baseUrl}${path}`, {
-      body: JSON.stringify({ targetSpaceName: "Restored copy" }),
-      headers: mutationHeaders(graph),
-      method: "POST",
+    const responses = await Promise.all([
+      fetch(`${testApi.baseUrl}${path}`, {
+        body: JSON.stringify({ targetSpaceName: "Restored copy" }),
+        headers: mutationHeaders(graph),
+        method: "POST",
+      }),
+      fetch(`${testApi.baseUrl}${path}`, {
+        body: JSON.stringify({ targetSpaceName: "Second restored copy" }),
+        headers: mutationHeaders(graph),
+        method: "POST",
+      }),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      201,
+      409,
+    ]);
+    const response = responses.find((candidate) => candidate.status === 201);
+    const rejected = responses.find((candidate) => candidate.status === 409);
+    if (response === undefined || rejected === undefined) {
+      throw new Error("Concurrent restore responses are incomplete");
+    }
+    expect(apiProblemSchema.parse(await rejected.json())).toMatchObject({
+      code: "conflict",
+      status: 409,
     });
-    expect(response.status).toBe(201);
     const restore = spaceRestoreSchema.parse(await response.json());
     expect(restore.status).toBe("queued");
     expect(restore.targetSpaceId).not.toBeNull();
@@ -328,13 +347,6 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
       targetSpaceId: restore.targetSpaceId,
     });
 
-    const duplicateResponse = await fetch(`${testApi.baseUrl}${path}`, {
-      body: JSON.stringify({ targetSpaceName: "Second restored copy" }),
-      headers: mutationHeaders(graph),
-      method: "POST",
-    });
-    expect(duplicateResponse.status).toBe(409);
-
     const listed = await fetch(
       `${testApi.baseUrl}${buildPath(ORGANIZATION_SPACE_RESTORES_PATH_TEMPLATE, {
         organizationId: graph.organizationId,
@@ -346,6 +358,22 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
     expect(spaceRestoresResponseSchema.parse(await listed.json())).toEqual({
       restores: [restore],
     });
+    await expect(
+      database.space.count({
+        where: {
+          id: { not: graph.spaceId },
+          organizationId: graph.organizationId,
+        },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.spaceRestoreJob.count({
+        where: {
+          organizationId: graph.organizationId,
+          sourceSpaceId: graph.spaceId,
+        },
+      }),
+    ).resolves.toBe(1);
     const audit = await database.$queryRaw<
       Array<{ action: string; spaceId: string; targetId: string; targetType: string }>
     >(
@@ -353,16 +381,16 @@ describe("sharing and operations HTTP contracts with PostgreSQL", () => {
         SELECT "action", "space_id" AS "spaceId", "target_id" AS "targetId", "target_type" AS "targetType"
         FROM "audit_events"
         WHERE "organization_id" = ${graph.organizationId}::uuid
+          AND "action" = 'restore.create'
         ORDER BY "sequence" DESC
-        LIMIT 1
       `,
     );
-    expect(audit[0]).toEqual({
+    expect(audit).toEqual([{
       action: "restore.create",
       spaceId: graph.spaceId,
       targetId: restore.restoreId,
       targetType: "restore",
-    });
+    }]);
   });
 
   test("activates only a ready-for-activation isolated restore", async () => {

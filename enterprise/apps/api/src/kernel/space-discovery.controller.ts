@@ -32,6 +32,7 @@ import {
 } from "@singularity/contracts";
 
 import type { HttpRequestBoundary } from "../http-boundary.js";
+import { bindHttpRequestAbortSignal } from "../http-request-signal.js";
 import {
   ApiProblemResponses,
   CurrentSession,
@@ -57,6 +58,7 @@ export class SpaceDiscoveryController {
   @ApiOperation({ summary: "Search content in an authorized space" })
   @ApiBody({ schema: SPACE_DISCOVERY_SEARCH_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: SPACE_DISCOVERY_SEARCH_RESPONSE_OPENAPI_SCHEMA })
+  /** 将浏览器搜索请求绑定当前 HTTP 取消信号，交给空间发现服务执行。 */
   search(
     @Param(new ZodValidationPipe(spaceRuntimePathParametersSchema))
     parameters: SpaceRuntimePathParameters,
@@ -84,6 +86,7 @@ export class SpaceDiscoveryController {
   @ApiOperation({ summary: "Read the content graph for an authorized space" })
   @ApiBody({ schema: SPACE_DISCOVERY_GRAPH_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: SPACE_DISCOVERY_GRAPH_RESPONSE_OPENAPI_SCHEMA })
+  /** 将浏览器图谱请求绑定当前 HTTP 取消信号，避免断开后继续占用 Kernel。 */
   graph(
     @Param(new ZodValidationPipe(spaceRuntimePathParametersSchema))
     parameters: SpaceRuntimePathParameters,
@@ -104,22 +107,16 @@ export class SpaceDiscoveryController {
     );
   }
 
+  /** 让 Kernel 读取在浏览器断开时取消，并在响应完成后移除底层监听器。 */
   async #withRequestSignal<Result>(
     request: SpaceDiscoveryHttpRequest,
     operation: (signal: AbortSignal) => Promise<Result>,
   ): Promise<Result> {
-    const abortController = new AbortController();
-    const abort = () =>
-      abortController.abort(new Error("Browser discovery request closed"));
-    if (request.raw.aborted) {
-      abort();
-    } else {
-      request.raw.once("aborted", abort);
-    }
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
     try {
-      return await operation(abortController.signal);
+      return await operation(abortScope.signal);
     } finally {
-      request.raw.off("aborted", abort);
+      abortScope.dispose();
     }
   }
 }

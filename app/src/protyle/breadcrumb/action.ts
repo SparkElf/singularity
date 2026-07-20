@@ -25,7 +25,7 @@ export const net2LocalAssets = (protyle: IProtyle, type: "Assets" | "Img") => {
     }
     addLoading(protyle);
     hideElements(["toolbar"], protyle);
-    void protyle.session!.runtime.transport.request<IWebSocketData>(`/api/format/net${type}2LocalAssets`, {
+    void protyle.runtime.transport.request<IWebSocketData>(`/api/format/net${type}2LocalAssets`, {
         id: protyle.block.rootID
     }, {
         identity: protyleContentIdentity(protyle),
@@ -49,7 +49,7 @@ export const updateReadonly = (target: Element, protyle: IProtyle) => {
     const identity = protyleContentIdentity(protyle);
     const requestedReadOnly = !currentlyReadOnly;
     void setDocumentReadOnlyAttribute(protyle.readonlyState, requestedReadOnly, async (readOnly) => {
-        await protyle.session!.runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
+        await protyle.runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
             id: protyle.block.rootID,
             attrs: {[Constants.CUSTOM_SY_READONLY]: readOnly ? "true" : "false"},
         }, {
@@ -57,7 +57,7 @@ export const updateReadonly = (target: Element, protyle: IProtyle) => {
             intent: "write",
             signal: protyle.requestSignal,
         });
-        const response = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getDocInfo", {
+        const response = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getDocInfo", {
             id: protyle.block.rootID,
             notebook: identity.notebookId,
         }, {

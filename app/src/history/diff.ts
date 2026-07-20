@@ -65,6 +65,7 @@ const renderCompare = (app: App, element: HTMLElement) => {
             surface: "embedded",
             participation: "detached",
             content: {mode: "local-only"},
+            upstreamLocalRuntime: app.upstreamLocalRuntime,
         });
         disabledProtyle(leftEditor.protyle);
         rightEditor = new Protyle(app, rightElement.lastElementChild as HTMLElement, {
@@ -83,6 +84,7 @@ const renderCompare = (app: App, element: HTMLElement) => {
             surface: "embedded",
             participation: "detached",
             content: {mode: "local-only"},
+            upstreamLocalRuntime: app.upstreamLocalRuntime,
         });
         disabledProtyle(rightEditor.protyle);
     }

@@ -9,8 +9,10 @@ export {
   kernelDeploymentSchema,
   kernelDeploymentChangedEventSchema,
   kernelDeploymentHandleSchema,
+  kernelDeploymentHostnameSchema,
   kernelDeploymentInstanceIdSchema,
   kernelDeploymentProfileSchema,
+  kernelDeploymentServerNameSchema,
   kernelDeploymentsDocumentSchema,
   kernelRuntimeEndpointSchema,
   KernelDeploymentConfigurationError,
@@ -30,6 +32,7 @@ export {
 export {
   KERNEL_DOCUMENT_ID_HEADER,
   KERNEL_NOTEBOOK_ID_HEADER,
+  kernelRequestTimeoutSchema,
   KernelPrivateClient,
   type KernelPrivateContentIdentity,
   type KernelPrivateClientOptions,

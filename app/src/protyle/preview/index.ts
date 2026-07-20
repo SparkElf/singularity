@@ -183,7 +183,7 @@ export class Preview {
             if (protyle.destroyed || signal.aborted || generation !== this.renderGeneration) {
                 return;
             }
-            void protyle.transport!.request<IWebSocketData>("/api/export/preview", {
+            void protyle.runtime.transport.request<IWebSocketData>("/api/export/preview", {
                 id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
                 notebook: protyle.notebookId,
             }, {
@@ -222,7 +222,7 @@ export class Preview {
         copyElement.querySelectorAll("[href],[src]").forEach(item => {
             const oldLink = item.getAttribute("href") || item.getAttribute("src");
             if (oldLink && oldLink.startsWith("assets/")) {
-                const newLink = protyle.runtime!.resources.resolveAsset(identity, oldLink);
+                const newLink = protyle.runtime.resources.resolveAsset(identity, oldLink);
                 if (item.getAttribute("href")) {
                     item.setAttribute("href", newLink);
                 } else {
@@ -304,7 +304,7 @@ export class Preview {
             this.processZHTable(copyElement);
         } else if (type === "yuque") {
             try {
-                const response = await protyle.transport!.request<IWebSocketData>("/api/lute/copyStdMarkdown", {
+                const response = await protyle.runtime.transport.request<IWebSocketData>("/api/lute/copyStdMarkdown", {
                     id: protyle.block.id || protyle.options.blockId || protyle.block.parentID,
                     notebook: protyle.notebookId,
                     assetsDestSpace2Underscore: true,

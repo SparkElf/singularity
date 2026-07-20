@@ -47,7 +47,7 @@ export class Graph extends Model {
     public rootId: string; // "local" 必填
     public notebookId: string; // "local" / "pin" 必填
     public graphData: {
-        nodes: { box: string, id: string, path: string, type: string, color: IObject }[],
+        nodes: { box: string, id: string, label: string, path: string, type: string, color: IObject }[],
         links: Record<string, unknown>[],
         box: string
     };
@@ -769,7 +769,7 @@ export class Graph extends Model {
                     return;
                 }
                 if (-1 < node.type.indexOf("tag")) {
-                    openGlobalSearch(this.app, `#${node.id}#`, !window.siyuan.ctrlIsPressed, {method: 0});
+                    openGlobalSearch(this.app, `#${node.label}#`, !window.siyuan.ctrlIsPressed, {method: 0});
                     return;
                 }
                 const notebookId = this.type === "global" ? node.box : this.notebookId;

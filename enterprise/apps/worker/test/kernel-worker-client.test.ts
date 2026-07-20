@@ -47,6 +47,25 @@ describe("Kernel observation response parser", () => {
     );
   });
 
+  test("rejects capacity and health values from different snapshots", () => {
+    const mismatched = observation({});
+    mismatched.health.sampledAt = "2026-07-19T10:00:01.000Z";
+
+    expect(() => parseKernelObservationResponse(mismatched)).toThrowError(
+      expect.objectContaining({ code: "kernel-response-invalid" }),
+    );
+  });
+
+  test("rejects a future snapshot that could hide later observations", () => {
+    const future = observation({});
+    future.capacity.sampledAt = "2099-07-19T10:00:00.000Z";
+    future.health.sampledAt = future.capacity.sampledAt;
+
+    expect(() => parseKernelObservationResponse(future)).toThrowError(
+      expect.objectContaining({ code: "kernel-response-invalid" }),
+    );
+  });
+
   test.each([
     {
       errorCode: "/srv/singularity/workspaces/private/data",

@@ -63,6 +63,6 @@ COPY --chown=65532:65532 LICENSE NOTICE /usr/share/licenses/singularity/
 USER 65532
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>{if(!response.ok)throw new Error('API healthcheck returned status '+response.status);process.exit(0)}).catch((error)=>{console.error(error);process.exit(1)})"]
 
 CMD ["dist/main.js"]

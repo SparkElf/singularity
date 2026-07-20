@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useParams } from "react-router";
 
+import { isApiProblem } from "@/api/http.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Select } from "@/components/ui/select.tsx";
@@ -39,6 +40,7 @@ import {
   PageFailure,
   PageHeader,
   SectionHeading,
+  prioritizedError,
 } from "@/enterprise/components.tsx";
 import {
   addGroupMember,
@@ -127,10 +129,32 @@ export function GroupsPage() {
     },
   });
 
-  if (groupsQuery.error || organizationMembersQuery.error) {
+  const queryErrors = [
+    groupsQuery.error,
+    organizationMembersQuery.error,
+    groupMembersQuery.error,
+  ];
+  const mutationErrors = [
+    createGroupMutation.error,
+    updateGroupMutation.error,
+    addMemberMutation.error,
+    removeMemberMutation.error,
+  ];
+  const currentErrors = [...queryErrors, ...mutationErrors];
+  const authenticationError = currentErrors.find((error) =>
+    isApiProblem(error, "unauthenticated"),
+  );
+  if (authenticationError) {
+    return <PageFailure error={authenticationError} />;
+  }
+  const queryError = prioritizedError([
+    groupsQuery.error,
+    organizationMembersQuery.error,
+  ]);
+  if (queryError) {
     return (
       <PageFailure
-        error={groupsQuery.error ?? organizationMembersQuery.error}
+        error={queryError}
         onRetry={() => {
           void groupsQuery.refetch();
           void organizationMembersQuery.refetch();
@@ -147,11 +171,12 @@ export function GroupsPage() {
   const groupMembers = groupMembersQuery.data?.members ?? [];
   const memberIds = new Set(groupMembers.map((member) => member.userId));
   const candidates = (organizationMembersQuery.data?.members ?? []).filter(
-    (member) => member.status === "active" && !memberIds.has(member.userId),
+    (member) =>
+      member.accountStatus === "active" &&
+      member.status === "active" &&
+      !memberIds.has(member.userId),
   );
-  const mutationError =
-    createGroupMutation.error ??
-    updateGroupMutation.error;
+  const mutationError = prioritizedError(mutationErrors);
 
   return (
     <div className="flex flex-col">
@@ -300,7 +325,6 @@ export function GroupsPage() {
             <SheetTitle>{selectedGroup?.name ?? "用户组成员"}</SheetTitle>
             <SheetDescription>用户组成员</SheetDescription>
           </SheetHeader>
-          <MutationFailure error={addMemberMutation.error ?? removeMemberMutation.error} />
           {groupMembersQuery.error ? (
             <PageFailure
               error={groupMembersQuery.error}

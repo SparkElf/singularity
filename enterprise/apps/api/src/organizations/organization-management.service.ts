@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import type {
   CreatedOrganizationInvitation,
   EnterpriseManagementAccessResponse,
@@ -14,7 +14,7 @@ import { AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
 
 import { unactivatedSpaceRestorePersistenceStatuses } from "../backups/restore-status.persistence.js";
 import type { Clock } from "../identity/clock.js";
-import { IdentityService } from "../identity/identity.service.js";
+import { IdentityService, type LoginResult } from "../identity/identity.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { conflict, forbidden, notFound } from "../problem.js";
 import { CLOCK } from "../tokens.js";
@@ -83,6 +83,8 @@ function invitationSummary(invitation: {
 
 @Injectable()
 export class OrganizationManagementService {
+  readonly #logger = new Logger("OrganizationManagementService");
+
   constructor(
     private readonly database: DatabaseRuntime,
     private readonly identity: IdentityService,
@@ -92,132 +94,140 @@ export class OrganizationManagementService {
     private readonly audit: AuditWriter,
   ) {}
 
+  /** 返回当前操作者的组织管理能力，权限判断集中在该入口供控制器复用。 */
   async getManagementAccess(
     actorUserId: string,
   ): Promise<EnterpriseManagementAccessResponse> {
-    const memberships = await this.database.client.organizationMembership.findMany({
-      where: {
-        status: "active",
-        userId: actorUserId,
-        user: { status: "active" },
-        organization: { status: "active" },
-      },
-      select: {
-        role: true,
-        organization: { select: { id: true, name: true } },
-      },
-      orderBy: [
-        { organization: { name: "asc" } },
-        { organizationId: "asc" },
-      ],
-    });
-    const managerOrganizationIds = memberships
-      .filter((membership) => membership.role !== "member")
-      .map((membership) => membership.organization.id);
-    const memberOrganizationIds = memberships
-      .filter((membership) => membership.role === "member")
-      .map((membership) => membership.organization.id);
-    const administeredSpaces =
-      memberships.length === 0
-        ? []
-        : await this.database.client.space.findMany({
-            where: {
-              status: { in: ["active", "archived"] },
-              targetRestores: {
-                none: {
-                  status: {
-                    in: [...unactivatedSpaceRestorePersistenceStatuses],
-                  },
-                },
-              },
-              OR: [
-                {
-                  organizationId: { in: managerOrganizationIds },
-                },
-                {
-                  organizationId: { in: memberOrganizationIds },
-                  OR: [
-                    {
-                      memberships: {
-                        some: {
-                          role: "admin",
-                          status: "active",
-                          userId: actorUserId,
-                          organizationMembership: {
-                            status: "active",
-                            user: { status: "active" },
-                          },
-                        },
+    return this.database.client.$transaction(
+      async (transaction) => {
+        const memberships = await transaction.organizationMembership.findMany({
+          where: {
+            status: "active",
+            userId: actorUserId,
+            user: { status: "active" },
+            organization: { status: "active" },
+          },
+          select: {
+            role: true,
+            organization: { select: { id: true, name: true } },
+          },
+          orderBy: [
+            { organization: { name: "asc" } },
+            { organizationId: "asc" },
+          ],
+        });
+        const managerOrganizationIds = memberships
+          .filter((membership) => membership.role !== "member")
+          .map((membership) => membership.organization.id);
+        const memberOrganizationIds = memberships
+          .filter((membership) => membership.role === "member")
+          .map((membership) => membership.organization.id);
+        const administeredSpaces =
+          memberships.length === 0
+            ? []
+            : await transaction.space.findMany({
+                where: {
+                  status: { in: ["active", "archived"] },
+                  targetRestores: {
+                    none: {
+                      status: {
+                        in: [...unactivatedSpaceRestorePersistenceStatuses],
                       },
                     },
+                  },
+                  OR: [
                     {
-                      groupGrants: {
-                        some: {
-                          role: "admin",
-                          group: {
-                            status: "active",
-                            memberships: {
-                              some: {
-                                userId: actorUserId,
-                                organizationMembership: {
-                                  status: "active",
-                                  user: { status: "active" },
+                      organizationId: { in: managerOrganizationIds },
+                    },
+                    {
+                      organizationId: { in: memberOrganizationIds },
+                      OR: [
+                        {
+                          memberships: {
+                            some: {
+                              role: "admin",
+                              status: "active",
+                              userId: actorUserId,
+                              organizationMembership: {
+                                status: "active",
+                                user: { status: "active" },
+                              },
+                            },
+                          },
+                        },
+                        {
+                          groupGrants: {
+                            some: {
+                              role: "admin",
+                              group: {
+                                status: "active",
+                                memberships: {
+                                  some: {
+                                    userId: actorUserId,
+                                    organizationMembership: {
+                                      status: "active",
+                                      user: { status: "active" },
+                                    },
+                                  },
                                 },
                               },
                             },
                           },
                         },
-                      },
+                      ],
                     },
                   ],
                 },
-              ],
-            },
-            select: { id: true, name: true, organizationId: true },
-            orderBy: [{ name: "asc" }, { id: "asc" }],
-          });
-    const spacesByOrganization = new Map<
-      string,
-      Array<(typeof administeredSpaces)[number]>
-    >();
-    for (const space of administeredSpaces) {
-      const current = spacesByOrganization.get(space.organizationId);
-      if (current === undefined) {
-        spacesByOrganization.set(space.organizationId, [space]);
-      } else {
-        current.push(space);
-      }
-    }
-
-    return {
-      organizations: memberships.flatMap((membership) => {
-        const organizationManager = membership.role !== "member";
-        const spaces = spacesByOrganization.get(membership.organization.id) ?? [];
-        if (!organizationManager && spaces.length === 0) {
-          return [];
+                select: { id: true, name: true, organizationId: true },
+                orderBy: [{ name: "asc" }, { id: "asc" }],
+              });
+        const spacesByOrganization = new Map<
+          string,
+          Array<(typeof administeredSpaces)[number]>
+        >();
+        for (const space of administeredSpaces) {
+          const current = spacesByOrganization.get(space.organizationId);
+          if (current === undefined) {
+            spacesByOrganization.set(space.organizationId, [space]);
+          } else {
+            current.push(space);
+          }
         }
-        return [
-          {
-            organizationCapabilities: organizationManager
-              ? [
-                  ...(membership.role === "owner"
-                    ? ORGANIZATION_OWNER_CAPABILITIES
-                    : ORGANIZATION_ADMIN_CAPABILITIES),
-                ]
-              : [],
-            organizationId: membership.organization.id,
-            organizationName: membership.organization.name,
-            spaces: spaces.map((space) => ({
-              capabilities: [...SPACE_ADMIN_CAPABILITIES],
-              spaceId: space.id,
-              spaceName: space.name,
-            })),
-          },
-        ];
-      }),
-    };
+
+        return {
+          organizations: memberships.flatMap((membership) => {
+            const organizationManager = membership.role !== "member";
+            const spaces =
+              spacesByOrganization.get(membership.organization.id) ?? [];
+            if (!organizationManager && spaces.length === 0) {
+              return [];
+            }
+            return [
+              {
+                organizationCapabilities: organizationManager
+                  ? [
+                      ...(membership.role === "owner"
+                        ? ORGANIZATION_OWNER_CAPABILITIES
+                        : ORGANIZATION_ADMIN_CAPABILITIES),
+                    ]
+                  : [],
+                organizationId: membership.organization.id,
+                organizationName: membership.organization.name,
+                spaces: spaces.map((space) => ({
+                  capabilities: [...SPACE_ADMIN_CAPABILITIES],
+                  spaceId: space.id,
+                  spaceName: space.name,
+                })),
+              },
+            ];
+          }),
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 
+  /** 列出组织成员及其空间角色，结果只包含当前组织可见的身份字段。 */
   async listMembers(
     actorUserId: string,
     organizationId: string,
@@ -228,11 +238,12 @@ export class OrganizationManagementService {
       select: {
         role: true,
         status: true,
-        user: { select: { id: true, loginIdentifier: true } },
+        user: { select: { id: true, loginIdentifier: true, status: true } },
       },
       orderBy: [{ user: { loginIdentifier: "asc" } }, { userId: "asc" }],
     });
     return memberships.map((membership) => ({
+      accountStatus: membership.user.status,
       loginIdentifier: membership.user.loginIdentifier,
       role: membership.role,
       status: membership.status,
@@ -240,6 +251,7 @@ export class OrganizationManagementService {
     }));
   }
 
+  /** 列出组织邀请并投影为管理端摘要，不暴露邀请 token 原文。 */
   async listInvitations(
     actorUserId: string,
     organizationId: string,
@@ -252,6 +264,7 @@ export class OrganizationManagementService {
     return invitations.map(invitationSummary);
   }
 
+  /** 创建一次性组织邀请并保存 token 摘要，事务内完成角色与审计约束。 */
   async createInvitation(input: {
     actorUserId: string;
     expiresInHours: number;
@@ -260,11 +273,7 @@ export class OrganizationManagementService {
     requestId: string;
     role: "admin" | "member";
   }): Promise<CreatedOrganizationInvitation> {
-    const now = this.clock.now();
     const token = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(
-      now.getTime() + input.expiresInHours * 60 * 60 * 1_000,
-    );
     const invitation = await this.database.client.$transaction(async (transaction) => {
       const actorRole = await this.requireManagerInTransaction(
         transaction,
@@ -284,15 +293,39 @@ export class OrganizationManagementService {
       if (existingMembership?.status === "active") {
         throw conflict();
       }
-      await transaction.organizationInvitation.updateMany({
-        where: {
-          acceptedAt: null,
-          loginIdentifier: input.loginIdentifier,
-          organizationId: input.organizationId,
-          revokedAt: null,
-        },
-        data: { revokedAt: now },
-      });
+      const replacedInvitations = await transaction.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT "id"
+          FROM "organization_invitations"
+          WHERE "organization_id" = ${input.organizationId}
+            AND "login_identifier" = ${input.loginIdentifier}
+            AND "accepted_at" IS NULL
+            AND "revoked_at" IS NULL
+          ORDER BY "id"
+          FOR UPDATE
+        `,
+      );
+      const now = this.clock.now();
+      const expiresAt = new Date(
+        now.getTime() + input.expiresInHours * 60 * 60 * 1_000,
+      );
+      if (replacedInvitations.length > 0) {
+        await transaction.organizationInvitation.updateMany({
+          where: { id: { in: replacedInvitations.map(({ id }) => id) } },
+          data: { revokedAt: now },
+        });
+        for (const replaced of replacedInvitations) {
+          await this.audit.appendPermissionChange(transaction, {
+            actorUserId: input.actorUserId,
+            occurredAt: now,
+            organizationId: input.organizationId,
+            requestId: input.requestId,
+            spaceId: null,
+            targetId: replaced.id,
+            targetType: "invitation",
+          });
+        }
+      }
       const created = await transaction.organizationInvitation.create({
         data: {
           expiresAt,
@@ -317,25 +350,32 @@ export class OrganizationManagementService {
     return { ...invitationSummary(invitation), invitationToken: token };
   }
 
+  /** 撤销尚未消费的邀请，并保留可检索的审计结果。 */
   async revokeInvitation(
     actorUserId: string,
     organizationId: string,
     invitationId: string,
     requestId: string,
   ): Promise<void> {
-    const now = this.clock.now();
     await this.database.client.$transaction(async (transaction) => {
-      await this.requireManagerInTransaction(
+      const actorRole = await this.requireManagerInTransaction(
         transaction,
         actorUserId,
         organizationId,
       );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "organization_invitations" WHERE "id" = ${invitationId} AND "organization_id" = ${organizationId} FOR UPDATE`,
+      );
+      const now = this.clock.now();
       const invitation = await transaction.organizationInvitation.findFirst({
         where: { id: invitationId, organizationId },
-        select: { acceptedAt: true, revokedAt: true },
+        select: { acceptedAt: true, revokedAt: true, role: true },
       });
       if (invitation === null) {
         throw notFound();
+      }
+      if (invitation.role === "admin" && actorRole !== "owner") {
+        throw forbidden();
       }
       if (invitation.acceptedAt !== null) {
         throw conflict();
@@ -358,12 +398,12 @@ export class OrganizationManagementService {
     });
   }
 
+  /** 消费邀请并激活成员关系，所有权转移与重复消费在同一事务中判定。 */
   async acceptInvitation(
     userId: string,
     invitationToken: string,
     requestId: string,
   ): Promise<void> {
-    const now = this.clock.now();
     const invitationReference = await this.findInvitationReference(
       invitationToken,
     );
@@ -380,10 +420,9 @@ export class OrganizationManagementService {
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${invitationReference.organizationId} AND "user_id" = ${userId} FOR UPDATE`,
       );
-      const invitation = await this.lockValidInvitation(
+      const { invitation, now } = await this.lockValidInvitation(
         transaction,
         invitationToken,
-        now,
       );
       if (invitation.organizationId !== invitationReference.organizationId) {
         throw conflict();
@@ -411,49 +450,60 @@ export class OrganizationManagementService {
   async acceptLocalInvitation(
     invitationToken: string,
     password: string,
+    currentTokenValue: string | undefined,
     requestId: string,
-  ): Promise<{ userId: string }> {
+  ): Promise<LoginResult> {
     const availableInvitation = await this.findAvailableInvitation(invitationToken);
     if (availableInvitation === null) {
       throw notFound();
     }
     const passwordDigest = await this.identity.hashPassword(password);
-    const now = this.clock.now();
     try {
-      return await this.database.client.$transaction(async (transaction) => {
-        const invitation = await this.lockValidInvitation(
-          transaction,
-          invitationToken,
-          now,
-        );
-        const user = await transaction.user.create({
-          data: {
-            loginIdentifier: invitation.loginIdentifier,
-            passwordDigest,
-            status: "active",
-          },
-          select: { id: true },
-        });
-        await this.activateMembershipForInvitation(
-          transaction,
-          invitation,
-          user.id,
-          now,
-          requestId,
-        );
-        return { userId: user.id };
+      return await this.identity.issueSessionForCreatedUser({
+        currentTokenValue,
+        requestId,
+        createUser: async (transaction) => {
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${availableInvitation.organizationId} FOR UPDATE`,
+          );
+          const { invitation, now } = await this.lockValidInvitation(
+            transaction,
+            invitationToken,
+          );
+          if (invitation.organizationId !== availableInvitation.organizationId) {
+            throw conflict();
+          }
+          const user = await transaction.user.create({
+            data: {
+              loginIdentifier: invitation.loginIdentifier,
+              passwordDigest,
+              status: "active",
+            },
+            select: { id: true },
+          });
+          await this.activateMembershipForInvitation(
+            transaction,
+            invitation,
+            user.id,
+            now,
+            requestId,
+          );
+          return user.id;
+        },
       });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
       ) {
-        throw conflict();
+        this.#logUniqueConflict("accept-local-invitation", error);
+        throw conflict({ cause: error });
       }
       throw error;
     }
   }
 
+  /** 更新成员组织角色或状态，并按变更范围撤销其现有会话。 */
   async updateMember(
     actorUserId: string,
     organizationId: string,
@@ -480,6 +530,20 @@ export class OrganizationManagementService {
       if (membership === null) {
         throw notFound();
       }
+      const requestedRole = update.role ?? membership.role;
+      const requestedStatus = update.status ?? membership.status;
+      if (
+        requestedRole === membership.role &&
+        requestedStatus === membership.status
+      ) {
+        return {
+          accountStatus: membership.user.status,
+          loginIdentifier: membership.user.loginIdentifier,
+          role: membership.role,
+          status: membership.status,
+          userId,
+        };
+      }
       if (membership.role === "owner") {
         throw conflict();
       }
@@ -492,6 +556,15 @@ export class OrganizationManagementService {
       if (membership.user.status !== "active" && update.status === "active") {
         throw conflict();
       }
+      const deactivatesMembership =
+        membership.status === "active" && requestedStatus === "inactive";
+      if (deactivatesMembership) {
+        await this.#lockRelatedSpaceMemberships(
+          transaction,
+          organizationId,
+          userId,
+        );
+      }
       const changed = await transaction.organizationMembership.update({
         where: { organizationId_userId: { organizationId, userId } },
         data: {
@@ -501,39 +574,35 @@ export class OrganizationManagementService {
         select: {
           role: true,
           status: true,
-          user: { select: { id: true, loginIdentifier: true } },
+          user: { select: { id: true, loginIdentifier: true, status: true } },
         },
       });
-      if (changed.status === "inactive") {
+      if (deactivatesMembership) {
         await transaction.spaceMembership.updateMany({
-          where: { organizationId, userId },
+          where: { organizationId, status: "active", userId },
           data: { status: "inactive" },
         });
       }
-      if (
-        changed.role !== membership.role ||
-        changed.status !== membership.status
-      ) {
-        await this.accessChanges.publish(transaction, {
-          kind: "close",
-          reason: "forbidden",
-          requestId,
-          selectors: [
-            { kind: "organization", value: organizationId },
-            { kind: "user", value: userId },
-          ],
-        });
-        await this.audit.appendPermissionChange(transaction, {
-          actorUserId,
-          occurredAt: this.clock.now(),
-          organizationId,
-          requestId,
-          spaceId: null,
-          targetId: userId,
-          targetType: "membership",
-        });
-      }
+      await this.accessChanges.publish(transaction, {
+        kind: "close",
+        reason: "forbidden",
+        requestId,
+        selectors: [
+          { kind: "organization", value: organizationId },
+          { kind: "user", value: userId },
+        ],
+      });
+      await this.audit.appendPermissionChange(transaction, {
+        actorUserId,
+        occurredAt: this.clock.now(),
+        organizationId,
+        requestId,
+        spaceId: null,
+        targetId: userId,
+        targetType: "membership",
+      });
       return {
+        accountStatus: changed.user.status,
         loginIdentifier: changed.user.loginIdentifier,
         role: changed.role,
         status: changed.status,
@@ -542,6 +611,7 @@ export class OrganizationManagementService {
     });
   }
 
+  /** 在锁定组织与成员关系后完成所有权转移，避免并发管理操作产生双 owner。 */
   async transferOwnership(
     actorUserId: string,
     organizationId: string,
@@ -613,6 +683,7 @@ export class OrganizationManagementService {
     });
   }
 
+  /** 撤销成员全部会话并发布认证变化事件，使各实例立即停止接受旧 token。 */
   async revokeMemberSessions(
     actorUserId: string,
     organizationId: string,
@@ -642,6 +713,19 @@ export class OrganizationManagementService {
       await transaction.$queryRaw(
         Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${targetUserId} FOR UPDATE`,
       );
+      const otherActiveMembership =
+        await transaction.organizationMembership.findFirst({
+          where: {
+            organizationId: { not: organizationId },
+            status: "active",
+            userId: targetUserId,
+            organization: { status: "active" },
+          },
+          select: { id: true },
+        });
+      if (otherActiveMembership !== null) {
+        throw conflict();
+      }
       const outcome = await this.identity.revokeUserSessionsInTransaction(
         transaction,
         targetUserId,
@@ -662,6 +746,7 @@ export class OrganizationManagementService {
     });
   }
 
+  /** 校验操作者具备组织管理角色，并返回后续事务可复用的成员事实。 */
   async requireManager(
     actorUserId: string,
     organizationId: string,
@@ -689,6 +774,7 @@ export class OrganizationManagementService {
     return membership.role;
   }
 
+  /** 在已有事务中锁定并校验组织管理员，避免权限检查与写入之间出现竞态。 */
   async requireManagerInTransaction(
     transaction: Transaction,
     actorUserId: string,
@@ -753,12 +839,12 @@ export class OrganizationManagementService {
     });
   }
 
+  /** 在 OIDC 回调事务内消费邀请并激活成员，复用同一锁与唯一性合同。 */
   async acceptOidcInvitationInTransaction(
     transaction: Transaction,
     invitationId: string,
     organizationId: string,
     userId: string,
-    now: Date,
     requestId: string,
   ): Promise<void> {
     const invitationReference = await transaction.organizationInvitation.findUnique({
@@ -783,6 +869,7 @@ export class OrganizationManagementService {
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_invitations" WHERE "id" = ${invitationId} FOR UPDATE`,
     );
+    const now = this.clock.now();
     const invitation = await transaction.organizationInvitation.findUnique({
       where: { id: invitationId },
       include: { organization: { select: { status: true } } },
@@ -805,15 +892,16 @@ export class OrganizationManagementService {
     );
   }
 
+  /** 锁定并读取仍有效的邀请，保证后续消费不会与撤销操作交叉。 */
   async lockValidInvitation(
     transaction: Transaction,
     invitationToken: string,
-    now: Date,
   ) {
     const tokenDigest = organizationInvitationTokenDigest(invitationToken);
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "organization_invitations" WHERE "token_digest" = ${tokenDigest} FOR UPDATE`,
     );
+    const now = this.clock.now();
     const invitation = await transaction.organizationInvitation.findUnique({
       where: { tokenDigest },
       include: { organization: { select: { status: true } } },
@@ -829,9 +917,10 @@ export class OrganizationManagementService {
     ) {
       throw conflict();
     }
-    return invitation;
+    return { invitation, now };
   }
 
+  /** 将已锁定邀请转换为活动成员关系，并清理一次性消费状态。 */
   async activateMembershipForInvitation(
     transaction: Transaction,
     invitation: {
@@ -906,6 +995,47 @@ export class OrganizationManagementService {
       spaceId: null,
       targetId: userId,
       targetType: "membership",
+    });
+  }
+
+  async #lockRelatedSpaceMemberships(
+    transaction: Transaction,
+    organizationId: string,
+    userId: string,
+  ): Promise<void> {
+    await transaction.$queryRaw(
+      Prisma.sql`
+        SELECT space."id"
+        FROM "spaces" AS space
+        INNER JOIN "space_memberships" AS membership
+          ON membership."space_id" = space."id"
+        WHERE membership."organization_id" = ${organizationId}
+          AND membership."user_id" = ${userId}
+        ORDER BY space."id"
+        FOR UPDATE OF space
+      `,
+    );
+    await transaction.$queryRaw(
+      Prisma.sql`
+        SELECT "id"
+        FROM "space_memberships"
+        WHERE "organization_id" = ${organizationId}
+          AND "user_id" = ${userId}
+        ORDER BY "space_id", "id"
+        FOR UPDATE
+      `,
+    );
+  }
+
+  #logUniqueConflict(
+    operation: string,
+    error: Prisma.PrismaClientKnownRequestError,
+  ): void {
+    this.#logger.warn({
+      error,
+      event: "organization.management",
+      operation,
+      outcome: "conflict",
     });
   }
 }

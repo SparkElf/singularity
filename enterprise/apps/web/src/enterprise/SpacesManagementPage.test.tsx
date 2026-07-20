@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { TooltipProvider } from "@/components/ui/tooltip.tsx";
+import { managedSpacesQueryKey } from "@/enterprise/api.ts";
 import { SpacesManagementPage } from "@/enterprise/SpacesManagementPage.tsx";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "22222222-2222-4222-8222-222222222222";
-const CSRF_TOKEN = "A".repeat(43);
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const SPACES_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/spaces`;
 const SPACE_PATH = `${SPACES_PATH}/${SPACE_ID}`;
 
@@ -28,11 +29,19 @@ const space = {
   status: "active" as const,
 };
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
-    status: 200,
+    status,
   });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 function requestPath(input: RequestInfo | URL): string {
@@ -49,9 +58,11 @@ function createTestQueryClient(): QueryClient {
   });
 }
 
-function renderSpacesManagementPage(): void {
+function renderSpacesManagementPage(
+  queryClient = createTestQueryClient(),
+): QueryClient {
   render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter
           initialEntries={[`/organizations/${ORGANIZATION_ID}/settings/spaces`]}
@@ -61,11 +72,13 @@ function renderSpacesManagementPage(): void {
               path="/organizations/:organizationId/settings/spaces"
               element={<SpacesManagementPage />}
             />
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -166,5 +179,96 @@ describe("SpacesManagementPage lifecycle workflows", () => {
       expect(screen.getByLabelText("空间状态")).toHaveValue("archived");
     });
     expect(screen.getByDisplayValue("归档项目资料")).toBeVisible();
+  });
+
+  it("renders a disabled space as a strictly read-only row", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === SPACES_PATH) {
+          return Promise.resolve(
+            jsonResponse({ spaces: [{ ...space, status: "disabled" }] }),
+          );
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderSpacesManagementPage();
+
+    const disabledLabel = await screen.findByText("已停用");
+    const row = disabledLabel.closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      within(row!).queryByRole("button", { name: "保存" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(row!).queryByRole("link", { name: "访问权限" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prioritizes a late unauthenticated refresh over a mutation conflict", async () => {
+    const refreshResponse = deferred<Response>();
+    let spacesReadCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const path = requestPath(input);
+        if (path === SPACES_PATH && init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                code: "conflict",
+                requestId: "77777777-7777-4777-8777-777777777777",
+                status: 409,
+              },
+              409,
+            ),
+          );
+        }
+        if (path === SPACES_PATH) {
+          spacesReadCount += 1;
+          return spacesReadCount === 1
+            ? Promise.resolve(jsonResponse({ spaces: [space] }))
+            : refreshResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderSpacesManagementPage(queryClient);
+
+    expect(await screen.findByDisplayValue(space.spaceName)).toBeVisible();
+    const createButton = screen.getByRole("button", { name: "创建空间" });
+    const createForm = createButton.closest("form");
+    expect(createForm).not.toBeNull();
+    fireEvent.change(within(createForm!).getByLabelText("空间名称"), {
+      target: { value: "冲突空间" },
+    });
+    fireEvent.click(createButton);
+    expect(await screen.findByText(/资源状态已经变化/)).toBeVisible();
+
+    void queryClient.invalidateQueries({
+      queryKey: managedSpacesQueryKey(ORGANIZATION_ID),
+    });
+    refreshResponse.resolve(
+      jsonResponse(
+        {
+          code: "unauthenticated",
+          requestId: "88888888-8888-4888-8888-888888888888",
+          status: 401,
+        },
+        401,
+      ),
+    );
+
+    expect(await screen.findByRole("heading", { name: "登录奇点" })).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
   });
 });

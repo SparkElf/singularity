@@ -224,6 +224,7 @@ const renderEmojiContent = (previousIndex: string, previousContentElement: Eleme
 
 export const openEmojiPanel = (
     id: string,
+    notebookId: string,
     type: "doc" | "notebook" | "av",
     position: IPosition,
     callback?: (emoji: string) => void,
@@ -440,7 +441,7 @@ export const openEmojiPanel = (
                     icon: unicode
                 }, () => {
                     dialog.destroy();
-                    updateFileTreeEmoji(unicode, id, "iconNewNoteBook");
+                    updateFileTreeEmoji(unicode, notebookId, id, "iconNewNoteBook");
                 });
             } else if (type === "doc") {
                 fetchPost("/api/attr/setBlockAttrs", {
@@ -448,8 +449,8 @@ export const openEmojiPanel = (
                     attrs: {"icon": unicode}
                 }, () => {
                     dialog.destroy();
-                    updateFileTreeEmoji(unicode, id);
-                    updateOutlineEmoji(unicode, id);
+                    updateFileTreeEmoji(unicode, notebookId, id);
+                    updateOutlineEmoji(unicode, notebookId, id);
                 });
             }
             if (callback) {
@@ -561,15 +562,15 @@ export const openEmojiPanel = (
                         notebook: id,
                         icon: ""
                     }, () => {
-                        updateFileTreeEmoji("", id, "iconNewNoteBook");
+                        updateFileTreeEmoji("", notebookId, id, "iconNewNoteBook");
                     });
                 } else if (type === "doc") {
                     fetchPost("/api/attr/setBlockAttrs", {
                         id: id,
                         attrs: {"icon": ""}
                     }, () => {
-                        updateFileTreeEmoji("", id);
-                        updateOutlineEmoji("", id);
+                        updateFileTreeEmoji("", notebookId, id);
+                        updateOutlineEmoji("", notebookId, id);
                     });
                 }
                 if (callback) {
@@ -594,15 +595,15 @@ export const openEmojiPanel = (
                         notebook: id,
                         icon: unicode
                     }, () => {
-                        updateFileTreeEmoji(unicode, id, "iconNewNoteBook");
+                        updateFileTreeEmoji(unicode, notebookId, id, "iconNewNoteBook");
                     });
                 } else if (type === "doc") {
                     fetchPost("/api/attr/setBlockAttrs", {
                         id,
                         attrs: {"icon": unicode}
                     }, () => {
-                        updateFileTreeEmoji(unicode, id);
-                        updateOutlineEmoji(unicode, id);
+                        updateFileTreeEmoji(unicode, notebookId, id);
+                        updateOutlineEmoji(unicode, notebookId, id);
                     });
                 }
                 if (callback) {
@@ -695,28 +696,36 @@ export const openEmojiPanel = (
     });
 };
 
-export const updateOutlineEmoji = (unicode: string, id: string) => {
+export const updateOutlineEmoji = (unicode: string, notebookId: string, id: string) => {
     /// #if !MOBILE
     getAllModels().outline.forEach(model => {
-        if (model.blockId === id) {
+        if (model.notebookId === notebookId && model.blockId === id) {
             model.headerElement.nextElementSibling.firstElementChild.outerHTML = unicode2Emoji(unicode || window.siyuan.storage[Constants.LOCAL_IMAGES].file, "b3-list-item__graphic", true);
         }
     });
     /// #endif
 };
 
-export const updateFileTreeEmoji = (unicode: string, id: string, icon = "iconFile") => {
+export const updateFileTreeEmoji = (unicode: string, notebookId: string, id: string, icon = "iconFile") => {
     let emojiElement;
+    const notebookSelector = `ul[data-url="${notebookId}"]`;
     /// #if MOBILE
-    emojiElement = document.querySelector(`#sidebar [data-type="sidebar-file"] [data-node-id="${id}"] .b3-list-item__icon`);
+    emojiElement = icon === "iconFile" ? document.querySelector(
+        `#sidebar [data-type="sidebar-file"] ${notebookSelector} [data-node-id="${id}"] .b3-list-item__icon`,
+    ) : document.querySelector(
+        `#sidebar [data-type="sidebar-file"] ${notebookSelector} > .b3-list-item .b3-list-item__icon`,
+    );
     /// #else
     const dockFile = getDockByType("file");
     if (dockFile) {
         const files = dockFile.data.file as Files;
         if (icon === "iconFile") {
-            emojiElement = files.element.querySelector(`[data-node-id="${id}"] .b3-list-item__icon`);
+            emojiElement = files.element.querySelector(
+                `${notebookSelector} [data-node-id="${id}"] .b3-list-item__icon`,
+            );
         } else {
-            emojiElement = files.element.querySelector(`[data-node-id="${id}"] .b3-list-item__icon`) || files.element.querySelector(`[data-url="${id}"] .b3-list-item__icon`) || files.closeElement.querySelector(`[data-url="${id}"] .b3-list-item__icon`);
+            emojiElement = files.element.querySelector(`${notebookSelector} > .b3-list-item .b3-list-item__icon`) ||
+                files.closeElement.querySelector(`[data-url="${notebookId}"] .b3-list-item__icon`);
         }
     }
     /// #endif

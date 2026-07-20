@@ -124,6 +124,9 @@ describe("AuditPage", () => {
     expect(requests.map((url) => url.search)).toContain(
       "?limit=51&beforeSequence=52",
     );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "上一页" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "上一页" }));
 
     expect(await screen.findByText("第 1 页")).toBeVisible();

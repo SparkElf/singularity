@@ -63,7 +63,7 @@ export const setAVBlockIcon = (
     target: AVBlockTarget,
     icon: string,
     signal: AbortSignal,
-) => protyle.session!.runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
+) => protyle.runtime.transport.request<IWebSocketData>("/api/attr/setBlockAttrs", {
     attrs: {icon},
     id: target.blockId,
 }, {

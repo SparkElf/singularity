@@ -15,7 +15,7 @@ import {
   type KernelPrivateResponse,
 } from "@singularity/kernel-client";
 
-import { ApiProblemError, notFound, serviceUnavailable } from "../problem.js";
+import { ApiProblemError, notFound } from "../problem.js";
 import {
   type AuthorizedKernelTarget,
   KernelAccessService,
@@ -42,6 +42,11 @@ function jsonContentType(message: IncomingMessage): boolean {
   );
 }
 
+function discoveryUnavailable(cause: unknown): ApiProblemError {
+  return new ApiProblemError("service-unavailable", 503, undefined, { cause });
+}
+
+/** 读取有界图谱/搜索响应，确保上游流在超限或解析失败时立即关闭。 */
 async function readDiscoveryJson(message: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let sizeBytes = 0;
@@ -51,7 +56,9 @@ async function readDiscoveryJson(message: IncomingMessage): Promise<unknown> {
       sizeBytes += bytes.byteLength;
       if (sizeBytes > MAX_SPACE_DISCOVERY_RESPONSE_BYTES) {
         message.destroy();
-        throw serviceUnavailable();
+        throw discoveryUnavailable(
+          new Error("Kernel discovery response exceeded the size limit"),
+        );
       }
       chunks.push(bytes);
     }
@@ -60,7 +67,7 @@ async function readDiscoveryJson(message: IncomingMessage): Promise<unknown> {
     if (error instanceof ApiProblemError) {
       throw error;
     }
-    throw serviceUnavailable();
+    throw discoveryUnavailable(error);
   }
 }
 
@@ -73,6 +80,7 @@ export class SpaceDiscoveryService {
     private readonly kernel: KernelPrivateClient,
   ) {}
 
+  /** 在当前授权空间执行服务端全文搜索，响应身份由 Kernel 源 block 提供。 */
   search(
     input: SpaceDiscoveryRequestContext & {
       readonly body: SpaceDiscoverySearchRequest;
@@ -86,12 +94,15 @@ export class SpaceDiscoveryService {
       );
       const parsed = spaceDiscoverySearchResponseSchema.safeParse(value);
       if (!parsed.success) {
-        throw serviceUnavailable();
+        throw discoveryUnavailable(
+          parsed.error,
+        );
       }
       return parsed.data;
     });
   }
 
+  /** 在当前授权空间执行图谱查询，tag 等非内容节点不在此处补造文档身份。 */
   graph(
     input: SpaceDiscoveryRequestContext & {
       readonly body: SpaceDiscoveryGraphRequest;
@@ -105,12 +116,15 @@ export class SpaceDiscoveryService {
       );
       const parsed = spaceDiscoveryGraphResponseSchema.safeParse(value);
       if (!parsed.success) {
-        throw serviceUnavailable();
+        throw discoveryUnavailable(
+          parsed.error,
+        );
       }
       return parsed.data;
     });
   }
 
+  /** 复验空间授权并通过私有 Gateway 请求空间级搜索/图谱数据。 */
   async #requestJson(
     input: SpaceDiscoveryRequestContext,
     path: string,
@@ -148,13 +162,21 @@ export class SpaceDiscoveryService {
         requestId: input.requestId,
         signal: input.signal,
       });
-    } catch {
-      throw serviceUnavailable();
+    } catch (error) {
+      throw discoveryUnavailable(error);
     }
 
-    if (response.status !== 200 || !jsonContentType(response.message)) {
-      response.message.resume();
-      throw serviceUnavailable();
+    if (response.status !== 200) {
+      response.message.destroy();
+      throw discoveryUnavailable(
+        new Error(`Kernel discovery returned HTTP ${response.status}`),
+      );
+    }
+    if (!jsonContentType(response.message)) {
+      response.message.destroy();
+      throw discoveryUnavailable(
+        new Error("Kernel discovery returned a non-JSON response"),
+      );
     }
     return readDiscoveryJson(response.message);
   }
@@ -189,6 +211,7 @@ export class SpaceDiscoveryService {
         requestId: input.requestId,
         outcome: "failed",
         spaceId: input.spaceId,
+        error,
       });
       throw error;
     }

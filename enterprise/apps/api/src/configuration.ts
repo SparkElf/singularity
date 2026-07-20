@@ -4,15 +4,23 @@ import { isAbsolute } from "node:path";
 export const DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS = 120_000;
 
 export class ApiConfigurationError extends Error {
-  constructor() {
-    super("API deployment configuration is unavailable");
+  constructor(options?: ErrorOptions) {
+    super("API deployment configuration is unavailable", options);
     this.name = "ApiConfigurationError";
   }
 }
 
+export interface OidcClientSecretBinding {
+  readonly clientId: string;
+  readonly issuer: string;
+  readonly organizationId: string;
+  readonly reference: string;
+  readonly secretFile: string;
+}
+
 export interface ApiConfiguration {
   contentAuditIndeterminateAfterMilliseconds: number;
-  oidcClientSecretFiles: Readonly<Record<string, string>>;
+  oidcClientSecretBindings: readonly OidcClientSecretBinding[];
   publicOrigin: string;
   trustedProxyCidrs: readonly string[];
 }
@@ -32,35 +40,78 @@ export function parseContentAuditIndeterminateAfterMilliseconds(
   return parsed;
 }
 
-export function parseOidcClientSecretFiles(
+function parseOidcBindingIssuer(value: string): string {
+  let issuer: URL;
+  try {
+    issuer = new URL(value);
+  } catch (error) {
+    throw new ApiConfigurationError({ cause: error });
+  }
+  if (
+    issuer.protocol !== "https:" ||
+    issuer.username.length > 0 ||
+    issuer.password.length > 0 ||
+    issuer.search.length > 0 ||
+    issuer.hash.length > 0
+  ) {
+    throw new ApiConfigurationError();
+  }
+  return issuer.toString();
+}
+
+export function parseOidcClientSecretBindings(
   value: string | undefined,
-): Readonly<Record<string, string>> {
+): readonly OidcClientSecretBinding[] {
   if (value === undefined || value.length === 0) {
-    return {};
+    return [];
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
-  } catch {
+  } catch (error) {
+    throw new ApiConfigurationError({ cause: error });
+  }
+  if (!Array.isArray(parsed)) {
     throw new ApiConfigurationError();
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed)
-  ) {
-    throw new ApiConfigurationError();
-  }
-  const result: Record<string, string> = {};
-  for (const [reference, path] of Object.entries(parsed)) {
+  const references = new Set<string>();
+  const result: OidcClientSecretBinding[] = [];
+  for (const value of parsed) {
     if (
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(reference) ||
-      typeof path !== "string" ||
-      !isAbsolute(path)
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value)
     ) {
       throw new ApiConfigurationError();
     }
-    result[reference] = path;
+    const record = value as Record<string, unknown>;
+    if (
+      Object.keys(record).sort().join(",") !==
+        "clientId,issuer,organizationId,reference,secretFile" ||
+      typeof record.clientId !== "string" ||
+      record.clientId.length === 0 ||
+      record.clientId.length > 512 ||
+      typeof record.organizationId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        record.organizationId,
+      ) ||
+      typeof record.reference !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(record.reference) ||
+      references.has(record.reference) ||
+      typeof record.secretFile !== "string" ||
+      !isAbsolute(record.secretFile) ||
+      typeof record.issuer !== "string"
+    ) {
+      throw new ApiConfigurationError();
+    }
+    references.add(record.reference);
+    result.push({
+      clientId: record.clientId,
+      issuer: parseOidcBindingIssuer(record.issuer),
+      organizationId: record.organizationId,
+      reference: record.reference,
+      secretFile: record.secretFile,
+    });
   }
   return result;
 }
@@ -73,8 +124,8 @@ export function parsePublicOrigin(value: string | undefined): string {
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
-    throw new ApiConfigurationError();
+  } catch (error) {
+    throw new ApiConfigurationError({ cause: error });
   }
 
   if (

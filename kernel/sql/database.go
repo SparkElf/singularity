@@ -944,16 +944,16 @@ func buildBlockFromNode(n *ast.Node, tree *parse.Tree) (block *Block, attributes
 		length = utf8.RuneCountInString(fcontent)
 	} else if n.IsContainerBlock() {
 		markdown = treenode.ExportNodeStdMd(n, luteEngine)
-		if !treenode.IsNodeOCRed(n) {
+		if !treenode.IsNodeOCRedInDocument(n, tree.Box, tree.Path) {
 			util.PushNodeOCRQueue(n)
 		}
-		content = NodeStaticContent(n, nil, true, indexAssetPath, true)
+		content = nodeStaticContent(n, nil, true, indexAssetPath, true, tree.Box, tree.Path)
 
 		fc := treenode.FirstLeafBlock(n)
-		if !treenode.IsNodeOCRed(fc) {
+		if !treenode.IsNodeOCRedInDocument(fc, tree.Box, tree.Path) {
 			util.PushNodeOCRQueue(fc)
 		}
-		fcontent = NodeStaticContent(fc, nil, true, false, true)
+		fcontent = nodeStaticContent(fc, nil, true, false, true, tree.Box, tree.Path)
 
 		parentID = n.Parent.ID
 		if h := treenode.HeadingParent(n); nil != h { // 如果在标题块下方，则将标题块作为父节点
@@ -962,10 +962,10 @@ func buildBlockFromNode(n *ast.Node, tree *parse.Tree) (block *Block, attributes
 		length = utf8.RuneCountInString(fcontent)
 	} else {
 		markdown = treenode.ExportNodeStdMd(n, luteEngine)
-		if !treenode.IsNodeOCRed(n) {
+		if !treenode.IsNodeOCRedInDocument(n, tree.Box, tree.Path) {
 			util.PushNodeOCRQueue(n)
 		}
-		content = NodeStaticContent(n, nil, true, indexAssetPath, true)
+		content = nodeStaticContent(n, nil, true, indexAssetPath, true, tree.Box, tree.Path)
 
 		parentID = n.Parent.ID
 		if h := treenode.HeadingParent(n); nil != h {

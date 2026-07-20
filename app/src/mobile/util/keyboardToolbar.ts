@@ -20,15 +20,19 @@ import {getMirror} from "../../protyle/undo/globalUndo";
 
 let renderKeyboardToolbarTimeout: number;
 let showUtil = false;
+const pluginSlashItems = new WeakMap<Element, Array<{
+    item: import("../../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginSlashItem,
+    pluginName: string,
+}>>();
 
-const getSlashItem = (value: string, icon: string, text: string, focus = "false") => {
+const getSlashItem = (value: string, icon: string, text: string, focus = "false", pluginIndex?: number) => {
     let iconHTML;
     if (icon && icon.startsWith("icon")) {
         iconHTML = `<svg class="keyboard__slash-icon"><use xlink:href="#${icon}"></use></svg>`;
     } else {
         iconHTML = icon;
     }
-    return `<button class="keyboard__slash-item" data-focus="${focus}" data-value="${encodeURIComponent(value)}">
+    return `<button class="keyboard__slash-item" data-focus="${focus}" data-value="${encodeURIComponent(value)}"${typeof pluginIndex === "number" ? ` data-plugin-index="${pluginIndex}"` : ""}>
     ${iconHTML}
     <span class="keyboard__slash-text">${text}</span>
 </button>`;
@@ -211,12 +215,15 @@ const renderSlashMenu = (protyle: IProtyle, toolbarElement: Element) => {
     protyle.hint.splitChar = "/";
     protyle.hint.lastIndex = -1;
     let pluginHTML = "";
-    protyle.app.plugins.forEach((plugin) => {
-        plugin.protyleSlash.forEach(slash => {
-            pluginHTML += getSlashItem(`plugin${Constants.ZWSP}${plugin.name}${Constants.ZWSP}${slash.id}`,
-                "", slash.html, "true");
-        });
+    const slashItems: Array<{
+        item: import("../../../../enterprise/packages/protyle-browser/src/contracts").ProtylePluginSlashItem,
+        pluginName: string,
+    }> = [];
+    protyle.plugins.forEachSlashItem((pluginName, item) => {
+        const pluginIndex = slashItems.push({item, pluginName}) - 1;
+        pluginHTML += getSlashItem("", "", item.html, "true", pluginIndex);
     });
+    pluginSlashItems.set(toolbarElement, slashItems);
     if (pluginHTML) {
         pluginHTML = `<div class="keyboard__slash-title"></div><div class="keyboard__slash-block">${pluginHTML}</div>`;
     }
@@ -650,7 +657,16 @@ export const initKeyboardToolbar = () => {
             if (dataValue === Constants.ZWSP + 3) {
                 return;
             }
-            protyle.hint.fill(dataValue, protyle, false);   // 点击后 range 会改变
+            const pluginIndex = slashBtnElement.dataset.pluginIndex;
+            const selectedPluginItem = typeof pluginIndex === "undefined"
+                ? undefined
+                : pluginSlashItems.get(toolbarElement)?.[Number(pluginIndex)];
+            protyle.hint.fill(dataValue, protyle, false, false, undefined, selectedPluginItem ? {
+                html: selectedPluginItem.item.html,
+                value: "",
+                slashItem: selectedPluginItem.item,
+                slashPluginName: selectedPluginItem.pluginName,
+            } : undefined);   // 点击后 range 会改变
             event.preventDefault();
             event.stopPropagation();
             if (dataValue === "((" || dataValue === "{{") {

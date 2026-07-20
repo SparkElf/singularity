@@ -9,12 +9,25 @@ const baselinePath = resolve(repositoryRoot, "config/upstream-baseline.json");
 
 const SOURCE = "https://github.com/SparkElf/singularity";
 const LICENSE = "AGPL-3.0-or-later";
+const API_TITLE = "Singularity Enterprise API";
+const WEB_TITLE = "Singularity Enterprise Web";
 const WORKER_TITLE = "Singularity Enterprise Worker";
+const DIAGNOSTIC_OUTPUT_LIMIT_CHARACTERS = 64 * 1_024;
+const API_HEALTHCHECK = [
+  "CMD",
+  "/nodejs/bin/node",
+  "-e",
+  "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>{if(!response.ok)throw new Error('API healthcheck returned status '+response.status);process.exit(0)}).catch((error)=>{console.error(error);process.exit(1)})",
+];
 const WORKER_HEALTHCHECK = [
   "CMD",
   "/nodejs/bin/node",
   "-e",
-  "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error();for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch{process.exit(1)}",
+  "const fs=require('node:fs'),path=require('node:path');try{process.kill(1,0);if(process.versions.node.split('.')[0]!=='24')throw new Error('Worker runtime is not Node 24');for(const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL,process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY])fs.accessSync(file,fs.constants.X_OK);fs.accessSync(path.join(process.env.SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY,'appearance','langs','en.json'),fs.constants.R_OK)}catch(error){console.error(error);process.exit(1)}",
+];
+const API_ENVIRONMENT = [
+  "NODE_ENV=production",
+  "PORT=3001",
 ];
 const WORKER_ENVIRONMENT = [
   "HOME=/var/lib/singularity-worker/home",
@@ -22,24 +35,21 @@ const WORKER_ENVIRONMENT = [
   "SINGULARITY_WORKER_OBJECT_STORE_ROOT=/var/lib/singularity-worker/objects",
   "SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL=/opt/singularity-kernel/kernel",
   "SINGULARITY_WORKER_RESTORE_KERNEL_BINARY=/opt/singularity-kernel/kernel",
+  "SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS=127.0.0.1",
   "SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY=/opt/singularity-kernel",
   "SINGULARITY_WORKER_RESTORE_RUNTIME_ROOT=/var/lib/singularity-worker/runtime",
 ];
 const IMAGE_CONTRACTS = new Map([
   [
-    "Singularity Enterprise API",
+    API_TITLE,
     {
       command: ["dist/main.js"],
+      environment: API_ENVIRONMENT,
       healthcheck: {
         interval: 30_000_000_000,
         retries: 3,
         startPeriod: 10_000_000_000,
-        test: [
-          "CMD",
-          "/nodejs/bin/node",
-          "-e",
-          "fetch('http://127.0.0.1:'+(process.env.PORT||'3001')+'/api/v1/health/database').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
-        ],
+        test: API_HEALTHCHECK,
         timeout: 5_000_000_000,
       },
       port: "3001/tcp",
@@ -47,7 +57,7 @@ const IMAGE_CONTRACTS = new Map([
     },
   ],
   [
-    "Singularity Enterprise Web",
+    WEB_TITLE,
     {
       command: ["nginx", "-g", "daemon off;"],
       healthcheck: {
@@ -185,10 +195,21 @@ export function validateContainerMetadata(images, inspectedImages, { revision, u
   return failures;
 }
 
+function nodeEntryProbe(runtimeName) {
+  return [
+    'const fs = require("node:fs");',
+    `if (process.versions.node.split(".")[0] !== "24") throw new Error("${runtimeName} runtime is not Node 24");`,
+    `if (process.env.NODE_ENV !== "production") throw new Error("${runtimeName} NODE_ENV is not production");`,
+    'fs.accessSync("dist/main.js", fs.constants.R_OK);',
+    'const entry = fs.statSync("dist/main.js");',
+    `if (!entry.isFile() || entry.size === 0) throw new Error("${runtimeName} dist/main.js is unavailable");`,
+  ].join("");
+}
+
+const API_FILESYSTEM_PROBE = nodeEntryProbe("API");
 const WORKER_FILESYSTEM_PROBE = [
-  'const fs = require("node:fs");',
+  nodeEntryProbe("Worker"),
   'const path = require("node:path");',
-  'if (process.versions.node.split(".")[0] !== "24") throw new Error("Worker runtime is not Node 24");',
   'for (const file of [process.env.SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL, process.env.SINGULARITY_WORKER_RESTORE_KERNEL_BINARY]) {',
   '  fs.accessSync(file, fs.constants.X_OK);',
   '}',
@@ -198,8 +219,69 @@ const WORKER_FILESYSTEM_PROBE = [
   'if (language === null || typeof language !== "object" || Array.isArray(language)) throw new Error("Worker appearance language is invalid");',
 ].join("");
 
+function boundedOutput(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return (Buffer.isBuffer(value) ? value.toString("utf8") : String(value)).trim();
+}
+
+function spawnErrorStack(error) {
+  if (error === undefined || error === null) {
+    return "";
+  }
+  return typeof error.stack === "string" ? error.stack : String(error);
+}
+
+function probeFailure(image, failure, result) {
+  const error = spawnErrorStack(result.error);
+  const output = [
+    ["stdout", boundedOutput(result.stdout)],
+    ["stderr", boundedOutput(result.stderr)],
+  ]
+    .filter(([, value]) => value.length > 0)
+    .map(([label, value]) => `[${label} tail]\n${value}`)
+    .join("\n")
+    .slice(-DIAGNOSTIC_OUTPUT_LIMIT_CHARACTERS);
+  return [
+    `${image}: ${failure}`,
+    ...(error.length === 0 ? [] : [`[spawn error]\n${error}`]),
+    ...(output.length === 0 ? [] : [`[bounded command output]\n${output}`]),
+  ].join("\n");
+}
+
+function runContainerProbes(image, probes, run) {
+  const failures = [];
+  for (const probe of probes) {
+    const result = run("docker", probe.args, { encoding: "utf8" });
+    if (result.status !== 0 || result.error !== undefined) {
+      failures.push(probeFailure(image, probe.failure, result));
+    }
+  }
+  return failures;
+}
+
+export function probeApiRuntimeArtifacts(image, run = spawnSync) {
+  return runContainerProbes(image, [
+    {
+      args: [
+        "run",
+        "--rm",
+        "--network=none",
+        "--pull=never",
+        "--read-only",
+        "--entrypoint=/nodejs/bin/node",
+        image,
+        "-e",
+        API_FILESYSTEM_PROBE,
+      ],
+      failure: "Node 24, production environment, or API entry artifact probe failed",
+    },
+  ], run);
+}
+
 export function probeWorkerRuntimeArtifacts(image, run = spawnSync) {
-  const probes = [
+  return runContainerProbes(image, [
     {
       args: [
         "run",
@@ -212,7 +294,7 @@ export function probeWorkerRuntimeArtifacts(image, run = spawnSync) {
         "-e",
         WORKER_FILESYSTEM_PROBE,
       ],
-      failure: "Node 24, Kernel executable, or appearance artifact probe failed",
+      failure: "Node 24, production environment, Worker entry, Kernel, or appearance artifact probe failed",
     },
     {
       args: [
@@ -229,23 +311,15 @@ export function probeWorkerRuntimeArtifacts(image, run = spawnSync) {
       ],
       failure: "Kernel restore-archive executable probe failed",
     },
-  ];
-  const failures = [];
-  for (const probe of probes) {
-    const result = run("docker", probe.args, { encoding: "utf8" });
-    if (result.status !== 0) {
-      failures.push(`${image}: ${probe.failure}`);
-    }
-  }
-  return failures;
+  ], run);
 }
 
 function main() {
   const { images, options } = parseArguments(process.argv.slice(2));
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
   const inspect = spawnSync("docker", ["image", "inspect", ...images], { encoding: "utf8" });
-  if (inspect.status !== 0) {
-    throw new Error(inspect.stderr.trim() || inspect.error?.message || "docker image inspect failed");
+  if (inspect.status !== 0 || inspect.error !== undefined) {
+    throw new Error(probeFailure("docker image inspect", "failed", inspect));
   }
 
   const inspectedImages = JSON.parse(inspect.stdout);
@@ -254,9 +328,13 @@ function main() {
     upstreamCommit: baseline.upstreamCommit,
   });
   if (failures.length === 0) {
+    const apiIndex = inspectedImages.findIndex(
+      (inspectedImage) => inspectedImage?.Config?.Labels?.["org.opencontainers.image.title"] === API_TITLE,
+    );
     const workerIndex = inspectedImages.findIndex(
       (inspectedImage) => inspectedImage?.Config?.Labels?.["org.opencontainers.image.title"] === WORKER_TITLE,
     );
+    failures.push(...probeApiRuntimeArtifacts(images[apiIndex]));
     failures.push(...probeWorkerRuntimeArtifacts(images[workerIndex]));
   }
   if (failures.length > 0) {

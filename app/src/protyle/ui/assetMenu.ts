@@ -3,6 +3,7 @@ import {contentPathExtension} from "../hint/path";
 import {combineAbortSignals} from "../util/abortSignal";
 import {isNarrowViewport} from "../util/browserPlatform";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {protyleContentScopeIdentity} from "../runtime/contentScope";
 import {hasClosestByAttribute, hasClosestByClassName} from "../util/hasClosest";
 import {upDownHint} from "../util/upDownHint";
 
@@ -58,7 +59,7 @@ const renderPreview = (
     path: string,
 ) => {
     const type = contentPathExtension(path);
-    const source = protyle.session!.runtime.resources.resolveAsset(state.identity, path);
+    const source = protyle.runtime.resources.resolveAsset(state.identity, path);
     let preview: HTMLElement;
     if (Constants.SIYUAN_ASSETS_IMAGE.includes(type)) {
         const image = document.createElement("img");
@@ -88,7 +89,7 @@ export const openAssetMenu = (options: OpenAssetMenuOptions) => {
     const {protyle} = options;
     activeAssetMenus.get(protyle)?.handle.close();
 
-    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    const runtime = protyle.runtime;
     const handle = runtime.menu.open();
     const state: AssetMenuState = {
         controller: new AbortController(),
@@ -211,10 +212,8 @@ export const openAssetMenu = (options: OpenAssetMenuOptions) => {
                     renderListMessage(listElement, protyle.localization.kernelText(258));
                     previewElement.textContent = protyle.localization.kernelText(258);
                     console.error("[protyle.asset-menu] search failed", {
-                        documentId: state.identity.documentId,
+                        ...protyleContentScopeIdentity(protyle),
                         error,
-                        notebookId: state.identity.notebookId,
-                        spaceId: protyle.session!.spaceId,
                     });
                 });
             };

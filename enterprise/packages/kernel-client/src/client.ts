@@ -2,6 +2,8 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 import { request as requestHttps } from "node:https";
 import type { Readable } from "node:stream";
 
+import { z } from "zod";
+
 import { KernelCredentialService } from "./credentials.js";
 import type {
   KernelDeploymentIdentity,
@@ -15,6 +17,7 @@ import {
 
 export const KERNEL_NOTEBOOK_ID_HEADER = "x-singularity-notebook-id";
 export const KERNEL_DOCUMENT_ID_HEADER = "x-singularity-document-id";
+export const kernelRequestTimeoutSchema = z.number().int().min(1).max(86_400_000);
 
 export interface KernelPrivateContentIdentity {
   readonly documentId: string;
@@ -30,6 +33,7 @@ export interface KernelPrivateRequest {
   path: string;
   requestId: string;
   signal?: AbortSignal;
+  timeoutMilliseconds?: number;
 }
 
 export interface KernelPrivateResponse {
@@ -72,6 +76,7 @@ function isForbiddenRequestHeader(name: string): boolean {
   );
 }
 
+/** 只投影路由声明允许的上游请求头，避免浏览器或调用方旁路认证边界。 */
 function selectRequestHeaders(
   source: IncomingHttpHeaders,
   policy: ResolvedKernelRoutePolicy,
@@ -89,6 +94,10 @@ function selectRequestHeaders(
   return selected;
 }
 
+/**
+ * 在路由策略允许的范围内注入内容身份；服务级路由严禁携带文档身份。
+ * 这是跨进程内容请求的唯一身份头构造点，下游直接消费已收敛的头部合同。
+ */
 function addContentIdentity(
   headers: Record<string, string | string[]>,
   identity: KernelPrivateContentIdentity | undefined,
@@ -148,7 +157,24 @@ export class KernelPrivateClient {
     }
   }
 
+  /**
+   * 通过已解析部署句柄发起单次 mTLS 请求，并把请求体、响应流和 AbortSignal 绑定到同一生命周期。
+   * 返回响应头后仍由消费者负责消费或销毁响应体，直到流结束前不能解除取消监听。
+   */
   request(input: KernelPrivateRequest): Promise<KernelPrivateResponse> {
+    if (input.signal?.aborted) {
+      const reason = input.signal.reason;
+      return Promise.reject(
+        new KernelTransportError("unavailable", {
+          cause: reason,
+        }),
+      );
+    }
+    const timeoutMilliseconds =
+      input.timeoutMilliseconds ?? this.#timeoutMilliseconds;
+    if (!kernelRequestTimeoutSchema.safeParse(timeoutMilliseconds).success) {
+      throw new Error("Kernel request timeout is unavailable");
+    }
     const policy = this.#policies.resolve(input.method, input.path);
     const deployment = this.#deployments.resolve(input.deployment);
     const headers = selectRequestHeaders(input.headers, policy);
@@ -162,18 +188,66 @@ export class KernelPrivateClient {
 
     return new Promise((resolve, reject) => {
       let settled = false;
-      const fail = (error: unknown) => {
+      let response: IncomingMessage | undefined;
+      let request: ReturnType<typeof requestHttps>;
+      let onRequestError: ((error: Error) => void) | undefined;
+      let onRequestTimeout: (() => void) | undefined;
+      let onAbort: (() => void) | undefined;
+      let onBodyError: ((error: Error) => void) | undefined;
+      let onResponseEnd: (() => void) | undefined;
+
+      const destroyBody = (error?: Error): void => {
+        if (
+          input.body !== undefined &&
+          typeof input.body !== "string" &&
+          !(input.body instanceof Uint8Array) &&
+          !input.body.destroyed
+        ) {
+          input.body.destroy(error);
+        }
+      };
+
+      const cleanup = (): void => {
+        if (onRequestError !== undefined) {
+          request.off("error", onRequestError);
+        }
+        if (onRequestTimeout !== undefined) {
+          request.off("timeout", onRequestTimeout);
+        }
+        if (onAbort !== undefined) {
+          input.signal?.removeEventListener("abort", onAbort);
+        }
+        if (
+          onBodyError !== undefined &&
+          input.body !== undefined &&
+          typeof input.body !== "string" &&
+          !(input.body instanceof Uint8Array)
+        ) {
+          input.body.off("error", onBodyError);
+        }
+        if (response !== undefined && onResponseEnd !== undefined) {
+          response.off("end", onResponseEnd);
+          response.off("close", onResponseEnd);
+          response.off("aborted", onResponseEnd);
+          response.off("error", onResponseEnd);
+        }
+      };
+
+      const fail = (error: unknown): void => {
         if (settled) {
           return;
         }
         settled = true;
+        cleanup();
+        destroyBody(error instanceof Error ? error : undefined);
         reject(
           error instanceof KernelTransportError
             ? error
             : new KernelTransportError("unavailable", { cause: error }),
         );
       };
-      const request = requestHttps(
+
+      request = requestHttps(
         {
           agent: false,
           ca: deployment.tls.caCertificate,
@@ -187,42 +261,59 @@ export class KernelPrivateClient {
           port: deployment.port,
           rejectUnauthorized: true,
           servername: deployment.serverName,
-          timeout: this.#timeoutMilliseconds,
+          timeout: timeoutMilliseconds,
         },
-        (response) => {
+        (incomingResponse) => {
+          response = incomingResponse;
           settled = true;
+          onResponseEnd = (): void => cleanup();
+          incomingResponse.once("end", onResponseEnd);
+          incomingResponse.once("close", onResponseEnd);
+          incomingResponse.once("aborted", onResponseEnd);
+          incomingResponse.once("error", onResponseEnd);
           resolve({
-            headers: selectResponseHeaders(response.headers, policy),
-            message: response,
+            headers: selectResponseHeaders(incomingResponse.headers, policy),
+            message: incomingResponse,
             policy,
-            status: response.statusCode ?? 502,
+            status: incomingResponse.statusCode ?? 502,
           });
         },
       );
-      request.once("error", fail);
-      request.once("timeout", () => {
+      onRequestError = (error: Error): void => fail(error);
+      request.once("error", onRequestError);
+      onRequestTimeout = (): void => {
         const error = new KernelTransportError("timeout");
         fail(error);
         request.destroy(error);
-      });
+      };
+      request.once("timeout", onRequestTimeout);
       if (input.signal) {
-        if (input.signal.aborted) {
-          request.destroy(input.signal.reason);
-        } else {
-          input.signal.addEventListener(
-            "abort",
-            () => request.destroy(input.signal?.reason),
-            { once: true },
-          );
-        }
+        onAbort = (): void => {
+          const reason = input.signal?.reason;
+          const abortError =
+            reason instanceof Error
+              ? reason
+              : new KernelTransportError("unavailable", { cause: reason });
+          destroyBody(abortError);
+          request.destroy(abortError);
+          response?.destroy(abortError);
+        };
+        input.signal.addEventListener("abort", onAbort, { once: true });
       }
 
       if (input.body === undefined) {
         request.end();
-      } else if (typeof input.body === "string" || input.body instanceof Uint8Array) {
+      } else if (
+        typeof input.body === "string" ||
+        input.body instanceof Uint8Array
+      ) {
         request.end(input.body);
       } else {
-        input.body.once("error", (error) => request.destroy(error));
+        onBodyError = (error: Error): void => {
+          fail(error);
+          request.destroy(error);
+        };
+        input.body.once("error", onBodyError);
         input.body.pipe(request);
       }
     });

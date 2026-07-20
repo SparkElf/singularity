@@ -6,7 +6,8 @@ import type {
 } from "@singularity/protyle-browser";
 import {
   type ReactNode,
-  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -21,6 +22,7 @@ import {
   selectContentDocument,
   useContentSelectionStore,
   type ContentSelectionScope,
+  type ContentSelectionTarget,
 } from "@/spaces/content-selection.ts";
 import {
   createSpaceProtyleSession,
@@ -28,6 +30,7 @@ import {
   type SpaceProtyleMenuSurfaceFactory,
   type SpaceProtyleRuntime,
   type SpaceSessionComposition,
+  type SpaceSessionTerminalEvent,
 } from "@/spaces/space-session.ts";
 
 export type RuntimeErrorEvent = ProtyleRuntimeErrorEvent;
@@ -39,8 +42,28 @@ type SessionPhase = "blocked" | "creating" | "disposing" | "idle" | "ready";
 
 interface OwnedSession {
   readonly generation: number;
+  readonly requestTerminal: (
+    event: SpaceSessionTerminalEvent,
+  ) => Promise<boolean>;
   readonly scope: ContentSelectionScope;
   readonly session: ProtyleSession<SpaceProtyleRuntime>;
+}
+
+interface TerminalTransition {
+  readonly promise: Promise<boolean>;
+  readonly scope: ContentSelectionScope;
+}
+
+/** 通过当前组合根引用转发终止请求，避免渲染阶段直接读取可变 Session。 */
+function requestOwnedSessionTerminal(
+  activeSessionRef: { readonly current: OwnedSession | null },
+  scope: ContentSelectionScope,
+  event: SpaceSessionTerminalEvent,
+): Promise<boolean> {
+  const owned = activeSessionRef.current;
+  return owned?.scope === scope
+    ? owned.requestTerminal(event)
+    : Promise.resolve(false);
 }
 
 type RuntimeCorrelation = Pick<
@@ -63,6 +86,7 @@ export interface SpaceSessionRootProps {
   readonly retryRuntime: () => Promise<SpaceRuntimeBootstrap>;
 }
 
+/** 冻结 Transport 后等待真实 Protyle dispose，并无条件清空 portal DOM。 */
 async function disposeOwnedSession(
   owned: OwnedSession,
   portalRoot: HTMLElement,
@@ -81,8 +105,9 @@ async function disposeOwnedSession(
         ? { triggeringRequestId: correlation.triggeringRequestId }
         : {}),
     });
-  } catch {
+  } catch (error) {
     console.error("[protyle.lifecycle]", {
+      error,
       generation: owned.generation,
       phase: "dispose",
       result: "failed",
@@ -106,6 +131,13 @@ function sameSpace(
     first.spaceId === second.spaceId;
 }
 
+/** 判断运行时错误是否需要终止当前 Session，非终止错误只阻断写入而不清理空间。 */
+function isTerminalRuntimeError(
+  event: ProtyleRuntimeErrorEvent,
+): event is SpaceSessionTerminalEvent {
+  return event.category === "unauthenticated" || event.category === "forbidden";
+}
+
 export function SpaceSessionRoot({
   bootstrap,
   children,
@@ -118,162 +150,145 @@ export function SpaceSessionRoot({
   const generationRef = useRef(0);
   const lifecycleQueueRef = useRef<Promise<void>>(Promise.resolve());
   const mountedRef = useRef(false);
-  const onAccessLostRef = useRef(onAccessLost);
-  const onHostEventRef = useRef(onHostEvent);
+  const onAccessLostCurrent = useEffectEvent(onAccessLost);
+  const onHostEventCurrent = useEffectEvent(onHostEvent);
   const portalRootRef = useRef<HTMLDivElement>(null);
-  const retryRuntimeRef = useRef(retryRuntime);
-  const bootstrapRef = useRef<ReadySpaceRuntimeBootstrap | null>(bootstrap);
-  const menuSurfaceFactoryRef = useRef(createProtyleMenuSurface);
+  const retryRuntimeCurrent = useEffectEvent(retryRuntime);
+  const bootstrapCurrent = useEffectEvent(() => bootstrap);
+  const menuSurfaceFactoryCurrent = useEffectEvent(createProtyleMenuSurface);
   const selectionScopeRef = useRef<ContentSelectionScope | null>(null);
+  const terminalTransitionRef = useRef<TerminalTransition | null>(null);
   const [renderedSession, setRenderedSession] = useState<
     ProtyleSession<SpaceProtyleRuntime> | null
+  >(null);
+  const [renderedBootstrap, setRenderedBootstrap] = useState<
+    ReadySpaceRuntimeBootstrap | null
   >(null);
   const [selectionScope, setSelectionScope] = useState<ContentSelectionScope | null>(null);
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const selection = useContentSelectionStore((state) => state.selection);
-  onAccessLostRef.current = onAccessLost;
-  onHostEventRef.current = onHostEvent;
-  retryRuntimeRef.current = retryRuntime;
-  bootstrapRef.current = bootstrap;
-  menuSurfaceFactoryRef.current = createProtyleMenuSurface;
-
-  useEffect(() => {
+  /** 按空间路由代次创建唯一 Session，并在切换、撤权或退出时串行冻结和销毁。 */
+  useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const portalRoot = portalRootRef.current;
     if (!portalRoot) {
       return;
     }
 
-    const targetBootstrap = bootstrapRef.current;
+    const targetBootstrap = bootstrapCurrent();
     const generation = ++generationRef.current;
-    const nextScope = targetBootstrap
-      ? activateContentSelectionScope(targetBootstrap)
-      : null;
-    const previousScope = selectionScopeRef.current;
-    if (previousScope && previousScope !== nextScope) {
-      releaseContentSelectionScope(previousScope);
-    }
-    selectionScopeRef.current = nextScope;
-    if (mountedRef.current) {
-      setSelectionScope(nextScope);
-      setPhase(targetBootstrap ? "creating" : "idle");
-    }
     let cancelled = false;
+    let nextScope: ContentSelectionScope | null = null;
+    const previousScope = selectionScopeRef.current;
+    const previousSession = activeSessionRef.current;
+    if (previousScope) {
+      freezeContentSelectionScope(previousScope);
+    }
+    previousSession?.session.runtime.transport.freeze();
+    if (mountedRef.current) {
+      setPhase(
+        previousScope || previousSession
+          ? "disposing"
+          : targetBootstrap ? "creating" : "idle",
+      );
+    }
+
+    const clearOwnedRenderState = (
+      scope: ContentSelectionScope,
+      session: ProtyleSession<SpaceProtyleRuntime> | null,
+    ) => {
+      if (selectionScopeRef.current === scope) {
+        releaseContentSelectionScope(scope);
+        selectionScopeRef.current = null;
+      }
+      if (!mountedRef.current) {
+        return;
+      }
+      setSelectionScope((current) => current === scope ? null : current);
+      if (session) {
+        setRenderedSession((current) => current === session ? null : current);
+      }
+      setRenderedBootstrap((current) =>
+        current && sameSpace(current, scope) ? null : current
+      );
+      setPhase("idle");
+    };
 
     const createCurrentSession = async () => {
-      const previous = activeSessionRef.current;
-      if (previous && previous.scope !== nextScope) {
-        activeSessionRef.current = null;
+      if (
+        !targetBootstrap ||
+        cancelled ||
+        generation !== generationRef.current
+      ) {
+        return;
+      }
+      const scope = activateContentSelectionScope(targetBootstrap);
+      nextScope = scope;
+      terminalTransitionRef.current = null;
+      selectionScopeRef.current = scope;
+      if (mountedRef.current) {
+        setRenderedBootstrap(targetBootstrap);
+        setSelectionScope(scope);
+        setPhase("creating");
+      }
+
+      let ownedSession: OwnedSession | null = null;
+      /** 只接受当前 scope 的 terminal 请求，完成销毁后才通知上层清理授权状态。 */
+      const requestTerminal = (
+        event: SpaceSessionTerminalEvent,
+      ): Promise<boolean> => {
+        const existingTransition = terminalTransitionRef.current;
+        if (existingTransition?.scope === scope) {
+          return existingTransition.promise;
+        }
+        const active = activeSessionRef.current;
+        const currentBootstrap = bootstrapCurrent();
+        if (
+          ownedSession === null ||
+          active !== ownedSession ||
+          active.generation !== generation ||
+          active.scope !== scope ||
+          generation !== generationRef.current ||
+          selectionScopeRef.current !== scope ||
+          !currentBootstrap ||
+          !sameSpace(currentBootstrap, scope)
+        ) {
+          console.warn("[protyle.lifecycle]", {
+            generation,
+            phase: "terminal",
+            result: "stale-generation-rejected",
+            spaceId: targetBootstrap.spaceId,
+            ...(event.documentId ? { documentId: event.documentId } : {}),
+            ...(event.triggeringRequestId
+              ? { triggeringRequestId: event.triggeringRequestId }
+              : {}),
+          });
+          return Promise.resolve(false);
+        }
+
+        ++generationRef.current;
+        freezeContentSelectionScope(scope);
+        active.session.runtime.transport.freeze();
         if (mountedRef.current) {
           setPhase("disposing");
         }
-        await disposeOwnedSession(previous, portalRoot);
-        if (mountedRef.current) {
-          setRenderedSession((current) =>
-            current === previous.session ? null : current,
-          );
-        }
-      }
-      if (!targetBootstrap || !nextScope) {
-        if (mountedRef.current) {
-          setPhase("idle");
-          setRenderedSession(null);
-        }
-        return;
-      }
-      if (cancelled || generation !== generationRef.current) {
-        console.warn("[protyle.lifecycle]", {
-          generation,
-          phase: "create",
-          result: "stale-generation-rejected",
-          spaceId: targetBootstrap.spaceId,
-        });
-        return;
-      }
-
-      const session = createSpaceProtyleSession({
-        bootstrap: targetBootstrap,
-        createProtyleMenuSurface: (options) =>
-          menuSurfaceFactoryRef.current(options),
-        getCsrfToken: getOrFetchCsrfToken,
-        onHostEvent: (event) => {
-          const active = activeSessionRef.current;
-          const currentBootstrap = bootstrapRef.current;
-          if (
-            !active ||
-            active.generation !== generation ||
-            active.scope !== nextScope ||
-            generation !== generationRef.current ||
-            selectionScopeRef.current !== nextScope ||
-            !currentBootstrap ||
-            !sameSpace(currentBootstrap, nextScope)
-          ) {
-            console.warn("[protyle.lifecycle]", {
-              generation,
-              phase: "host-event",
-              result: "stale-generation-rejected",
-              spaceId: targetBootstrap.spaceId,
-              ...(event.type === "runtime-error" && event.documentId
-                ? { documentId: event.documentId }
-                : {}),
-              ...(event.type === "runtime-error" && event.triggeringRequestId
-                ? { triggeringRequestId: event.triggeringRequestId }
-                : {}),
-            });
-            return;
+        const terminalPromise: Promise<boolean> = lifecycleQueueRef.current.then(async () => {
+          await disposeOwnedSession(active, portalRoot, event);
+          if (activeSessionRef.current === active) {
+            activeSessionRef.current = null;
           }
-          if (event.type !== "runtime-error") {
-            Promise.resolve(onHostEventRef.current(event, currentBootstrap)).catch((error: unknown) => {
-              console.error("[protyle.host]", {
-                error: error instanceof Error ? error.message : "unknown",
-                eventType: event.type,
-                generation,
-                phase: "mediator",
-                result: "failed",
-                spaceId: targetBootstrap.spaceId,
-              });
-            });
-            return;
-          }
-          if (event.category !== "unauthenticated" && event.category !== "forbidden") {
-            if (mountedRef.current) {
-              setPhase("blocked");
-            }
-            return;
-          }
-
-          ++generationRef.current;
-          freezeContentSelectionScope(nextScope);
-          active.session.runtime.transport.freeze();
-          if (mountedRef.current) {
-            setPhase("disposing");
-          }
-          lifecycleQueueRef.current = lifecycleQueueRef.current.then(async () => {
-            await disposeOwnedSession(active, portalRoot, event);
-            if (activeSessionRef.current === active) {
-              activeSessionRef.current = null;
-            }
-            if (selectionScopeRef.current === nextScope) {
-              releaseContentSelectionScope(nextScope);
-              selectionScopeRef.current = null;
-              if (mountedRef.current) {
-                setSelectionScope(null);
-              }
-            }
-            if (mountedRef.current) {
-              setRenderedSession((current) =>
-                current === active.session ? null : current,
-              );
-            }
-            await onAccessLostRef.current(event, currentBootstrap);
-          }).catch(() => {
+          clearOwnedRenderState(scope, active.session);
+          try {
+            await onAccessLostCurrent(event, currentBootstrap);
+          } catch (error) {
             console.error("[protyle.lifecycle]", {
+              error,
               generation,
               phase: "access-loss",
               result: "notification-failed",
@@ -283,15 +298,99 @@ export function SpaceSessionRoot({
                 ? { triggeringRequestId: event.triggeringRequestId }
                 : {}),
             });
-          });
-        },
-        portalRoot,
-        retryRuntime: () => retryRuntimeRef.current(),
-      });
-      const owned = { generation, scope: nextScope, session };
-      if (cancelled || generation !== generationRef.current ||
-        selectionScopeRef.current !== nextScope) {
+          }
+          if (terminalTransitionRef.current?.promise === terminalPromise) {
+            terminalTransitionRef.current = null;
+          }
+          return true;
+        });
+        terminalTransitionRef.current = {
+          promise: terminalPromise,
+          scope,
+        };
+        lifecycleQueueRef.current = terminalPromise.then(() => undefined);
+        return terminalPromise;
+      };
+
+      let session: ProtyleSession<SpaceProtyleRuntime>;
+      try {
+        session = createSpaceProtyleSession({
+          bootstrap: targetBootstrap,
+          createProtyleMenuSurface: (options) =>
+            menuSurfaceFactoryCurrent(options),
+          getCsrfToken: getOrFetchCsrfToken,
+          onHostEvent: (event) => {
+            const active = activeSessionRef.current;
+            const currentBootstrap = bootstrapCurrent();
+            if (
+              !active ||
+              active.generation !== generation ||
+              active.scope !== scope ||
+              generation !== generationRef.current ||
+              selectionScopeRef.current !== scope ||
+              !currentBootstrap ||
+              !sameSpace(currentBootstrap, scope)
+            ) {
+              console.warn("[protyle.lifecycle]", {
+                generation,
+                phase: "host-event",
+                result: "stale-generation-rejected",
+                spaceId: targetBootstrap.spaceId,
+                ...(event.type === "runtime-error" && event.documentId
+                  ? { documentId: event.documentId }
+                  : {}),
+                ...(event.type === "runtime-error" && event.triggeringRequestId
+                  ? { triggeringRequestId: event.triggeringRequestId }
+                  : {}),
+              });
+              return;
+            }
+            if (event.type !== "runtime-error") {
+              void Promise.resolve()
+                .then(() => onHostEventCurrent(event, currentBootstrap))
+                .catch((error: unknown) => {
+                  console.error("[protyle.host]", {
+                    error,
+                    eventType: event.type,
+                    generation,
+                    phase: "mediator",
+                    result: "failed",
+                    spaceId: targetBootstrap.spaceId,
+                  });
+                });
+              return;
+            }
+            if (!isTerminalRuntimeError(event)) {
+              if (mountedRef.current) {
+                setPhase("blocked");
+              }
+              return;
+            }
+            void requestTerminal(event);
+          },
+          portalRoot,
+          retryRuntime: () => retryRuntimeCurrent(),
+        });
+      } catch (error) {
+        clearOwnedRenderState(scope, null);
+        throw error;
+      }
+
+      const owned = {
+        generation,
+        requestTerminal,
+        scope,
+        session,
+      };
+      ownedSession = owned;
+      if (
+        cancelled ||
+        generation !== generationRef.current ||
+        selectionScopeRef.current !== scope
+      ) {
+        freezeContentSelectionScope(scope);
         await disposeOwnedSession(owned, portalRoot);
+        clearOwnedRenderState(scope, session);
         if (!cancelled) {
           console.warn("[protyle.lifecycle]", {
             generation,
@@ -318,52 +417,66 @@ export function SpaceSessionRoot({
 
     lifecycleQueueRef.current = lifecycleQueueRef.current
       .then(createCurrentSession)
-      .catch(() => {
+      .catch((error: unknown) => {
         console.error("[protyle.lifecycle]", {
+          error,
           generation,
           phase: "create",
           result: "failed",
+          ...(targetBootstrap ? { spaceId: targetBootstrap.spaceId } : {}),
         });
       });
 
     return () => {
       cancelled = true;
+      // 终止当前代次后拒绝所有尚未完成的创建与事件回调。
       if (generationRef.current === generation) {
+        // 终止清理必须读取最新代次，不能捕获创建 effect 的旧值。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         ++generationRef.current;
       }
       if (nextScope) {
-        releaseContentSelectionScope(nextScope);
-        if (selectionScopeRef.current === nextScope) {
-          selectionScopeRef.current = null;
-        }
-        if (mountedRef.current) {
-          setSelectionScope((current) => current === nextScope ? null : current);
-        }
+        freezeContentSelectionScope(nextScope);
       }
       const active = activeSessionRef.current;
-      if (!active || active.generation !== generation) {
-        return;
+      if (active?.generation === generation) {
+        active.session.runtime.transport.freeze();
       }
-      activeSessionRef.current = null;
-      active.session.runtime.transport.freeze();
-      lifecycleQueueRef.current = lifecycleQueueRef.current.then(async () => {
-        await disposeOwnedSession(active, portalRoot);
-        if (mountedRef.current) {
-          setRenderedSession((current) =>
-            current === active.session ? null : current,
-          );
-        }
-      });
+      if (mountedRef.current && (nextScope || active?.generation === generation)) {
+        setPhase("disposing");
+      }
+      lifecycleQueueRef.current = lifecycleQueueRef.current
+        .then(async () => {
+          const owned = activeSessionRef.current;
+          if (owned?.generation === generation) {
+            await disposeOwnedSession(owned, portalRoot);
+            if (activeSessionRef.current === owned) {
+              activeSessionRef.current = null;
+            }
+            clearOwnedRenderState(owned.scope, owned.session);
+            return;
+          }
+          if (nextScope && selectionScopeRef.current === nextScope) {
+            clearOwnedRenderState(nextScope, null);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("[protyle.lifecycle]", {
+            error,
+            generation,
+            phase: "dispose",
+            result: "cleanup-failed",
+            ...(targetBootstrap ? { spaceId: targetBootstrap.spaceId } : {}),
+          });
+        });
     };
-  }, [bootstrap?.organizationId, bootstrap?.spaceId]);
+  }, [bootstrap?.organizationId, bootstrap?.role, bootstrap?.spaceId]);
 
   const currentScope = selectionScope;
-  const currentBootstrap = bootstrap;
-  const owned = activeSessionRef.current;
-  const session = currentScope && owned && owned.scope === currentScope &&
-    owned.session === renderedSession
-    ? renderedSession
-    : null;
+  const currentBootstrap = currentScope && sameSpace(bootstrap, currentScope)
+    ? bootstrap
+    : renderedBootstrap;
+  const session = currentScope && renderedSession ? renderedSession : null;
   const scopedSelection = currentScope &&
     isContentSelectionScopeActive(currentScope)
       ? selection?.spaceId === currentScope.spaceId ? selection : null
@@ -373,16 +486,24 @@ export function SpaceSessionRoot({
       ? {
           bootstrap: currentBootstrap,
           clearSelection: () => clearContentSelection(currentScope),
+          requestTerminal: (event: SpaceSessionTerminalEvent) =>
+            requestOwnedSessionTerminal(activeSessionRef, currentScope, event),
           scope: currentScope,
           selection: scopedSelection,
-          selectDocument: (target: { readonly documentId: string; readonly notebookId: string }) =>
+          selectDocument: (target: ContentSelectionTarget) =>
             selectContentDocument(currentScope, target),
           session,
         } satisfies SpaceSessionComposition
       : null;
 
   return (
-    <div className="contents" data-space-session-state={phase}>
+    <div
+      aria-hidden={phase === "disposing" ? true : undefined}
+      className={phase === "disposing" ? "contents invisible pointer-events-none" : "contents"}
+      data-space-session-state={phase}
+    >
+      {/* 组合对象中的终止回调只在事件触发时读取 Session 引用。 */}
+      {/* eslint-disable-next-line react-hooks/refs */}
       {children(composition)}
       <div ref={portalRootRef} data-protyle-session-portals />
     </div>

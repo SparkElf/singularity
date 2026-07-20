@@ -24,18 +24,17 @@ export function parseReturnTo(search: string, publicOrigin: string): string | nu
     return null;
   }
 
-  try {
-    const target = new URL(candidate, publicOrigin);
-    if (
-      target.origin !== publicOrigin ||
-      target.username !== "" ||
-      target.password !== ""
-    ) {
-      return null;
-    }
-
-    return `${target.pathname}${target.search}${target.hash}`;
-  } catch {
+  if (!URL.canParse(candidate, publicOrigin)) {
     return null;
   }
+  const target = new URL(candidate, publicOrigin);
+  if (
+    target.origin !== publicOrigin ||
+    target.username !== "" ||
+    target.password !== ""
+  ) {
+    return null;
+  }
+
+  return `${target.pathname}${target.search}${target.hash}`;
 }

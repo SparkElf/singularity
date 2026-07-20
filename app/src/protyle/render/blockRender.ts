@@ -2,6 +2,7 @@ import {hasClosestByAttribute} from "../util/hasClosest";
 import {combineAbortSignals} from "../util/abortSignal";
 import {processRender} from "../util/processCode";
 import {protyleContentIdentity} from "../util/contentLoad";
+import {protyleContentScopeIdentity} from "../runtime/contentScope";
 import {resolveProtyleContentAssetSources} from "../util/assetSource";
 import {genBreadcrumb, improveBreadcrumbAppearance} from "../wysiwyg/renderBacklink";
 import {avRender} from "./av/render";
@@ -48,7 +49,7 @@ const requestEmbed = <TResponse>(
     path: string,
     body?: unknown,
 ) => {
-    const runtime = protyle.session!.runtime as TProtyleRuntime;
+    const runtime = protyle.runtime;
     return runtime.transport.request<TResponse>(path, body, {
         identity: protyleContentIdentity(protyle),
         intent: "read",
@@ -86,12 +87,7 @@ const runEmbedScript = async (
     load: EmbedLoad,
     top?: number,
 ) => {
-    const identity = protyleContentIdentity(protyle);
-    const context = Object.freeze({
-        documentId: identity.documentId,
-        notebookId: identity.notebookId,
-        spaceId: protyle.session!.spaceId,
-    });
+    const context = Object.freeze(protyleContentScopeIdentity(protyle));
     const execute = new Function("request", "item", "context", "top", content) as (
         request: EmbedScriptRequest,
         item: HTMLElement,

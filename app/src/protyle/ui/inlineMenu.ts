@@ -51,7 +51,7 @@ const inlineInputWidth = "min(360px, calc(100vw - 32px))";
 const openInlineMenu = (protyle: IProtyle, name: string): OwnedInlineMenu => {
     activeInlineMenus.get(protyle)?.handle.close();
 
-    const handle = protyle.session!.runtime.menu.open();
+    const handle = protyle.runtime.menu.open();
     const controller = new AbortController();
     const signal = combineAbortSignals([protyle.requestSignal, controller.signal]);
     const state: ActiveInlineMenu = {handle};
@@ -96,7 +96,7 @@ const requestKernel = <T>(
     body: unknown,
     intent: "read" | "write",
     identity: ProtyleContentIdentity = protyleContentIdentity(protyle),
-) => protyle.session!.runtime.transport.request<KernelDataResponse<T>>(path, body, {
+) => protyle.runtime.transport.request<KernelDataResponse<T>>(path, body, {
     identity,
     intent,
     signal,
@@ -984,7 +984,7 @@ export const linkMenu = (protyle: IProtyle, linkElement: HTMLElement, focusText 
                 id: "export",
                 label: protyle.localization.text("export"),
                 icon: "iconUpload",
-                click: () => downloadExportFile(protyle.session!.runtime.resources.resolveAsset(identity, assetPath)),
+                click: () => downloadExportFile(protyle.runtime.resources.resolveAsset(identity, assetPath)),
             });
         }
     }

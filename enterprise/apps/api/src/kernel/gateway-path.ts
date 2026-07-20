@@ -43,8 +43,8 @@ export interface KernelWebSocketTarget {
 }
 
 export class KernelGatewayAdmissionError extends Error {
-  constructor(readonly status: 400 | 403) {
-    super("Kernel gateway request is unavailable");
+  constructor(readonly status: 400 | 403, options?: ErrorOptions) {
+    super("Kernel gateway request is unavailable", options);
     this.name = "KernelGatewayAdmissionError";
   }
 }
@@ -95,8 +95,8 @@ function parseSpaceRoute(rawUrl: string): {
   let canonicalPath: `/${string}`;
   try {
     canonicalPath = canonicalKernelPath(rawUrl);
-  } catch {
-    throw new KernelGatewayAdmissionError(400);
+  } catch (error) {
+    throw new KernelGatewayAdmissionError(400, { cause: error });
   }
   const match = canonicalPath.match(SPACE_PREFIX);
   if (match === null) {
@@ -224,8 +224,8 @@ export function parseKernelGatewayTarget(
   let policy: ResolvedKernelRoutePolicy;
   try {
     policy = policies.resolve(method, upstreamPath);
-  } catch {
-    throw new KernelGatewayAdmissionError(403);
+  } catch (error) {
+    throw new KernelGatewayAdmissionError(403, { cause: error });
   }
   const expectedContentMode = surface === "api" ? "json" : surface;
   if (

@@ -21,7 +21,6 @@ import {
 } from "@singularity/contracts";
 
 import {
-  NetworkFailureError,
   requestJson,
   requestNoContent,
 } from "@/api/http.ts";
@@ -39,10 +38,18 @@ interface ActiveCsrfFetch {
 
 let activeCsrfFetch: ActiveCsrfFetch | null = null;
 
-function invalidatedCsrfFetchError(): NetworkFailureError {
-  return new NetworkFailureError(
-    new DOMException("The browser session changed during the CSRF request", "AbortError"),
-  );
+class CsrfRequestInvalidatedError extends Error {
+  constructor(cause?: unknown) {
+    super("The browser session changed during the CSRF request", { cause });
+    this.name = "AbortError";
+  }
+}
+
+function callerAbortReason(signal: AbortSignal | undefined): Error {
+  const reason: unknown = signal?.reason ?? new DOMException("The request was aborted", "AbortError");
+  return reason instanceof Error
+    ? reason
+    : new Error(String(reason), { cause: reason });
 }
 
 function createCsrfFetch(revision: number): ActiveCsrfFetch {
@@ -53,19 +60,29 @@ function createCsrfFetch(revision: number): ActiveCsrfFetch {
   };
   const promise = requestJson(csrfResponseSchema, AUTH_CSRF_PATH, {
     signal: controller.signal,
-  }).then(({ csrfToken }) => {
-    const state = useCsrfStore.getState();
-    if (state.csrfRevision !== revision) {
-      throw invalidatedCsrfFetchError();
-    }
-    state.setCsrfToken(csrfToken);
-    return csrfToken;
-  }).finally(() => {
-    lifecycle.settled = true;
-    if (activeCsrfFetch?.controller === controller) {
-      activeCsrfFetch = null;
-    }
-  });
+  })
+    .then(
+      ({ csrfToken }) => {
+        const state = useCsrfStore.getState();
+        if (state.csrfRevision !== revision) {
+          throw new CsrfRequestInvalidatedError();
+        }
+        state.setCsrfToken(csrfToken);
+        return csrfToken;
+      },
+      (error: unknown) => {
+        if (useCsrfStore.getState().csrfRevision !== revision) {
+          throw new CsrfRequestInvalidatedError(error);
+        }
+        throw error;
+      },
+    )
+    .finally(() => {
+      lifecycle.settled = true;
+      if (activeCsrfFetch?.controller === controller) {
+        activeCsrfFetch = null;
+      }
+    });
   return { controller, lifecycle, promise, revision };
 }
 
@@ -89,12 +106,14 @@ function waitForCsrfFetch(
       outcome();
     };
     const abort = () => {
-      finish(() => reject(new NetworkFailureError(signal?.reason)));
+      finish(() => reject(callerAbortReason(signal)));
     };
     signal?.addEventListener("abort", abort, { once: true });
     void active.promise.then(
       (csrfToken) => finish(() => resolve(csrfToken)),
-      (error: unknown) => finish(() => reject(error)),
+      (error: unknown) => finish(() => reject(
+        error instanceof Error ? error : new Error(String(error), { cause: error }),
+      )),
     );
     if (signal?.aborted) {
       abort();
@@ -115,6 +134,9 @@ export function login(
 }
 
 export function getOrFetchCsrfToken(signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) {
+    return Promise.reject(callerAbortReason(signal));
+  }
   const state = useCsrfStore.getState();
   if (state.csrfToken !== null) {
     return Promise.resolve(state.csrfToken);

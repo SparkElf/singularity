@@ -8,6 +8,7 @@ import {
 
 import {
   AUTH_CSRF_PATH,
+  AUTH_INVITATION_ACCEPT_LOCAL_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_OIDC_CALLBACK_PATH,
@@ -26,7 +27,11 @@ import {
   oidcStartResponseSchema,
   sessionTokenSchema,
 } from "@singularity/contracts";
-import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
+import {
+  DatabaseRuntime,
+  Prisma,
+  type DatabaseClient,
+} from "@singularity/database";
 import {
   afterEach,
   beforeAll,
@@ -354,6 +359,20 @@ function csrfRequest(baseUrl: string, cookie: string): Promise<Response> {
   });
 }
 
+function acceptLocalInvitationRequest(
+  baseUrl: string,
+  input: { invitationToken: string; password: string },
+): Promise<Response> {
+  return fetch(`${baseUrl}${AUTH_INVITATION_ACCEPT_LOCAL_PATH}`, {
+    body: JSON.stringify(input),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: TEST_PUBLIC_ORIGIN,
+    },
+    method: "POST",
+  });
+}
+
 function oidcStartRequest(
   baseUrl: string,
   input: { invitationToken?: string; providerId: string; returnTo?: string },
@@ -387,6 +406,80 @@ function oidcCallbackRequest(
     headers: { Cookie: input.cookie },
     redirect: "manual",
   });
+}
+
+async function holdUserRowLock(
+  database: DatabaseClient,
+  userId: string,
+): Promise<{ completed: Promise<void>; lockerPid: number; release(): void }> {
+  let resolveLocked!: (pid: number) => void;
+  let rejectLocked!: (reason?: unknown) => void;
+  const locked = new Promise<number>((resolve, reject) => {
+    resolveLocked = resolve;
+    rejectLocked = reject;
+  });
+  let resolveRelease!: () => void;
+  const released = new Promise<void>((resolve) => {
+    resolveRelease = resolve;
+  });
+  let didRelease = false;
+  const release = (): void => {
+    if (!didRelease) {
+      didRelease = true;
+      resolveRelease();
+    }
+  };
+  const completed = database.$transaction(
+    async (transaction) => {
+      const rows = await transaction.$queryRaw<Array<{ pid: number }>>(
+        Prisma.sql`
+          SELECT pg_backend_pid() AS "pid"
+          FROM "users"
+          WHERE "id" = ${userId}
+          FOR UPDATE
+        `,
+      );
+      const backend = rows[0];
+      if (backend === undefined) {
+        throw new Error("The session user row lock target does not exist");
+      }
+      resolveLocked(backend.pid);
+      await released;
+    },
+    { maxWait: 2_000, timeout: 10_000 },
+  );
+  void completed.catch(rejectLocked);
+  try {
+    return { completed, lockerPid: await locked, release };
+  } catch (error) {
+    release();
+    await Promise.allSettled([completed]);
+    throw error;
+  }
+}
+
+async function waitForUserLockWaiter(
+  database: DatabaseClient,
+  lockerPid: number,
+): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    const rows = await database.$queryRaw<Array<{ pid: number }>>(
+      Prisma.sql`
+        SELECT activity.pid AS "pid"
+        FROM pg_stat_activity AS activity
+        WHERE ${lockerPid} = ANY(pg_blocking_pids(activity.pid))
+          AND activity.wait_event_type = 'Lock'
+      `,
+    );
+    if (rows.length > 0) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("The session renewal did not wait for the user row lock");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 describe("identity HTTP contract with PostgreSQL", () => {
@@ -894,6 +987,45 @@ describe("identity HTTP contract with PostgreSQL", () => {
     await expectProblem(expired, 401, "unauthenticated");
   });
 
+  test("does not renew a session that expires while authentication waits for its user lock", async () => {
+    const loginIdentifier = `idle-lock-${randomUUID()}@example.test`;
+    const userId = await createUser(loginIdentifier);
+    const login = await loginRequest(
+      testApi.baseUrl,
+      { loginIdentifier, password },
+      { origin: TEST_PUBLIC_ORIGIN },
+    );
+    const cookie = cookiePair(requireSetCookie(login));
+    const initialSession = await database.authSession.findFirstOrThrow({
+      where: { userId },
+      select: { idleExpiresAt: true },
+    });
+    const lock = await holdUserRowLock(database, userId);
+    let renewal: Promise<Response> | undefined;
+    try {
+      clock.set(new Date(initialTime.getTime() + 29 * 60 * 1_000));
+      renewal = csrfRequest(testApi.baseUrl, cookie);
+      await waitForUserLockWaiter(database, lock.lockerPid);
+      clock.set(initialSession.idleExpiresAt);
+      lock.release();
+      await lock.completed;
+
+      await expectProblem(await renewal, 401, "unauthenticated");
+      await expect(
+        database.authSession.findFirstOrThrow({
+          where: { userId },
+          select: { idleExpiresAt: true },
+        }),
+      ).resolves.toEqual(initialSession);
+    } finally {
+      lock.release();
+      await Promise.allSettled([lock.completed]);
+      if (renewal !== undefined) {
+        await Promise.allSettled([renewal]);
+      }
+    }
+  });
+
   test("caps repeated idle renewal at the twelve-hour absolute expiry", async () => {
     const loginIdentifier = `absolute-${randomUUID()}@example.test`;
     await createUser(loginIdentifier);
@@ -956,6 +1088,88 @@ describe("identity HTTP contract with PostgreSQL", () => {
       401,
       "unauthenticated",
     );
+  });
+
+  test("rolls back a local invitation when session persistence fails", async () => {
+    const organizationId = randomUUID();
+    const ownerId = await createUser(
+      `local-rollback-owner-${randomUUID()}@example.test`,
+    );
+    const loginIdentifier = `local-rollback-${randomUUID()}@example.test`;
+    await database.organization.create({
+      data: {
+        id: organizationId,
+        name: "Local invitation rollback",
+        status: "active",
+      },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "owner",
+        status: "active",
+        userId: ownerId,
+      },
+    });
+    const invitation = await testApi.app
+      .get(OrganizationManagementService)
+      .createInvitation({
+        actorUserId: ownerId,
+        expiresInHours: 24,
+        loginIdentifier,
+        organizationId,
+        requestId: randomUUID(),
+        role: "member",
+      });
+    await database.$executeRawUnsafe(`
+      CREATE FUNCTION reject_identity_session_insert()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $body$
+      BEGIN
+        RAISE EXCEPTION 'identity-session-insert-failure';
+      END
+      $body$
+    `);
+    try {
+      await database.$executeRawUnsafe(`
+        CREATE TRIGGER reject_identity_session_insert
+        BEFORE INSERT ON auth_sessions
+        FOR EACH ROW
+        EXECUTE FUNCTION reject_identity_session_insert()
+      `);
+      await expectProblem(
+        await acceptLocalInvitationRequest(testApi.baseUrl, {
+          invitationToken: invitation.invitationToken,
+          password,
+        }),
+        503,
+        "service-unavailable",
+      );
+    } finally {
+      try {
+        await database.$executeRawUnsafe(
+          "DROP TRIGGER IF EXISTS reject_identity_session_insert ON auth_sessions",
+        );
+      } finally {
+        await database.$executeRawUnsafe(
+          "DROP FUNCTION IF EXISTS reject_identity_session_insert()",
+        );
+      }
+    }
+
+    await expect(
+      database.user.findUnique({ where: { loginIdentifier } }),
+    ).resolves.toBeNull();
+    await expect(
+      database.organizationInvitation.findUniqueOrThrow({
+        where: { id: invitation.invitationId },
+        select: { acceptedAt: true, acceptedByUserId: true },
+      }),
+    ).resolves.toEqual({ acceptedAt: null, acceptedByUserId: null });
+    await expect(
+      database.authSession.count({ where: { user: { loginIdentifier } } }),
+    ).resolves.toBe(0);
   });
 
   test("manages organization OIDC providers through owner HTTP routes and hides disabled providers", async () => {
@@ -1317,6 +1531,146 @@ describe("identity HTTP contract with PostgreSQL", () => {
     ).resolves.toBe(1);
   });
 
+  test("returns one conflict when first-identity OIDC callbacks race for one invitation", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const organizationId = randomUUID();
+    const ownerId = await createUser(
+      `oidc-first-race-owner-${randomUUID()}@example.test`,
+    );
+    await database.organization.create({
+      data: {
+        id: organizationId,
+        name: "OIDC first identity race",
+        status: "active",
+      },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "owner",
+        status: "active",
+        userId: ownerId,
+      },
+    });
+    const provider = await database.oidcProvider.create({
+      data: {
+        clientId: oidcClientId,
+        issuer: providerBoundary.issuer,
+        name: "First identity race",
+        organizationId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    const subject = randomUUID();
+    const loginIdentifier = `oidc-${subject}@example.test`;
+    const invitation = await testApi.app
+      .get(OrganizationManagementService)
+      .createInvitation({
+        actorUserId: ownerId,
+        expiresInHours: 24,
+        loginIdentifier,
+        organizationId,
+        requestId: randomUUID(),
+        role: "member",
+      });
+    providerBoundary.install();
+
+    const starts = await Promise.all([
+      oidcStartRequest(testApi.baseUrl, {
+        invitationToken: invitation.invitationToken,
+        providerId: provider.id,
+      }),
+      oidcStartRequest(testApi.baseUrl, {
+        invitationToken: invitation.invitationToken,
+        providerId: provider.id,
+      }),
+    ]);
+    expect(starts.map((response) => response.status)).toEqual([200, 200]);
+    const flows = await Promise.all(
+      starts.map(async (response) => {
+        const flowCookie = cookiePair(
+          requireNamedSetCookie(response, oidcFlowCookieName),
+        );
+        const authorization = new URL(
+          oidcStartResponseSchema.parse(await response.json()).authorizationUrl,
+        );
+        return {
+          flowCookie,
+          nonce: requireSearchParameter(authorization, "nonce"),
+          state: requireSearchParameter(authorization, "state"),
+        };
+      }),
+    );
+    const [firstFlow, secondFlow] = flows;
+    if (firstFlow === undefined || secondFlow === undefined) {
+      throw new Error("Both first-identity OIDC attempts must be available");
+    }
+    const firstCode = "first-identity-race-one";
+    const secondCode = "first-identity-race-two";
+    providerBoundary.configureIdToken({
+      code: firstCode,
+      nonce: firstFlow.nonce,
+      subject,
+    });
+    providerBoundary.configureIdToken({
+      code: secondCode,
+      nonce: secondFlow.nonce,
+      subject,
+    });
+
+    const callbacks = await Promise.all([
+      oidcCallbackRequest(testApi.baseUrl, {
+        code: firstCode,
+        cookie: firstFlow.flowCookie,
+        state: firstFlow.state,
+      }),
+      oidcCallbackRequest(testApi.baseUrl, {
+        code: secondCode,
+        cookie: secondFlow.flowCookie,
+        state: secondFlow.state,
+      }),
+    ]);
+    const accepted = callbacks.find((response) => response.status === 303);
+    const conflicted = callbacks.find((response) => response.status === 409);
+    if (accepted === undefined || conflicted === undefined) {
+      throw new Error("Exactly one first-identity callback must succeed");
+    }
+    await expectProblem(conflicted, 409, "conflict");
+    const user = await database.user.findUniqueOrThrow({
+      where: { loginIdentifier },
+      select: { id: true },
+    });
+    await expect(
+      database.user.count({ where: { loginIdentifier } }),
+    ).resolves.toBe(1);
+    await expect(
+      database.oidcIdentity.count({
+        where: { providerId: provider.id, subject, userId: user.id },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.organizationMembership.findUniqueOrThrow({
+        where: {
+          organizationId_userId: { organizationId, userId: user.id },
+        },
+        select: { role: true, status: true },
+      }),
+    ).resolves.toEqual({ role: "member", status: "active" });
+    await expect(
+      database.authSession.count({ where: { revokedAt: null, userId: user.id } }),
+    ).resolves.toBe(1);
+    await expect(
+      database.auditEvent.count({
+        where: {
+          organizationId,
+          targetId: user.id,
+          targetType: "membership",
+        },
+      }),
+    ).resolves.toBe(1);
+  });
+
   test("consumes one invitation when existing-identity OIDC callbacks race", async () => {
     const providerBoundary = new OidcProviderBoundary(() => clock.now());
     const graph = await createOidcIdentityGraph(providerBoundary);
@@ -1474,15 +1828,13 @@ describe("identity HTTP contract with PostgreSQL", () => {
 
     const unknownState = Buffer.alloc(32, 0x5a).toString("base64url");
     expect(unknownState).not.toBe(state);
-    await expectProblem(
-      await oidcCallbackRequest(testApi.baseUrl, {
-        code: "wrong-state-code",
-        cookie: flowCookie,
-        state: unknownState,
-      }),
-      401,
-      "unauthenticated",
-    );
+    const unknown = await oidcCallbackRequest(testApi.baseUrl, {
+      code: "wrong-state-code",
+      cookie: flowCookie,
+      state: unknownState,
+    });
+    await expectProblem(unknown, 401, "unauthenticated");
+    expect(unknown.headers.getSetCookie()).toEqual([]);
     expect(providerBoundary.tokenExchanges).toHaveLength(0);
     await expect(
       database.oidcAuthorizationAttempt.findFirstOrThrow({
@@ -1542,15 +1894,17 @@ describe("identity HTTP contract with PostgreSQL", () => {
       subject: graph.subject,
     });
 
-    await expectProblem(
-      await oidcCallbackRequest(testApi.baseUrl, {
-        code: "untrusted-token-code",
-        cookie: flowCookie,
-        state,
-      }),
-      401,
-      "unauthenticated",
-    );
+    const rejected = await oidcCallbackRequest(testApi.baseUrl, {
+      code: "untrusted-token-code",
+      cookie: flowCookie,
+      state,
+    });
+    await expectProblem(rejected, 401, "unauthenticated");
+    expect(
+      rejected.headers
+        .getSetCookie()
+        .some((value) => value.startsWith(`${oidcFlowCookieName}=`)),
+    ).toBe(true);
     expect(providerBoundary.tokenExchanges).toHaveLength(1);
     expect(providerBoundary.jwksRequests).toBe(1);
     await expect(
@@ -1574,6 +1928,81 @@ describe("identity HTTP contract with PostgreSQL", () => {
     );
     expect(providerBoundary.tokenExchanges).toHaveLength(1);
     expect(providerBoundary.jwksRequests).toBe(1);
+  });
+
+  test("removes expired OIDC attempts without deleting active flows before starting a new one", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    const digest = (value: string) =>
+      createHash("sha256").update(value, "utf8").digest("hex");
+    await database.oidcAuthorizationAttempt.createMany({
+      data: [
+        {
+          browserBindingDigest: digest("expired-browser"),
+          codeVerifier: "expired-verifier",
+          expiresAt: new Date(initialTime.getTime() - 1),
+          nonceDigest: digest("expired-nonce"),
+          organizationId: graph.organizationId,
+          providerId: graph.providerId,
+          returnTo: "/spaces",
+          stateDigest: digest("expired-state"),
+        },
+        {
+          browserBindingDigest: digest("active-browser"),
+          codeVerifier: "active-verifier",
+          expiresAt: new Date(initialTime.getTime() + 60_000),
+          nonceDigest: digest("active-nonce"),
+          organizationId: graph.organizationId,
+          providerId: graph.providerId,
+          returnTo: "/spaces",
+          stateDigest: digest("active-state"),
+        },
+      ],
+    });
+    providerBoundary.install();
+
+    const response = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+    });
+
+    expect(response.status).toBe(200);
+    await expect(
+      database.oidcAuthorizationAttempt.count({
+        where: {
+          expiresAt: { lte: initialTime },
+          providerId: graph.providerId,
+        },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      database.oidcAuthorizationAttempt.count({
+        where: { providerId: graph.providerId },
+      }),
+    ).resolves.toBe(2);
+  });
+
+  test("rate-limits repeated public OIDC starts before creating another attempt", async () => {
+    const providerBoundary = new OidcProviderBoundary(() => clock.now());
+    const graph = await createOidcIdentityGraph(providerBoundary);
+    providerBoundary.install();
+
+    for (let index = 0; index < 30; index += 1) {
+      const accepted = await oidcStartRequest(testApi.baseUrl, {
+        providerId: graph.providerId,
+      });
+      expect(accepted.status).toBe(200);
+    }
+    const limited = await oidcStartRequest(testApi.baseUrl, {
+      providerId: graph.providerId,
+    });
+
+    await expectProblem(limited, 429, "rate-limited");
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    await expect(
+      database.oidcAuthorizationAttempt.count({
+        where: { providerId: graph.providerId },
+      }),
+    ).resolves.toBe(30);
   });
 
   test("maps malformed OIDC discovery bytes to 503 without creating an authorization attempt", async () => {

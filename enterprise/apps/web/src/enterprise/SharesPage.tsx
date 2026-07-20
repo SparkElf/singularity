@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   changeDocumentSharePasswordRequestSchema,
   createDocumentShareRequestSchema,
@@ -19,6 +19,7 @@ import { useLocation, useParams } from "react-router";
 
 import { SessionRedirect } from "@/auth/SessionRedirect.tsx";
 import { locationTarget } from "@/auth/return-to.ts";
+import { isApiProblem } from "@/api/http.ts";
 import {
   Alert,
   AlertDescription,
@@ -63,19 +64,19 @@ import { publicSharePagePath } from "@/shares/routes.ts";
 import {
   ContentDirectory,
   type ContentDirectoryAccessLoss,
+  type ContentDirectoryIdentity,
   type ContentDirectoryStatus,
 } from "@/spaces/ContentDirectory.tsx";
-import {
-  clearContentSelection,
-  getContentSelectionForScope,
-  useContentSelectionScope,
-  useContentSelectionStore,
+import type {
+  ContentSelection,
+  ContentSelectionTarget,
 } from "@/spaces/content-selection.ts";
 
 const createDocumentShareOptionsSchema = createDocumentShareRequestSchema.pick({
   expiresAt: true,
   password: true,
 });
+let nextShareDirectoryGeneration = 0;
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -189,11 +190,29 @@ function SharesPageContent({
   const [sessionExpired, setSessionExpired] = useState(false);
   const [directoryStatus, setDirectoryStatus] =
     useState<ContentDirectoryStatus>("loading");
-  const selectionScope = useContentSelectionScope({ organizationId, spaceId });
-  const storeSelection = useContentSelectionStore((state) => state.selection);
-  const selection = selectionScope === null || storeSelection === null
-    ? null
-    : getContentSelectionForScope(selectionScope);
+  const [ownedSelection, setOwnedSelection] =
+    useState<ContentSelection | null>(null);
+  const directoryIdentity = useMemo<ContentDirectoryIdentity>(() => Object.freeze({
+    generation: ++nextShareDirectoryGeneration,
+    organizationId,
+    spaceId,
+  }), [organizationId, spaceId]);
+  const selection = ownedSelection?.spaceId === spaceId
+    ? ownedSelection
+    : null;
+  const clearSelection = useCallback(() => {
+    setOwnedSelection(null);
+    return true;
+  }, []);
+  const selectDocument = useCallback((target: ContentSelectionTarget) => {
+    setOwnedSelection({
+      documentId: target.documentId,
+      notebookId: target.notebookId,
+      spaceId,
+      supportsGraph: target.supportsGraph,
+    });
+    return true;
+  }, [spaceId]);
   const sharesQuery = useQuery({
     queryKey: spaceSharesQueryKey(organizationId, spaceId),
     queryFn: ({ signal }) => getSpaceShares(organizationId, spaceId, signal),
@@ -201,10 +220,7 @@ function SharesPageContent({
   const handleDirectoryAccessLost = useCallback((
     event: ContentDirectoryAccessLoss,
   ) => {
-    if (selectionScope === null) {
-      return;
-    }
-    clearContentSelection(selectionScope);
+    setOwnedSelection(null);
     console.warn("[content.directory]", {
       category: event.category,
       phase: "share-management-access",
@@ -227,7 +243,7 @@ function SharesPageContent({
         queryKey: spaceSharesQueryKey(organizationId, spaceId),
       }),
     ]);
-  }, [organizationId, queryClient, selectionScope, spaceId]);
+  }, [organizationId, queryClient, spaceId]);
   const invalidateShares = async () => {
     await queryClient.invalidateQueries({
       queryKey: spaceSharesQueryKey(organizationId, spaceId),
@@ -285,10 +301,14 @@ function SharesPageContent({
         window.location.origin,
       ).toString()
     : null;
-  const mutationError =
-    createShareMutation.error ??
-    changePasswordMutation.error ??
-    revokeShareMutation.error;
+  const mutationErrors = [
+    createShareMutation.error,
+    changePasswordMutation.error,
+    revokeShareMutation.error,
+  ];
+  const mutationError = mutationErrors.find((error) =>
+    isApiProblem(error, "unauthenticated")
+  ) ?? mutationErrors.find((error) => error !== null && error !== undefined) ?? null;
 
   const copyCreatedShareUrl = async () => {
     if (createdShareUrl === null) {
@@ -298,7 +318,12 @@ function SharesPageContent({
       await navigator.clipboard.writeText(createdShareUrl);
       setCopied(true);
       setCopyError(false);
-    } catch {
+    } catch (error) {
+      console.error(
+        "[share.management]",
+        { operation: "clipboard.write", result: "failed" },
+        error,
+      );
       setCopied(false);
       setCopyError(true);
     }
@@ -311,13 +336,14 @@ function SharesPageContent({
 
       <div className="grid min-h-80 grid-cols-[16rem_minmax(0,1fr)] border-b max-md:grid-cols-1">
         <div className="flex h-80 min-h-0 max-md:h-72">
-          {selectionScope ? (
-            <ContentDirectory
-              onAccessLost={handleDirectoryAccessLost}
-              onStatusChange={setDirectoryStatus}
-              scope={selectionScope}
-            />
-          ) : null}
+          <ContentDirectory
+            identity={directoryIdentity}
+            onAccessLost={handleDirectoryAccessLost}
+            onClear={clearSelection}
+            onSelect={selectDocument}
+            onStatusChange={setDirectoryStatus}
+            selection={selection}
+          />
         </div>
         <form
           className="grid content-start grid-cols-[minmax(220px,1fr)_140px_minmax(180px,1fr)_auto] items-end gap-3 bg-muted/25 p-3 max-xl:grid-cols-2 max-sm:grid-cols-1"

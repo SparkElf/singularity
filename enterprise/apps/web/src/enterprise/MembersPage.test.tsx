@@ -28,24 +28,33 @@ const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 const ADMIN_ID = "33333333-3333-4333-8333-333333333333";
 const MEMBER_ID = "44444444-4444-4444-8444-444444444444";
 const INVITATION_ID = "55555555-5555-4555-8555-555555555555";
-const INVITATION_TOKEN = "I".repeat(43);
-const CSRF_TOKEN = "A".repeat(43);
+const INVITATION_TOKEN = "I".repeat(42) + "E";
+const CSRF_TOKEN = "A".repeat(42) + "E";
 const OWNERSHIP_PATH = `/api/v1/organizations/${ORGANIZATION_ID}/ownership`;
 const MEMBER_PATH = `${MEMBERS_PATH}/${MEMBER_ID}`;
 const MEMBER_SESSIONS_PATH = `${MEMBER_PATH}/sessions`;
 
 const member = {
+  accountStatus: "active" as const,
   loginIdentifier: "member@example.test",
   role: "member" as const,
   status: "active" as const,
   userId: MEMBER_ID,
 };
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
-    status: 200,
+    status,
   });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 function noContentResponse(): Response {
@@ -71,12 +80,12 @@ function renderMembersPage(
     "members",
     "groups",
     "spaces",
-    "oidc",
     "audit",
   ],
-): void {
+  queryClient = createTestQueryClient(),
+): QueryClient {
   render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter
           initialEntries={[`/organizations/${ORGANIZATION_ID}/settings/members`]}
@@ -97,11 +106,13 @@ function renderMembersPage(
             >
               <Route path="members" element={<MembersPage />} />
             </Route>
+            <Route path="/login" element={<h1>登录奇点</h1>} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -122,18 +133,21 @@ describe("MembersPage capability projection", () => {
             jsonResponse({
               members: [
                 {
+                  accountStatus: "active",
                   loginIdentifier: "owner@example.test",
                   role: "owner",
                   status: "active",
                   userId: OWNER_ID,
                 },
                 {
+                  accountStatus: "active",
                   loginIdentifier: "admin@example.test",
                   role: "admin",
                   status: "active",
                   userId: ADMIN_ID,
                 },
                 {
+                  accountStatus: "active",
                   loginIdentifier: "member@example.test",
                   role: "member",
                   status: "active",
@@ -175,6 +189,59 @@ describe("MembersPage capability projection", () => {
     expect(
       screen.queryByRole("option", { name: "管理员" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("MembersPage authentication error priority", () => {
+  it("prioritizes a later unauthenticated query over an earlier ordinary error", async () => {
+    const invitationsResponse = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        const path = requestPath(input);
+        if (path === MEMBERS_PATH) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                code: "conflict",
+                requestId: "66666666-6666-4666-8666-666666666666",
+                status: 409,
+              },
+              409,
+            ),
+          );
+        }
+        if (path === INVITATIONS_PATH) {
+          return invitationsResponse.promise;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    useCsrfStore.getState().setCsrfToken(CSRF_TOKEN);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["sensitive"], { title: "private" });
+
+    renderMembersPage(undefined, queryClient);
+
+    expect(
+      await screen.findByRole("heading", { name: "无法加载数据" }),
+    ).toBeVisible();
+    invitationsResponse.resolve(
+      jsonResponse(
+        {
+          code: "unauthenticated",
+          requestId: "77777777-7777-4777-8777-777777777777",
+          status: 401,
+        },
+        401,
+      ),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "登录奇点" }),
+    ).toBeVisible();
+    expect(useCsrfStore.getState().csrfToken).toBeNull();
+    expect(queryClient.getQueryData(["sensitive"])).toBeUndefined();
   });
 });
 
@@ -326,6 +393,7 @@ describe("MembersPage mutation workflows", () => {
   it("transfers ownership only after the owner confirms the target", async () => {
     let currentMembers: OrganizationMemberSummary[] = [
       {
+        accountStatus: "active",
         loginIdentifier: "owner@example.test",
         role: "owner" as const,
         status: "active" as const,

@@ -152,6 +152,7 @@ export function mountComposer(host: HTMLElement, onSend: () => void, onChange?: 
         surface: "embedded",
         participation: "detached",
         content: {mode: "local-only"},
+        upstreamLocalRuntime: app.upstreamLocalRuntime,
     });
 
     // Protyle 实例的 protyle 属性才是 IProtyle（持有 wysiwyg/hint/lute 等）。

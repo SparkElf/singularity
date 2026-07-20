@@ -50,6 +50,7 @@ import {
   type SpaceSearchPanel,
   useDiscoveryStore,
 } from "@/spaces/discovery-state.ts";
+import { useContentSelectionStore } from "@/spaces/content-selection.ts";
 import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 
 export interface DiscoveryNavigationTarget {
@@ -94,11 +95,14 @@ function useDiscoveryRequest<T>(input: {
 
   useEffect(() => {
     if (!enabledCurrent()) {
+      // 关闭面板时立即撤销旧请求状态，避免旧结果重新显示。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setState({ status: "idle" });
       return;
     }
     const controller = new AbortController();
     let acceptsResult = true;
+    // 请求代次变化时先清除旧结果，再接收当前请求的响应。
     setState({ status: "loading" });
     loadCurrent(controller.signal).then((data) => {
       if (acceptsResult) {
@@ -110,7 +114,7 @@ function useDiscoveryRequest<T>(input: {
       }
       console.error("[discovery.panel]", {
         documentId,
-        error: error instanceof Error ? error.name : "unknown",
+        error,
         kind,
         notebookId,
         outcome: "request-failed",
@@ -122,7 +126,7 @@ function useDiscoveryRequest<T>(input: {
       acceptsResult = false;
       controller.abort(new DOMException("Discovery panel changed", "AbortError"));
     };
-  }, [documentId, kind, notebookId, spaceId, input.requestRevision]);
+  }, [documentId, input.enabled, kind, notebookId, spaceId, input.requestRevision]);
 
   return state;
 }
@@ -149,18 +153,18 @@ function panelTitle(panel: DiscoveryPanel): string {
 function panelIcon(panel: DiscoveryPanel) {
   switch (panel.kind) {
     case "space-search":
-      return SearchIcon;
+      return <SearchIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
     case "document-search":
-      return TextSearchIcon;
+      return <TextSearchIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
     case "outline":
-      return ListTreeIcon;
+      return <ListTreeIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
     case "backlinks":
-      return GitForkIcon;
+      return <GitForkIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
     case "document-history":
-      return FileClockIcon;
+      return <FileClockIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
     case "space-graph":
     case "document-graph":
-      return GitForkIcon;
+      return <GitForkIcon aria-hidden="true" className="size-4 text-muted-foreground" />;
   }
 }
 
@@ -638,11 +642,14 @@ function GraphNodeList({
           {node.documentId !== null && node.notebookId !== null ? (
             <button
               className="min-h-8 w-full min-w-0 truncate rounded-md px-2 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
-              onClick={() => onNavigate({
-                blockId: node.id,
-                documentId: node.documentId,
-                notebookId: node.notebookId,
-              })}
+              onClick={() => {
+                const documentId = node.documentId;
+                const notebookId = node.notebookId;
+                if (documentId === null || notebookId === null) {
+                  return;
+                }
+                onNavigate({ blockId: node.id, documentId, notebookId });
+              }}
               title={node.label}
               type="button"
             >
@@ -663,12 +670,14 @@ function GraphNodeList({
 }
 
 function GraphPanelBody({
+  enabled,
   onNavigate,
   panel,
   requestRevision,
   session,
   spaceClient,
 }: {
+  readonly enabled: boolean;
   readonly onNavigate: (target: DiscoveryNavigationTarget) => void;
   readonly panel: SpaceGraphPanel | DocumentGraphPanel;
   readonly requestRevision: number;
@@ -698,7 +707,7 @@ function GraphPanelBody({
   }), [panel]);
   const state = useDiscoveryRequest({
     diagnostic,
-    enabled: true,
+    enabled,
     load,
     requestRevision,
   });
@@ -720,12 +729,15 @@ function GraphPanelBody({
           <SearchIcon aria-hidden="true" />
         </Button>
       </form>
-      {state.status === "loading" || state.status === "idle" ? <LoadingState /> : null}
-      {state.status === "error" ? <ErrorState /> : null}
-      {state.status === "ready" && state.data.nodes.length === 0 ? (
+      {!enabled ? <PanelState>当前文档无法显示关系图</PanelState> : null}
+      {enabled && (state.status === "loading" || state.status === "idle")
+        ? <LoadingState />
+        : null}
+      {enabled && state.status === "error" ? <ErrorState /> : null}
+      {enabled && state.status === "ready" && state.data.nodes.length === 0 ? (
         <PanelState>没有可显示的关系</PanelState>
       ) : null}
-      {state.status === "ready" && state.data.nodes.length > 0 ? (
+      {enabled && state.status === "ready" && state.data.nodes.length > 0 ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex justify-center p-2">
             <GraphCanvas graph={state.data} />
@@ -746,6 +758,16 @@ export function DiscoveryPanel({
   const panel = useDiscoveryStore((state) =>
     state.panel?.spaceId === spaceId ? state.panel : null
   );
+  const documentGraphEnabled = useContentSelectionStore((state) => {
+    if (panel?.kind !== "document-graph") {
+      return false;
+    }
+    const selection = state.selection;
+    return selection?.spaceId === panel.spaceId &&
+      selection.notebookId === panel.notebookId &&
+      selection.documentId === panel.documentId &&
+      selection.supportsGraph;
+  });
   const requestRevision = useDiscoveryStore((state) => state.requestRevision);
   const close = useDiscoveryStore((state) => state.close);
   const refresh = useDiscoveryStore((state) => state.refresh);
@@ -758,7 +780,7 @@ export function DiscoveryPanel({
   if (!panel || session.spaceId !== spaceId) {
     return null;
   }
-  const Icon = panelIcon(panel);
+  const icon = panelIcon(panel);
   return (
     <aside
       aria-label={panelTitle(panel)}
@@ -767,7 +789,7 @@ export function DiscoveryPanel({
       data-discovery-space-id={panel.spaceId}
     >
       <header className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
-        <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
+        {icon}
         <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
           {panelTitle(panel)}
         </h2>
@@ -822,6 +844,7 @@ export function DiscoveryPanel({
       ) : null}
       {panel.kind === "space-graph" || panel.kind === "document-graph" ? (
         <GraphPanelBody
+          enabled={panel.kind === "space-graph" || documentGraphEnabled}
           onNavigate={onNavigate}
           panel={panel}
           requestRevision={requestRevision}

@@ -35,10 +35,11 @@ var (
 )
 
 type EnterpriseDirectoryNotebook struct {
-	Icon       string `json:"icon"`
-	Locked     bool   `json:"locked"`
-	Name       string `json:"name"`
-	NotebookID string `json:"notebookId"`
+	Icon          string `json:"icon"`
+	Locked        bool   `json:"locked"`
+	Name          string `json:"name"`
+	NotebookID    string `json:"notebookId"`
+	SupportsGraph bool   `json:"supportsGraph"`
 }
 
 type EnterpriseDirectoryDocument struct {
@@ -66,10 +67,11 @@ func ListEnterpriseDirectoryNotebooks() ([]EnterpriseDirectoryNotebook, error) {
 			continue
 		}
 		notebooks = append(notebooks, EnterpriseDirectoryNotebook{
-			Icon:       box.Icon,
-			Locked:     box.Encrypted && !box.Unlocked,
-			Name:       box.Name,
-			NotebookID: box.ID,
+			Icon:          box.Icon,
+			Locked:        box.Encrypted && !box.Unlocked,
+			Name:          box.Name,
+			NotebookID:    box.ID,
+			SupportsGraph: !box.Encrypted,
 		})
 	}
 	return notebooks, nil

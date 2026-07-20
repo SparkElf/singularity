@@ -36,6 +36,9 @@ const DATABASE_URL =
   "postgresql://worker:worker@127.0.0.1:1/singularity_test?schema=worker_bootstrap_test";
 
 const restoreDeployment: RestoreDeploymentPort = {
+  async commitTarget(): Promise<void> {
+    return;
+  },
   async destroyTarget(): Promise<void> {
     return;
   },
@@ -56,6 +59,7 @@ function configuration(rootDirectory: string): WorkerConfiguration {
       SINGULARITY_AUDIT_HMAC_KEY: Buffer.alloc(32, 7).toString("base64url"),
       SINGULARITY_AUDIT_KEY_VERSION: "worker-test-v1",
     }),
+    backupRequestTimeoutMilliseconds: 10_000,
     claimBatchSize: 4,
     contentAuditBatchSize: 100,
     contentAuditReconciliationIntervalMilliseconds: 5_000,
@@ -72,11 +76,13 @@ function configuration(rootDirectory: string): WorkerConfiguration {
     policies: new KernelRoutePolicyRegistry(kernelRoutePolicies),
     pollIntervalMilliseconds: 1_000,
     restore: {
+      archiveTimeoutMilliseconds: 10_000,
       archiveToolPath: rootDirectory,
       credentials,
       gatewayHostname: "127.0.0.1",
       handlePrefix: "restore-test",
       kernelBinaryPath: rootDirectory,
+      kernelListenAddress: "127.0.0.1",
       kernelWorkingDirectory: rootDirectory,
       maximumArchiveBytes: 2 * 1_024 * 1_024,
       maximumEntryBytes: 2 * 1_024 * 1_024,
@@ -85,6 +91,7 @@ function configuration(rootDirectory: string): WorkerConfiguration {
       portRange: { first: 40_000, last: 40_010 },
       readinessPollMilliseconds: 100,
       runtimeRootDirectory: rootDirectory,
+      runtimeOwner: "worker-test",
       startupTimeoutMilliseconds: 1_000,
       tls: {
         caCertificate: Buffer.from("test"),

@@ -41,7 +41,7 @@ Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidat
 
 有效空间角色取直接成员和活跃用户组授权中的最高角色：`admin > editor > viewer`。每次读取同时约束 User、Organization、OrganizationMembership、Space 和对应成员/组状态；归档空间保留管理事实，但不进入普通授权空间列表。
 
-空间管理写事务按 `User -> Organization -> OrganizationMembership -> Space -> SpaceMembership` 的稳定顺序锁定相关行。已有账号和 OIDC 邀请消费先以令牌或邀请 ID 取得显式组织身份，再按 `User -> Organization -> OrganizationMembership -> OrganizationInvitation` 锁定并在同一事务复验组织、期限、撤销和接受状态；本地新账号入口锁定邀请后创建唯一 User，不存在可被更早锁定的成员行。接受动作确实把既有活跃成员的角色改为新角色时，事务提交后发布一个带 `organization` 与 `user` selector 的 `close/forbidden` 事件。重复角色写入不发布重复撤权通知。
+空间管理写事务按 `User -> Organization -> OrganizationMembership -> Space -> SpaceMembership` 的稳定顺序锁定相关行。已有账号和 OIDC 邀请消费先以令牌或邀请 ID 取得显式组织身份，再按 `User -> Organization -> OrganizationMembership -> OrganizationInvitation` 锁定；本地新账号入口在可选当前会话 owner User 之后按 `Organization -> OrganizationInvitation -> new User -> AuthSession` 锁定和创建，不存在可被更早锁定的新成员行。所有接受路径都在取得邀请行锁后读取当前时钟，并在同一事务复验组织、期限、撤销和接受状态。接受动作确实把既有活跃成员的角色改为新角色时，事务提交后发布一个带 `organization` 与 `user` selector 的 `close/forbidden` 事件。重复角色写入不发布重复撤权通知。
 
 权限变化写入组织审计链；事件发布和审计记录与业务状态同事务提交，消费者只依赖公开事件合同，不读取数据库模型或原始请求载荷。受控运维入口沿已锁定事实或更新计数判定唯一状态转移；重复角色、重复撤销和重复禁用仍返回既有成功结果，但不发布 `AccessChanged` 或追加 `permission.change`。
 

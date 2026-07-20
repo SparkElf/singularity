@@ -4,7 +4,6 @@ import {
   randomUUID,
   sign,
 } from "node:crypto";
-import { once } from "node:events";
 import {
   copyFile,
   chmod,
@@ -17,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -28,12 +27,12 @@ const appRoot = join(repositoryRoot, "app");
 const databaseRoot = join(enterpriseRoot, "packages/database");
 const kernelRoot = join(repositoryRoot, "kernel");
 const workerRoot = join(enterpriseRoot, "apps/worker");
-const runtimeRoot = resolve(tmpdir(), `singularity-p5-e2e-runtime-${String(process.pid)}`);
-const kernelBinaryRoot = join(appRoot, `.singularity-p5-e2e-kernel-${String(process.pid)}`);
+const runtimeRoot = process.env.SINGULARITY_E2E_RUNTIME_ROOT ?? "";
 const objectStoreRoot = join(runtimeRoot, "object-store");
 const restoreRuntimeRoot = join(runtimeRoot, "restore-runtime");
 const workspaceRoot = join(runtimeRoot, "workspace");
-const schema = "singularity_p5_e2e";
+const kernelBinary = join(runtimeRoot, "singularity-kernel");
+const schema = process.env.SINGULARITY_E2E_SCHEMA ?? "";
 const stateFile = process.env.SINGULARITY_E2E_STATE_FILE;
 const apiPort = Number(process.env.SINGULARITY_E2E_API_PORT ?? "3012");
 const kernelPort = Number(process.env.SINGULARITY_E2E_KERNEL_PORT ?? "6807");
@@ -61,9 +60,16 @@ const spaceName = "P5 真实链路空间";
 const notebookName = "P5 真实链路笔记本";
 const documentTitle = "P5 真实链路文档";
 const documentInitialText = "P5 初始内容由真实 Go Kernel 提供";
-const commandOutputLimitBytes = 2 * 1_024 * 1_024;
+const referenceDocumentTitle = "P5 真实引用文档";
+const searchMarker = `P5 唯一搜索标记 ${String(process.pid)}`;
+const workerId = `p5-e2e-${String(process.pid)}`;
+const commandOutputLimitCharacters = 64 * 1_024;
+const commandTimeoutMilliseconds = 300_000;
+const processStopTimeoutMilliseconds = 30_000;
 let stack;
 let stopping = false;
+let requestedExitCode = 0;
+let shutdownPromise;
 const activeCommands = new Set();
 
 if (process.versions.node.split(".")[0] !== "24") {
@@ -71,6 +77,21 @@ if (process.versions.node.split(".")[0] !== "24") {
 }
 if (stateFile === undefined || stateFile.length === 0) {
   throw new Error("SINGULARITY_E2E_STATE_FILE is not configured");
+}
+if (!/^singularity_p5_e2e_[0-9]+$/.test(schema)) {
+  throw new Error("SINGULARITY_E2E_SCHEMA is not owned by the P5 runner");
+}
+if (!isAbsolute(runtimeRoot)) {
+  throw new Error("SINGULARITY_E2E_RUNTIME_ROOT must be absolute");
+}
+if (
+  dirname(runtimeRoot) !== resolve(tmpdir()) ||
+  !/^singularity-p5-e2e-runtime-[0-9]+$/.test(basename(runtimeRoot))
+) {
+  throw new Error("SINGULARITY_E2E_RUNTIME_ROOT is not owned by the P5 runner");
+}
+if (stateFile !== join(runtimeRoot, "stack-state.json")) {
+  throw new Error("SINGULARITY_E2E_STATE_FILE is outside the P5 runtime directory");
 }
 for (const [name, value] of Object.entries({
   apiPort,
@@ -89,10 +110,37 @@ if (restorePortFirst > restorePortLast) {
 
 function appendBounded(current, chunk) {
   const next = current + chunk.toString("utf8");
-  if (Buffer.byteLength(next, "utf8") > commandOutputLimitBytes) {
-    throw new Error("P5 E2E setup command output exceeded its limit");
+  if (next.length <= commandOutputLimitCharacters) {
+    return next;
   }
-  return next;
+  return next.slice(-commandOutputLimitCharacters);
+}
+
+function commandDiagnostic(stderr, stdout) {
+  const stderrValue = stderr.trim();
+  const stdoutValue = stdout.trim();
+  return [
+    ...(stdoutValue.length === 0 ? [] : [`[stdout tail]\n${stdoutValue}`]),
+    ...(stderrValue.length === 0 ? [] : [`[stderr tail]\n${stderrValue}`]),
+  ].map((value) => `\n${value}`).join("");
+}
+
+function signalProcess(child, signal, processGroup) {
+  if (child.pid === undefined) {
+    throw new Error("P5 E2E child process has no process identity");
+  }
+  try {
+    if (process.platform === "win32" || !processGroup) {
+      child.kill(signal);
+      return;
+    }
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error !== null && typeof error === "object" && error.code === "ESRCH") {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function runCommand(command, args, options = {}) {
@@ -102,6 +150,7 @@ async function runCommand(command, args, options = {}) {
   return new Promise((resolveCommand, rejectCommand) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
+      detached: process.platform !== "win32",
       env: options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -109,21 +158,25 @@ async function runCommand(command, args, options = {}) {
     let stdout = "";
     let stderr = "";
     let startError;
-    child.stdout.on("data", (chunk) => {
+    const timeout = setTimeout(() => {
+      startError = new Error(
+        `P5 E2E setup command ${command} exceeded its timeout`,
+      );
       try {
-        stdout = appendBounded(stdout, chunk);
+        signalProcess(child, "SIGKILL", true);
       } catch (error) {
-        child.kill("SIGKILL");
-        startError = error;
+        startError = new AggregateError(
+          [startError, error],
+          `P5 E2E setup command ${command} timed out and could not be stopped`,
+        );
       }
+    }, options.timeoutMilliseconds ?? commandTimeoutMilliseconds);
+    timeout.unref();
+    child.stdout.on("data", (chunk) => {
+      stdout = appendBounded(stdout, chunk);
     });
     child.stderr.on("data", (chunk) => {
-      try {
-        stderr = appendBounded(stderr, chunk);
-      } catch (error) {
-        child.kill("SIGKILL");
-        startError = error;
-      }
+      stderr = appendBounded(stderr, chunk);
     });
     child.once("error", (error) => {
       startError = error;
@@ -134,9 +187,14 @@ async function runCommand(command, args, options = {}) {
       child.stdin.end(options.input, "utf8");
     }
     child.once("close", (code, signal) => {
+      clearTimeout(timeout);
       activeCommands.delete(child);
       if (startError !== undefined) {
-        rejectCommand(startError);
+        rejectCommand(new Error(
+          `P5 E2E setup command ${command} failed` +
+            commandDiagnostic(stderr, stdout),
+          { cause: startError },
+        ));
         return;
       }
       if (code === 0) {
@@ -144,9 +202,10 @@ async function runCommand(command, args, options = {}) {
         return;
       }
       rejectCommand(new Error(
-        signal === null
+        (signal === null
           ? `P5 E2E setup command ${command} exited with code ${String(code)}`
-          : `P5 E2E setup command ${command} exited after signal ${signal}`,
+          : `P5 E2E setup command ${command} exited after signal ${signal}`) +
+          commandDiagnostic(stderr, stdout),
       ));
     });
   });
@@ -251,9 +310,6 @@ async function readKernelInstanceId(baseDatabaseUrl, spaceId) {
 }
 
 async function buildRuntimeArtifacts() {
-  const kernelBinary = join(kernelBinaryRoot, "singularity-kernel");
-  await rm(kernelBinaryRoot, { force: true, recursive: true });
-  await mkdir(kernelBinaryRoot, { recursive: true });
   await runCommand(
     "pnpm",
     ["--filter", "@singularity/api...", "build"],
@@ -327,13 +383,45 @@ async function createKernelContent(kernelBinary) {
       "--title",
       documentTitle,
       "--markdown",
-      `# ${documentTitle}\n\n${documentInitialText}`,
+      [
+        `# ${documentTitle}`,
+        "",
+        `${documentInitialText} ${searchMarker}`,
+        "",
+        "```plantuml",
+        "@startuml",
+        "Alice -> Bob: P5 active content fence",
+        "@enduml",
+        "```",
+        "",
+        '<div><script>window.__p5ActiveContentExecuted = true</script><img src="https://p5-active-content.invalid/pixel.png"></div>',
+      ].join("\n"),
+    ],
+    { cwd: appRoot, env: cliEnvironment },
+  );
+  const documentId = lastOutputLine(document.stdout);
+  const referenceDocument = await runCommand(
+    kernelBinary,
+    [
+      "--workspace",
+      workspaceRoot,
+      "document",
+      "create",
+      "--notebook",
+      notebookId,
+      "--title",
+      referenceDocumentTitle,
+      "--markdown",
+      `# ${referenceDocumentTitle}\n\n((${documentId} 'P5 引用'))`,
     ],
     { cwd: appRoot, env: cliEnvironment },
   );
   return {
-    documentId: lastOutputLine(document.stdout),
+    documentId,
     notebookId,
+    referenceDocumentId: lastOutputLine(referenceDocument.stdout),
+    referenceDocumentTitle,
+    searchMarker,
   };
 }
 
@@ -429,25 +517,37 @@ async function requestKernelReady(input) {
 
 async function waitForKernelReady(input, kernelProcess) {
   const deadline = Date.now() + 120_000;
+  let lastFailure;
   while (Date.now() < deadline) {
+    if (stopping) {
+      throw new Error("P5 E2E stack shutdown interrupted Kernel readiness");
+    }
     if (kernelProcess.exitCode !== null || kernelProcess.signalCode !== null) {
       throw new Error("P5 E2E Go Kernel exited during startup");
     }
     try {
-      if (await requestKernelReady(input) === 200) {
+      const status = await requestKernelReady(input);
+      if (status === 200) {
         return;
       }
-    } catch {
-      // 进程尚未完成 TLS 与 readiness 启动。
+      lastFailure = new Error(`P5 E2E Go Kernel readiness returned status ${String(status)}`);
+    } catch (error) {
+      lastFailure = error;
     }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 250));
   }
-  throw new Error("P5 E2E Go Kernel did not become ready before timeout");
+  throw new Error("P5 E2E Go Kernel did not become ready before timeout", {
+    cause: lastFailure,
+  });
 }
 
 async function waitForApiReady(apiProcess) {
   const deadline = Date.now() + 60_000;
+  let lastFailure;
   while (Date.now() < deadline) {
+    if (stopping) {
+      throw new Error("P5 E2E stack shutdown interrupted API readiness");
+    }
     if (apiProcess.exitCode !== null || apiProcess.signalCode !== null) {
       throw new Error("P5 E2E Nest API exited during startup");
     }
@@ -458,88 +558,258 @@ async function waitForApiReady(apiProcess) {
       if (response.ok) {
         return;
       }
-    } catch {
-      // HTTP listener 尚未就绪。
+      lastFailure = new Error(`P5 E2E Nest API readiness returned status ${String(response.status)}`);
+    } catch (error) {
+      lastFailure = error;
     }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 250));
   }
-  throw new Error("P5 E2E Nest API did not become ready before timeout");
+  throw new Error("P5 E2E Nest API did not become ready before timeout", {
+    cause: lastFailure,
+  });
 }
 
-async function waitForWorkerStartup(workerProcess) {
-  await new Promise((resolvePoll) => setTimeout(resolvePoll, 250));
-  if (workerProcess.exitCode !== null || workerProcess.signalCode !== null) {
-    throw new Error("P5 E2E Nest Worker exited during startup");
+async function waitForWorkerReady(baseDatabaseUrl, kernelInstanceId, workerProcess) {
+  const connection = psqlConnection(baseDatabaseUrl);
+  const deadline = Date.now() + 60_000;
+  let lastStatus = "unobserved";
+  while (Date.now() < deadline) {
+    if (stopping) {
+      throw new Error("P5 E2E stack shutdown interrupted Worker readiness");
+    }
+    if (workerProcess.exitCode !== null || workerProcess.signalCode !== null) {
+      throw new Error("P5 E2E Nest Worker exited during startup");
+    }
+    const { stdout } = await runCommand(
+      "psql",
+      [
+        "--no-psqlrc",
+        "--set=ON_ERROR_STOP=1",
+        "--tuples-only",
+        "--no-align",
+        connection.url,
+        "--command",
+        `SELECT COALESCE((
+          SELECT "status"::text || ':' || COALESCE("error_code", '') || ':' || "attempt"::text
+          FROM "${schema}"."worker_jobs"
+          WHERE "kind" = 'sample-kernel'
+            AND "payload" ->> 'kernelInstanceId' = '${kernelInstanceId}'
+          ORDER BY "created_at" DESC
+          LIMIT 1
+        ), 'pending');`,
+      ],
+      { env: connection.environment },
+    );
+    lastStatus = lastOutputLine(stdout);
+    if (lastStatus.startsWith("succeeded:")) {
+      return;
+    }
+    if (lastStatus.startsWith("failed:")) {
+      throw new Error(
+        `P5 E2E Nest Worker readiness job failed; status=${lastStatus}`,
+      );
+    }
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 500));
   }
+  throw new Error(`P5 E2E Nest Worker did not become ready before timeout; last job status=${lastStatus}`);
 }
 
 function startProcess(command, args, options) {
+  if (stopping) {
+    throw new Error(`P5 E2E cannot start ${options.label} during shutdown`);
+  }
   const child = spawn(command, args, {
     cwd: options.cwd,
+    detached: false,
     env: options.env,
     stdio: ["ignore", "inherit", "inherit"],
   });
+  let startFailure;
   child.once("error", (error) => {
-    console.error(`[p5.e2e] ${options.label} failed to start`, error.name);
+    startFailure = error;
+    console.error(`[p5.e2e] ${options.label} failed to start`, error);
+    void shutdown(1, error);
+  });
+  child.once("close", (code, signal) => {
+    if (!stopping && startFailure === undefined) {
+      const error = new Error(
+        signal === null
+          ? `${options.label} exited with code ${String(code)}`
+          : `${options.label} exited after signal ${signal}`,
+      );
+      console.error(
+        `[p5.e2e] ${options.label} exited unexpectedly`,
+        error,
+      );
+      void shutdown(1, error);
+    }
   });
   return child;
 }
 
-async function stopProcess(child) {
+function waitForProcessClose(child, timeoutMilliseconds) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolveWait) => {
+    let settled = false;
+    const finishWait = (closed) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("close", handleClose);
+      resolveWait(closed);
+    };
+    const handleClose = () => finishWait(true);
+    const timer = setTimeout(() => finishWait(false), timeoutMilliseconds);
+    child.once("close", handleClose);
+  });
+}
+
+async function stopProcess(child, processGroup = false) {
   if (child === undefined) {
     return;
   }
-  const closed = once(child, "close");
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
-  child.kill("SIGTERM");
-  await Promise.race([
-    closed,
-    new Promise((resolveWait) => setTimeout(resolveWait, 5_000)),
-  ]);
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
-    await Promise.race([
-      closed,
-      new Promise((resolveWait) => setTimeout(resolveWait, 5_000)),
-    ]);
+  signalProcess(child, "SIGTERM", processGroup);
+  if (!(await waitForProcessClose(child, processStopTimeoutMilliseconds))) {
+    signalProcess(child, "SIGKILL", processGroup);
+    await waitForProcessClose(child, 5_000);
   }
   if (child.exitCode === null && child.signalCode === null) {
     throw new Error("P5 E2E child process did not stop");
   }
 }
 
-function processExists(pid) {
+function processInspectionUnavailable(error) {
+  return error !== null &&
+    typeof error === "object" &&
+    (error.code === "ENOENT" || error.code === "ESRCH");
+}
+
+function processArgument(arguments_, name) {
+  const index = arguments_.indexOf(name);
+  return index === -1 ? undefined : arguments_[index + 1];
+}
+
+function processEnvironmentValue(entries, name) {
+  const prefix = `${name}=`;
+  return entries.find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
+}
+
+function restoredProcessMetadata(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("P5 E2E restored Kernel metadata is invalid");
+  }
+  const metadata = value;
+  if (metadata.pid === null) {
+    return null;
+  }
+  if (
+    !Number.isSafeInteger(metadata.pid) ||
+    metadata.pid < 1 ||
+    !Number.isSafeInteger(metadata.port) ||
+    metadata.port < restorePortFirst ||
+    metadata.port > restorePortLast ||
+    typeof metadata.kernelInstanceId !== "string" ||
+    typeof metadata.spaceId !== "string" ||
+    metadata.kernelListenAddress !== "127.0.0.1" ||
+    metadata.runtimeOwner !== workerId ||
+    typeof metadata.workspaceDirectoryName !== "string" ||
+    !/^p5-e2e-restore-[0-9a-f-]+$/.test(metadata.workspaceDirectoryName)
+  ) {
+    throw new Error("P5 E2E restored Kernel process identity is invalid");
+  }
+  return metadata;
+}
+
+async function persistedProcessMatchesIdentity(metadata) {
+  let commandLine;
+  let environment;
   try {
-    process.kill(pid, 0);
+    [commandLine, environment] = await Promise.all([
+      readFile(`/proc/${String(metadata.pid)}/cmdline`, "utf8"),
+      readFile(`/proc/${String(metadata.pid)}/environ`, "utf8"),
+    ]);
+  } catch (error) {
+    if (processInspectionUnavailable(error)) {
+      return false;
+    }
+    throw error;
+  }
+  const arguments_ = commandLine.split("\u0000").filter(Boolean);
+  const environmentEntries = environment.split("\u0000").filter(Boolean);
+  const workspaceDirectory = join(
+    restoreRuntimeRoot,
+    metadata.workspaceDirectoryName,
+  );
+  if (
+    arguments_[0] !== kernelBinary ||
+    processArgument(arguments_, "--workspace") !== workspaceDirectory ||
+    processArgument(arguments_, "--port") !== String(metadata.port) ||
+    processEnvironmentValue(
+      environmentEntries,
+      "SINGULARITY_KERNEL_INSTANCE_ID",
+    ) !== metadata.kernelInstanceId ||
+    processEnvironmentValue(
+      environmentEntries,
+      "SINGULARITY_KERNEL_SPACE_ID",
+    ) !== metadata.spaceId ||
+    processEnvironmentValue(
+      environmentEntries,
+      "SINGULARITY_KERNEL_LISTEN_ADDRESS",
+    ) !== "127.0.0.1" ||
+    processEnvironmentValue(
+      environmentEntries,
+      "SINGULARITY_KERNEL_RUNTIME_OWNER",
+    ) !== workerId
+  ) {
+    throw new Error("P5 E2E restored Kernel PID belongs to another process");
+  }
+  return true;
+}
+
+async function signalPersistedProcess(metadata, signal) {
+  if (!(await persistedProcessMatchesIdentity(metadata))) {
+    return false;
+  }
+  try {
+    process.kill(metadata.pid, signal);
     return true;
   } catch (error) {
-    if (error !== null && typeof error === "object" && error.code === "ESRCH") {
+    if (processInspectionUnavailable(error)) {
       return false;
     }
     throw error;
   }
 }
 
-async function stopPersistedProcess(pid) {
-  if (!processExists(pid)) {
-    return;
-  }
-  process.kill(pid, "SIGTERM");
-  let deadline = Date.now() + 5_000;
-  while (processExists(pid) && Date.now() < deadline) {
+async function waitForPersistedProcessExit(metadata, timeoutMilliseconds) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    if (!(await persistedProcessMatchesIdentity(metadata))) {
+      return true;
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
-  if (!processExists(pid)) {
+  return !(await persistedProcessMatchesIdentity(metadata));
+}
+
+async function stopPersistedProcess(metadata) {
+  if (!(await signalPersistedProcess(metadata, "SIGTERM"))) {
     return;
   }
-  process.kill(pid, "SIGKILL");
-  deadline = Date.now() + 5_000;
-  while (processExists(pid) && Date.now() < deadline) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  if (await waitForPersistedProcessExit(metadata, 5_000)) {
+    return;
   }
-  if (processExists(pid)) {
+  if (!(await signalPersistedProcess(metadata, "SIGKILL"))) {
+    return;
+  }
+  if (!(await waitForPersistedProcessExit(metadata, 5_000))) {
     throw new Error("P5 E2E restored Kernel process did not stop");
   }
 }
@@ -554,7 +824,7 @@ async function stopRestoredKernelProcesses() {
     }
     throw error;
   }
-  const processIds = [];
+  const processes = [];
   for (const entry of entries) {
     if (
       !entry.isFile() ||
@@ -563,27 +833,42 @@ async function stopRestoredKernelProcesses() {
     ) {
       continue;
     }
-    const metadata = JSON.parse(
+    const metadata = restoredProcessMetadata(JSON.parse(
       await readFile(join(restoreRuntimeRoot, entry.name), "utf8"),
-    );
-    const pid = metadata?.pid;
-    if (pid === null) {
-      continue;
+    ));
+    if (metadata !== null) {
+      processes.push(metadata);
     }
-    if (!Number.isSafeInteger(pid) || pid < 1) {
-      throw new Error("P5 E2E restored Kernel process identity is invalid");
-    }
-    processIds.push(pid);
   }
-  await Promise.all(processIds.map((pid) => stopPersistedProcess(pid)));
+  const results = await Promise.allSettled(
+    processes.map((metadata) => stopPersistedProcess(metadata)),
+  );
+  const failures = results
+    .filter((result) => result.status === "rejected")
+    .map((result) => result.reason);
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "P5 E2E restored Kernel cleanup failed",
+    );
+  }
 }
 
 async function writeStackState(state) {
   const temporaryStateFile = `${stateFile}.${String(process.pid)}.tmp`;
+  if (stopping) {
+    throw new Error("P5 E2E cannot publish stack state during shutdown");
+  }
   await mkdir(dirname(stateFile), { recursive: true });
   try {
-    await writeFile(temporaryStateFile, JSON.stringify(state), "utf8");
-    await chmod(temporaryStateFile, 0o600);
+    await writeFile(temporaryStateFile, JSON.stringify(state), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    if (stopping) {
+      throw new Error("P5 E2E stack shutdown interrupted state publication");
+    }
     await rename(temporaryStateFile, stateFile);
   } catch (error) {
     await rm(temporaryStateFile, { force: true });
@@ -723,12 +1008,14 @@ async function startStack() {
       SINGULARITY_KERNEL_SERVICE_KEY_ID: serviceKeyId,
       SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE:
         serviceIdentity.servicePrivateKeyFile,
-      SINGULARITY_WORKER_ID: `p5-e2e-${String(process.pid)}`,
+      SINGULARITY_WORKER_BACKUP_REQUEST_TIMEOUT_MS: "300000",
       SINGULARITY_WORKER_CONTENT_AUDIT_RECONCILIATION_INTERVAL_MS: "1000",
+      SINGULARITY_WORKER_ID: workerId,
       SINGULARITY_WORKER_MAXIMUM_CONCURRENT_JOBS: "4",
       SINGULARITY_WORKER_OBJECT_STORE_ROOT: objectStoreRoot,
       SINGULARITY_WORKER_POLL_INTERVAL_MS: "100",
       SINGULARITY_WORKER_RESTORE_ARCHIVE_TOOL: kernelBinary,
+      SINGULARITY_WORKER_RESTORE_ARCHIVE_TIMEOUT_MS: "300000",
       SINGULARITY_WORKER_RESTORE_CLIENT_CA_FILE:
         serviceIdentity.certificateFile,
       SINGULARITY_WORKER_RESTORE_CLIENT_CERT_FILE:
@@ -739,6 +1026,7 @@ async function startStack() {
       SINGULARITY_WORKER_RESTORE_GATEWAY_HOSTNAME: "127.0.0.1",
       SINGULARITY_WORKER_RESTORE_HANDLE_PREFIX: "p5-e2e-restore",
       SINGULARITY_WORKER_RESTORE_KERNEL_BINARY: kernelBinary,
+      SINGULARITY_WORKER_RESTORE_KERNEL_LISTEN_ADDRESS: "127.0.0.1",
       SINGULARITY_WORKER_RESTORE_KERNEL_WORKING_DIRECTORY: appRoot,
       SINGULARITY_WORKER_RESTORE_PORT_FIRST: String(restorePortFirst),
       SINGULARITY_WORKER_RESTORE_PORT_LAST: String(restorePortLast),
@@ -755,12 +1043,20 @@ async function startStack() {
     label: "Nest Worker",
   });
   stack.workerProcess = workerProcess;
-  await waitForWorkerStartup(workerProcess);
+  await waitForWorkerReady(baseDatabaseUrl, kernelInstanceId, workerProcess);
+  for (const [label, child] of [
+    ["Go Kernel", kernelProcess],
+    ["Nest API", apiProcess],
+    ["Nest Worker", workerProcess],
+  ]) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`P5 E2E ${label} exited before state publication`);
+    }
+  }
   await writeStackState({
     apiOrigin,
     certificateFile: serviceIdentity.certificateFile,
     documentId: content.documentId,
-    documentInitialText,
     documentTitle,
     editor: { ...editorCredentials, userId: installation.userId },
     kernelInstanceId,
@@ -770,7 +1066,10 @@ async function startStack() {
     organizationId: installation.organizationId,
     organizationName,
     privateKeyFile: serviceIdentity.privateKeyFile,
+    referenceDocumentId: content.referenceDocumentId,
+    referenceDocumentTitle: content.referenceDocumentTitle,
     schema,
+    searchMarker: content.searchMarker,
     spaceId: installation.spaceId,
     spaceName,
     stateVersion: 1,
@@ -787,29 +1086,42 @@ const finished = new Promise((resolveFinished) => {
   finish = resolveFinished;
 });
 
-async function shutdown(exitCode) {
-  if (stopping) {
-    return;
+async function performShutdown(trigger) {
+  const failures = [];
+  if (trigger !== undefined) {
+    failures.push(trigger);
   }
-  stopping = true;
-  await rm(stateFile, { force: true });
-  const workerStopResults = await Promise.allSettled([
-    ...[...activeCommands].map((child) => stopProcess(child)),
-    stopProcess(stack?.workerProcess),
-  ]);
-  const stopResults = await Promise.allSettled([
-    stopRestoredKernelProcesses(),
-    stopProcess(stack?.apiProcess),
-    stopProcess(stack?.kernelProcess),
-  ]);
-  if (
-    workerStopResults.some((result) => result.status === "rejected") ||
-    stopResults.some((result) => result.status === "rejected")
-  ) {
-    exitCode = 1;
-  }
-  if (stack?.baseDatabaseUrl !== undefined) {
+  const cleanup = async (label, operation) => {
     try {
+      await operation();
+    } catch (error) {
+      failures.push(new Error(label, { cause: error }));
+    }
+  };
+
+  await cleanup("P5 E2E state cleanup failed", () =>
+    rm(stateFile, { force: true }));
+  await cleanup("P5 E2E setup command cleanup failed", async () => {
+    const results = await Promise.allSettled(
+      [...activeCommands].map((child) => stopProcess(child, true)),
+    );
+    const errors = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "P5 E2E setup commands did not stop");
+    }
+  });
+  await cleanup("P5 E2E Worker cleanup failed", () =>
+    stopProcess(stack?.workerProcess));
+  await cleanup("P5 E2E restored Kernel cleanup failed", () =>
+    stopRestoredKernelProcesses());
+  await cleanup("P5 E2E API cleanup failed", () => stopProcess(stack?.apiProcess));
+  await cleanup("P5 E2E source Kernel cleanup failed", () =>
+    stopProcess(stack?.kernelProcess));
+
+  if (stack?.baseDatabaseUrl !== undefined) {
+    await cleanup("P5 E2E schema cleanup failed", async () => {
       const connection = psqlConnection(stack.baseDatabaseUrl);
       await runCommand(
         "psql",
@@ -818,18 +1130,37 @@ async function shutdown(exitCode) {
           "--set=ON_ERROR_STOP=1",
           connection.url,
           "--command",
-          `DROP SCHEMA IF EXISTS "${schema}" CASCADE;`,
+          `SET lock_timeout = '5s'; SET statement_timeout = '30s'; DROP SCHEMA IF EXISTS "${schema}" CASCADE;`,
         ],
-        { allowDuringShutdown: true, env: connection.environment },
+        {
+          allowDuringShutdown: true,
+          env: connection.environment,
+          timeoutMilliseconds: 45_000,
+        },
       );
-    } catch {
-      exitCode = 1;
-    }
+    });
   }
-  await rm(runtimeRoot, { force: true, recursive: true });
-  await rm(kernelBinaryRoot, { force: true, recursive: true });
-  process.exitCode = exitCode;
-  finish();
+  await cleanup("P5 E2E runtime directory cleanup failed", () =>
+    rm(runtimeRoot, { force: true, recursive: true }));
+
+  if (failures.length > 0) {
+    requestedExitCode = 1;
+    console.error(
+      "[p5.e2e] stack shutdown failed",
+      new AggregateError(failures, "P5 E2E stack failed"),
+    );
+  }
+  process.exitCode = requestedExitCode;
+}
+
+function shutdown(exitCode, trigger) {
+  requestedExitCode = Math.max(requestedExitCode, exitCode);
+  if (shutdownPromise !== undefined) {
+    return shutdownPromise;
+  }
+  stopping = true;
+  shutdownPromise = performShutdown(trigger).finally(() => finish());
+  return shutdownPromise;
 }
 
 process.once("SIGINT", () => void shutdown(0));
@@ -837,23 +1168,8 @@ process.once("SIGTERM", () => void shutdown(0));
 
 try {
   stack = await startStack();
-  stack.apiProcess.once("exit", () => {
-    if (!stopping) {
-      void shutdown(1);
-    }
-  });
-  stack.kernelProcess.once("exit", () => {
-    if (!stopping) {
-      void shutdown(1);
-    }
-  });
-  stack.workerProcess.once("exit", () => {
-    if (!stopping) {
-      void shutdown(1);
-    }
-  });
   await finished;
 } catch (error) {
-  console.error("[p5.e2e] stack setup failed", error instanceof Error ? error.name : "unknown");
-  await shutdown(1);
+  console.error("[p5.e2e] stack setup failed", error);
+  await shutdown(1, error);
 }

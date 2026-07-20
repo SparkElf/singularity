@@ -30,6 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/filelock"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 	"github.com/siyuan-note/siyuan/kernel/sql"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
@@ -108,9 +109,12 @@ type resolvedImageOCRAsset struct {
 	absPath   string
 	assetKey  string
 	encrypted bool
+	source    *os.File
 }
 
-func resolveImageOCRAsset(c *gin.Context, arg map[string]any) (resolvedImageOCRAsset, error) {
+const imageOCREncryptedAssetUnsupported = "OCR is not supported for assets in encrypted notebooks"
+
+func resolveImageOCRAsset(c *gin.Context, arg map[string]any, retainSource bool) (resolvedImageOCRAsset, error) {
 	assetPath, ok := arg["path"].(string)
 	if !ok || strings.TrimSpace(assetPath) == "" {
 		return resolvedImageOCRAsset{}, errors.New("field [path] must be a non-empty string")
@@ -119,19 +123,50 @@ func resolveImageOCRAsset(c *gin.Context, arg map[string]any) (resolvedImageOCRA
 	if err != nil {
 		return resolvedImageOCRAsset{}, err
 	}
-	absPath, err := model.GetAssetAbsPathInBox(assetPath, notebookID)
+	var absPath, assetKey string
+	var source *os.File
+	if identity, enterpriseRequest := serviceauth.RequestContentIdentity(c.Request); enterpriseRequest {
+		var documentAsset *model.DocumentAssetForOCR
+		documentAsset, err = model.ResolveDocumentAssetForOCR(notebookID, identity.DocumentID, assetPath)
+		if err == nil {
+			absPath = documentAsset.AbsPath
+			assetKey = documentAsset.AssetKey
+			source = documentAsset.Source
+		}
+	} else {
+		absPath, err = model.GetAssetAbsPathInBox(assetPath, notebookID)
+		if err == nil {
+			resolvedNotebookID := model.ExtractBoxIDFromAssetsPath(absPath)
+			if notebookID != "" && resolvedNotebookID != "" && resolvedNotebookID != notebookID {
+				return resolvedImageOCRAsset{}, errors.New("asset does not belong to the declared notebook")
+			}
+			assetKey, err = util.AssetTextKeyFromAbsPath(absPath)
+		}
+	}
 	if err != nil {
 		return resolvedImageOCRAsset{}, err
 	}
-	assetKey, err := filepath.Rel(util.DataDir, absPath)
-	if err != nil {
-		return resolvedImageOCRAsset{}, err
+	if source != nil && !retainSource {
+		if err = source.Close(); err != nil {
+			return resolvedImageOCRAsset{}, err
+		}
+		source = nil
 	}
 	return resolvedImageOCRAsset{
 		absPath:   absPath,
-		assetKey:  filepath.ToSlash(assetKey),
+		assetKey:  assetKey,
 		encrypted: model.IsEncryptedAssetPath(absPath),
+		source:    source,
 	}, nil
+}
+
+func (asset *resolvedImageOCRAsset) close() error {
+	if asset.source == nil {
+		return nil
+	}
+	err := asset.source.Close()
+	asset.source = nil
+	return err
 }
 
 func getImageOCRText(c *gin.Context) {
@@ -143,7 +178,7 @@ func getImageOCRText(c *gin.Context) {
 		return
 	}
 
-	asset, err := resolveImageOCRAsset(c, arg)
+	asset, err := resolveImageOCRAsset(c, arg, false)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -170,7 +205,7 @@ func setImageOCRText(c *gin.Context) {
 		return
 	}
 
-	asset, err := resolveImageOCRAsset(c, arg)
+	asset, err := resolveImageOCRAsset(c, arg, false)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
@@ -183,6 +218,8 @@ func setImageOCRText(c *gin.Context) {
 		return
 	}
 	if asset.encrypted {
+		ret.Code = -1
+		ret.Msg = imageOCREncryptedAssetUnsupported
 		return
 	}
 	util.SetAssetText(asset.assetKey, text)
@@ -209,20 +246,33 @@ func ocr(c *gin.Context) {
 		return
 	}
 
-	asset, err := resolveImageOCRAsset(c, arg)
+	asset, err := resolveImageOCRAsset(c, arg, true)
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
 	}
 	if asset.encrypted {
+		if closeErr := asset.close(); closeErr != nil {
+			ret.Code = -1
+			ret.Msg = closeErr.Error()
+			return
+		}
 		ret.Code = -1
-		ret.Msg = "OCR is not supported for assets in encrypted notebooks"
+		ret.Msg = imageOCREncryptedAssetUnsupported
 		ret.Data = map[string]any{"closeTimeout": 3000}
 		return
 	}
 
-	ocrJSON, err := util.OcrAsset(asset.assetKey, asset.absPath)
+	var ocrJSON []map[string]any
+	if asset.source == nil {
+		ocrJSON, err = util.OcrAsset(asset.assetKey, asset.absPath)
+	} else {
+		ocrJSON, err = util.OcrAssetFromFile(asset.assetKey, asset.absPath, asset.source)
+	}
+	if closeErr := asset.close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
 	if nil != err {
 		ret.Code = -1
 		ret.Msg = err.Error()

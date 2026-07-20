@@ -48,10 +48,6 @@ function renderLayout(initialEntry: string, managementAccess: unknown): void {
           <Routes>
             <Route path="/spaces" element={<h1>Space list</h1>} />
             <Route
-              path="/organizations/:organizationId/spaces/:spaceId"
-              element={<h1>Knowledge space</h1>}
-            />
-            <Route
               path="/organizations/:organizationId/settings"
               element={<EnterpriseAdminLayout />}
             >
@@ -111,6 +107,34 @@ describe("EnterpriseAdminLayout capability navigation", () => {
     expect(screen.getByRole("link", { name: "备份恢复" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "分享" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "健康容量" })).not.toBeInTheDocument();
+  });
+
+  it("returns from managed space settings to the authorized space list", async () => {
+    renderLayout(
+      `/organizations/${ORGANIZATION_ID}/settings/spaces/${SPACE_ID}/access`,
+      {
+        organizations: [
+          {
+            organizationCapabilities: [],
+            organizationId: ORGANIZATION_ID,
+            organizationName: "银河研究院",
+            spaces: [
+              {
+                capabilities: ["access"],
+                spaceId: SPACE_ID,
+                spaceName: "深空知识空间",
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    expect(await screen.findByRole("heading", { name: "Access content" })).toBeVisible();
+    const returnLink = screen.getByRole("link", { name: "返回空间列表" });
+    expect(returnLink).toHaveAttribute("href", "/spaces");
+    fireEvent.click(returnLink);
+    expect(await screen.findByRole("heading", { name: "Space list" })).toBeVisible();
   });
 
   it("uses UI priority instead of server capability order for redirects and space selection", async () => {

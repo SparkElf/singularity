@@ -4,7 +4,7 @@ import type {
 import {Constants} from "../../constants";
 import {addStyle} from "../util/addStyle";
 
-export type ProtyleRendererMessageKey = "copy" | "edit" | "more" | "refresh";
+export type ProtyleRendererMessageKey = "copy" | "edit" | "mcpStatusDisabled" | "mcpStatusFailed" | "more" | "refresh";
 
 export interface ProtyleRendererContext {
     readonly localization: {

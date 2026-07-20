@@ -25,13 +25,14 @@ import (
 )
 
 const (
-	enterpriseDiscoveryRequestMaxBytes    = 4096
-	enterpriseDiscoveryQueryMaxRunes      = 512
-	enterpriseDiscoveryContentMaxRunes    = 4096
-	enterpriseDiscoveryGraphLabelMaxRunes = 512
-	enterpriseDiscoveryPageSize           = 64
-	enterpriseDiscoveryGraphMaxNodes      = 2048
-	enterpriseDiscoveryGraphMaxLinks      = 4096
+	enterpriseDiscoveryRequestMaxBytes     = 4096
+	enterpriseDiscoveryQueryMaxRunes       = 512
+	enterpriseDiscoveryContentMaxRunes     = 4096
+	enterpriseDiscoveryGraphLabelMaxRunes  = 512
+	enterpriseDiscoveryGraphNodeIDMaxRunes = enterpriseDiscoveryGraphLabelMaxRunes + len("tag:")
+	enterpriseDiscoveryPageSize            = 64
+	enterpriseDiscoveryGraphMaxNodes       = 2048
+	enterpriseDiscoveryGraphMaxLinks       = 4096
 )
 
 type enterpriseDiscoverySearchRequest struct {
@@ -231,7 +232,7 @@ func enterpriseDiscoveryLocalGraphProjections(nodes []*model.GraphNode) []enterp
 		if node == nil || node.ID == "" {
 			continue
 		}
-		if utf8.RuneCountInString(node.ID) > enterpriseDiscoveryGraphLabelMaxRunes {
+		if utf8.RuneCountInString(node.ID) > enterpriseDiscoveryGraphNodeIDMaxRunes {
 			continue
 		}
 		if len(ret) == enterpriseDiscoveryGraphMaxNodes {
@@ -266,7 +267,7 @@ func enterpriseDiscoveryGraphLinkProjections(links []*model.GraphLink, nodes []e
 		if link == nil || link.From == "" || link.To == "" {
 			continue
 		}
-		if utf8.RuneCountInString(link.From) > enterpriseDiscoveryGraphLabelMaxRunes || utf8.RuneCountInString(link.To) > enterpriseDiscoveryGraphLabelMaxRunes {
+		if utf8.RuneCountInString(link.From) > enterpriseDiscoveryGraphNodeIDMaxRunes || utf8.RuneCountInString(link.To) > enterpriseDiscoveryGraphNodeIDMaxRunes {
 			continue
 		}
 		if _, ok := projectedNodeIDs[link.From]; !ok {
@@ -321,6 +322,14 @@ func enterpriseDiscoveryBoxID(notebookID string) string {
 	return ""
 }
 
+func enterpriseDiscoveryGraphCapability(c *gin.Context) (enterprise, supportsGraph bool) {
+	identity, enterprise := serviceauth.RequestContentIdentity(c.Request)
+	if !enterprise {
+		return false, true
+	}
+	return true, !model.IsEncryptedBox(identity.NotebookID)
+}
+
 func EnterpriseSearchSpace(c *gin.Context) {
 	request := &enterpriseDiscoverySearchRequest{}
 	if !bindEnterpriseDiscoveryJSON(c, request) || request.Query == nil ||
@@ -329,16 +338,13 @@ func EnterpriseSearchSpace(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
-	blocks, matchedBlockCount, _, pageCount, _ := model.FullTextSearchBlock(
+	if err := RegisterAllEncryptedResponses(c); err != nil {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
+	blocks, matchedBlockCount, pageCount := model.SearchEnterpriseDiscoveryBlocks(
 		*request.Query,
-		nil,
-		nil,
-		map[string]bool{},
-		map[string]bool{},
-		0,
-		7,
-		0,
-		1,
+		model.UnlockedEncryptedContentStoreIDs(),
 		enterpriseDiscoveryPageSize,
 	)
 	projection := enterpriseDiscoveryBlockProjections(blocks)
@@ -358,7 +364,16 @@ func EnterpriseReadSpaceGraph(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
-	_, nodes, links := model.BuildGraph(*request.Query)
+	if err := RegisterAllEncryptedResponses(c); err != nil {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
+	nodes, links := model.BuildEnterpriseDiscoveryGraph(
+		*request.Query,
+		model.UnlockedEncryptedContentStoreIDs(),
+		enterpriseDiscoveryGraphMaxNodes,
+		enterpriseDiscoveryGraphMaxLinks,
+	)
 	projectionNodes := make([]enterpriseDiscoveryGraphNode, 0, min(len(nodes), enterpriseDiscoveryGraphMaxNodes))
 	navigable := make(map[string]struct{}, len(nodes))
 	for _, node := range nodes {

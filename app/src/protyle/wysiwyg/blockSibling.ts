@@ -9,7 +9,7 @@ interface BlockSiblingResponse {
 export const requestBlockSibling = (
     protyle: IProtyle,
     id: string,
-) => protyle.session!.runtime.transport.request<BlockSiblingResponse>("/api/block/getBlockSiblingID", {
+) => protyle.runtime.transport.request<BlockSiblingResponse>("/api/block/getBlockSiblingID", {
     id,
     notebook: protyle.notebookId,
 }, {

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 
+import { isApiProblem } from "@/api/http.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -31,6 +32,7 @@ import {
   PageFailure,
   PageHeader,
   SectionHeading,
+  prioritizedError,
 } from "@/enterprise/components.tsx";
 import {
   createManagedSpace,
@@ -85,6 +87,18 @@ export function SpacesManagementPage() {
     onSuccess: invalidateSpaces,
   });
 
+  const queryErrors = [spacesQuery.error];
+  const mutationErrors = [
+    createSpaceMutation.error,
+    updateSpaceMutation.error,
+  ];
+  const currentErrors = [...queryErrors, ...mutationErrors];
+  const authenticationError = currentErrors.find((error) =>
+    isApiProblem(error, "unauthenticated"),
+  );
+  if (authenticationError) {
+    return <PageFailure error={authenticationError} />;
+  }
   if (spacesQuery.error) {
     return (
       <PageFailure
@@ -95,11 +109,12 @@ export function SpacesManagementPage() {
   }
 
   const spaces = spacesQuery.data?.spaces ?? [];
+  const mutationError = prioritizedError(mutationErrors);
 
   return (
     <div className="flex flex-col">
       <PageHeader description="组织知识空间与生命周期" title="空间" />
-      <MutationFailure error={createSpaceMutation.error ?? updateSpaceMutation.error} />
+      <MutationFailure error={mutationError} />
 
       <form
         className="grid grid-cols-[minmax(200px,420px)_auto] items-end gap-3 border-b bg-muted/25 p-3 max-sm:grid-cols-1"
@@ -161,70 +176,71 @@ export function SpacesManagementPage() {
                 return (
                   <TableRow key={space.spaceId}>
                     <TableCell colSpan={2}>
-                      <form
-                        className="flex min-w-[380px] items-center gap-2"
-                        key={`${space.spaceId}:${space.spaceName}:${space.status}`}
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          const formData = new FormData(event.currentTarget);
-                          const request = updateSpaceRequestSchema.safeParse({
-                            name: formData.get("name"),
-                            ...(space.status === "disabled"
-                              ? {}
-                              : { status: formData.get("status") }),
-                          });
-                          if (request.success) {
-                            updateSpaceMutation.mutate({
-                              request: request.data,
-                              spaceId: space.spaceId,
-                            });
-                          }
-                        }}
-                      >
-                        <label className="sr-only" htmlFor={`space-name-${space.spaceId}`}>
-                          空间名称
-                        </label>
-                        <Input
-                          className="min-w-48"
-                          defaultValue={space.spaceName}
-                          id={`space-name-${space.spaceId}`}
-                          name="name"
-                          required
-                        />
-                        {space.status === "disabled" ? (
+                      {space.status === "disabled" ? (
+                        <div className="flex min-w-[380px] items-center gap-2">
+                          <span className="min-w-48 font-medium">{space.spaceName}</span>
                           <Badge variant="destructive">{spaceStatusLabel(space.status)}</Badge>
-                        ) : (
-                          <>
-                            <label className="sr-only" htmlFor={`space-status-${space.spaceId}`}>
-                              空间状态
-                            </label>
-                            <Select
-                              defaultValue={space.status}
-                              id={`space-status-${space.spaceId}`}
-                              name="status"
-                            >
-                              <option value="active">活跃</option>
-                              <option value="archived">归档</option>
-                            </Select>
-                          </>
-                        )}
-                        <Button disabled={updating} size="sm" type="submit" variant="outline">
-                          {updating ? (
-                            <Spinner data-icon="inline-start" aria-label="正在保存" />
-                          ) : (
-                            <SaveIcon data-icon="inline-start" />
-                          )}
-                          保存
-                        </Button>
-                      </form>
+                        </div>
+                      ) : (
+                        <form
+                          className="flex min-w-[380px] items-center gap-2"
+                          key={`${space.spaceId}:${space.spaceName}:${space.status}`}
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const formData = new FormData(event.currentTarget);
+                            const request = updateSpaceRequestSchema.safeParse({
+                              name: formData.get("name"),
+                              status: formData.get("status"),
+                            });
+                            if (request.success) {
+                              updateSpaceMutation.mutate({
+                                request: request.data,
+                                spaceId: space.spaceId,
+                              });
+                            }
+                          }}
+                        >
+                          <label className="sr-only" htmlFor={`space-name-${space.spaceId}`}>
+                            空间名称
+                          </label>
+                          <Input
+                            className="min-w-48"
+                            defaultValue={space.spaceName}
+                            id={`space-name-${space.spaceId}`}
+                            name="name"
+                            required
+                          />
+                          <label className="sr-only" htmlFor={`space-status-${space.spaceId}`}>
+                            空间状态
+                          </label>
+                          <Select
+                            defaultValue={space.status}
+                            id={`space-status-${space.spaceId}`}
+                            name="status"
+                          >
+                            <option value="active">活跃</option>
+                            <option value="archived">归档</option>
+                          </Select>
+                          <Button disabled={updating} size="sm" type="submit" variant="outline">
+                            {updating ? (
+                              <Spinner data-icon="inline-start" aria-label="正在保存" />
+                            ) : (
+                              <SaveIcon data-icon="inline-start" />
+                            )}
+                            保存
+                          </Button>
+                        </form>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button asChild size="sm" variant="outline">
-                        <Link to={spaceSettingsPath(organizationId, space.spaceId, "access")}>
-                          <ShieldCheckIcon data-icon="inline-start" />
-                          访问权限
-                        </Link>
-                      </Button>
+                      {space.status === "disabled" ? null : (
+                        <Button asChild size="sm" variant="outline">
+                          <Link to={spaceSettingsPath(organizationId, space.spaceId, "access")}>
+                            <ShieldCheckIcon data-icon="inline-start" />
+                            访问权限
+                          </Link>
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 );

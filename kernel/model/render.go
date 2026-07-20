@@ -109,7 +109,7 @@ func renderBlockText(node *ast.Node, excludeTypes []string, removeLineBreak bool
 		return
 	}
 
-	ret = sql.NodeStaticContent(node, excludeTypes, false, false, false)
+	ret = sql.NodeStaticContentWithoutOCR(node, excludeTypes, false, false, false)
 	ret = strings.TrimSpace(ret)
 	if removeLineBreak {
 		ret = strings.ReplaceAll(ret, "\n", "")
@@ -217,7 +217,7 @@ func renderBlockContentByNodes(nodes []*ast.Node) string {
 
 	buf := bytes.Buffer{}
 	for _, n := range subNodes {
-		buf.WriteString(sql.NodeStaticContent(n, nil, false, false, false))
+		buf.WriteString(sql.NodeStaticContentWithoutOCR(n, nil, false, false, false))
 	}
 	return buf.String()
 }

@@ -12,7 +12,7 @@ import {
   LockKeyholeIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -32,6 +32,7 @@ interface ContentDirectoryTreeProps {
   readonly onPageError: (error: unknown, generation: number) => void;
   readonly onSelect: (
     document: ContentDirectoryDocument,
+    supportsGraph: boolean,
     generation: number,
   ) => void;
   readonly selection: ContentSelection | null;
@@ -46,10 +47,12 @@ interface DocumentLevelProps {
   readonly onPageError: (error: unknown, generation: number) => void;
   readonly onSelect: (
     document: ContentDirectoryDocument,
+    supportsGraph: boolean,
     generation: number,
   ) => void;
   readonly onToggleDocument: (document: ContentDirectoryDocument) => void;
   readonly selection: ContentSelection | null;
+  readonly supportsGraph: boolean;
 }
 
 interface DocumentPageProps extends DocumentLevelProps {
@@ -67,6 +70,22 @@ function DirectoryIcon({ icon }: { readonly icon: string }) {
   );
 }
 
+function PageFailure({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <li className="flex items-center gap-1 px-2 py-1.5 text-xs text-destructive">
+      <span className="min-w-0 flex-1 truncate">该层未能加载</span>
+      <Button
+        aria-label="重新加载该层文档"
+        onClick={onRetry}
+        size="icon-xs"
+        variant="ghost"
+      >
+        <RefreshCwIcon aria-hidden="true" />
+      </Button>
+    </li>
+  );
+}
+
 function DocumentPage({
   depth,
   expandedDocuments,
@@ -79,12 +98,13 @@ function DocumentPage({
   onSelect,
   onToggleDocument,
   selection,
+  supportsGraph,
 }: DocumentPageProps) {
   const pageQuery = useQuery({
     queryKey: contentDirectoryDocumentsQueryKey(identity, offset),
     queryFn: ({ signal }) =>
       getContentDirectoryDocuments(identity, offset, signal),
-    refetchOnMount: false,
+    refetchOnMount: true,
     retry: false,
     staleTime: 30_000,
   });
@@ -95,13 +115,13 @@ function DocumentPage({
     }
   }, [generation, onPageError, pageQuery.error]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (pageQuery.data?.locked) {
       onNotebookLocked(identity.notebookId, generation);
     }
   }, [generation, identity.notebookId, onNotebookLocked, pageQuery.data?.locked]);
 
-  if (pageQuery.isPending) {
+  if (pageQuery.data === undefined && pageQuery.isPending) {
     return (
       <li aria-label="正在加载文档" className="space-y-1 px-2 py-1.5">
         <Skeleton className="h-5 w-4/5" />
@@ -110,20 +130,8 @@ function DocumentPage({
     );
   }
 
-  if (pageQuery.isError) {
-    return (
-      <li className="flex items-center gap-1 px-2 py-1.5 text-xs text-destructive">
-        <span className="min-w-0 flex-1 truncate">该层未能加载</span>
-        <Button
-          aria-label="重新加载该层文档"
-          onClick={() => void pageQuery.refetch()}
-          size="icon-xs"
-          variant="ghost"
-        >
-          <RefreshCwIcon aria-hidden="true" />
-        </Button>
-      </li>
-    );
+  if (pageQuery.data === undefined) {
+    return <PageFailure onRetry={() => void pageQuery.refetch()} />;
   }
 
   if (pageQuery.data.locked) {
@@ -137,9 +145,14 @@ function DocumentPage({
 
   if (pageQuery.data.documents.length === 0 && offset === 0) {
     return (
-      <li className="flex h-7 items-center px-2 text-xs text-muted-foreground max-md:h-11">
-        暂无文档
-      </li>
+      <>
+        <li className="flex h-7 items-center px-2 text-xs text-muted-foreground max-md:h-11">
+          暂无文档
+        </li>
+        {pageQuery.isError ? (
+          <PageFailure onRetry={() => void pageQuery.refetch()} />
+        ) : null}
+      </>
     );
   }
 
@@ -184,7 +197,7 @@ function DocumentPage({
               <button
                 aria-current={selected ? "page" : undefined}
                 className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                onClick={() => onSelect(document, generation)}
+                onClick={() => onSelect(document, supportsGraph, generation)}
                 type="button"
               >
                 <DirectoryIcon icon={document.icon} />
@@ -212,6 +225,7 @@ function DocumentPage({
                 onSelect={onSelect}
                 onToggleDocument={onToggleDocument}
                 selection={selection}
+                supportsGraph={supportsGraph}
               />
             ) : null}
           </li>
@@ -230,6 +244,9 @@ function DocumentPage({
           </Button>
         </li>
       )}
+      {pageQuery.isError ? (
+        <PageFailure onRetry={() => void pageQuery.refetch()} />
+      ) : null}
     </>
   );
 }
@@ -277,6 +294,8 @@ export function ContentDirectoryTree({
     if (selection?.spaceId !== identity.spaceId) {
       return;
     }
+    // 选中文档时展开其笔记本，保证目录树立即跟随当前身份。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedNotebooks((current) => {
       if (current.has(selection.notebookId)) {
         return current;
@@ -365,6 +384,7 @@ export function ContentDirectoryTree({
                     });
                   }}
                   selection={selection}
+                  supportsGraph={notebook.supportsGraph}
                 />
               ) : null}
             </li>

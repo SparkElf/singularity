@@ -887,14 +887,21 @@ func GetChildBlocks(parentID, condition string, limit int) (ret []*Block) {
 }
 
 func GetAllChildBlocks(rootIDs []string, condition string, limit int) (ret []*Block) {
+	return GetAllChildBlocksInBox(rootIDs, condition, limit, "")
+}
+
+func GetAllChildBlocksInBox(rootIDs []string, condition string, limit int, boxID string) (ret []*Block) {
 	ret = []*Block{}
+	if len(rootIDs) == 0 {
+		return
+	}
 	sqlStmt := "SELECT * FROM blocks AS ref WHERE ref.root_id IN ('" + strings.Join(rootIDs, "','") + "')"
 	if "" != condition {
 		sqlStmt += " AND " + condition
 	}
 	sqlStmt += " LIMIT " + strconv.Itoa(limit)
 	queryEpoch := blockCacheQueryEpoch()
-	rows, err := query(sqlStmt)
+	rows, err := queryForBox(boxID, sqlStmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", sqlStmt, err)
 		return
@@ -965,9 +972,13 @@ func GetDuplicatedRootIDsInBox(blocksTable, boxID string) (ret []string) {
 }
 
 func GetAllRootBlocks() (ret []*Block) {
+	return GetAllRootBlocksInBox("")
+}
+
+func GetAllRootBlocksInBox(boxID string) (ret []*Block) {
 	stmt := "SELECT * FROM blocks WHERE type = 'd'"
 	queryEpoch := blockCacheQueryEpoch()
-	rows, err := query(stmt)
+	rows, err := queryForBox(boxID, stmt)
 	if err != nil {
 		logging.LogErrorf("sql query [%s] failed: %s", stmt, err)
 		return

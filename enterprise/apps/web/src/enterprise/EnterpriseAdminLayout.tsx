@@ -325,14 +325,7 @@ export function EnterpriseAdminLayout() {
           <header className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
             <SidebarTrigger />
             <Button asChild size="icon-sm" variant="ghost">
-              <Link
-                aria-label={currentSpace ? "返回知识空间" : "返回空间列表"}
-                to={
-                  currentSpace
-                    ? `/organizations/${encodeURIComponent(organizationId)}/spaces/${encodeURIComponent(currentSpace.spaceId)}`
-                    : SPACES_PATH
-                }
-              >
+              <Link aria-label="返回空间列表" to={SPACES_PATH}>
                 <ArrowLeftIcon aria-hidden="true" />
               </Link>
             </Button>

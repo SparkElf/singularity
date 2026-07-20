@@ -93,7 +93,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                 sideIsNext = false;
             }
             if (topElement.getAttribute("data-type") === "NodeHeading" && topElement.getAttribute("fold") === "1") {
-                const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
+                const foldTransaction = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                     id: topElement.getAttribute("data-node-id"),
                     notebook: protyle.notebookId,
                 }, {
@@ -116,7 +116,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     foldPreviousBlockElement.getAttribute("fold") === "1") {
                     const foldId = foldPreviousBlockElement.getAttribute("data-node-id");
                     if (!unfoldData[foldId]) {
-                        const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
+                        const foldTransaction = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
                             notebook: protyle.notebookId,
                         }, {
@@ -146,7 +146,7 @@ export const removeBlock = async (protyle: IProtyle, blockElement: Element, rang
                     previousBlockElement.getAttribute("fold") === "1") {
                     const foldId = previousBlockElement.getAttribute("data-node-id");
                     if (!unfoldData[foldId]) {
-                        const foldTransaction = await protyle.session!.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
+                        const foldTransaction = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getHeadingDeleteTransaction", {
                             id: foldId,
                             notebook: protyle.notebookId,
                         }, {

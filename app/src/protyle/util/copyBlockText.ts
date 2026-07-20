@@ -9,7 +9,7 @@ interface TextResponse {
 }
 
 const requestRefText = (protyle: IProtyle, id: string) =>
-    protyle.session!.runtime.transport.request<TextResponse>("/api/block/getRefText", {id}, {
+    protyle.runtime.transport.request<TextResponse>("/api/block/getRefText", {id}, {
         identity: protyleContentIdentity(protyle),
         intent: "read",
         signal: protyle.requestSignal,
@@ -17,7 +17,7 @@ const requestRefText = (protyle: IProtyle, id: string) =>
 
 const requestHumanPath = (protyle: IProtyle, id: string) => {
     const identity = protyleContentIdentity(protyle);
-    return protyle.session!.runtime.transport.request<TextResponse>("/api/filetree/getHPathByID", {
+    return protyle.runtime.transport.request<TextResponse>("/api/filetree/getHPathByID", {
         id,
         notebook: identity.notebookId,
     }, {
@@ -27,6 +27,7 @@ const requestHumanPath = (protyle: IProtyle, id: string) => {
     });
 };
 
+/** 按指定格式读取或拼装块文本，并通过当前编辑器身份生成可粘贴内容。 */
 export const copyBlockText = async (
     protyle: IProtyle,
     ids: readonly string[],

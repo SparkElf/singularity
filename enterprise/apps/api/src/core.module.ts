@@ -20,12 +20,14 @@ import { IdentityController } from "./identity/identity.controller.js";
 import { HttpAccessGuard } from "./identity/http-access.js";
 import { IdentityService } from "./identity/identity.service.js";
 import { LoginRateLimiter } from "./identity/login-rate-limiter.js";
+import { OidcStartAdmission } from "./identity/oidc-start-admission.js";
 import { PasswordHasher } from "./identity/password-hasher.js";
 import { AccessChangedPublisher } from "./kernel/access-changed.js";
 import {
   FetchOidcProviderClient,
   FileOidcClientSecretResolver,
   type OidcClientSecretResolver,
+  type OidcHttpTransport,
   OidcService,
 } from "./identity/oidc.service.js";
 import { OidcController } from "./identity/oidc.controller.js";
@@ -53,6 +55,8 @@ export interface CoreModuleOptions {
   databaseUrl: string | undefined;
   auditConfiguration: AuditConfiguration;
   initializeDummyPasswordHash?: boolean;
+  oidcClientSecretResolver?: OidcClientSecretResolver;
+  oidcHttpTransport?: OidcHttpTransport;
 }
 
 @Module({})
@@ -112,6 +116,10 @@ export class CoreModule {
           provide: LoginRateLimiter,
           useFactory: () => new LoginRateLimiter(),
         },
+        {
+          provide: OidcStartAdmission,
+          useFactory: () => new OidcStartAdmission(),
+        },
         IdentityService,
         SpaceAccessService,
         OrganizationManagementService,
@@ -120,15 +128,19 @@ export class CoreModule {
         {
           provide: OIDC_CLIENT_SECRET_RESOLVER,
           useFactory: () =>
+            options.oidcClientSecretResolver ??
             new FileOidcClientSecretResolver(
-              options.configuration.oidcClientSecretFiles,
+              options.configuration.oidcClientSecretBindings,
             ),
         },
         {
           provide: OIDC_PROVIDER_CLIENT,
           inject: [OIDC_CLIENT_SECRET_RESOLVER],
           useFactory: (secretResolver: OidcClientSecretResolver) =>
-            new FetchOidcProviderClient(secretResolver),
+            new FetchOidcProviderClient(
+              secretResolver,
+              options.oidcHttpTransport,
+            ),
         },
         OidcService,
         AccessOperationDiscovery,

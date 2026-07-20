@@ -21,10 +21,15 @@ import {
 } from "@singularity/contracts";
 import { DatabaseRuntime } from "@singularity/database";
 
+import { SpaceConnectionRegistry } from "./kernel/space-connection.registry.js";
+
 @ApiTags("health")
 @Controller(DATABASE_READINESS_PATH)
 export class DatabaseHealthController {
-  constructor(private readonly database: DatabaseRuntime) {}
+  constructor(
+    private readonly database: DatabaseRuntime,
+    private readonly kernelConnections: SpaceConnectionRegistry,
+  ) {}
 
   @Get()
   @Header("Cache-Control", "no-store")
@@ -37,11 +42,16 @@ export class DatabaseHealthController {
   async getReadiness(): Promise<DatabaseReadinessResponse> {
     try {
       await this.database.client.$queryRaw`SELECT 1`;
-      return DATABASE_READY_RESPONSE;
     } catch (error) {
       throw new ServiceUnavailableException(DATABASE_UNAVAILABLE_RESPONSE, {
         cause: error,
       });
     }
+    if (!this.kernelConnections.available) {
+      throw new ServiceUnavailableException(DATABASE_UNAVAILABLE_RESPONSE, {
+        cause: new Error("Kernel notification listeners are unavailable"),
+      });
+    }
+    return DATABASE_READY_RESPONSE;
   }
 }

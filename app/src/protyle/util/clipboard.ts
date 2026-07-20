@@ -1,12 +1,10 @@
-import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
+import type {ProtyleContentScopeIdentity} from "../runtime/contentScope";
 
 const SIYUAN_HTML_PATTERN = /<!--data-siyuan='([^']+)'-->/;
 const SIYUAN_HTML_GLOBAL_PATTERN = /<!--data-siyuan='[^']+'-->/g;
 const SIYUAN_CLIPBOARD_VERSION = 1;
 
-export interface ProtyleClipboardSourceIdentity extends ProtyleContentIdentity {
-    readonly spaceId: string;
-}
+export type ProtyleClipboardSourceIdentity = ProtyleContentScopeIdentity;
 
 export interface ProtyleClipboardData {
     files?: File[];
@@ -46,30 +44,40 @@ export const encodeBase64 = (text: string): string => {
     return btoa(binary);
 };
 
+// 解析剪贴板协议并校验内容身份，确保云端空间与本地应用来源互斥且完整。
 const parseClipboardPayload = (value: unknown): SiyuanClipboardPayload | undefined => {
     if (!value || typeof value !== "object") {
         return;
     }
     const payload = value as Record<string, unknown>;
-    const source = payload.source;
+    const rawSource = payload.source;
     if (payload.version !== SIYUAN_CLIPBOARD_VERSION ||
         typeof payload.siyuanHTML !== "string" ||
-        !source || typeof source !== "object") {
+        !rawSource || typeof rawSource !== "object") {
         return;
     }
-    const identity = source as Record<string, unknown>;
-    if (typeof identity.spaceId !== "string" || identity.spaceId === "" ||
-        typeof identity.notebookId !== "string" || identity.notebookId === "" ||
+    const identity = rawSource as Record<string, unknown>;
+    if (typeof identity.notebookId !== "string" || identity.notebookId === "" ||
         typeof identity.documentId !== "string" || identity.documentId === "") {
+        return;
+    }
+    const spaceId = typeof identity.spaceId === "string" && identity.spaceId !== "" ? identity.spaceId : undefined;
+    const localAppId = typeof identity.localAppId === "string" && identity.localAppId !== "" ?
+        identity.localAppId : undefined;
+    if ((spaceId === undefined) === (localAppId === undefined)) {
+        return;
+    }
+    let source: ProtyleClipboardSourceIdentity;
+    if (spaceId !== undefined) {
+        source = {spaceId, notebookId: identity.notebookId, documentId: identity.documentId};
+    } else if (localAppId !== undefined) {
+        source = {localAppId, notebookId: identity.notebookId, documentId: identity.documentId};
+    } else {
         return;
     }
     return {
         version: SIYUAN_CLIPBOARD_VERSION,
-        source: {
-            spaceId: identity.spaceId,
-            notebookId: identity.notebookId,
-            documentId: identity.documentId,
-        },
+        source,
         siyuanHTML: payload.siyuanHTML,
     };
 };
