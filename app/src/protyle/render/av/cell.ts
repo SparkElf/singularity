@@ -4,7 +4,7 @@ import {openMenuPanel} from "./openMenuPanel";
 import {updateAttrViewCellAnimation} from "./action";
 import {isNotCtrl} from "../../util/keyboard";
 import {focusBlock, focusByRange} from "../../util/selection";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {unicodeToEmoji} from "../../hint/emoji";
 import {registerAVBlockValueTarget, resolveAVBlockTarget} from "./blockTarget";
 import {getColIconByType, getColId} from "./col";

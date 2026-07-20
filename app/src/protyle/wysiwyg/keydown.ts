@@ -57,7 +57,7 @@ import {foldBlocksRecursively, getFoldBlock, setFold} from "../util/blockFold";
 import {Constants} from "../../constants";
 import {scrollCenter} from "../util/highlightById";
 import {closeContainingBlockPanel, openBlockPanel} from "../BlockPanel";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {highlightRender} from "../render/highlightRender";
 import {countBlockStatistics} from "../util/statistics";
 import {moveToDown, moveToUp} from "./move";

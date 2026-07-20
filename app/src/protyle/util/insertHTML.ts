@@ -1,5 +1,5 @@
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName, hasClosestByTag} from "./hasClosest";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {transaction, updateTransaction} from "../wysiwyg/transaction";
 import {getContenteditableElement, getParentBlock, fixAdjacentTags} from "../wysiwyg/getBlock";
 import {

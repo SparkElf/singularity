@@ -18,7 +18,7 @@ import {getAllModels} from "../layout/getAll";
 import {updateBacklinkGraph} from "../editor/util";
 /// #endif
 import {getSearch, isMobile} from "../util/functions";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {renameAsset} from "../editor/rename";
 import {pushBack} from "../mobile/util/MobileBackFoward";
 import {copyPNGByLink, exportAsset, writeAssetToClipboard} from "./util";

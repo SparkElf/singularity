@@ -12,7 +12,7 @@ import {setPosition} from "../util/setPosition";
 import {setStorageVal} from "../protyle/util/compatibility";
 import {configureProtyleLuteEmojis} from "../protyle/render/setLute";
 import {resolveProtyleEmojiPath} from "../protyle/util/emojiPath";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {addRecentEmoji} from "../host/recent-emojis";
 import {emojiCodepointsToString} from "../protyle/util/emojiUnicode";
 

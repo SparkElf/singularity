@@ -22,7 +22,7 @@ import {focusBlock, focusByRange} from "../../util/selection";
 import {previewAttrViewImages} from "../../preview/image";
 import {unicodeToEmoji} from "../../hint/emoji";
 import {openProtyleEmojiMenu} from "../../ui/emojiMenu";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {openCalcMenu} from "./calc";
 import {avRender} from "./render";
 import {addView, openViewMenu} from "./view";

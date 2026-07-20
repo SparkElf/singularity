@@ -3,7 +3,7 @@ import {escapeAttr, escapeHtml} from "../../../util/escape";
 import {getColIconByType} from "./col";
 import {setToolbarPosition} from "../../toolbar/position";
 import {genCellValue} from "./cell";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {unicodeToEmoji} from "../../hint/emoji";
 import {getFieldsByData} from "./view";
 import {Constants} from "../../../constants";

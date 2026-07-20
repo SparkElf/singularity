@@ -8,7 +8,7 @@ import {scrollCenter} from "../util/highlightById";
 import {transaction, updateTransaction} from "./transaction";
 import {onGet} from "../util/onGet";
 import {Constants} from "../../constants";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {net2LocalAssets} from "../breadcrumb/action";
 import {processClonePHElement} from "../render/util";
 import {copyBlockText} from "../util/copyBlockText";

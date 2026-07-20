@@ -5,7 +5,7 @@ import {genLinkText, resolveLinkDest} from "./config";
 import {readClipboard, writeText} from "../util/clipboard";
 import {setToolbarPosition} from "./position";
 import {focusByRange, getSelectionPosition} from "../util/selection";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 
 type ToolbarTextKey = Parameters<IProtyle["localization"]["text"]>[0];
 

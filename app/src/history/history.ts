@@ -5,7 +5,7 @@ import {hasClosestByClassName} from "../protyle/util/hasClosest";
 import {renderAssetsPreview} from "../asset/renderAssets";
 import {Protyle} from "../protyle";
 import {disabledProtyle, onGet} from "../protyle/util/onGet";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {fetchPost} from "../util/fetch";
 import {escapeAttr, escapeHtml} from "../util/escape";
 import {isMobile} from "../util/functions";

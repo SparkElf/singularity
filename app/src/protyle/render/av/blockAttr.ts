@@ -1,6 +1,6 @@
 import {addCol, getColIconByType} from "./col";
 import {escapeAriaLabel, escapeAttr, escapeHtml} from "../../../util/escape";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {popTextCell, updateCellsValue} from "./cell";
 import {hasClosestBlock, hasClosestByAttribute, hasClosestByClassName} from "../../util/hasClosest";
 import {unicodeToEmoji} from "../../hint/emoji";

@@ -1,5 +1,5 @@
 import type {ProtyleContentIdentity} from "../../../../enterprise/packages/protyle-browser/src/contracts";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {Constants} from "../../constants";
 import {escapeHtml} from "../../util/escape";
 import {blockRender} from "../render/blockRender";

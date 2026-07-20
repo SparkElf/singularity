@@ -1,7 +1,7 @@
 import {focusByWbr} from "../util/selection";
 import {transaction, turnsIntoOneTransaction, updateTransaction} from "./transaction";
 import {genEmptyBlock} from "./blockElement";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {Constants} from "../../constants";
 import {moveToPrevious, removeBlock} from "./remove";
 import {hasClosestByClassName, isBlockElement} from "../util/hasClosest";

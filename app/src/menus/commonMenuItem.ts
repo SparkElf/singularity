@@ -24,7 +24,7 @@ import {focusBlock, focusByRange, getEditorRange} from "../protyle/util/selectio
 import {openAsset, openBy} from "../editor/util";
 /// #endif
 import {rename, replaceFileName} from "../editor/rename";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {Constants} from "../constants";
 import {exportImage} from "../protyle/export/util";
 import {App} from "../index";

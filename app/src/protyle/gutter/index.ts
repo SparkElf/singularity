@@ -26,7 +26,7 @@ import {hideElements} from "../ui/hideElements";
 import {highlightRender} from "../render/highlightRender";
 import {blockRender} from "../render/blockRender";
 import {getContenteditableElement, getParentBlock, getTopAloneElement, isNotEditBlock} from "../wysiwyg/getBlock";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {transparentImgSrc} from "../util/dragTip";
 import {countBlockStatistics} from "../util/statistics";
 import {Constants} from "../../constants";

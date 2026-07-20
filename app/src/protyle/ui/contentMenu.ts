@@ -1,5 +1,5 @@
 import type {ProtyleMenuHandle, ProtyleMenuSurface} from "../../../../enterprise/packages/protyle-browser/src/contracts";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {copyPlainText, readClipboard, writeText} from "../util/clipboard";
 import {hasClosestByTag} from "../util/hasClosest";
 import {emitProtylePluginMenu} from "../util/plugin";

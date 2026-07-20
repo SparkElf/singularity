@@ -9,7 +9,7 @@ import {
     renderCell,
     renderCellAttr
 } from "./cell";
-import * as dayjs from "dayjs";
+import dayjs from "dayjs";
 import {Constants} from "../../../constants";
 import {insertGalleryItemAnimation} from "./gallery/item";
 import {clearSelect} from "../../util/clear";
