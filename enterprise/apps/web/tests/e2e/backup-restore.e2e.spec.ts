@@ -155,7 +155,6 @@ test("restores one committed content version into an activated isolated space", 
     restoredDocumentRequest.headers()["x-singularity-document-id"],
   ).not.toBe(state.documentId);
 
-  await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   const sourceSpaceApiPrefix =
     `/api/v1/organizations/${state.organizationId}/spaces/${state.spaceId}`;
   const targetSpaceApiPrefix =
@@ -163,11 +162,24 @@ test("restores one committed content version into an activated isolated space", 
   const expectedNavigationAbortPaths = new Set([
     `${sourceSpaceApiPrefix}/backups`,
     `${sourceSpaceApiPrefix}/restores`,
+    `${sourceSpaceApiPrefix}/content-directory/notebooks`,
     `${sourceSpaceApiPrefix}/kernel/api/block/getDocInfo`,
     `${sourceSpaceApiPrefix}/kernel/api/block/getBlockBreadcrumb`,
     `${sourceSpaceApiPrefix}/kernel/api/transactions/undoState`,
     `${targetSpaceApiPrefix}/kernel/api/block/getDocInfo`,
+    `${targetSpaceApiPrefix}/kernel/api/block/getBlockBreadcrumb`,
+    `${targetSpaceApiPrefix}/kernel/api/transactions/undoState`,
   ]);
+  const isExpectedNavigationRequest = (request: { url(): string }) =>
+    expectedNavigationAbortPaths.has(new URL(request.url()).pathname);
+  await expect.poll(() =>
+    [...diagnostics.pendingRequests].filter(
+      (request) => !isExpectedNavigationRequest(request),
+    ).length,
+  ).toBe(0);
+  const expectedPendingRequests = [...diagnostics.pendingRequests].filter(
+    isExpectedNavigationRequest,
+  );
   const expectedNavigationConsoleMessages = diagnostics.consoleMessages.filter((message) => {
     const text = message.text();
     return text === "[global-undo] initialize failed: Failed to fetch" ||
@@ -188,5 +200,6 @@ test("restores one committed content version into an activated isolated space", 
       request.failure()?.errorText !== "net::ERR_ABORTED" ||
       !expectedNavigationAbortPaths.has(new URL(request.url()).pathname),
     ),
+    expectedPendingRequests,
   });
 });

@@ -418,11 +418,12 @@ test.describe("React discovery work panels", () => {
       unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
         (message) => !isExpectedIconNetworkChange(message),
       ),
-      // 文档切换时主动取消的旧 getDoc 属于迟到响应隔离合同，不是失败请求。
+      // 文档切换时主动取消的旧内容、统计和面包屑请求属于迟到响应隔离合同，不是失败请求。
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const failure = request.failure();
         const url = new URL(request.url());
         const isCancelledDocumentRequest = url.pathname.includes("/kernel/api/filetree/getDoc") ||
+          url.pathname.includes("/kernel/api/block/getContentWordCount") ||
           url.pathname.includes("/kernel/api/block/getBlockBreadcrumb");
         return failure?.errorText !== "net::ERR_ABORTED" || !isCancelledDocumentRequest;
       }),

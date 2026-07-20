@@ -35,7 +35,9 @@ COPY app/stage/protyle /workspace/app/stage/protyle
 COPY app/stage/loading-pure.svg /workspace/app/stage/loading-pure.svg
 COPY enterprise/ ./
 
-RUN pnpm --filter @singularity/web build
+RUN pnpm --filter @singularity/authorization build && \
+    pnpm --filter @singularity/contracts build && \
+    pnpm --filter @singularity/web build
 
 FROM nginxinc/nginx-unprivileged:1.31.2-alpine@sha256:6320020c7da8714feab524e02c08c5a1958675c4e68700e93a2fd8970b065786 AS runtime
 

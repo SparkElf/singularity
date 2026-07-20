@@ -35,6 +35,11 @@ interface BrowserHealthEvidence {
   expectedPendingRequests?: readonly Request[];
 }
 
+// 长生命周期 WebSocket 由专用连接合同验证，不纳入普通 HTTP 请求终态统计。
+function isLongLivedRequest(request: Request): boolean {
+  return request.resourceType() === "websocket";
+}
+
 export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   const diagnostics: BrowserDiagnostics = {
     consoleMessages: [],
@@ -56,7 +61,9 @@ export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   });
   page.on("request", (request) => {
     diagnostics.requests.push(request);
-    diagnostics.pendingRequests.add(request);
+    if (!isLongLivedRequest(request)) {
+      diagnostics.pendingRequests.add(request);
+    }
     diagnostics.requestTimings.set(request, {
       durationMs: null,
       finishedAt: null,
@@ -126,6 +133,10 @@ export function expectBrowserHealthy(
     ...diagnostics.requestFailures,
   ]);
   for (const request of diagnostics.requests) {
+    // WebSocket 是长生命周期连接，由专用 socket 合同验证，不参与 HTTP 请求的终态和耗时检查。
+    if (isLongLivedRequest(request)) {
+      continue;
+    }
     if (expectedPendingRequests.has(request)) {
       continue;
     }

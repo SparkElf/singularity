@@ -125,6 +125,27 @@ function commandDiagnostic(stderr, stdout) {
   ].map((value) => `\n${value}`).join("");
 }
 
+// 递归展开关闭阶段的 AggregateError，保留每个进程清理失败的完整堆栈。
+function shutdownDiagnostic(error) {
+  if (error instanceof AggregateError) {
+    return {
+      errors: error.errors.map((nested) => shutdownDiagnostic(nested)),
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      cause: error.cause === undefined ? undefined : shutdownDiagnostic(error.cause),
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+  return { value: String(error) };
+}
+
 function signalProcess(child, signal, processGroup) {
   if (child.pid === undefined) {
     throw new Error("P5 E2E child process has no process identity");
@@ -734,7 +755,8 @@ function restoredProcessMetadata(value) {
   return metadata;
 }
 
-async function persistedProcessMatchesIdentity(metadata) {
+// 严格校验待终止进程身份；终止后的等待阶段允许 PID 复用，但绝不向复用 PID 发信号。
+async function persistedProcessMatchesIdentity(metadata, options = {}) {
   let commandLine;
   let environment;
   try {
@@ -754,7 +776,7 @@ async function persistedProcessMatchesIdentity(metadata) {
     restoreRuntimeRoot,
     metadata.workspaceDirectoryName,
   );
-  if (
+  const matches = !(
     arguments_[0] !== kernelBinary ||
     processArgument(arguments_, "--workspace") !== workspaceDirectory ||
     processArgument(arguments_, "--port") !== String(metadata.port) ||
@@ -774,10 +796,11 @@ async function persistedProcessMatchesIdentity(metadata) {
       environmentEntries,
       "SINGULARITY_KERNEL_RUNTIME_OWNER",
     ) !== workerId
-  ) {
+  );
+  if (!matches && options.failOnMismatch !== false) {
     throw new Error("P5 E2E restored Kernel PID belongs to another process");
   }
-  return true;
+  return matches;
 }
 
 async function signalPersistedProcess(metadata, signal) {
@@ -798,12 +821,15 @@ async function signalPersistedProcess(metadata, signal) {
 async function waitForPersistedProcessExit(metadata, timeoutMilliseconds) {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
-    if (!(await persistedProcessMatchesIdentity(metadata))) {
+    // 终止后 PID 可能立即被系统复用；身份不再匹配即表示原目标已经退出，不能继续向新进程发信号。
+    if (
+      !(await persistedProcessMatchesIdentity(metadata, { failOnMismatch: false }))
+    ) {
       return true;
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
-  return !(await persistedProcessMatchesIdentity(metadata));
+  return !(await persistedProcessMatchesIdentity(metadata, { failOnMismatch: false }));
 }
 
 async function stopPersistedProcess(metadata) {
@@ -1154,7 +1180,11 @@ async function performShutdown(trigger) {
     requestedExitCode = 1;
     console.error(
       "[p5.e2e] stack shutdown failed",
-      new AggregateError(failures, "P5 E2E stack failed"),
+      JSON.stringify(
+        failures.map((failure) => shutdownDiagnostic(failure)),
+        null,
+        2,
+      ),
     );
   }
   process.exitCode = requestedExitCode;
