@@ -334,10 +334,10 @@ describe("DiscoveryPanel", () => {
   });
 
   it("cancels a document panel when its explicit target changes", async () => {
-    let resolveRequest: ((value: unknown) => void) | undefined;
+    const resolveRequests: Array<(value: unknown) => void> = [];
     const documentRequest = vi.fn<DiscoveryRequest>(
       () => new Promise((resolve) => {
-        resolveRequest = resolve;
+        resolveRequests.push(resolve);
       }),
     );
     useDiscoveryStore.getState().open({
@@ -367,10 +367,11 @@ describe("DiscoveryPanel", () => {
         spaceId: SPACE_ID,
       });
     });
-    expect(screen.queryByRole("complementary", { name: "文档内搜索" })).toBeNull();
+    expect(await screen.findByRole("complementary", { name: "文档内搜索" })).toBeVisible();
+    await waitFor(() => expect(documentRequest).toHaveBeenCalledTimes(2));
 
     await act(async () => {
-      resolveRequest?.({
+      resolveRequests[0]?.({
         code: 0,
         data: {
           blocks: [{
@@ -386,6 +387,24 @@ describe("DiscoveryPanel", () => {
       await Promise.resolve();
     });
     expect(screen.queryByText("迟到的旧文档结果")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveRequests[1]?.({
+        code: 0,
+        data: {
+          blocks: [{
+            content: "当前文档结果",
+            documentId: DOCUMENT_B,
+            id: BLOCK_ID,
+            notebookId: NOTEBOOK_ID,
+          }],
+          matchedBlockCount: 1,
+          pageCount: 1,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("当前文档结果")).toBeVisible();
   });
 
   it("searches one document through a single identity-bound Gateway request", async () => {

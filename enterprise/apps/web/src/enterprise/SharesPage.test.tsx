@@ -164,6 +164,14 @@ describe("SharesPage document selection", () => {
 
     renderSharesPage();
 
+    const directory = screen.getByRole("complementary");
+    await waitFor(() =>
+      expect(directory).toHaveAttribute("data-content-directory-status", "ready")
+    );
+    const expandNotebook = screen.queryByRole("button", { name: "展开笔记本" });
+    if (expandNotebook) {
+      fireEvent.click(expandNotebook);
+    }
     fireEvent.click(await screen.findByRole("button", { name: "发布方案" }));
     expect(await screen.findByText(DOCUMENT_B_ID)).toBeVisible();
     expect(screen.queryByLabelText("笔记本 ID")).not.toBeInTheDocument();

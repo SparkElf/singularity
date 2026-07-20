@@ -103,6 +103,8 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     environment: "jsdom",
+    // 浏览器 API 合同测试替换全局 fetch；串行文件才能保持每个 fixture 的全局所有权。
+    fileParallelism: false,
     include: ["src/**/*.test.{js,ts,tsx}"],
     setupFiles: "./src/test/setup.ts",
   },
