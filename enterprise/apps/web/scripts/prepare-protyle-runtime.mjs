@@ -73,3 +73,19 @@ const compiledStyle = await sass.compileAsync(
 );
 await mkdir(dirname(styleTarget), { recursive: true });
 await writeFile(styleTarget, compiledStyle.css);
+
+// 企业 Web 不依赖旧工作台全局状态，并统一把 HTML 块收敛为惰性、安全的 DOM 渲染。
+const protyleHtmlTarget = resolve(publicRoot, "stage/protyle/js/protyle-html.js");
+const protyleHtmlRuntime = await readFile(protyleHtmlTarget, "utf8");
+const legacyHtmlElementOffset = protyleHtmlRuntime.lastIndexOf("class ProtyleHtml extends HTMLElement {");
+if (legacyHtmlElementOffset < 0) {
+  throw new Error("Unable to locate the upstream protyle-html custom element");
+}
+const enterpriseHtmlElement = await readFile(
+  resolve(webRoot, "src/editor/protyle-html.enterprise.js"),
+  "utf8",
+);
+await writeFile(
+  protyleHtmlTarget,
+  `${protyleHtmlRuntime.slice(0, legacyHtmlElementOffset)}${enterpriseHtmlElement}`,
+);
