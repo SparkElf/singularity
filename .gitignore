@@ -26,6 +26,10 @@ enterprise/packages/database/src/generated
 ios
 pprof
 
+# Generated supply-chain reports and Go vendoring
+/artifacts/
+/kernel/vendor/
+
 # Test binary, build with `go test -c`
 *.test
 
