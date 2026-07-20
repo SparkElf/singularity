@@ -32,7 +32,13 @@ const createProtyleFactoryForSpace: SpaceProtyleFactoryProvider = (spaceId) => {
   const coreFactory = createRealProtyleBrowserCoreFactory<SpaceProtyleRuntime>({
     application,
   });
-  return createProtyleFactory(coreFactory, {});
+  // 企业工作区需要标题和背景宿主，文档身份仍由 Factory 绑定的 Session 提供。
+  return createProtyleFactory(coreFactory, {
+    render: {
+      background: true,
+      title: true,
+    },
+  });
 };
 
 const createProtyleMenuSurface: SpaceProtyleMenuSurfaceFactory = (options) =>
