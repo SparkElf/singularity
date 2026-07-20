@@ -12,6 +12,7 @@ import {
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
+import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -483,7 +484,7 @@ async function installGatewayBoundary(
 async function openDocument(page: Page): Promise<Locator> {
   await page.goto(workspacePath());
   const editor = page.getByTestId("protyle-host");
-  await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toContainText("复杂内容起点");
+  await expect(contentBlock(editor, BLOCK_A)).toContainText("复杂内容起点");
   return editor;
 }
 
@@ -514,8 +515,8 @@ test.describe("Protyle complex-content identity integration", () => {
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
     const editor = await openDocument(page);
-    const editable = editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`);
-    const source = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).first();
+    const editable = contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]');
+    const source = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').first();
     await expect(source).toHaveAttribute("data-notebook-id", NOTEBOOK_A);
     await expect(source).toHaveAttribute("data-document-id", DOCUMENT_B);
     await expect(source).toHaveAttribute("data-id", BLOCK_B);
@@ -539,7 +540,7 @@ test.describe("Protyle complex-content identity integration", () => {
       }));
     }, { blockId: BLOCK_C, documentId: DOCUMENT_C, notebookId: NOTEBOOK_B });
 
-    const pasted = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).filter({ hasText: "跨库引用" });
+    const pasted = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').filter({ hasText: "跨库引用" });
     await expect(pasted).toHaveAttribute("data-id", BLOCK_C);
     await expect(pasted).toHaveAttribute("data-notebook-id", NOTEBOOK_B);
     await expect(pasted).toHaveAttribute("data-document-id", DOCUMENT_C);
@@ -561,17 +562,17 @@ test.describe("Protyle complex-content identity integration", () => {
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
     const editor = await openDocument(page);
-    const sameNotebookRef = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).first();
+    const sameNotebookRef = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').first();
     await sameNotebookRef.click();
     await expect.poll(() => boundary.kernelRequests.filter((request) => request.kernelPath === "/api/block/checkBlockFold").length).toBeGreaterThan(0);
     const clickFold = lastRequest(boundary.kernelRequests, "/api/block/checkBlockFold");
     expect(clickFold.notebookId).toBe(NOTEBOOK_A);
     expect(clickFold.documentId).toBe(DOCUMENT_B);
     expect(clickFold.body).toEqual({ id: BLOCK_B });
-    await expect(page.getByTestId("protyle-host").locator(`[data-node-id="${BLOCK_B}"]`)).toContainText("同库目标文档");
+    await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_B)).toContainText("同库目标文档");
 
     const secondEditor = await openDocument(page);
-    const crossNotebookRef = secondEditor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).nth(1);
+    const crossNotebookRef = contentBlock(secondEditor, BLOCK_A).locator('[data-type~="block-ref"]').nth(1);
     await crossNotebookRef.evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element);
@@ -586,7 +587,7 @@ test.describe("Protyle complex-content identity integration", () => {
     const shortcutFold = [...boundary.kernelRequests].reverse().find((request) => request.kernelPath === "/api/block/checkBlockFold" && request.documentId === DOCUMENT_C)!;
     expect(shortcutFold.notebookId).toBe(NOTEBOOK_B);
     expect(shortcutFold.body).toEqual({ id: DOCUMENT_C });
-    await expect(page.getByTestId("protyle-host").locator(`[data-node-id="${BLOCK_C}"]`)).toContainText("跨库目标文档");
+    await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_C)).toContainText("跨库目标文档");
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
@@ -597,7 +598,7 @@ test.describe("Protyle complex-content identity integration", () => {
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
     const editor = await openDocument(page);
-    const reference = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).first();
+    const reference = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').first();
 
     await reference.click({ button: "right" });
     const backlinks = page.locator("[data-protyle-menu] [data-id=\"backlinks\"]");
@@ -630,7 +631,7 @@ test.describe("Protyle complex-content identity integration", () => {
         element.closest<HTMLElement>("[contenteditable=true]")?.focus();
       });
     };
-    const crossNotebookReference = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).nth(1);
+    const crossNotebookReference = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').nth(1);
     await focusReference(crossNotebookReference);
     await page.keyboard.press("Control+Alt+B");
     await expect.poll(() => boundary.discoveryRequests.filter((request) => request.kernelPath === "/api/ref/getBacklink2").length).toBe(2);
@@ -689,10 +690,10 @@ test.describe("Protyle complex-content identity integration", () => {
     requireDesktop(testInfo);
     const diagnostics = collectBrowserDiagnostics(page);
     const boundary = await installGatewayBoundary(page);
-    const editor = await openDocument(page);
+    await openDocument(page);
     const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
     expect(socket).toBeDefined();
-    const title = editor.locator(".protyle-title__input");
+    const title = page.locator(".protyle-title__input");
 
     await title.fill("客户端标题");
     await title.blur();
@@ -755,10 +756,10 @@ test.describe("Protyle complex-content identity integration", () => {
     const editor = await openDocument(page);
     const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
     expect(socket).toBeDefined();
-    const dynamicReference = editor.locator(`[data-node-id="${BLOCK_A}"] [data-id="${DOCUMENT_C}"]`);
-    const block = editor.locator(`[data-node-id="${BLOCK_A}"]`);
+    const dynamicReference = contentBlock(editor, BLOCK_A).locator(`[data-id="${DOCUMENT_C}"]`);
+    const block = contentBlock(editor, BLOCK_A);
     const blockCount = block.locator(":scope > .protyle-attr .protyle-attr--refcount");
-    const titleCount = editor.locator(".protyle-title .protyle-attr--refcount");
+    const titleCount = page.locator(".protyle-title .protyle-attr--refcount");
 
     socket!.route.send(JSON.stringify({
       cmd: "setRefDynamicText",
@@ -835,7 +836,7 @@ test.describe("Protyle complex-content identity integration", () => {
     const editor = await openDocument(page);
     const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
     expect(socket).toBeDefined();
-    const heading = editor.locator(`[data-node-id="${HEADING_A}"]`);
+    const heading = contentBlock(editor, HEADING_A);
     const initialTransactions = boundary.transactionRequests.length;
 
     socket!.route.send(JSON.stringify({
@@ -901,7 +902,7 @@ test.describe("Protyle complex-content identity integration", () => {
       msg: "",
     }));
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+    await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     socket!.route.send(JSON.stringify({
       cmd: "removeDoc",
@@ -959,7 +960,7 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/filetree/getDoc",
     )).toHaveLength(initialDocumentRequests);
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+    await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     socket!.route.send(JSON.stringify({
       cmd: "moveDoc",
@@ -978,7 +979,7 @@ test.describe("Protyle complex-content identity integration", () => {
       (request) => request.kernelPath === "/api/filetree/getDoc" &&
         request.notebookId === NOTEBOOK_B && request.documentId === DOCUMENT_A,
     ).length).toBe(1);
-    await expect(page.getByTestId("protyle-host").locator(`[data-node-id="${BLOCK_A}"]`)).toBeVisible();
+    await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
@@ -1028,7 +1029,7 @@ test.describe("Protyle complex-content identity integration", () => {
     const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
     expect(socket).toBeDefined();
 
-    const crossNotebookRef = editor.locator(`[data-node-id="${BLOCK_A}"] [data-type~="block-ref"]`).nth(1);
+    const crossNotebookRef = contentBlock(editor, BLOCK_A).locator('[data-type~="block-ref"]').nth(1);
     socket!.route.send(JSON.stringify({
       cmd: "rename",
       code: 0,
@@ -1117,7 +1118,7 @@ test.describe("Protyle complex-content identity integration", () => {
     const socket = socketFor(boundary, NOTEBOOK_A, DOCUMENT_A);
     expect(socket).toBeDefined();
 
-    const beforeWrongTransaction = await editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`).textContent();
+    const beforeWrongTransaction = await contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]').textContent();
     socket!.route.send(JSON.stringify({
       cmd: "transactions",
       code: 0,
@@ -1131,7 +1132,7 @@ test.describe("Protyle complex-content identity integration", () => {
       sid: "wrong-notebook",
     }));
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`)).toHaveText(beforeWrongTransaction ?? "");
+    await expect(contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]')).toHaveText(beforeWrongTransaction ?? "");
 
     socket!.route.send(JSON.stringify({
       cmd: "transactions",
@@ -1146,7 +1147,7 @@ test.describe("Protyle complex-content identity integration", () => {
       sid: "wrong-document",
     }));
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`)).toHaveText(beforeWrongTransaction ?? "");
+    await expect(contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]')).toHaveText(beforeWrongTransaction ?? "");
 
     socket!.route.send(JSON.stringify({
       cmd: "transactions",
@@ -1160,7 +1161,7 @@ test.describe("Protyle complex-content identity integration", () => {
       msg: "",
       sid: "current-notebook",
     }));
-    await expect(editor.locator(`[data-node-id="${BLOCK_A}"] [contenteditable="true"]`)).toContainText("同库服务推送");
+    await expect(contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]')).toContainText("同库服务推送");
 
     expect(boundary.unexpectedRequests).toEqual([]);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);

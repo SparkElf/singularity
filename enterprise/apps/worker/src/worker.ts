@@ -1,4 +1,4 @@
-import { setTimeout as wait } from "node:timers/promises";
+import { waitForDelay } from "./wait.js";
 
 export const MAXIMUM_AUDIT_ARCHIVE_EVENTS = 10_000;
 
@@ -405,7 +405,7 @@ export class BoundedJobWorker {
   ): Promise<boolean> {
     while (!signal.aborted) {
       try {
-        await wait(this.#leaseRenewalMilliseconds, undefined, { signal });
+        await waitForDelay(this.#leaseRenewalMilliseconds, signal);
       } catch (error) {
         if (signal.aborted) {
           return true;
@@ -447,7 +447,7 @@ export class BoundedJobWorker {
 
   async #waitForNextPoll(signal: AbortSignal): Promise<void> {
     try {
-      await wait(this.#pollIntervalMilliseconds, undefined, { signal });
+      await waitForDelay(this.#pollIntervalMilliseconds, signal);
     } catch (error) {
       if (!signal.aborted) {
         throw error;

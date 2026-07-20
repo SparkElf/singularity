@@ -410,7 +410,7 @@ func restoredEncryptedBoxes(dataRoot string) (map[string]bool, error) {
 			return nil, fmt.Errorf("%w: parse restored notebook configuration: %v", ErrEnterpriseBackupInvalid, unmarshalErr)
 		}
 		if boxConf.Encrypted {
-			encrypted[entry.Name] = true
+			encrypted[entry.Name()] = true
 		}
 	}
 	return encrypted, nil

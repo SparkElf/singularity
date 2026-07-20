@@ -10,6 +10,7 @@ import {
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
+import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const SPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -356,7 +357,7 @@ test.describe("active content and PDF preview", () => {
     });
     await installGatewayBoundary(page);
     const editor = await openWorkspace(page);
-    const plantUml = editor.locator(`[data-node-id="${PLANTUML_BLOCK_ID}"]`);
+    const plantUml = contentBlock(editor, PLANTUML_BLOCK_ID);
 
     await expect(plantUml).toHaveAttribute("data-render", "true");
     await expect(plantUml.locator('[spin="1"]')).toHaveText("未启用");
@@ -456,7 +457,7 @@ test.describe("active content and PDF preview", () => {
     await expect(image).toBeVisible();
     expect(await image.getAttribute("src")).toContain(`${GATEWAY_BASE_PATH}/${PNG_ASSET.path}`);
     expect(await image.getAttribute("data-src")).toBe(PNG_ASSET.path);
-    await image.click({ button: "right" });
+    await image.click({ button: "right", force: true });
     const imageMenu = page.locator('[data-protyle-menu][data-name="inline-img"]');
     await expect(imageMenu).toBeVisible();
     const ocr = imageMenu.locator(':scope > .b3-menu__items > [data-id="ocr"]');

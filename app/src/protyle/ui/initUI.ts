@@ -18,6 +18,7 @@ import {hideElements} from "./hideElements";
 import {positionElementInViewport} from "./positionElement";
 
 const toolbarResizeDirections = ["move", "rd", "ld", "lt", "rt", "r", "d", "t", "l"] as const;
+const loadingTimers = new WeakMap<IProtyle, ReturnType<typeof setTimeout>>();
 
 const enableToolbarMoveResize = (protyle: IProtyle) => {
     const element = protyle.toolbar.subElement;
@@ -363,9 +364,16 @@ export const initUI = (protyle: IProtyle) => {
     }, {signal: protyle.uiEventController.signal});
 };
 
+// 为编辑器内容加载创建唯一的延迟遮罩，连续请求只保留最新计时器。
 export const addLoading = (protyle: IProtyle, msg?: string) => {
+    const previousTimer = loadingTimers.get(protyle);
+    if (previousTimer !== undefined) {
+        clearTimeout(previousTimer);
+    }
+    protyle.element.querySelectorAll(".wysiwygLoading").forEach(item => item.remove());
     protyle.element.removeAttribute("data-loading");
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+        loadingTimers.delete(protyle);
         if (protyle.element.getAttribute("data-loading") !== "finished") {
             protyle.element.insertAdjacentHTML("beforeend", `<div style="background-color: var(--b3-theme-background);flex-direction: column;" class="fn__loading wysiwygLoading">
     <img width="48px" src="/stage/loading-pure.svg">
@@ -373,9 +381,16 @@ export const addLoading = (protyle: IProtyle, msg?: string) => {
 </div>`);
         }
     }, Constants.TIMEOUT_LOAD);
+    loadingTimers.set(protyle, timer);
 };
 
+// 结束编辑器内容加载并清理当前编辑器的遮罩与延迟计时器。
 export const removeLoading = (protyle: IProtyle) => {
+    const timer = loadingTimers.get(protyle);
+    if (timer !== undefined) {
+        clearTimeout(timer);
+        loadingTimers.delete(protyle);
+    }
     protyle.element.setAttribute("data-loading", "finished");
     protyle.element.querySelectorAll(".wysiwygLoading").forEach(item => {
         item.remove();

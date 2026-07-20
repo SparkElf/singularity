@@ -55,6 +55,11 @@ async function installIdentityRoutes(
       return;
     }
 
+    if (path === "/api/v1/auth/oidc/providers") {
+      await fulfillJson(route, { providers: [] });
+      return;
+    }
+
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, { spaces: authorizedSpaces });
       return;
@@ -103,7 +108,7 @@ test("keyboard login reaches only the authorized responsive space list", async (
 
   const identifier = page.getByLabel("账号");
   const password = page.getByLabel("密码");
-  const submit = page.getByRole("button", { name: "登录" });
+  const submit = page.getByRole("button", { name: "登录", exact: true });
 
   if (testInfo.project.name !== "desktop") {
     for (const control of [identifier, password, submit]) {
@@ -222,11 +227,15 @@ test("keyboard login reaches only the authorized responsive space list", async (
     method: request.method(),
     path: new URL(request.url()).pathname,
   }));
-  expect(observedApiRequests).toHaveLength(3);
+  expect(observedApiRequests).toHaveLength(4);
   expect(observedApiRequests).toEqual(expect.arrayContaining([
     {
       method: "POST",
       path: "/api/v1/auth/login",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/auth/oidc/providers",
     },
     {
       method: "GET",
@@ -245,9 +254,10 @@ test("keyboard login reaches only the authorized responsive space list", async (
       path: new URL(response.url()).pathname,
       status: response.status(),
     }));
-  expect(observedApiResponses).toHaveLength(3);
+  expect(observedApiResponses).toHaveLength(4);
   expect(observedApiResponses).toEqual(expect.arrayContaining([
     { path: "/api/v1/auth/login", status: 200 },
+    { path: "/api/v1/auth/oidc/providers", status: 200 },
     { path: "/api/v1/spaces", status: 200 },
     { path: MANAGEMENT_ACCESS_PATH, status: 200 },
   ]));

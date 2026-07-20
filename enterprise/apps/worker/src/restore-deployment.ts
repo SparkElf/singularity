@@ -19,7 +19,6 @@ import {
 import { request as requestHttps } from "node:https";
 import { createServer, isIP } from "node:net";
 import { join, relative, resolve, sep } from "node:path";
-import { setTimeout as wait } from "node:timers/promises";
 import { createSecureContext } from "node:tls";
 
 import type {
@@ -42,6 +41,7 @@ import { z } from "zod";
 import type { RestoreDeploymentConfiguration } from "./configuration.js";
 import type { RestoreDeploymentPort } from "./l1-handlers.js";
 import { WORKER_JOB_LOGGER } from "./tokens.js";
+import { waitForDelay } from "./wait.js";
 import type { RestoreSpaceJob, WorkerJobLogger } from "./worker.js";
 
 export const RESTORE_PLATFORM_CONFIGURATION = Symbol(
@@ -1072,13 +1072,12 @@ export class ProcessRestoreDeployment
       }
       const remainingMilliseconds = deadline - Date.now();
       if (remainingMilliseconds > 0) {
-        await wait(
+        await waitForDelay(
           Math.min(
             remainingMilliseconds,
             this.#configuration.readinessPollMilliseconds,
           ),
-          undefined,
-          { signal },
+          signal,
         );
       }
     }
@@ -2054,7 +2053,7 @@ export class ProcessRestoreDeployment
     }
     const graceful = await Promise.race([
       exited.then(() => true),
-      wait(PROCESS_TERMINATION_GRACE_MILLISECONDS).then(() => false),
+      waitForDelay(PROCESS_TERMINATION_GRACE_MILLISECONDS).then(() => false),
     ]);
     if (!graceful) {
       try {
@@ -2067,7 +2066,7 @@ export class ProcessRestoreDeployment
       }
       const forced = await Promise.race([
         exited.then(() => true),
-        wait(PROCESS_TERMINATION_GRACE_MILLISECONDS).then(() => false),
+        waitForDelay(PROCESS_TERMINATION_GRACE_MILLISECONDS).then(() => false),
       ]);
       if (!forced) {
         throw new RestoreDeploymentError("target-cleanup-failed");
@@ -2152,7 +2151,7 @@ export class ProcessRestoreDeployment
       if (!this.#processExists(pid)) {
         return true;
       }
-      await wait(PROCESS_TERMINATION_POLL_MILLISECONDS);
+      await waitForDelay(PROCESS_TERMINATION_POLL_MILLISECONDS);
     }
     return !this.#processExists(pid);
   }
