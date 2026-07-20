@@ -58,7 +58,7 @@ interface FastifyReplyBoundary {
 interface FastifyBoundary {
   removeContentTypeParser(contentType: string): void;
   addContentTypeParser(
-    contentType: RegExp,
+    contentType: string | RegExp,
     options: { bodyLimit: number; parseAs: "buffer" },
     parser: (
       request: FastifyRequestBoundary,
