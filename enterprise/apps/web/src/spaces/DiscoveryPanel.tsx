@@ -69,7 +69,7 @@ interface DiscoveryPanelProps {
   readonly spaceId: string;
 }
 
-/** 只保留与当前空间文档选择一致的面板，切换文档时让旧请求随组件卸载而取消。 */
+/** 只保留当前空间的面板；只有关系图需要当前选择提供加密能力合同。 */
 function panelForCurrentSelection(
   panel: DiscoveryPanel | null,
   selection: ContentSelection | null,
@@ -78,7 +78,7 @@ function panelForCurrentSelection(
   if (panel === null || panel.spaceId !== spaceId) {
     return null;
   }
-  if (!("documentId" in panel)) {
+  if (panel.kind !== "document-graph") {
     return panel;
   }
   return selection?.spaceId === panel.spaceId &&

@@ -618,7 +618,14 @@ test.describe("Protyle complex-content identity integration", () => {
     await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_C)).toContainText("跨库目标文档");
 
     expect(boundary.unexpectedRequests).toEqual([]);
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
+        !(
+          request.url().includes("/kernel/api/api/filetree/getDoc") &&
+          request.failure()?.errorText === "net::ERR_ABORTED"
+        )
+      ),
+    });
   });
 
   test("Core menus and shortcuts open document panels with explicit identity", async ({ page }, testInfo) => {

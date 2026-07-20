@@ -329,7 +329,7 @@ describe("DiscoveryPanel", () => {
     expect(graphRequest).not.toHaveBeenCalled();
   });
 
-  it("cancels a document panel when the current selection changes", async () => {
+  it("cancels a document panel when its explicit target changes", async () => {
     let resolveRequest: ((value: unknown) => void) | undefined;
     const documentRequest = vi.fn<DiscoveryRequest>(
       () => new Promise((resolve) => {
@@ -355,13 +355,12 @@ describe("DiscoveryPanel", () => {
 
     await waitFor(() => expect(documentRequest).toHaveBeenCalledOnce());
     act(() => {
-      useContentSelectionStore.setState({
-        selection: {
-          documentId: DOCUMENT_B,
-          notebookId: NOTEBOOK_ID,
-          spaceId: SPACE_ID,
-          supportsGraph: true,
-        },
+      useDiscoveryStore.getState().open({
+        documentId: DOCUMENT_B,
+        kind: "document-search",
+        notebookId: NOTEBOOK_ID,
+        query: "current",
+        spaceId: SPACE_ID,
       });
     });
     expect(screen.queryByRole("complementary", { name: "文档内搜索" })).toBeNull();
