@@ -50,10 +50,6 @@ import {
   type SpaceSearchPanel,
   useDiscoveryStore,
 } from "@/spaces/discovery-state.ts";
-import {
-  type ContentSelection,
-  useContentSelectionStore,
-} from "@/spaces/content-selection.ts";
 import type { SpaceProtyleRuntime } from "@/spaces/space-session.ts";
 
 export interface DiscoveryNavigationTarget {
@@ -69,23 +65,15 @@ interface DiscoveryPanelProps {
   readonly spaceId: string;
 }
 
-/** 只保留当前空间的面板；只有关系图需要当前选择提供加密能力合同。 */
-function panelForCurrentSelection(
+/** 只保留当前空间的面板；文档关系图能力随目标笔记本身份显式进入面板。 */
+function panelForCurrentSpace(
   panel: DiscoveryPanel | null,
-  selection: ContentSelection | null,
   spaceId: string,
 ): DiscoveryPanel | null {
   if (panel === null || panel.spaceId !== spaceId) {
     return null;
   }
-  if (panel.kind !== "document-graph") {
-    return panel;
-  }
-  return selection?.spaceId === panel.spaceId &&
-    selection.notebookId === panel.notebookId &&
-    selection.documentId === panel.documentId
-    ? panel
-    : null;
+  return panel;
 }
 
 type RequestState<T> =
@@ -780,12 +768,10 @@ export function DiscoveryPanel({
   session,
   spaceId,
 }: DiscoveryPanelProps) {
-  const selection = useContentSelectionStore((state) => state.selection);
   const panel = useDiscoveryStore((state) =>
-    panelForCurrentSelection(state.panel, selection, spaceId)
+    panelForCurrentSpace(state.panel, spaceId)
   );
-  const documentGraphEnabled =
-    panel?.kind === "document-graph" && selection?.supportsGraph === true;
+  const documentGraphEnabled = panel?.kind === "document-graph" && panel.supportsGraph;
   const requestRevision = useDiscoveryStore((state) => state.requestRevision);
   const close = useDiscoveryStore((state) => state.close);
   const refresh = useDiscoveryStore((state) => state.refresh);
