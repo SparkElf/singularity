@@ -32,6 +32,7 @@ import type {
   OidcClientSecretResolver,
   OidcHttpTransport,
 } from "./identity/oidc.service.js";
+import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
   installKernelGatewayHttpBoundary,
@@ -48,6 +49,7 @@ export interface CreateApiApplicationOptions {
   databaseUrl: string | undefined;
   https?: HttpsServerOptions;
   kernelGateway: KernelGatewayRuntimeConfiguration;
+  loginRateLimiter?: LoginRateLimiter;
   logger?: LoggerService;
   oidcClientSecretBindings?: string | undefined;
   oidcClientSecretResolver?: OidcClientSecretResolver;
@@ -91,6 +93,9 @@ export async function createApiApplication(
       configuration,
       databaseUrl: options.databaseUrl,
       kernelGateway: options.kernelGateway,
+      ...(options.loginRateLimiter === undefined
+        ? {}
+        : { loginRateLimiter: options.loginRateLimiter }),
       ...(options.oidcClientSecretResolver === undefined
         ? {}
         : { oidcClientSecretResolver: options.oidcClientSecretResolver }),

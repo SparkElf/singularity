@@ -239,10 +239,10 @@ export class AccessOperationsService implements OnModuleInit {
     command: Extract<AccessOperation, { operation: "create-space" }>,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockUser(transaction, command.adminUserId))) {
+      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
         return this.#result(operationId, "not-found");
       }
-      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
+      if (!(await this.#lockUser(transaction, command.adminUserId))) {
         return this.#result(operationId, "not-found");
       }
       if (
@@ -401,10 +401,10 @@ export class AccessOperationsService implements OnModuleInit {
       if (ownership === null) {
         return this.#result(operationId, "not-found");
       }
-      if (!(await this.#lockUser(transaction, command.userId))) {
+      if (!(await this.#lockOrganization(transaction, ownership.organizationId))) {
         return this.#result(operationId, "not-found");
       }
-      if (!(await this.#lockOrganization(transaction, ownership.organizationId))) {
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
       if (
@@ -526,10 +526,13 @@ export class AccessOperationsService implements OnModuleInit {
         where: { id: command.spaceId },
         select: { organizationId: true },
       });
-      if (ownership === null || !(await this.#lockUser(transaction, command.userId))) {
+      if (ownership === null) {
         return this.#result(operationId, "not-found");
       }
       if (!(await this.#lockOrganization(transaction, ownership.organizationId))) {
+        return this.#result(operationId, "not-found");
+      }
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
       if (
@@ -672,10 +675,10 @@ export class AccessOperationsService implements OnModuleInit {
     >,
   ): Promise<AccessOperationResult> {
     return this.database.client.$transaction(async (transaction) => {
-      if (!(await this.#lockUser(transaction, command.userId))) {
+      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
         return this.#result(operationId, "not-found");
       }
-      if (!(await this.#lockOrganization(transaction, command.organizationId))) {
+      if (!(await this.#lockUser(transaction, command.userId))) {
         return this.#result(operationId, "not-found");
       }
       if (

@@ -28,9 +28,11 @@ import {
   userGroupSummarySchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, Prisma, type DatabaseClient } from "@singularity/database";
+import { RateLimiterMemory } from "rate-limiter-flexible";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import type { Clock } from "../src/identity/clock.js";
+import { LoginRateLimiter } from "../src/identity/login-rate-limiter.js";
 import { PasswordHasher } from "../src/identity/password-hasher.js";
 import { ACCESS_CHANGE_CHANNEL } from "../src/kernel/access-changed.js";
 import { captureAccessChanges } from "./support/access-change-barrier.js";
@@ -195,14 +197,51 @@ async function waitForBlockedBackendCount(
   lockerPid: number,
   expectedCount: number,
 ): Promise<void> {
+  // 沿 PostgreSQL 锁等待链统计最终等待目标事务的后端，覆盖排队请求互相转发阻塞者的情况。
   const deadline = Date.now() + LOCK_OBSERVATION_TIMEOUT_MS;
   for (;;) {
-    const rows = await database.$queryRaw<Array<{ pid: number }>>(
+    const rows = await database.$queryRaw<
+      Array<{
+        blockingPids: number[];
+        pid: number;
+        waitEvent: string | null;
+        waitEventType: string | null;
+      }>
+    >(
       Prisma.sql`
-        SELECT activity.pid AS "pid"
+        WITH RECURSIVE lock_chain AS (
+          SELECT
+            activity.pid AS "pid",
+            blocker.pid AS "blockerPid",
+            ARRAY[activity.pid, blocker.pid]::bigint[] AS "path"
+          FROM pg_stat_activity AS activity
+          CROSS JOIN LATERAL unnest(pg_blocking_pids(activity.pid)) AS blocker(pid)
+          WHERE activity.wait_event_type = 'Lock'
+          UNION ALL
+          SELECT
+            lock_chain."pid",
+            blocker.pid AS "blockerPid",
+            lock_chain."path" || blocker.pid
+          FROM lock_chain
+          INNER JOIN pg_stat_activity AS activity
+            ON activity.pid = lock_chain."blockerPid"
+          CROSS JOIN LATERAL unnest(pg_blocking_pids(activity.pid)) AS blocker(pid)
+          WHERE NOT blocker.pid = ANY(lock_chain."path")
+        ),
+        blocked_pids AS (
+          SELECT DISTINCT "pid"
+          FROM lock_chain
+          WHERE "blockerPid" = ${lockerPid}
+        )
+        SELECT
+          activity.pid AS "pid",
+          activity.wait_event AS "waitEvent",
+          activity.wait_event_type AS "waitEventType",
+          pg_blocking_pids(activity.pid) AS "blockingPids"
         FROM pg_stat_activity AS activity
-        WHERE ${lockerPid} = ANY(pg_blocking_pids(activity.pid))
-          AND activity.wait_event_type = 'Lock'
+        INNER JOIN blocked_pids
+          ON blocked_pids."pid" = activity.pid
+        WHERE activity.wait_event_type = 'Lock'
       `,
     );
     if (rows.length === expectedCount) {
@@ -215,7 +254,8 @@ async function waitForBlockedBackendCount(
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `Did not observe ${String(expectedCount)} PostgreSQL lock waiters`,
+        `Did not observe ${String(expectedCount)} PostgreSQL lock waiters; ` +
+          `observed ${String(rows.length)}: ${JSON.stringify(rows)}`,
       );
     }
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -231,7 +271,14 @@ describe("organization membership, invitation, and group HTTP contracts with Pos
 
   beforeAll(async () => {
     clock = new MutableClock(INITIAL_TIME);
-    testApi = await startTestApiApplication({ clock });
+    testApi = await startTestApiApplication({
+      clock,
+      // 该套件验证组织并发合同；限流器行为由身份测试单独覆盖。
+      loginRateLimiter: new LoginRateLimiter(
+        new RateLimiterMemory({ duration: 900, points: 1_000 }),
+        new RateLimiterMemory({ duration: 900, points: 1_000 }),
+      ),
+    });
     databaseRuntime = testApi.app.get(DatabaseRuntime);
     database = databaseRuntime.client;
     passwordDigest = await testApi.app

@@ -8,6 +8,7 @@ import type { ApiConfiguration } from "./configuration.js";
 import { CoreModule } from "./core.module.js";
 import { DatabaseHealthController } from "./database-health.controller.js";
 import type { Clock } from "./identity/clock.js";
+import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type {
   OidcClientSecretResolver,
   OidcHttpTransport,
@@ -22,6 +23,7 @@ export interface AppModuleOptions {
   databaseUrl: string | undefined;
   auditConfiguration: AuditConfiguration;
   kernelGateway: KernelGatewayRuntimeConfiguration;
+  loginRateLimiter?: LoginRateLimiter;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
 }

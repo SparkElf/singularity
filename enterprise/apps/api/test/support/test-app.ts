@@ -5,6 +5,7 @@ import { isolatedDatabaseUrl } from "@singularity/database/testing/postgres";
 import { createApiApplication } from "../../src/application.js";
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 import type { Clock } from "../../src/identity/clock.js";
+import type { LoginRateLimiter } from "../../src/identity/login-rate-limiter.js";
 import type {
   OidcClientSecretResolver,
   OidcHttpTransport,
@@ -30,6 +31,7 @@ export interface TestApiApplicationOptions {
   contentAuditIndeterminateAfterMilliseconds?: string;
   https?: boolean;
   kernelGateway?: KernelGatewayRuntimeConfiguration;
+  loginRateLimiter?: LoginRateLimiter;
   logger?: LoggerService;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
@@ -83,6 +85,9 @@ export async function startTestApiApplication(
       : {}),
     kernelGateway:
       options.kernelGateway ?? testKernelGatewayConfiguration(),
+    ...(options.loginRateLimiter === undefined
+      ? {}
+      : { loginRateLimiter: options.loginRateLimiter }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     oidcClientSecretResolver:
       options.oidcClientSecretResolver ?? testOidcClientSecretResolver,
