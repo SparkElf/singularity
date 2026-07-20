@@ -65,6 +65,13 @@ export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   });
   page.on("response", (response) => {
     diagnostics.responses.push(response);
+    // 响应已是健康检查认可的请求终态，避免把事件循环排队时间计入网络耗时。
+    const resourceTiming = response.request().timing();
+    finishRequest(
+      diagnostics,
+      response.request(),
+      resourceTiming.responseStart >= 0 ? resourceTiming.responseStart : undefined,
+    );
   });
   page.on("requestfinished", (request) => {
     finishRequest(diagnostics, request);
@@ -77,14 +84,18 @@ export function collectBrowserDiagnostics(page: Page): BrowserDiagnostics {
   return diagnostics;
 }
 
-function finishRequest(diagnostics: BrowserDiagnostics, request: Request): void {
+function finishRequest(
+  diagnostics: BrowserDiagnostics,
+  request: Request,
+  resourceDurationMs?: number,
+): void {
   const timing = diagnostics.requestTimings.get(request);
-  if (!timing) {
+  if (!timing || timing.finishedAt !== null) {
     return;
   }
 
   timing.finishedAt = performance.now();
-  timing.durationMs = timing.finishedAt - timing.startedAt;
+  timing.durationMs = resourceDurationMs ?? timing.finishedAt - timing.startedAt;
   diagnostics.pendingRequests.delete(request);
 }
 
@@ -122,7 +133,10 @@ export function expectBrowserHealthy(
     expect(timing).toBeDefined();
     expect(timing?.finishedAt).not.toBeNull();
     expect(timing?.durationMs).not.toBeNull();
-    expect(timing!.durationMs!).toBeLessThan(maxRequestDurationMs);
+    expect(
+      timing!.durationMs!,
+      `请求终态耗时超过阈值：${request.method()} ${request.url()}`,
+    ).toBeLessThan(maxRequestDurationMs);
     expect(terminalRequests.has(request)).toBe(true);
   }
 }
