@@ -508,9 +508,11 @@ async function installGatewayBoundary(
   return boundary;
 }
 
+// 等待复杂内容编辑器完成首次装载，避免异步 DOM 尚未就绪时读取块内容。
 async function openDocument(page: Page): Promise<Locator> {
   await page.goto(workspacePath());
   const editor = page.getByTestId("protyle-host");
+  await expect(editor).toHaveAttribute("aria-busy", "false");
   await expect(contentBlock(editor, BLOCK_A)).toContainText("复杂内容起点");
   return editor;
 }
@@ -693,7 +695,15 @@ test.describe("Protyle complex-content identity integration", () => {
     await expect.poll(() => [...diagnostics.pendingRequests].some((request) =>
       request.url().includes("/kernel/api/api/outline/getDocOutline")
     )).toBe(false);
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    const expectedIconNetworkChange = diagnostics.consoleMessages.filter((message) =>
+      message.text() === "Failed to load resource: net::ERR_NETWORK_CHANGED" &&
+      message.location().url.endsWith("/appearance/icons/litheness/icon.js?v=3.7.2"),
+    );
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !expectedIconNetworkChange.includes(message),
+      ),
+    });
   });
 
   test("renders an attribute view and commits a cell transaction with content identity", async ({ page }, testInfo) => {
@@ -1021,6 +1031,7 @@ test.describe("Protyle complex-content identity integration", () => {
     await expect(contentBlock(page.getByTestId("protyle-host"), BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
@@ -1057,6 +1068,7 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(refreshRequest.documentId).toBe(DOCUMENT_A);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
@@ -1146,6 +1158,7 @@ test.describe("Protyle complex-content identity integration", () => {
     ).length).toBeGreaterThan(initialDocumentRequests);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

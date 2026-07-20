@@ -488,6 +488,7 @@ test.describe("real Protyle browser integration", () => {
     expect(matchingSockets).toContain(workspaceSocket);
 
     const sourceEditable = contentBlock(editor, BLOCK_A).locator('[contenteditable="true"]');
+    const sourceWysiwyg = editor.locator(".protyle-wysiwyg");
     const embeddedEditable = contentBlock(panel, SAME_DOCUMENT_BLOCK).locator(
       '[contenteditable="true"]',
     );
@@ -505,8 +506,18 @@ test.describe("real Protyle browser integration", () => {
     expect(typeof embeddedEditorId).toBe("string");
     expect(embeddedEditorId).not.toBe("");
 
-    await sourceEditable.focus();
-    await expect(sourceEditable).toBeFocused();
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
+    await sourceEditable.click({ force: true });
+    await sourceEditable.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.closest<HTMLElement>(".protyle-wysiwyg")?.focus();
+    });
+    await expect(sourceWysiwyg).toBeFocused();
     const fallbackRequests = boundary.kernelRequests.filter(
       (request) => request.kernelPath === "/api/block/getBlockDOM",
     ).length;
@@ -716,6 +727,7 @@ test.describe("real Protyle browser integration", () => {
     await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

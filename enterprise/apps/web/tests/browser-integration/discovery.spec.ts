@@ -408,6 +408,11 @@ test.describe("React discovery work panels", () => {
       conf: { type: { paragraph: true, tag: true } },
       id: DOCUMENT_B,
     });
+    await expect.poll(() => [...diagnostics.pendingRequests].every((request) => {
+      const path = new URL(request.url()).pathname;
+      return path.includes("/kernel/api/api/filetree/getDoc") ||
+        path.includes("/kernel/api/api/block/getBlockBreadcrumb");
+    })).toBe(true);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
       // 文档切换时主动取消的旧 getDoc 属于迟到响应隔离合同，不是失败请求。
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
