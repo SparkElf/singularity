@@ -124,8 +124,7 @@ const DOCUMENTED_ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { methods: ["get", "post"], path: ORGANIZATION_SPACE_SHARES_PATH_TEMPLATE },
   { methods: ["delete"], path: ORGANIZATION_SPACE_SHARE_PATH_TEMPLATE },
   { methods: ["patch"], path: ORGANIZATION_SPACE_SHARE_PASSWORD_PATH_TEMPLATE },
-  { methods: ["get"], path: ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE },
-  { methods: ["post"], path: ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE },
+  { methods: ["get", "post"], path: ORGANIZATION_SPACE_BACKUPS_PATH_TEMPLATE },
   {
     methods: ["post"],
     path: ORGANIZATION_SPACE_BACKUP_RESTORES_PATH_TEMPLATE,
