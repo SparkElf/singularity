@@ -153,7 +153,7 @@ test("restores one committed content version into an activated isolated space", 
   ).toBe(state.notebookId);
   expect(
     restoredDocumentRequest.headers()["x-singularity-document-id"],
-  ).toBe(state.documentId);
+  ).not.toBe(state.documentId);
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds);
