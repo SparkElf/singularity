@@ -40,12 +40,9 @@ class EnterpriseProtyleHtml extends HTMLElement {
                     return;
                 }
                 const value = attribute.value.trim();
-                try {
-                    const url = new URL(value, window.location.href);
-                    if (url.origin !== window.location.origin) {
-                        element.removeAttribute(attribute.name);
-                    }
-                } catch {
+                const url = document.createElement("a");
+                url.href = value;
+                if (url.origin !== window.location.origin || value.includes(",")) {
                     element.removeAttribute(attribute.name);
                 }
             });
