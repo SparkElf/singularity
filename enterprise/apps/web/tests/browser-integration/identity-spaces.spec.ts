@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
+  isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 
@@ -287,13 +288,9 @@ test("an account without space access sees an explicit empty state", async ({ pa
   expect(spaceRequests[0]?.method()).toBe("GET");
   expect(spaceResponses).toHaveLength(1);
   expect(spaceResponses[0]?.status()).toBe(200);
-  const expectedIconNetworkChange = diagnostics.consoleMessages.filter((message) =>
-    message.text() === "Failed to load resource: net::ERR_NETWORK_CHANGED" &&
-    message.location().url.endsWith("/appearance/icons/litheness/icon.js?v=3.7.2"),
-  );
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
     unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
-      (message) => !expectedIconNetworkChange.includes(message),
+      (message) => !isExpectedIconNetworkChange(message),
     ),
   });
 });

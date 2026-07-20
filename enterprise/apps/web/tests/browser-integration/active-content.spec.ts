@@ -8,6 +8,7 @@ import {
 import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
+  isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
 import { fulfillJson } from "./support/http.ts";
 import { contentBlock } from "./support/protyle.ts";
@@ -395,7 +396,11 @@ test.describe("active content and PDF preview", () => {
     await expect(plantUml.locator("object, embed, img")).toHaveCount(0);
     expect(plantUmlRequests).toEqual([]);
     expect(await page.evaluate<unknown>(() => Reflect.get(window, "__activeContentExecuted"))).toBeUndefined();
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !isExpectedIconNetworkChange(message),
+      ),
+    });
   });
 
   test("renders an authorized PDF only through PDF.js canvas", async ({ page }, testInfo) => {
@@ -447,7 +452,11 @@ test.describe("active content and PDF preview", () => {
     });
 
     await page.getByRole("button", { name: "关闭" }).click();
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !isExpectedIconNetworkChange(message),
+      ),
+    });
   });
 
   test("inlines only a Gateway-approved inert image MIME", async ({ page }, testInfo) => {
@@ -473,7 +482,11 @@ test.describe("active content and PDF preview", () => {
     });
 
     await page.getByRole("button", { name: "关闭" }).click();
-    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
+    expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !isExpectedIconNetworkChange(message),
+      ),
+    });
   });
 
   test("submits the canonical persisted image path to OCR", async ({ page }, testInfo) => {
@@ -551,6 +564,9 @@ test.describe("active content and PDF preview", () => {
     })));
     await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+      unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+        (message) => !isExpectedIconNetworkChange(message),
+      ),
       // 浏览器把已交给下载管理器的附件请求标记为 ERR_ABORTED，不代表 Gateway 失败。
       unexpectedRequestFailures: diagnostics.requestFailures.filter((request) => {
         const url = new URL(request.url());

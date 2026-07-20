@@ -22,6 +22,12 @@ export interface BrowserDiagnostics {
   responses: Response[];
 }
 
+// 识别思源主题图标在并行浏览器运行中产生的固定网络切换噪声。
+export function isExpectedIconNetworkChange(message: ConsoleMessage): boolean {
+  return message.text() === "Failed to load resource: net::ERR_NETWORK_CHANGED" &&
+    message.location().url.endsWith("/appearance/icons/litheness/icon.js?v=3.7.2");
+}
+
 interface BrowserHealthEvidence {
   unexpectedConsoleMessages?: readonly ConsoleMessage[];
   unexpectedErrorResponses?: readonly Response[];
