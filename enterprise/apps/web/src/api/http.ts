@@ -47,6 +47,28 @@ function isAbortError(error: unknown): error is Error {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function isTransientFetchFailure(error: unknown): boolean {
+  return error instanceof Error &&
+    error.name === "TypeError" &&
+    error.message === "Failed to fetch";
+}
+
+/** 瞬时网络切换只重试一次；取消信号、业务错误和第二次失败保持原始语义。 */
+export async function fetchWithNetworkRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (init?.signal?.aborted || !isTransientFetchFailure(error)) {
+      throw error;
+    }
+    console.debug("[http.transport]", { phase: "network-retry", attempt: 1 }, error);
+    return await fetch(input, init);
+  }
+}
+
 function parseRetryAfter(value: string | null): number | null {
   if (value === null || !/^\d+$/.test(value)) {
     return null;
@@ -82,7 +104,7 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   }
 
   try {
-    return await fetch(path, {
+    return await fetchWithNetworkRetry(path, {
       credentials: "same-origin",
       ...init,
       headers,

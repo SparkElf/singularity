@@ -13,6 +13,20 @@ afterEach(() => {
 });
 
 describe("HTTP client failure observability", () => {
+  it("retries one transient browser network change", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestJson(z.object({ ok: z.literal(true) }), "/health"))
+      .resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("records the original network error with its complete stack", async () => {
     const failure = new Error("network-stack-sentinel");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
