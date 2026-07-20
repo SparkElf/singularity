@@ -75,7 +75,15 @@ test("public shares stay read-only, hide internal identities, and recheck revoca
       new URL(response.url()).pathname === SHARE_PATH,
   );
   expect(expectedErrorResponses).toHaveLength(1);
+  const expectedConsoleMessages = diagnostics.consoleMessages.filter((message) =>
+    message.text().includes("404 (Not Found") &&
+    new URL(message.location().url).pathname === SHARE_PATH,
+  );
+  expect(expectedConsoleMessages).toHaveLength(1);
   expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS, {
+    unexpectedConsoleMessages: diagnostics.consoleMessages.filter(
+      (message) => !expectedConsoleMessages.includes(message),
+    ),
     unexpectedErrorResponses: diagnostics.responses.filter(
       (response) =>
         response.status() >= 400 && !expectedErrorResponses.includes(response),
