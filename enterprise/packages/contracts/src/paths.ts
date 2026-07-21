@@ -3,6 +3,12 @@ import type {
   ContentDirectoryNotebooksPathParameters,
   ContentDirectoryRootDocumentsPathParameters,
 } from "./content-directory.js";
+import type {
+  CommentEntryPathParameters,
+  CommentThreadPathParameters,
+} from "./collaboration.js";
+import type { DocumentIdentity } from "./document-identity.js";
+import type { HistoryVersionPathParameters } from "./history.js";
 import type { SpaceRuntimePathParameters } from "./spaces.js";
 
 export const DATABASE_READINESS_PATH = "/api/v1/health/database";
@@ -102,6 +108,33 @@ export const ORGANIZATION_SPACE_DISCOVERY_SEARCH_PATH_TEMPLATE =
 export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/discovery/graph";
 
+export const DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/access-policy";
+export const DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/comments";
+export const DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE =
+  `${DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE}/{threadId}`;
+export const DOCUMENT_COMMENT_ENTRIES_PATH_TEMPLATE =
+  `${DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE}/entries`;
+export const DOCUMENT_COMMENT_ENTRY_PATH_TEMPLATE =
+  `${DOCUMENT_COMMENT_ENTRIES_PATH_TEMPLATE}/{entryId}`;
+export const DOCUMENT_COMMENT_THREAD_STATUS_PATH_TEMPLATE =
+  `${DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE}/status`;
+export const DOCUMENT_COMMENT_MENTION_CANDIDATES_PATH_TEMPLATE =
+  `${DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE}/mention-candidates`;
+export const NOTIFICATIONS_PATH = "/api/v1/notifications";
+export const NOTIFICATION_UNREAD_COUNT_PATH =
+  "/api/v1/notifications/unread-count";
+export const NOTIFICATION_READ_PATH_TEMPLATE =
+  "/api/v1/notifications/{notificationId}/read";
+export const NOTIFICATIONS_READ_ALL_PATH = "/api/v1/notifications/read-all";
+export const DOCUMENT_HISTORY_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/history";
+export const DOCUMENT_HISTORY_DIFF_PATH_TEMPLATE =
+  `${DOCUMENT_HISTORY_PATH_TEMPLATE}/{versionId}/diff`;
+export const DOCUMENT_HISTORY_RESTORE_PATH_TEMPLATE =
+  `${DOCUMENT_HISTORY_PATH_TEMPLATE}/restore`;
+
 function toControllerPath(template: string): string {
   return template.replace(/\{([^}]+)\}/g, ":$1");
 }
@@ -120,6 +153,39 @@ export const ORGANIZATION_SPACE_DISCOVERY_SEARCH_CONTROLLER_PATH =
   toControllerPath(ORGANIZATION_SPACE_DISCOVERY_SEARCH_PATH_TEMPLATE);
 export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_CONTROLLER_PATH =
   toControllerPath(ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE);
+export const DOCUMENT_ACCESS_POLICY_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_THREADS_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_THREAD_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_ENTRIES_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_ENTRIES_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_ENTRY_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_ENTRY_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_THREAD_STATUS_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_THREAD_STATUS_PATH_TEMPLATE,
+);
+export const DOCUMENT_COMMENT_MENTION_CANDIDATES_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COMMENT_MENTION_CANDIDATES_PATH_TEMPLATE,
+);
+export const NOTIFICATION_READ_CONTROLLER_PATH = toControllerPath(
+  NOTIFICATION_READ_PATH_TEMPLATE,
+);
+export const DOCUMENT_HISTORY_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_HISTORY_PATH_TEMPLATE,
+);
+export const DOCUMENT_HISTORY_DIFF_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_HISTORY_DIFF_PATH_TEMPLATE,
+);
+export const DOCUMENT_HISTORY_RESTORE_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_HISTORY_RESTORE_PATH_TEMPLATE,
+);
 export const ORGANIZATION_MEMBERS_CONTROLLER_PATH = toControllerPath(
   ORGANIZATION_MEMBERS_PATH_TEMPLATE,
 );
@@ -297,4 +363,110 @@ export function buildSpaceDiscoveryGraphPath(
     ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE,
     parameters,
   );
+}
+
+function buildDocumentIdentityPath(
+  template: string,
+  parameters: DocumentIdentity,
+): string {
+  return template
+    .replace("{organizationId}", encodeURIComponent(parameters.organizationId))
+    .replace("{spaceId}", encodeURIComponent(parameters.spaceId))
+    .replace("{notebookId}", encodeURIComponent(parameters.notebookId))
+    .replace("{documentId}", encodeURIComponent(parameters.documentId));
+}
+
+export function buildDocumentAccessPolicyPath(
+  parameters: DocumentIdentity,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE,
+    parameters,
+  );
+}
+
+export function buildDocumentCommentThreadsPath(
+  parameters: DocumentIdentity,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE,
+    parameters,
+  );
+}
+
+export function buildDocumentCommentThreadPath(
+  parameters: CommentThreadPathParameters,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE,
+    parameters,
+  ).replace("{threadId}", encodeURIComponent(parameters.threadId));
+}
+
+export function buildDocumentCommentEntriesPath(
+  parameters: CommentThreadPathParameters,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_ENTRIES_PATH_TEMPLATE,
+    parameters,
+  ).replace("{threadId}", encodeURIComponent(parameters.threadId));
+}
+
+export function buildDocumentCommentEntryPath(
+  parameters: CommentEntryPathParameters,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_ENTRY_PATH_TEMPLATE,
+    parameters,
+  )
+    .replace("{threadId}", encodeURIComponent(parameters.threadId))
+    .replace("{entryId}", encodeURIComponent(parameters.entryId));
+}
+
+export function buildDocumentCommentThreadStatusPath(
+  parameters: CommentThreadPathParameters,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_THREAD_STATUS_PATH_TEMPLATE,
+    parameters,
+  ).replace("{threadId}", encodeURIComponent(parameters.threadId));
+}
+
+export function buildDocumentCommentMentionCandidatesPath(
+  parameters: DocumentIdentity,
+  query?: string,
+): string {
+  const path = buildDocumentIdentityPath(
+    DOCUMENT_COMMENT_MENTION_CANDIDATES_PATH_TEMPLATE,
+    parameters,
+  );
+  return query === undefined || query.length === 0
+    ? path
+    : `${path}?${new URLSearchParams({ query }).toString()}`;
+}
+
+export function buildNotificationReadPath(notificationId: string): string {
+  return NOTIFICATION_READ_PATH_TEMPLATE.replace(
+    "{notificationId}",
+    encodeURIComponent(notificationId),
+  );
+}
+
+export function buildDocumentHistoryPath(parameters: DocumentIdentity): string {
+  return buildDocumentIdentityPath(DOCUMENT_HISTORY_PATH_TEMPLATE, parameters);
+}
+
+export function buildDocumentHistoryDiffPath(
+  parameters: HistoryVersionPathParameters,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_HISTORY_DIFF_PATH_TEMPLATE,
+    parameters,
+  ).replace("{versionId}", encodeURIComponent(parameters.versionId));
+}
+
+export function buildDocumentHistoryRestorePath(
+  parameters: DocumentIdentity,
+): string {
+  return buildDocumentIdentityPath(DOCUMENT_HISTORY_RESTORE_PATH_TEMPLATE, parameters);
 }

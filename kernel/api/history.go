@@ -24,6 +24,7 @@ import (
 	"github.com/88250/gulu"
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/siyuan/kernel/model"
+	"github.com/siyuan-note/siyuan/kernel/serviceauth"
 	"github.com/siyuan-note/siyuan/kernel/util"
 )
 
@@ -253,11 +254,28 @@ func rollbackDocHistory(c *gin.Context) {
 		ret.Msg = err.Error()
 		return
 	}
-	err = model.RollbackDocHistory(historyPath, notebook)
+	identity, enterprise := serviceauth.RequestContentIdentity(c.Request)
+	if enterprise {
+		err = model.RollbackDocHistoryWithDocumentID(historyPath, notebook, identity.DocumentID)
+	} else {
+		err = model.RollbackDocHistory(historyPath, notebook)
+	}
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()
 		return
+	}
+	if enterprise {
+		currentPath, historyErr := model.CreateDocHistoryWithPathInBox(
+			identity.DocumentID,
+			identity.NotebookID,
+		)
+		if historyErr != nil {
+			ret.Code = -1
+			ret.Msg = historyErr.Error()
+			return
+		}
+		ret.Data = map[string]any{"versionId": currentPath}
 	}
 }
 
@@ -340,7 +358,17 @@ func createDocHistory(c *gin.Context) {
 		return
 	}
 
-	err := model.CreateDocHistory(id)
+	err := error(nil)
+	if identity, enterprise := serviceauth.RequestContentIdentity(c.Request); enterprise {
+		if id != identity.DocumentID {
+			ret.Code = -1
+			ret.Msg = "document identity is unavailable"
+			return
+		}
+		_, err = model.CreateDocHistoryWithPathInBox(identity.DocumentID, identity.NotebookID)
+	} else {
+		err = model.CreateDocHistory(id)
+	}
 	if err != nil {
 		ret.Code = -1
 		ret.Msg = err.Error()

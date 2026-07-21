@@ -250,6 +250,16 @@ func GetDocHistoryContent(notebook, historyPath, keyword string, highlight bool)
 }
 
 func RollbackDocHistory(historyPath, notebook string) (err error) {
+	return rollbackDocHistory(historyPath, notebook, "")
+}
+
+// RollbackDocHistoryWithDocumentID 在企业内容链路中回滚历史，并保持外部显式文档身份不变。
+// 普通 CLI/MCP 回滚仍使用 RollbackDocHistory，以保留原有的重复块 ID 重置语义。
+func RollbackDocHistoryWithDocumentID(historyPath, notebook, documentID string) (err error) {
+	return rollbackDocHistory(historyPath, notebook, documentID)
+}
+
+func rollbackDocHistory(historyPath, notebook, preserveDocumentID string) (err error) {
 	historyPath, _, err = validateHistoryPathForNotebook(historyPath, notebook)
 	if err != nil {
 		return
@@ -391,7 +401,8 @@ func RollbackDocHistory(historyPath, notebook string) (err error) {
 	idMap := treenode.ExistBlockTreesInBox(ids, boxID)
 	var duplicatedIDs []string
 	for nodeID, exist := range idMap {
-		if exist {
+		// 企业文档身份由 API/ACL/审计链显式绑定；回滚时只保留匹配历史路径的根文档 ID。
+		if exist && !(preserveDocumentID == rootID && nodeID == rootID) {
 			duplicatedIDs = append(duplicatedIDs, nodeID)
 		}
 	}
@@ -408,6 +419,11 @@ func RollbackDocHistory(historyPath, notebook string) (err error) {
 	// Reindex only the current document after rolling back the document https://github.com/siyuan-note/siyuan/issues/12320
 	if err = sql.RemoveTreeQueue(boxID, rootID); err != nil {
 		return
+	}
+	if preserveDocumentID == rootID {
+		// 保留企业文档根 ID 时先清掉已被移除文件对应的缓存，避免相同缓存让写入 owner 错过重新落盘。
+		cache.RemoveTreeDataInBox(tree.ID, tree.Box)
+		cache.RemoveDocIALInBox(tree.Path, tree.Box)
 	}
 	if writeErr := indexWriteTreeIndexQueue(tree); nil != writeErr {
 		return
@@ -978,26 +994,41 @@ const (
 	HistoryOpOutline = "outline"
 )
 
-func generateOpTypeHistory(tree *parse.Tree, opType string) {
+func generateOpTypeHistory(tree *parse.Tree, opType string) string {
 	historyDir, err := getHistoryDir(opType)
 	if err != nil {
 		logging.LogErrorf("get history dir failed: %s", err)
-		return
+		return ""
 	}
 
 	generateTreeHistory(tree, historyDir)
 	generateAvHistoryInTree(tree, historyDir)
 
 	indexHistoryDir(filepath.Base(historyDir), util.NewLute())
+	return historyDir
 }
 
 func CreateDocHistory(id string) (err error) {
-	tree, err := LoadTreeByBlockID(id)
-	if err != nil {
-		return
-	}
-	generateOpTypeHistory(tree, HistoryOpUpdate)
+	_, err = CreateDocHistoryWithPathInBox(id, "")
 	return
+}
+
+// CreateDocHistoryWithPathInBox 按明确笔记本写入历史快照并返回 Kernel 相对路径，
+// 企业入口直接消费该路径，避免跨笔记本查找或在控制面猜测版本事实。
+func CreateDocHistoryWithPathInBox(id, boxID string) (historyPath string, err error) {
+	tree, err := LoadTreeByBlockIDInBox(id, boxID)
+	if err != nil {
+		return "", err
+	}
+	historyDir := generateOpTypeHistory(tree, HistoryOpUpdate)
+	if historyDir == "" {
+		return "", errors.New("create document history directory failed")
+	}
+	historyPath = filepath.ToSlash(strings.TrimPrefix(
+		filepath.Join(historyDir, tree.Box, tree.Path),
+		util.WorkspaceDir+string(os.PathSeparator),
+	))
+	return historyPath, nil
 }
 
 func generateTreeHistory(tree *parse.Tree, historyDir string) {

@@ -163,6 +163,7 @@ test("restores one committed content version into an activated isolated space", 
     `${sourceSpaceApiPrefix}/backups`,
     `${sourceSpaceApiPrefix}/restores`,
     `${sourceSpaceApiPrefix}/content-directory/notebooks`,
+    `${sourceSpaceApiPrefix}/content-directory/notebooks/${state.notebookId}/documents`,
     `${sourceSpaceApiPrefix}/kernel/api/block/getDocInfo`,
     `${sourceSpaceApiPrefix}/kernel/api/block/getBlockBreadcrumb`,
     `${sourceSpaceApiPrefix}/kernel/api/transactions/undoState`,
@@ -173,10 +174,10 @@ test("restores one committed content version into an activated isolated space", 
   const isExpectedNavigationRequest = (request: { url(): string }) =>
     expectedNavigationAbortPaths.has(new URL(request.url()).pathname);
   await expect.poll(() =>
-    [...diagnostics.pendingRequests].filter(
-      (request) => !isExpectedNavigationRequest(request),
-    ).length,
-  ).toBe(0);
+    [...diagnostics.pendingRequests]
+      .filter((request) => !isExpectedNavigationRequest(request))
+      .map((request) => new URL(request.url()).pathname),
+  ).toEqual([]);
   const expectedPendingRequests = [...diagnostics.pendingRequests].filter(
     isExpectedNavigationRequest,
   );

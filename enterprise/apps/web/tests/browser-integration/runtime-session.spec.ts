@@ -4,7 +4,7 @@ import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
-import { fulfillJson } from "./support/http.ts";
+import { fulfillEmptyCollaborationRoute, fulfillJson } from "./support/http.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -68,6 +68,9 @@ test("logout clears authorized history and sends the in-memory CSRF token", asyn
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
     if (path === "/api/v1/spaces") {
       if (!authenticated) {
         await fulfillJson(
@@ -171,6 +174,9 @@ test("a visible starting page polls once and adopts the new ready state", async 
   let runtimeRequests = 0;
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, { spaces: [spaces[0]] });
       return;
@@ -211,6 +217,9 @@ test("a browser network failure remains distinct and explicit retry recovers", a
   let networkFailure = true;
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, { spaces: [spaces[0]] });
       return;
@@ -274,6 +283,9 @@ test("the sidebar collapses on desktop and closes after mobile space navigation"
   const diagnostics = collectBrowserDiagnostics(page);
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, { spaces });
       return;

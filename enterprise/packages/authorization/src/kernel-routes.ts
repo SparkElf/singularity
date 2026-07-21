@@ -121,6 +121,9 @@ const PROTYLE_READ_ROUTES = [
   "/api/filetree/getPublishAccess",
   "/api/filetree/getRefCreateSavePath",
   "/api/graph/getLocalGraph",
+  "/api/history/getDocHistoryContent",
+  "/api/history/getHistoryItems",
+  "/api/history/getNotebookHistory",
   "/api/history/searchHistory",
   "/api/lute/copyStdMarkdown",
   "/api/lute/html2BlockDOM",
@@ -174,6 +177,11 @@ const PROTYLE_CONTENT_DELETE_ROUTES = [
   "/api/filetree/doc2Heading",
 ] as const;
 
+const PROTYLE_HISTORY_EDIT_ROUTES = [
+  "/api/history/createDocHistory",
+  "/api/history/rollbackDocHistory",
+] as const;
+
 const PROTYLE_WRITE_ROUTES = ["/api/search/removeTemplate"] as const;
 
 const PROTYLE_EXPORT_ROUTES = [
@@ -199,6 +207,9 @@ export const kernelRoutePolicies: readonly KernelRoutePolicy[] = Object.freeze([
   ),
   ...PROTYLE_CONTENT_DELETE_ROUTES.map((path) =>
     jsonPolicy(path, "write", "content.delete"),
+  ),
+  ...PROTYLE_HISTORY_EDIT_ROUTES.map((path) =>
+    jsonPolicy(path, "write", "content.edit"),
   ),
   jsonPolicy("/api/transactions", "write", "content.mutation"),
   ...PROTYLE_EXPORT_ROUTES.map((path) =>

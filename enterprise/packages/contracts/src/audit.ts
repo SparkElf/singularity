@@ -24,6 +24,15 @@ export const auditActions = [
   "backup.create",
   "restore.create",
   "restore.activate",
+  "comment.create",
+  "comment.reply",
+  "comment.edit",
+  "comment.resolve",
+  "comment.reopen",
+  "comment.delete",
+  "history.view",
+  "history.restore",
+  "notification.read",
 ] as const;
 export const auditActionSchema = z.enum(auditActions);
 export type AuditAction = z.infer<typeof auditActionSchema>;
@@ -39,10 +48,13 @@ export type AuditOutcome = z.infer<typeof auditOutcomeSchema>;
 
 export const auditTargetTypes = [
   "backup",
+  "comment",
   "document",
   "group",
   "invitation",
+  "history",
   "membership",
+  "notification",
   "oidc-provider",
   "organization",
   "restore",

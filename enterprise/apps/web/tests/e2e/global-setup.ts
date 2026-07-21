@@ -72,17 +72,28 @@ function restorePorts(): readonly number[] {
 function portIsListening(port: number): Promise<boolean> {
   return new Promise((resolveProbe, rejectProbe) => {
     const socket = connect({ host: "127.0.0.1", port });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolveProbe(true);
-    });
-    socket.once("error", (error: NodeJS.ErrnoException) => {
-      socket.destroy();
-      if (error.code === "ECONNREFUSED") {
-        resolveProbe(false);
+    let settled = false;
+    const finish = (result: boolean): void => {
+      if (settled) {
         return;
       }
-      rejectProbe(error);
+      settled = true;
+      socket.destroy();
+      resolveProbe(result);
+    };
+    // 空闲端口在 WSL 可能只留下 SYN-SENT，不会及时返回 ECONNREFUSED；超时视为未监听。
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ECONNREFUSED") {
+        finish(false);
+        return;
+      }
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        rejectProbe(error);
+      }
     });
   });
 }

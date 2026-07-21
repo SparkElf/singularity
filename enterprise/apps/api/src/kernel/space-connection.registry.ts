@@ -12,6 +12,8 @@ export interface PendingSpaceConnection {
   readonly closeBrowser: (code: number, reason: string) => void;
   readonly connectionId: string;
   readonly organizationId: string;
+  readonly documentId: string;
+  readonly notebookId: string;
   readonly requestId: string;
   readonly sendBrowser: (data: Buffer, binary: boolean) => void;
   readonly spaceId: string;
@@ -54,6 +56,7 @@ const CLOSE = {
 export class SpaceConnectionRegistry {
   readonly #byAuthSession = new Map<string, Set<string>>();
   readonly #byOrganization = new Map<string, Set<string>>();
+  readonly #byDocument = new Map<string, Set<string>>();
   readonly #bySpace = new Map<string, Set<string>>();
   readonly #byUser = new Map<string, Set<string>>();
   readonly #connections = new Map<string, ConnectionRecord>();
@@ -120,6 +123,11 @@ export class SpaceConnectionRegistry {
     this.#index(this.#byUser, record.userId, record.connectionId);
     this.#index(this.#byOrganization, record.organizationId, record.connectionId);
     this.#index(this.#bySpace, record.spaceId, record.connectionId);
+    this.#index(
+      this.#byDocument,
+      this.#documentKey(record),
+      record.connectionId,
+    );
 
     return {
       connectionId: record.connectionId,
@@ -334,6 +342,11 @@ export class SpaceConnectionRegistry {
       record.connectionId,
     );
     this.#unindex(this.#bySpace, record.spaceId, record.connectionId);
+    this.#unindex(
+      this.#byDocument,
+      this.#documentKey(record),
+      record.connectionId,
+    );
   }
 
   #matchingConnectionIds(
@@ -360,7 +373,16 @@ export class SpaceConnectionRegistry {
     if (selector.kind === "organization") {
       return this.#byOrganization.get(selector.value) ?? new Set();
     }
+    if (selector.kind === "document") {
+      return this.#byDocument.get(
+        `${selector.organizationId}:${selector.spaceId}:${selector.notebookId}:${selector.documentId}`,
+      ) ?? new Set();
+    }
     return this.#bySpace.get(selector.value) ?? new Set();
+  }
+
+  #documentKey(record: Pick<PendingSpaceConnection, "documentId" | "notebookId" | "organizationId" | "spaceId">): string {
+    return `${record.organizationId}:${record.spaceId}:${record.notebookId}:${record.documentId}`;
   }
 
   #index(index: Map<string, Set<string>>, key: string, connectionId: string): void {

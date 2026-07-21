@@ -19,6 +19,7 @@ import WebSocket, {
 } from "ws";
 
 import type { ApiConfiguration } from "../configuration.js";
+import { DocumentAccessPolicyService } from "../document-access/document-access.service.js";
 import { IdentityService } from "../identity/identity.service.js";
 import { ApiProblemError } from "../problem.js";
 import { API_CONFIGURATION } from "../tokens.js";
@@ -69,6 +70,7 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
     @Inject(API_CONFIGURATION)
     private readonly configuration: ApiConfiguration,
     private readonly connections: SpaceConnectionRegistry,
+    private readonly documentAccess: DocumentAccessPolicyService,
     private readonly identity: IdentityService,
     private readonly policies: KernelRoutePolicyRegistry,
     private readonly upstream: KernelPrivateWebSocketClient,
@@ -141,7 +143,9 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
               authSessionId: session.authSessionId,
               closeBrowser: (code, reason) => browser.close(code, reason),
               connectionId: randomUUID(),
+              documentId: target.identity.documentId,
               organizationId: target.organizationId,
+              notebookId: target.identity.notebookId,
               requestId,
               sendBrowser: (data, binary) => {
                 if (browser.readyState === WebSocket.OPEN) {
@@ -254,6 +258,29 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
     session: { readonly authSessionId: string; readonly userId: string },
     requestId: string,
   ): Promise<void> {
+    try {
+      await this.documentAccess.requireDocumentRole(
+        {
+          actorUserId: session.userId,
+          documentId: target.identity.documentId,
+          notebookId: target.identity.notebookId,
+          organizationId: target.organizationId,
+          spaceId: target.spaceId,
+        },
+        "viewer",
+      );
+    } catch (error) {
+      this.#logger.warn({
+        ...kernelErrorContext(error, "Document ACL rejected WebSocket activation"),
+        connectionId: handle.connectionId,
+        event: "kernel.route",
+        outcome: "document-access-rejected",
+        requestId,
+        spaceId: target.spaceId,
+      });
+      handle.reject("forbidden");
+      return;
+    }
     const authorization = await this.access.revalidateConnection({
       action: "read",
       authSessionId: session.authSessionId,

@@ -4,7 +4,7 @@ import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
-import { fulfillJson } from "./support/http.ts";
+import { fulfillEmptyCollaborationRoute, fulfillJson } from "./support/http.ts";
 
 const SHARE_TOKEN = "A".repeat(43);
 const SHARE_PATH = `/api/v1/shares/${SHARE_TOKEN}`;
@@ -19,6 +19,9 @@ test("public shares stay read-only, hide internal identities, and recheck revoca
 
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
     if (path === SHARE_PATH) {
       documentReads += 1;
       if (documentReads === 1) {

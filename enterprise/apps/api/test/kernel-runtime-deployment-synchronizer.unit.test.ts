@@ -33,6 +33,8 @@ const ENDPOINT_IDENTITY = {
   kernelInstanceId: ENDPOINT.kernelInstanceId,
   spaceId: ENDPOINT.spaceId,
 } as const;
+const NOTEBOOK_ID = "20260721090000-bookabc";
+const DOCUMENT_ID = "20260721090001-docabcd";
 
 const UPDATED_ENDPOINT = {
   ...ENDPOINT,
@@ -117,7 +119,9 @@ describe("Kernel runtime deployment synchronization", () => {
       closeBrowser: (code, reason) =>
         connectionEvents.push(`browser:${String(code)}:${reason}`),
       connectionId: "44444444-4444-4444-8444-444444444444",
+      documentId: DOCUMENT_ID,
       organizationId: "55555555-5555-4555-8555-555555555555",
+      notebookId: NOTEBOOK_ID,
       requestId: "66666666-6666-4666-8666-666666666666",
       sendBrowser: () => connectionEvents.push("push"),
       spaceId: ENDPOINT.spaceId,
@@ -161,7 +165,9 @@ describe("Kernel runtime deployment synchronization", () => {
         authSessionId: "88888888-8888-4888-8888-888888888888",
         closeBrowser: () => undefined,
         connectionId: "99999999-9999-4999-8999-999999999999",
+        documentId: DOCUMENT_ID,
         organizationId: "55555555-5555-4555-8555-555555555555",
+        notebookId: NOTEBOOK_ID,
         requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         sendBrowser: () => undefined,
         spaceId: ENDPOINT.spaceId,
@@ -244,7 +250,9 @@ describe("Kernel runtime deployment synchronization", () => {
       closeBrowser: (code, reason) =>
         events.push(`browser:${String(code)}:${reason}`),
       connectionId: "44444444-4444-4444-8444-444444444444",
+      documentId: DOCUMENT_ID,
       organizationId: "55555555-5555-4555-8555-555555555555",
+      notebookId: NOTEBOOK_ID,
       requestId: "66666666-6666-4666-8666-666666666666",
       sendBrowser: () => events.push("push"),
       spaceId: ENDPOINT.spaceId,
@@ -286,7 +294,9 @@ describe("Kernel runtime deployment synchronization", () => {
         authSessionId: "88888888-8888-4888-8888-888888888888",
         closeBrowser: () => undefined,
         connectionId: "99999999-9999-4999-8999-999999999999",
+        documentId: DOCUMENT_ID,
         organizationId: "55555555-5555-4555-8555-555555555555",
+        notebookId: NOTEBOOK_ID,
         requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         sendBrowser: () => undefined,
         spaceId: ENDPOINT.spaceId,
@@ -301,7 +311,9 @@ describe("Kernel runtime deployment synchronization", () => {
           authSessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
           closeBrowser: () => undefined,
           connectionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          documentId: DOCUMENT_ID,
           organizationId: "55555555-5555-4555-8555-555555555555",
+          notebookId: NOTEBOOK_ID,
           requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
           sendBrowser: () => undefined,
           spaceId: ENDPOINT.spaceId,
