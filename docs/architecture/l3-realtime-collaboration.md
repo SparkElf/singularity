@@ -4,7 +4,7 @@ description: "定义实时协作原型的语义操作、因果合并、Kernel事
 author: "Codex"
 date: "2026-07-22"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["architecture", "l3", "realtime-collaboration", "crdt", "prototype"]
 ---
 
