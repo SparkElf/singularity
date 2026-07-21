@@ -4,7 +4,7 @@ description: "定义评论、提及、站内通知、版本历史与文档级权
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["architecture", "l2", "async-collaboration", "prisma", "nestjs", "react"]
 ---
 
@@ -222,7 +222,7 @@ Contracts + ACL policy contract (唯一共享 owner)
 
 ## 10. 当前验证状态
 
-代码复评和 test-governance 复评已通过。静态、合同、固定 PostgreSQL/API/Worker/Web、生产构建、Kernel service-auth 与 P5 真实 E2E（12/12）通过；三视口 browser integration 聚合仍有 40 个既有页面元素稳定性超时（19 passed、64 skipped），因此暂不宣称 L2 全阶段 verified。
+代码复评和 test-governance 复评已通过。`pnpm verify:s0-s3` 通过静态、合同、固定 PostgreSQL/API/Worker/Web、生产构建、Kernel service-auth、三视口 browser integration（单 worker，59/59）与 P5 真实 E2E（12/12）；此前默认 8 workers 的 locator 稳定性失败已通过 runner 资源隔离修复，不改变业务断言或生产行为。L2 verification 已完成。
 
 ## References
 

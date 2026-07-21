@@ -4,7 +4,7 @@ description: "奇点评论、提及、通知、版本历史与文档级权限的
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 ---
 
@@ -25,7 +25,7 @@ tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 
 - L0/L1 已完成并推送至 `origin/master`。
 - L1 已拥有组织/空间/用户组、显式三 ID 内容链、分享、审计、备份、Worker 声明式发现、React Query/shadcn/Tailwind 4 和现有 Kernel history 路由基础。
-- L2 生产实现、迁移、永久测试和唯一 P5 E2E 已完成；代码复评与 test-governance 复评通过，当前处于集中 verification。P5 E2E 已通过，三视口 browser integration 聚合仍有既有页面稳定性失败。
+- L2 生产实现、迁移、永久测试和唯一 P5 E2E 已完成；代码复评与 test-governance 复评通过，统一 verification 已通过。三视口 browser integration 固定单 worker 后为 59 passed、0 failed、64 skipped，P5 E2E 为 12 passed、0 failed。
 
 ## Locked Contracts
 
@@ -93,7 +93,7 @@ tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 - [x] 扩展 PostgreSQL integration：复合 FK、锚点边界和通知幂等。
 - [x] 扩展 API integration：真实 HTTP、ACL、评论、提及、通知及完整异常 stack。
 - [x] 扩展 Web component：真实消费组件、设计系统状态和权限数据流。
-- [ ] 闭合三视口 browser integration aggregate；本轮 19 passed、40 failed、64 skipped，失败为既有页面元素稳定性超时。
+- [x] 闭合三视口 browser integration aggregate；默认 8 workers 会造成真实 Protyle DOM actionability 争用，已将专用入口固定为单 worker/`fullyParallel: false`，统一聚合结果为 59 passed、64 skipped、0 failed。
 - [x] 扩展唯一 P5 E2E：至少一条评论+提及+通知、ACL 切换、历史恢复的真实链路；不新增 launcher。
 - [x] 更新权威方案 7/9/11.4、L2 文档和完成记录。
 
@@ -132,7 +132,7 @@ PRD/ADR review
 - 所有新路径由统一 contracts、Nest 声明式装配、审计和设计系统承载；无旧路径、兼容字段、fallback、薄 adapter 或孤儿测试。
 - 集中 verification 矩阵通过，更新权威方案、ADR、计划状态并提交推送。
 
-## Verification Evidence (2026-07-21)
+## Verification Evidence (2026-07-22)
 
 - `corepack pnpm@11.9.0 lint:s0-s3`: passed.
 - `corepack pnpm@11.9.0 typecheck:s0-s3`: passed.
@@ -140,7 +140,7 @@ PRD/ADR review
 - Contracts, fixed PostgreSQL integration, API (222 tests), Worker (59 tests), and Web component (78 tests): passed in the unified run.
 - `corepack pnpm@11.9.0 test:kernel-serviceauth`: passed.
 - `CI=1 env -u DISPLAY -u WAYLAND_DISPLAY corepack pnpm@11.9.0 test:e2e`: 12 passed, 0 failed, 0 flaky, 0 skipped. The backlink case asserts the real `block-ref` identity after the Kernel response; the expected revoked-share 404 retains a full stack trace.
-- Browser aggregate `playwright.integration.config.ts`: 19 passed, 40 failed, 64 skipped. Failures were locator stability timeouts in existing active-content, identity/runtime-session and Protyle scenarios, including a serial reproduction outside the L2 flow; this evidence remains open and is not treated as a pass.
+- Browser aggregate `playwright.integration.config.ts` with the documented single-worker resource contract: 59 passed, 0 failed, 64 skipped. The prior 8-worker run produced 19 passed, 40 failed, 64 skipped through locator stability timeouts; a full single-worker rerun of the same 123 collected cases passed without force-click, extra timeout, retry, or fixture fallback.
 
 ### Test Governance
 
@@ -150,7 +150,7 @@ PRD/ADR review
 
 ## Resume Guide
 
-下次先读取本计划、L2 PRD/架构/ADR、权威方案 7/9.2/11.4，再检查：
+L2 已完成并推送。后续工作应从新的 L3/L4 方案开始，不得把本计划重新当作 implementation 入口。交接检查：
 
 ```text
 cd /root/projects/singularity
@@ -159,4 +159,4 @@ git log -8 --oneline --decorate
 cat /root/projects/mailbox.md 2>/dev/null || true
 ```
 
-方案获审阅前只修改上述 L2 方案文件；获审阅后从 contracts/ACL schema 开始 implementation。不得启动或重配固定 PostgreSQL，不得恢复 L3 实时编辑范围。
+确认 `origin/master` 包含本计划、权威总案和 L2 文档的 verified 状态；不得启动或重配固定 PostgreSQL，不得恢复 L3 实时编辑范围。
