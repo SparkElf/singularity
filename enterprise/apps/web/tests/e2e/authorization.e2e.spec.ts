@@ -304,6 +304,19 @@ test("logout removes the authorized space from browser history", async ({ page }
   for (const path of expectedUnauthorizedPaths) {
     expectedUnauthorizedUrls.add(new URL(path, state.webOrigin).href);
   }
+  const expectedAbortUrls = new Set([
+    ...expectedUnauthorizedUrls,
+    new URL(
+      `/api/v1/organizations/${state.organizationId}` +
+        `/spaces/${state.spaceId}/kernel/api/block/getBlockBreadcrumb`,
+      state.webOrigin,
+    ).href,
+    new URL(
+      `/api/v1/organizations/${state.organizationId}` +
+        `/spaces/${state.spaceId}/kernel/api/transactions/undoState`,
+      state.webOrigin,
+    ).href,
+  ]);
   const logoutWarnings = diagnostics.consoleMessages.filter((message) =>
     message.type() === "warning" &&
     message.text().startsWith("[protyle.lifecycle]") &&
@@ -321,10 +334,10 @@ test("logout removes the authorized space from browser history", async ({ page }
     unexpectedErrorResponses: diagnostics.responses.filter(
       (response) => response.status() >= 400 && response.status() !== 401,
     ),
-    // 登出后浏览器回退会主动取消同一批未授权请求；只放行已观察到的 401 URL。
+    // 登出导航会取消编辑器清理和未授权页面请求；只放行已知终点 URL。
     unexpectedRequestFailures: diagnostics.requestFailures.filter((request) =>
       request.failure()?.errorText !== "net::ERR_ABORTED" ||
-      !expectedUnauthorizedUrls.has(request.url()),
+      !expectedAbortUrls.has(request.url()),
     ),
   });
 });

@@ -75,6 +75,8 @@ export async function createApiApplication(
   const adapter = new FastifyAdapter({
     bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
     genReqId: () => randomUUID(),
+    // 历史版本 ID 是受合同约束的 opaque 路径参数，必须覆盖 Fastify 默认的 100 字节上限。
+    routerOptions: { maxParamLength: 256 },
     requestIdHeader: false,
     ...(options.https === undefined ? {} : { https: options.https }),
     ...(configuration.trustedProxyCidrs.length === 0

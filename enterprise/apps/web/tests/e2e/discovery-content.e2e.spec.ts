@@ -60,13 +60,33 @@ test("shows a real Kernel backlink for the selected document", async ({
     request.headers()["x-singularity-document-id"] === state.referenceDocumentId &&
     request.headers()["x-singularity-notebook-id"] === state.notebookId
   );
+  const referenceDocumentResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname.endsWith("/kernel/api/filetree/getDoc") &&
+    response.request().headers()["x-singularity-document-id"] === state.referenceDocumentId &&
+    response.request().headers()["x-singularity-notebook-id"] === state.notebookId,
+  );
   await reference.click();
   await referenceDocumentRequest;
+  const loadedReferenceResponse = await referenceDocumentResponse;
+  expect(loadedReferenceResponse.ok()).toBe(true);
   await expect(editor.locator(".protyle-title__input")).toHaveText(
     state.referenceDocumentTitle,
     { timeout: 30_000 },
   );
-  await expect(editor).toContainText("P5 引用");
+  // 引用块按目标文档标题渲染；用显式身份属性验证真实引用链路。
+  const referenceBlock = editor.locator(
+    `.protyle-wysiwyg [data-type="block-ref"][data-id="${state.documentId}"]`,
+  );
+  await expect(referenceBlock).toHaveCount(1, { timeout: 30_000 });
+  await expect(referenceBlock).toHaveAttribute(
+    "data-notebook-id",
+    state.notebookId,
+  );
+  await expect(referenceBlock).toHaveAttribute(
+    "data-document-id",
+    state.documentId,
+  );
 
   await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
   expectBrowserHealthy(diagnostics, maximumRequestDurationMilliseconds, {

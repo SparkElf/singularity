@@ -18,6 +18,7 @@ import {
   ContentAuditIntentService,
   type ObservedContentAuditOutcome,
 } from "../audit/content-audit-intent.service.js";
+import { DocumentAccessPolicyService } from "../document-access/document-access.service.js";
 import {
   ApiProblemError,
   conflict,
@@ -264,6 +265,7 @@ export class KernelGatewayService {
     private readonly access: KernelAccessService,
     private readonly client: KernelPrivateClient,
     private readonly contentAudit: ContentAuditIntentService,
+    private readonly documentAccess: DocumentAccessPolicyService,
   ) {}
 
   /** 按路由策略完成授权、审计、Kernel 请求及响应转发，并维持流式响应的生命周期。 */
@@ -272,6 +274,16 @@ export class KernelGatewayService {
     reply: KernelGatewayProxyReply,
   ): Promise<void> {
     const startedAt = performance.now();
+    await this.documentAccess.requireDocumentRole(
+      {
+        actorUserId: input.userId,
+        documentId: input.target.identity.documentId,
+        notebookId: input.target.identity.notebookId,
+        organizationId: input.target.organizationId,
+        spaceId: input.target.spaceId,
+      },
+      input.target.policy.action === "read" ? "viewer" : "editor",
+    );
     const authorized = await this.access.authorizeHttp({
       action: input.target.policy.action,
       organizationId: input.target.organizationId,

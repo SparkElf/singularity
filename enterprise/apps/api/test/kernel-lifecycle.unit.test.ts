@@ -5,6 +5,8 @@ import { SpaceConnectionRegistry } from "../src/kernel/space-connection.registry
 const SPACE_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_SPACE_ID = "33333333-3333-4333-8333-333333333333";
 const KERNEL_INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
+const NOTEBOOK_ID = "20260721090000-bookabc";
+const DOCUMENT_ID = "20260721090001-docabcd";
 
 function markRegistryReady(registry: SpaceConnectionRegistry): void {
   expect(registry.markNotificationListenerReady("access")).toBe(true);
@@ -26,7 +28,9 @@ describe("Kernel connection lifecycle", () => {
       closeBrowser: (code, reason) =>
         activeEvents.push(`browser:${String(code)}:${reason}`),
       connectionId: "55555555-5555-4555-8555-555555555555",
+      documentId: DOCUMENT_ID,
       organizationId: "11111111-1111-4111-8111-111111111111",
+      notebookId: NOTEBOOK_ID,
       requestId: "66666666-6666-4666-8666-666666666666",
       sendBrowser: () => activeEvents.push("push"),
       spaceId: SPACE_ID,
@@ -46,7 +50,9 @@ describe("Kernel connection lifecycle", () => {
       closeBrowser: (code, reason) =>
         pendingEvents.push(`browser:${String(code)}:${reason}`),
       connectionId: "99999999-9999-4999-8999-999999999999",
+      documentId: DOCUMENT_ID,
       organizationId: "11111111-1111-4111-8111-111111111111",
+      notebookId: NOTEBOOK_ID,
       requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       sendBrowser: () => pendingEvents.push("push"),
       spaceId: SPACE_ID,
@@ -59,7 +65,9 @@ describe("Kernel connection lifecycle", () => {
       closeBrowser: (code, reason) =>
         connectingEvents.push(`browser:${String(code)}:${reason}`),
       connectionId: "13131313-1313-4131-8131-131313131313",
+      documentId: DOCUMENT_ID,
       organizationId: "11111111-1111-4111-8111-111111111111",
+      notebookId: NOTEBOOK_ID,
       requestId: "14141414-1414-4141-8141-141414141414",
       sendBrowser: () => connectingEvents.push("push"),
       spaceId: SPACE_ID,
@@ -78,7 +86,9 @@ describe("Kernel connection lifecycle", () => {
       closeBrowser: (code, reason) =>
         otherEvents.push(`browser:${String(code)}:${reason}`),
       connectionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      documentId: DOCUMENT_ID,
       organizationId: "11111111-1111-4111-8111-111111111111",
+      notebookId: NOTEBOOK_ID,
       requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
       sendBrowser: () => otherEvents.push("push"),
       spaceId: OTHER_SPACE_ID,
@@ -117,7 +127,9 @@ describe("Kernel connection lifecycle", () => {
         authSessionId: "16161616-1616-4161-8161-161616161616",
         closeBrowser: () => undefined,
         connectionId: "17171717-1717-4171-8171-171717171717",
+        documentId: DOCUMENT_ID,
         organizationId: "11111111-1111-4111-8111-111111111111",
+        notebookId: NOTEBOOK_ID,
         requestId: "18181818-1818-4181-8181-181818181818",
         sendBrowser: () => undefined,
         spaceId: SPACE_ID,
@@ -149,7 +161,9 @@ describe("Kernel connection lifecycle", () => {
         closeBrowser: (code, reason) =>
           events.push(`browser:${String(code)}:${reason}`),
         connectionId: "55555555-5555-4555-8555-555555555555",
+        documentId: DOCUMENT_ID,
         organizationId: "11111111-1111-4111-8111-111111111111",
+        notebookId: NOTEBOOK_ID,
         requestId: "66666666-6666-4666-8666-666666666666",
         sendBrowser: () => events.push("push"),
         spaceId: SPACE_ID,
@@ -200,7 +214,9 @@ describe("Kernel connection lifecycle", () => {
         closeBrowser: (code, reason) =>
           events.push(`browser:${String(code)}:${reason}`),
         connectionId: "55555555-5555-4555-8555-555555555555",
+        documentId: DOCUMENT_ID,
         organizationId: "11111111-1111-4111-8111-111111111111",
+        notebookId: NOTEBOOK_ID,
         requestId: "66666666-6666-4666-8666-666666666666",
         sendBrowser: () => events.push("push"),
         spaceId: SPACE_ID,
@@ -250,7 +266,9 @@ describe("Kernel connection lifecycle", () => {
         closeBrowser: (code, reason) =>
           input.events.push(`browser:${String(code)}:${reason}`),
         connectionId: input.connectionId,
+        documentId: DOCUMENT_ID,
         organizationId: input.organizationId,
+        notebookId: NOTEBOOK_ID,
         requestId: input.connectionId,
         sendBrowser: () => input.events.push("push"),
         spaceId: SPACE_ID,
@@ -299,6 +317,66 @@ describe("Kernel connection lifecycle", () => {
     expect(matchedEvents).toEqual(["browser:4403:forbidden"]);
     expect(sameUserEvents).toEqual(["push"]);
     expect(sameOrganizationEvents).toEqual(["push"]);
+    registry.closeAllByKernelLifecycle();
+  });
+
+  test("closes only connections bound to the changed document", () => {
+    const registry = new SpaceConnectionRegistry({
+      now: () => new Date("2026-07-19T10:00:00.000Z"),
+    });
+    markRegistryReady(registry);
+    const changedEvents: string[] = [];
+    const untouchedEvents: string[] = [];
+    const register = (connectionId: string, documentId: string, events: string[]) =>
+      registry.registerPending({
+        authSessionId: connectionId,
+        closeBrowser: (code, reason) =>
+          events.push(`browser:${String(code)}:${reason}`),
+        connectionId,
+        documentId,
+        notebookId: NOTEBOOK_ID,
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        requestId: connectionId,
+        sendBrowser: () => events.push("push"),
+        spaceId: SPACE_ID,
+        userId: "77777777-7777-4777-8777-777777777777",
+      });
+    const changed = register(
+      "55555555-5555-4555-8555-555555555555",
+      DOCUMENT_ID,
+      changedEvents,
+    );
+    const untouched = register(
+      "66666666-6666-4666-8666-666666666666",
+      "20260721090002-otherdoc",
+      untouchedEvents,
+    );
+    for (const handle of [changed, untouched]) {
+      expect(
+        handle.activate(
+          new Date("2026-07-19T11:00:00.000Z"),
+          KERNEL_INSTANCE_ID,
+        ),
+      ).toBe(true);
+    }
+
+    registry.closeByAccessChange({
+      kind: "close",
+      reason: "forbidden",
+      requestId: "77777777-7777-4777-8777-777777777777",
+      selectors: [{
+        documentId: DOCUMENT_ID,
+        kind: "document",
+        notebookId: NOTEBOOK_ID,
+        organizationId: "11111111-1111-4111-8111-111111111111",
+        spaceId: SPACE_ID,
+      }],
+    });
+    changed.upstreamMessage(Buffer.from("late"), false);
+    untouched.upstreamMessage(Buffer.from("current"), false);
+
+    expect(changedEvents).toEqual(["browser:4403:forbidden"]);
+    expect(untouchedEvents).toEqual(["push"]);
     registry.closeAllByKernelLifecycle();
   });
 });

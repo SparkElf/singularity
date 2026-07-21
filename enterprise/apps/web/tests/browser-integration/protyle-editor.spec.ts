@@ -10,7 +10,7 @@ import {
   collectBrowserDiagnostics,
   expectBrowserHealthy,
 } from "./support/diagnostics.ts";
-import { fulfillJson } from "./support/http.ts";
+import { fulfillEmptyCollaborationRoute, fulfillJson } from "./support/http.ts";
 import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
@@ -227,6 +227,10 @@ async function installGatewayBoundary(
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
 
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, {
@@ -507,7 +511,7 @@ test.describe("real Protyle browser integration", () => {
     expect(embeddedEditorId).not.toBe("");
 
     await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
-    await sourceEditable.click({ force: true });
+    await sourceEditable.focus();
     await sourceEditable.evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element);
@@ -549,6 +553,7 @@ test.describe("real Protyle browser integration", () => {
     )).toHaveLength(fallbackRequests);
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 
@@ -571,7 +576,7 @@ test.describe("real Protyle browser integration", () => {
     const initialHTML = await wysiwyg.innerHTML();
     const initialBackgroundHTML = await background.innerHTML();
 
-    await paragraph.click();
+    await paragraph.click({ position: { x: 5, y: 5 } });
     await page.keyboard.type("不会写入");
     await expect.poll(async () => wysiwyg.textContent()).toBe(initialContent);
     await expect.poll(async () => wysiwyg.innerHTML()).toBe(initialHTML);
@@ -690,6 +695,7 @@ test.describe("real Protyle browser integration", () => {
     await expect(contentBlock(editor, BLOCK_A)).toBeVisible();
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

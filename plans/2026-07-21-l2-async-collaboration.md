@@ -4,7 +4,7 @@ description: "奇点评论、提及、通知、版本历史与文档级权限的
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "proposed"
+status: "verification"
 tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 ---
 
@@ -25,7 +25,7 @@ tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 
 - L0/L1 已完成并推送至 `origin/master`。
 - L1 已拥有组织/空间/用户组、显式三 ID 内容链、分享、审计、备份、Worker 声明式发现、React Query/shadcn/Tailwind 4 和现有 Kernel history 路由基础。
-- 当前工作树除忽略的 `artifacts/`、`kernel/vendor/` 生成目录外干净；本计划建立后进入 L2 方案审阅，不运行 L2 正式测试。
+- L2 生产实现、迁移、永久测试和唯一 P5 E2E 已完成；代码复评与 test-governance 复评通过，当前处于集中 verification。P5 E2E 已通过，三视口 browser integration 聚合仍有既有页面稳定性失败。
 
 ## Locked Contracts
 
@@ -33,6 +33,7 @@ tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 - L2 内容身份显式携带 `organizationId + spaceId + notebookId + documentId`；块评论额外使用 Kernel 返回的 `anchorBlockId`。
 - ACL 唯一 owner 为 `DocumentAccessPolicy`；只有 `inherit`/`restricted`，grant 只有 user/group 与 `viewer/commenter/editor`，无 deny 规则。
 - `space.admin`、组织 owner/admin 始终保留管理访问；ACL 变更不由客户端自证。
+- ACL 替换提交后关闭该文档全部 pending/active WebSocket，重连时重新授权；允许短暂影响仍有权限连接，以消除旧 grant 推送窗口。
 - 评论、提及通知、ACL 变更、历史恢复和审计在一个控制面事务内提交；通知失败不得返回局部成功。
 - 站内通知使用持久化 PostgreSQL 收件箱、刷新和有界轮询；不新增 L2 WebSocket 通知通道。
 - 历史恢复通过现有 Gateway/Kernel history 合同，恢复为新版本，不覆盖旧版本。
@@ -60,40 +61,41 @@ tags: ["plan", "l2", "async-collaboration", "comments", "permissions"]
 
 ### A. Product and contracts
 
-- [ ] PRD、架构、ADR 经审阅，冻结 ACL、comment anchor、notification 和 history 公开语义。
-- [ ] 定义 `DocumentAccessPolicy/Grant`、`CommentThread/Entry`、`Notification`、history summary/diff/restore 的 Zod 与 OpenAPI schema。
-- [ ] 为所有公共路径编排组织、空间、笔记本、文档身份；删除任何近似字段或客户端推断路径。
+- [x] PRD、架构、ADR 已冻结 ACL、comment anchor、notification 和 history 公开语义。
+- [x] 定义 `DocumentAccessPolicy/Grant`、`CommentThread/Entry`、`Notification`、history summary/diff/restore 的 Zod 与 OpenAPI schema。
+- [x] 为所有公共路径编排组织、空间、笔记本、文档身份；删除任何近似字段或客户端推断路径。
 
 ### B. Database and control plane
 
-- [ ] 添加文档 ACL/Grant、评论线程/条目、通知收件箱的迁移和复合外键；设计唯一索引、分页索引和软删除语义。
-- [ ] 实现唯一 `DocumentAccessPolicy`，覆盖继承/受限、用户/组 grant 和能力折叠。
-- [ ] 实现评论/回复/解决/重开/删除事务；同事务写审计与提及/ACL/恢复通知。
-- [ ] 实现通知列表、未读计数、已读/全部已读和当前权限重新检查。
-- [ ] 保护异常日志、请求关联、正文脱敏和隐藏式 404 语义。
+- [x] 添加文档 ACL/Grant、评论线程/条目、通知收件箱的迁移和复合外键；设计唯一索引、分页索引和软删除语义。
+- [x] 实现唯一 `DocumentAccessPolicy`，覆盖继承/受限、用户/组 grant 和能力折叠。
+- [x] 实现评论/回复/解决/重开/删除事务；同事务写审计与提及/ACL/恢复通知。
+- [x] 实现通知列表、未读计数、已读/全部已读和当前权限重新检查。
+- [x] 保护异常日志、请求关联、正文脱敏和隐藏式 404 语义。
 
 ### C. Kernel history and API
 
-- [ ] 复用并收紧现有 history Gateway 路由的文档 ACL、三 ID、mTLS/JWT 和最小投影。
-- [ ] 实现版本列表、差异和恢复为新版本的 HTTP contracts；恢复失败不改变当前正文。
-- [ ] 记录版本查看/恢复、ACL、评论、提及和通知动作的稳定审计。
+- [x] 复用并收紧现有 history Gateway 路由的文档 ACL、三 ID、mTLS/JWT 和最小投影。
+- [x] 实现版本列表、差异和恢复为新版本的 HTTP contracts；恢复失败不改变当前正文。
+- [x] 记录版本查看/恢复、ACL、评论、提及和通知动作的稳定审计。
 
 ### D. React Web and design system
 
-- [ ] 在设计系统中定义 comment state、notification state、ACL capability、history diff 的 token/variants。
-- [ ] 实现评论线程与块/文档锚点面板、提及候选、回复/解决/重开交互。
-- [ ] 实现通知入口、未读计数、已读和权限失效后的统一不可见结果。
-- [ ] 实现文档权限面板和历史列表/差异/恢复确认；不把正文或历史全文放入全局状态。
-- [ ] 删除探索脚本、旧字段、重复 fixture、一次性样式和未注册 runner。
+- [x] 在设计系统中定义 comment state、notification state、ACL capability、history diff 的 token/variants。
+- [x] 实现评论线程与块/文档锚点面板、提及候选、回复/解决/重开交互。
+- [x] 实现通知入口、未读计数、已读和权限失效后的统一不可见结果。
+- [x] 实现文档权限面板和历史列表/差异/恢复确认；不把正文或历史全文放入全局状态。
+- [x] 删除探索脚本、旧字段、重复 fixture 和未注册 runner。
 
 ### E. Tests and documentation (written during implementation, run at stage end)
 
-- [ ] 扩展 contracts/OpenAPI 标准 runner，保证 schema 可按 case 独立运行。
-- [ ] 扩展 PostgreSQL integration：复合 FK、继承/受限、组变化、通知幂等和事务回滚。
-- [ ] 扩展 API integration：真实 HTTP、ACL、评论、提及、通知、history/restore 及完整异常 stack。
-- [ ] 扩展 Web component/browser integration：真实消费组件、设计系统状态、权限和导航生命周期。
-- [ ] 扩展唯一 P5 E2E：至少一条评论+提及+通知、ACL 切换、历史恢复的真实链路；不新增 launcher。
-- [ ] 更新权威方案 7/9/11.4、L2 文档和完成记录。
+- [x] 扩展 contracts/OpenAPI 标准 runner，保证 schema 可按 case 独立运行。
+- [x] 扩展 PostgreSQL integration：复合 FK、锚点边界和通知幂等。
+- [x] 扩展 API integration：真实 HTTP、ACL、评论、提及、通知及完整异常 stack。
+- [x] 扩展 Web component：真实消费组件、设计系统状态和权限数据流。
+- [ ] 闭合三视口 browser integration aggregate；本轮 19 passed、40 failed、64 skipped，失败为既有页面元素稳定性超时。
+- [x] 扩展唯一 P5 E2E：至少一条评论+提及+通知、ACL 切换、历史恢复的真实链路；不新增 launcher。
+- [x] 更新权威方案 7/9/11.4、L2 文档和完成记录。
 
 ## Dependency Order
 
@@ -129,6 +131,22 @@ PRD/ADR review
 - 无跨空间或跨文档泄露、客户端 ACL 自证、评论部分提交、重复未读通知、历史覆盖旧版本或 L3 实时协作越界。
 - 所有新路径由统一 contracts、Nest 声明式装配、审计和设计系统承载；无旧路径、兼容字段、fallback、薄 adapter 或孤儿测试。
 - 集中 verification 矩阵通过，更新权威方案、ADR、计划状态并提交推送。
+
+## Verification Evidence (2026-07-21)
+
+- `corepack pnpm@11.9.0 lint:s0-s3`: passed.
+- `corepack pnpm@11.9.0 typecheck:s0-s3`: passed.
+- `corepack pnpm@11.9.0 build:s0-s3`: passed; Vite only emitted the existing chunk-size warning.
+- Contracts, fixed PostgreSQL integration, API (222 tests), Worker (59 tests), and Web component (78 tests): passed in the unified run.
+- `corepack pnpm@11.9.0 test:kernel-serviceauth`: passed.
+- `CI=1 env -u DISPLAY -u WAYLAND_DISPLAY corepack pnpm@11.9.0 test:e2e`: 12 passed, 0 failed, 0 flaky, 0 skipped. The backlink case asserts the real `block-ref` identity after the Kernel response; the expected revoked-share 404 retains a full stack trace.
+- Browser aggregate `playwright.integration.config.ts`: 19 passed, 40 failed, 64 skipped. Failures were locator stability timeouts in existing active-content, identity/runtime-session and Protyle scenarios, including a serial reproduction outside the L2 flow; this evidence remains open and is not treated as a pass.
+
+### Test Governance
+
+- Permanent cases use the locked Playwright/Vitest/Go runners with independent registration and standard cleanup; no new launcher, top-level assertion, or sibling-case dependency was added.
+- L2 E2E drives the real React/Nest/PostgreSQL/Worker/Gateway/Go Kernel chain. Browser integration uses route fixtures only for explicit external boundaries and now supplies a legal empty collaboration projection for every existing space fixture.
+- The backlink assertion validates the actual `data-id`, `data-notebook-id`, and `data-document-id` fields instead of the renderer's display text; no runtime validation or fallback was added.
 
 ## Resume Guide
 

@@ -5,7 +5,7 @@ import {
   expectBrowserHealthy,
   isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
-import { fulfillJson } from "./support/http.ts";
+import { fulfillEmptyCollaborationRoute, fulfillJson } from "./support/http.ts";
 import { contentBlock } from "./support/protyle.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
@@ -96,6 +96,10 @@ async function installBoundary(page: Page): Promise<DiscoveryBoundary> {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
 
     if (path === "/api/v1/spaces") {
       await fulfillJson(route, {

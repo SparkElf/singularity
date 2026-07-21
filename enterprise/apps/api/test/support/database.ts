@@ -1,6 +1,11 @@
 import type { DatabaseClient } from "@singularity/database";
 
 const TEST_TABLES = `
+  "notifications",
+  "comment_entries",
+  "comment_threads",
+  "document_access_grants",
+  "document_access_policies",
   "content_audit_intents",
   "audit_events",
   "audit_archives",

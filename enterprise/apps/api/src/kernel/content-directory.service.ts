@@ -8,6 +8,7 @@ import {
   type ContentDirectoryDocumentsResponse,
   type ContentDirectoryNotebooksResponse,
 } from "@singularity/contracts";
+import { DatabaseRuntime } from "@singularity/database";
 import {
   KernelPrivateClient,
   type KernelPrivateResponse,
@@ -18,6 +19,7 @@ import {
   notFound,
   serviceUnavailable,
 } from "../problem.js";
+import { DocumentAccessPolicyService } from "../document-access/document-access.service.js";
 import { KernelAccessService } from "./kernel-access.service.js";
 
 const DIRECTORY_NOTEBOOKS_PATH =
@@ -93,6 +95,8 @@ export class ContentDirectoryService {
 
   constructor(
     private readonly access: KernelAccessService,
+    private readonly database: DatabaseRuntime,
+    private readonly documentAccess: DocumentAccessPolicyService,
     private readonly kernel: KernelPrivateClient,
   ) {}
 
@@ -151,7 +155,26 @@ export class ContentDirectoryService {
           new Error("Kernel directory returned a non-forward pagination offset"),
         );
       }
-      return parsed.data;
+      const visibleDocuments = await this.database.client.$transaction(
+        (transaction) =>
+          this.documentAccess.filterVisibleDocumentsInTransaction(transaction, {
+            actorUserId: input.actorUserId,
+            documents: parsed.data.documents,
+            organizationId: input.organizationId,
+            spaceId: input.spaceId,
+          }),
+      );
+      const visibleDocumentIds = new Set(
+        visibleDocuments.map((document) =>
+          `${document.notebookId}:${document.documentId}`,
+        ),
+      );
+      return {
+        ...parsed.data,
+        documents: parsed.data.documents.filter((document) =>
+          visibleDocumentIds.has(`${document.notebookId}:${document.documentId}`),
+        ),
+      };
     });
   }
 

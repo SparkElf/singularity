@@ -12,6 +12,10 @@ import { ContentAuditIntentService } from "./audit/content-audit-intent.service.
 import { AuditService } from "./audit/audit.service.js";
 import { BackupController } from "./backups/backup.controller.js";
 import { BackupService } from "./backups/backup.service.js";
+import { DocumentAccessController } from "./document-access/document-access.controller.js";
+import { DocumentAccessPolicyService } from "./document-access/document-access.service.js";
+import { CommentController } from "./collaboration/comment.controller.js";
+import { CommentService } from "./collaboration/comment.service.js";
 import type { ApiConfiguration } from "./configuration.js";
 import { GroupManagementService } from "./groups/group-management.service.js";
 import { GroupsController } from "./groups/groups.controller.js";
@@ -41,6 +45,8 @@ import { SpaceManagementController } from "./spaces/space-management.controller.
 import { SpaceManagementService } from "./spaces/space-management.service.js";
 import { SpaceObservabilityController } from "./spaces/space-observability.controller.js";
 import { SpaceObservabilityService } from "./spaces/space-observability.service.js";
+import { NotificationController } from "./notifications/notification.controller.js";
+import { NotificationService } from "./notifications/notification.service.js";
 import {
   API_CONFIGURATION,
   AUDIT_CONFIGURATION,
@@ -76,6 +82,9 @@ export class CoreModule {
         AuditController,
         BackupController,
         SpaceObservabilityController,
+        DocumentAccessController,
+        CommentController,
+        NotificationController,
       ],
       providers: [
         {
@@ -93,6 +102,9 @@ export class CoreModule {
         ContentAuditIntentService,
         BackupService,
         SpaceObservabilityService,
+        DocumentAccessPolicyService,
+        CommentService,
+        NotificationService,
         {
           provide: CLOCK,
           useValue: options.clock,
@@ -166,6 +178,9 @@ export class CoreModule {
         ContentAuditIntentService,
         BackupService,
         SpaceObservabilityService,
+        DocumentAccessPolicyService,
+        CommentService,
+        NotificationService,
       ],
     };
   }

@@ -19,6 +19,8 @@ import { KernelAccessService } from "./kernel-access.service.js";
 import { KernelGatewayAdmission } from "./kernel-gateway-admission.js";
 import { KernelGatewayController } from "./kernel-gateway.controller.js";
 import { KernelGatewayService } from "./kernel-gateway.service.js";
+import { HistoryController } from "./history.controller.js";
+import { HistoryService } from "./history.service.js";
 import { KernelRuntimeDeploymentSynchronizer } from "./kernel-runtime-deployment-synchronizer.js";
 import { KernelWebSocketGateway } from "./kernel-websocket.gateway.js";
 import { SpaceConnectionRegistry } from "./space-connection.registry.js";
@@ -81,6 +83,7 @@ function kernelProviders(options: KernelGatewayModuleOptions): Provider[] {
     ContentDirectoryService,
     KernelAccessService,
     KernelGatewayService,
+    HistoryService,
     KernelRuntimeDeploymentSynchronizer,
     KernelWebSocketGateway,
     ShareKernelClient,
@@ -104,6 +107,7 @@ export class KernelGatewayModule {
         ContentDirectoryController,
         SpaceDiscoveryController,
         KernelGatewayController,
+        HistoryController,
         PublicShareController,
         ShareManagementController,
       ],

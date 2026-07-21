@@ -126,6 +126,7 @@ import {
   type DiscoveryNavigationTarget,
 } from "@/spaces/DiscoveryPanel.tsx";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
+import { CollaborationPanel } from "@/collaboration/CollaborationPanel.tsx";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -551,6 +552,7 @@ function ReadyWorkspace({
   status,
 }: ReadyWorkspaceProps) {
   const { selection, session } = composition;
+  const queryClient = useQueryClient();
   const previousSessionRef = useRef(session);
   const factory = useMemo(
     () => createProtyleFactoryForSpace(identity.spaceId),
@@ -607,6 +609,16 @@ function ReadyWorkspace({
     }
   };
 
+  const navigateToDocument = useCallback((target: {
+    readonly documentId: string;
+    readonly notebookId: string;
+  }) => {
+    const resolved = resolveContentSelectionTarget(queryClient, identity, target);
+    if (resolved !== null) {
+      composition.selectDocument(resolved);
+    }
+  }, [composition, identity, queryClient]);
+
   return (
     <div
       className="flex h-full min-h-0 w-full overflow-hidden rounded-md border bg-background"
@@ -662,6 +674,24 @@ function ReadyWorkspace({
           />
         )}
       </main>
+      <CollaborationPanel
+        key={
+          selection === null
+            ? "empty"
+            : `${identity.organizationId}:${identity.spaceId}:${selection.notebookId}:${selection.documentId}`
+        }
+        identity={
+          selection === null
+            ? null
+            : {
+                documentId: selection.documentId,
+                notebookId: selection.notebookId,
+                organizationId: identity.organizationId,
+                spaceId: identity.spaceId,
+              }
+        }
+        onNavigate={navigateToDocument}
+      />
       {session ? (
         <DiscoveryPanel
           onNavigate={onDiscoveryNavigate}

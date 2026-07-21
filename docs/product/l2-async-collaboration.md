@@ -4,7 +4,7 @@ description: "定义奇点企业知识库的评论、提及、通知、版本历
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "proposed"
+status: "verification"
 tags: ["product", "l2", "async-collaboration", "comments", "document-permission"]
 ---
 
@@ -151,6 +151,10 @@ Grant 能力从低到高为 `viewer < commenter < editor`：
 ## 8. 阶段门禁
 
 L2 只有在 PRD、架构方案、ADR 和任务计划获审阅后进入 implementation。所有五项能力及其迁移、调用方、永久测试和文档属于同一个大阶段；实现期间不执行正式 runner。全部功能收口后进行一次集中 code-review，再按架构方案的统一矩阵进入 verification。
+
+## 9. 当前验证状态
+
+生产实现、迁移、组件测试和唯一 P5 真实链路已完成；代码复评与 test-governance 复评通过。`lint:s0-s3`、`typecheck:s0-s3`、`build:s0-s3`、固定 PostgreSQL/API/Worker/Web 测试、Kernel service-auth 和 P5 E2E（12/12）已通过。三视口 browser integration 聚合仍未闭合：本轮 runner 报告 19 passed、40 failed、64 skipped，失败集中在既有页面的 Playwright 元素稳定性超时，不能作为 L2 全阶段绿色证据。L2 在该聚合门禁闭合前保持 verification 状态。
 
 ## References
 

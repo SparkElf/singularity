@@ -9,6 +9,7 @@ import {
   Prisma,
   type DatabaseNotificationSubscription,
 } from "@singularity/database";
+import { contentIdSchema } from "@singularity/contracts";
 import { z } from "zod";
 
 import { kernelErrorContext } from "./error-context.js";
@@ -21,6 +22,13 @@ const accessSelectorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), value: z.string().uuid() }).strict(),
   z.object({ kind: z.literal("organization"), value: z.string().uuid() }).strict(),
   z.object({ kind: z.literal("space"), value: z.string().uuid() }).strict(),
+  z.object({
+    documentId: contentIdSchema,
+    kind: z.literal("document"),
+    notebookId: contentIdSchema,
+    organizationId: z.string().uuid(),
+    spaceId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const accessChangedSchema = z
@@ -156,10 +164,13 @@ export class AccessChangedListener
       > = {};
       for (const selector of parsed.data.selectors) {
         const values = selectorValues[selector.kind];
+        const value = selector.kind === "document"
+          ? `${selector.organizationId}:${selector.spaceId}:${selector.notebookId}:${selector.documentId}`
+          : selector.value;
         if (values === undefined) {
-          selectorValues[selector.kind] = [selector.value];
+          selectorValues[selector.kind] = [value];
         } else {
-          values.push(selector.value);
+          values.push(value);
         }
       }
       this.#logger.debug({

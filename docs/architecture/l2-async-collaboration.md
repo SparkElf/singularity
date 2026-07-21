@@ -4,7 +4,7 @@ description: "定义评论、提及、站内通知、版本历史与文档级权
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "proposed"
+status: "verification"
 tags: ["architecture", "l2", "async-collaboration", "prisma", "nestjs", "react"]
 ---
 
@@ -48,6 +48,8 @@ PostgreSQL 不保存正文、块 DOM、历史全文或 Kernel 快照。版本历
 
 请求链为 `HTTP/WS ingress -> Zod contract -> DocumentAccessPolicy -> use case -> Prisma/Kernel -> response`。Controller 不重新计算权限，Kernel 不知道组织 ACL；所有正文、评论、历史和分享入口都消费同一 policy 输出。
 
+目录分页是 ACL 的热路径：API 在一次事务中批量读取当前页的组织/空间角色、文档策略和匹配 grant，再在内存中按文档身份派生可见项；不得为每个目录项重新打开权限事务。
+
 ### 2.3 内容身份
 
 所有 L2 公共请求、事件和持久化查询都显式携带：
@@ -66,6 +68,8 @@ PostgreSQL 不保存正文、块 DOM、历史全文或 Kernel 快照。版本历
 4. 事务提交后返回 canonical 结果；失败回滚全部领域变更，不返回局部成功。
 
 L2 站内通知不新增 WebSocket 或消息总线。持久化通知行本身是可靠收件箱，React 使用 Query invalidation、显式刷新和有界轮询读取。未来外部渠道以独立 `worker_jobs` kind 扩展，不改变站内收件箱事实源。
+
+ACL 替换提交后通过事务内通知发送文档身份关闭事件，撤销该文档全部 pending/active Kernel WebSocket；浏览器重连时重新执行完整 ACL 判定。短暂关闭仍有权限的连接是可接受的可用性代价，用于避免旧 grant 在权限切换窗口继续推送，且不向客户端推送权限快照。
 
 ### 2.5 历史与恢复
 
@@ -215,6 +219,10 @@ Contracts + ACL policy contract (唯一共享 owner)
 ```
 
 模块可在共享 contracts 和数据库迁移合同冻结后并行；`paths.ts`、`openapi.ts`、`CoreModule`、App 组合根和唯一 P5 launcher 只能由集成 owner 修改。发生冲突时先在仓库根目录 `mailbox.md` 记录文件、owner、未完成意图和可转做任务，处理完成后删除已解决消息。
+
+## 10. 当前验证状态
+
+代码复评和 test-governance 复评已通过。静态、合同、固定 PostgreSQL/API/Worker/Web、生产构建、Kernel service-auth 与 P5 真实 E2E（12/12）通过；三视口 browser integration 聚合仍有 40 个既有页面元素稳定性超时（19 passed、64 skipped），因此暂不宣称 L2 全阶段 verified。
 
 ## References
 

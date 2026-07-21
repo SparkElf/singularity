@@ -5,7 +5,7 @@ import {
   expectBrowserHealthy,
   isExpectedIconNetworkChange,
 } from "./support/diagnostics.ts";
-import { fulfillJson } from "./support/http.ts";
+import { fulfillEmptyCollaborationRoute, fulfillJson } from "./support/http.ts";
 
 const ORGANIZATION_A = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_B = "22222222-2222-4222-8222-222222222222";
@@ -45,6 +45,10 @@ async function installIdentityRoutes(
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+
+    if (await fulfillEmptyCollaborationRoute(route)) {
+      return;
+    }
 
     if (path === "/api/v1/auth/login") {
       expect(request.method()).toBe("POST");

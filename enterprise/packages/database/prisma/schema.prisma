@@ -66,6 +66,46 @@ enum SpaceRole {
   @@map("space_role")
 }
 
+enum DocumentAccessMode {
+  inherit
+  restricted
+
+  @@map("document_access_mode")
+}
+
+enum DocumentAccessRole {
+  viewer
+  commenter
+  editor
+
+  @@map("document_access_role")
+}
+
+enum DocumentAccessGrantKind {
+  user
+  group
+
+  @@map("document_access_grant_kind")
+}
+
+enum CommentThreadStatus {
+  open
+  resolved
+  deleted
+
+  @@map("comment_thread_status")
+}
+
+enum NotificationKind {
+  mention
+  comment_reply       @map("comment-reply")
+  comment_resolved    @map("comment-resolved")
+  permission_changed  @map("permission-changed")
+  history_restored    @map("history-restored")
+
+  @@map("notification_kind")
+}
+
 enum KernelInstanceStatus {
   starting
   ready
@@ -124,6 +164,15 @@ enum AuditAction {
   backup_create        @map("backup.create")
   restore_create       @map("restore.create")
   restore_activate     @map("restore.activate")
+  comment_create       @map("comment.create")
+  comment_reply        @map("comment.reply")
+  comment_edit         @map("comment.edit")
+  comment_resolve      @map("comment.resolve")
+  comment_reopen       @map("comment.reopen")
+  comment_delete       @map("comment.delete")
+  history_view         @map("history.view")
+  history_restore      @map("history.restore")
+  notification_read    @map("notification.read")
 
   @@map("audit_action")
 }
@@ -160,6 +209,11 @@ model User {
   createdDocumentShares    DocumentShare[]           @relation("DocumentShareCreatedByUser")
   createdSpaceBackups      SpaceBackup[]             @relation("SpaceBackupCreatedByUser")
   createdSpaceRestores     SpaceRestoreJob[]         @relation("SpaceRestoreCreatedByUser")
+  documentAccessGrants     DocumentAccessGrant[]     @relation("DocumentAccessGrantUser")
+  createdCommentThreads    CommentThread[]           @relation("CommentThreadCreatedByUser")
+  commentEntries           CommentEntry[]            @relation("CommentEntryAuthorUser")
+  receivedNotifications    Notification[]            @relation("NotificationRecipientUser")
+  actedNotifications       Notification[]            @relation("NotificationActorUser")
 
   @@map("users")
 }
@@ -199,6 +253,9 @@ model Organization {
   contentAuditIntents ContentAuditIntent[]
   auditSequence OrganizationAuditSequence?
   documentShares DocumentShare[]
+  documentAccessPolicies DocumentAccessPolicy[]
+  commentThreads CommentThread[]
+  notifications Notification[]
   spaceBackups  SpaceBackup[]
   spaceRestores SpaceRestoreJob[]
   workerJobs    WorkerJob[]
@@ -244,6 +301,9 @@ model Space {
   sourceBackups SpaceBackup[]               @relation("SpaceBackupSourceSpace")
   sourceRestores SpaceRestoreJob[]          @relation("SpaceRestoreSourceSpace")
   targetRestores SpaceRestoreJob[]          @relation("SpaceRestoreTargetSpace")
+  documentAccessPolicies DocumentAccessPolicy[]
+  commentThreads CommentThread[]
+  notifications Notification[]
 
   @@unique([id, organizationId], map: "spaces_id_organization_id_key")
   @@index([organizationId], map: "spaces_organization_id_idx")
@@ -281,6 +341,7 @@ model UserGroup {
   organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "user_groups_organization_id_fkey")
   memberships    UserGroupMembership[] @relation("UserGroupMembershipGroup")
   spaceGrants    SpaceGroupGrant[]     @relation("SpaceGroupGrantGroup")
+  documentAccessGrants DocumentAccessGrant[] @relation("DocumentAccessGrantGroup")
 
   @@unique([id, organizationId], map: "user_groups_id_organization_id_key")
   @@unique([organizationId, name], map: "user_groups_organization_id_name_key")
@@ -314,6 +375,115 @@ model SpaceGroupGrant {
   @@unique([spaceId, groupId], map: "space_group_grants_space_id_group_id_key")
   @@index([organizationId, groupId], map: "space_group_grants_organization_id_group_id_idx")
   @@map("space_group_grants")
+}
+
+model DocumentAccessPolicy {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                 @map("organization_id") @db.Uuid
+  spaceId        String                 @map("space_id") @db.Uuid
+  notebookId     String                 @map("notebook_id")
+  documentId     String                 @map("document_id")
+  mode           DocumentAccessMode
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "document_access_policies_organization_id_fkey")
+  space          Space                  @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "document_access_policies_space_id_organization_id_fkey")
+  grants         DocumentAccessGrant[]
+
+  @@unique([organizationId, spaceId, notebookId, documentId], map: "document_access_policies_identity_key")
+  @@unique([id, organizationId, spaceId, notebookId, documentId], map: "document_access_policies_scope_key")
+  @@index([organizationId, spaceId, updatedAt], map: "document_access_policies_space_updated_idx")
+  @@map("document_access_policies")
+}
+
+model DocumentAccessGrant {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyId       String               @map("policy_id") @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  spaceId        String               @map("space_id") @db.Uuid
+  notebookId     String               @map("notebook_id")
+  documentId     String               @map("document_id")
+  kind           DocumentAccessGrantKind
+  userId         String?              @map("user_id") @db.Uuid
+  groupId        String?              @map("group_id") @db.Uuid
+  role           DocumentAccessRole
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  policy         DocumentAccessPolicy @relation(fields: [policyId, organizationId, spaceId, notebookId, documentId], references: [id, organizationId, spaceId, notebookId, documentId], onDelete: Cascade, onUpdate: Cascade, map: "document_access_grants_policy_scope_fkey")
+  user           User?                @relation("DocumentAccessGrantUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "document_access_grants_user_id_fkey")
+  group          UserGroup?           @relation("DocumentAccessGrantGroup", fields: [groupId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "document_access_grants_group_scope_fkey")
+
+  @@unique([id, organizationId, spaceId, notebookId, documentId], map: "document_access_grants_scope_key")
+  @@index([organizationId, spaceId, notebookId, documentId, createdAt], map: "document_access_grants_document_created_idx")
+  @@index([organizationId, userId], map: "document_access_grants_user_idx")
+  @@index([organizationId, groupId], map: "document_access_grants_group_idx")
+  @@map("document_access_grants")
+}
+
+model CommentThread {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  spaceId        String              @map("space_id") @db.Uuid
+  notebookId     String              @map("notebook_id")
+  documentId     String              @map("document_id")
+  anchorBlockId  String?             @map("anchor_block_id")
+  status         CommentThreadStatus
+  createdByUserId String             @map("created_by_user_id") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt     DateTime?           @map("resolved_at") @db.Timestamptz(3)
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "comment_threads_organization_id_fkey")
+  space          Space               @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "comment_threads_space_id_organization_id_fkey")
+  createdBy      User                @relation("CommentThreadCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "comment_threads_created_by_user_id_fkey")
+  entries        CommentEntry[]
+  notifications  Notification[]
+
+  @@unique([id, organizationId, spaceId, notebookId, documentId], map: "comment_threads_scope_key")
+  @@index([organizationId, spaceId, notebookId, documentId, createdAt, id], map: "comment_threads_document_created_idx")
+  @@map("comment_threads")
+}
+
+model CommentEntry {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  threadId       String        @map("thread_id") @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  spaceId        String        @map("space_id") @db.Uuid
+  notebookId     String        @map("notebook_id")
+  documentId     String        @map("document_id")
+  authorUserId   String        @map("author_user_id") @db.Uuid
+  body           String
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt       DateTime?     @map("edited_at") @db.Timestamptz(3)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  thread         CommentThread @relation(fields: [threadId, organizationId, spaceId, notebookId, documentId], references: [id, organizationId, spaceId, notebookId, documentId], onDelete: Cascade, onUpdate: Cascade, map: "comment_entries_thread_scope_fkey")
+  author         User          @relation("CommentEntryAuthorUser", fields: [authorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "comment_entries_author_user_id_fkey")
+
+  @@unique([id, organizationId, spaceId, notebookId, documentId], map: "comment_entries_scope_key")
+  @@index([organizationId, spaceId, notebookId, documentId, threadId, createdAt, id], map: "comment_entries_thread_created_idx")
+  @@map("comment_entries")
+}
+
+model Notification {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientUserId String          @map("recipient_user_id") @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  spaceId        String           @map("space_id") @db.Uuid
+  notebookId     String           @map("notebook_id")
+  documentId     String           @map("document_id")
+  kind           NotificationKind
+  eventKey       String           @map("event_key")
+  actorUserId    String?          @map("actor_user_id") @db.Uuid
+  threadId       String?          @map("thread_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  readAt         DateTime?        @map("read_at") @db.Timestamptz(3)
+  recipient      User             @relation("NotificationRecipientUser", fields: [recipientUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "notifications_recipient_user_id_fkey")
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "notifications_organization_id_fkey")
+  space          Space            @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "notifications_space_id_organization_id_fkey")
+  actor          User?            @relation("NotificationActorUser", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "notifications_actor_user_id_fkey")
+  thread         CommentThread?   @relation(fields: [threadId, organizationId, spaceId, notebookId, documentId], references: [id, organizationId, spaceId, notebookId, documentId], onDelete: Restrict, onUpdate: Cascade, map: "notifications_thread_scope_fkey")
+
+  @@unique([recipientUserId, eventKey], map: "notifications_recipient_event_key")
+  @@index([recipientUserId, readAt, createdAt, id], map: "notifications_recipient_read_idx")
+  @@index([organizationId, spaceId, notebookId, documentId, createdAt], map: "notifications_document_created_idx")
+  @@map("notifications")
 }
 
 model OidcProvider {
