@@ -3,9 +3,11 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/browser-integration",
   outputDir: "./test-results/browser-integration",
-  fullyParallel: true,
+  // 真实 Protyle 会持续维护编辑器 DOM；跨视口并行会让 actionability 失去稳定性。
+  fullyParallel: false,
   forbidOnly: true,
   retries: 0,
+  workers: 1,
   reporter: "line",
   use: {
     baseURL: "http://127.0.0.1:4173",

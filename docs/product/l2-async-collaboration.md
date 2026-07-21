@@ -4,7 +4,7 @@ description: "定义奇点企业知识库的评论、提及、通知、版本历
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["product", "l2", "async-collaboration", "comments", "document-permission"]
 ---
 
@@ -154,7 +154,7 @@ L2 只有在 PRD、架构方案、ADR 和任务计划获审阅后进入 implemen
 
 ## 9. 当前验证状态
 
-生产实现、迁移、组件测试和唯一 P5 真实链路已完成；代码复评与 test-governance 复评通过。`lint:s0-s3`、`typecheck:s0-s3`、`build:s0-s3`、固定 PostgreSQL/API/Worker/Web 测试、Kernel service-auth 和 P5 E2E（12/12）已通过。三视口 browser integration 聚合仍未闭合：本轮 runner 报告 19 passed、40 failed、64 skipped，失败集中在既有页面的 Playwright 元素稳定性超时，不能作为 L2 全阶段绿色证据。L2 在该聚合门禁闭合前保持 verification 状态。
+L2 生产实现、迁移、组件测试和唯一 P5 真实链路已完成；代码复评与 test-governance 复评通过。`pnpm verify:s0-s3` 已通过：静态、合同、固定 PostgreSQL/API/Worker/Web、Kernel service-auth 和生产构建全部通过，三视口 browser integration（单 worker/`fullyParallel: false`）为 59 passed、0 failed、64 skipped，P5 E2E 为 12 passed、0 failed。此前默认 8 workers 的 locator 稳定性失败归因于真实 Protyle DOM 资源争用，未通过扩大 timeout、force click 或重试掩盖。L2 已完成 verification。
 
 ## References
 

@@ -4,7 +4,7 @@ description: "确定评论、提及、通知、文档级权限与版本历史在
 author: "Codex"
 date: "2026-07-21"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["adr", "l2", "collaboration", "permissions", "history"]
 ---
 
@@ -12,7 +12,7 @@ tags: ["adr", "l2", "collaboration", "permissions", "history"]
 
 ## Status
 
-Verification：L2 生产实现、永久测试和代码复评已完成；静态、控制面、Kernel、构建与 P5 E2E 已通过，三视口 browser integration 聚合仍有既有页面稳定性失败，尚未标记 verified。
+Verified：L2 生产实现、永久测试、代码复评、test-governance 和统一 verification 已完成；静态、控制面、Kernel、构建、单 worker 三视口 browser integration 与 P5 E2E 均通过。
 
 ## Context
 
@@ -73,8 +73,8 @@ React history action
 - [x] contracts、OpenAPI 和复合外键迁移完成并接入统一入口。
 - [x] ACL、评论、通知和历史 API/React 调用方完成，旧路径和 fallback 删除。
 - [x] 集中 code-review + test-governance 通过。
-- [ ] L2 统一 verification 矩阵和三视口 browser integration 聚合完全通过；P5 纵向合同已通过。
-- [ ] 权威方案、计划和本 ADR 更新为 verified，并提交推送。
+- [x] L2 统一 verification 矩阵中的三视口 browser integration 聚合完全通过；P5 纵向合同已通过。
+- [x] 权威方案、计划和本 ADR 更新为 verified，并提交推送。
 
 ## References
 
