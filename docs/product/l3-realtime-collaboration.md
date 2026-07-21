@@ -4,7 +4,7 @@ description: "定义实时协作进入生产前的块语义、并发、历史与
 author: "Codex"
 date: "2026-07-22"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["product", "l3", "realtime-collaboration", "crdt", "prototype"]
 ---
 

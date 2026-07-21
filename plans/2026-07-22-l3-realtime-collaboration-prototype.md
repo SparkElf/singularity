@@ -4,7 +4,7 @@ description: "奇点实时协作进入生产前的语义、因果、历史与撤
 author: "Codex"
 date: "2026-07-22"
 version: "1.0.0"
-status: "verification"
+status: "verified"
 tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 ---
 
@@ -25,7 +25,7 @@ tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 
 - L0/L1/L2 已完成并推送至 `origin/master`。
 - 生产 Go Kernel 仍是正文、块、AV 和历史唯一事实源；现有 Protyle WebSocket 只接收推送。
-- L3.0 PRD、架构、ADR 和本计划已完成复评，当前处于 `implementation`。
+- L3.0 PRD、架构、ADR 和本计划已完成复评，原型实现和集中 verification 已通过，当前处于 `verification`。
 - 仓库没有 CRDT 依赖和 L3 生产路由；依赖、端口和服务均不在本计划默认启动范围内。
 
 ## Locked Contracts

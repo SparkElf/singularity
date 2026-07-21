@@ -4,7 +4,7 @@ description: "奇点企业控制面的组织邀请、用户组、空间生命周
 author: "Codex"
 date: "2026-07-19"
 version: "1.0.0"
-status: "working"
+status: "verified"
 tags: ["l1", "control-plane", "rbac", "organization"]
 ---
 
@@ -59,7 +59,7 @@ Nest Controller 通过 `@Authenticated()`、`@SessionMutation()` 和 `ZodValidat
 - `enterprise/apps/web/src/enterprise/MembersPage.test.tsx`、`GroupsPage.test.tsx`、`SpacesManagementPage.test.tsx`、`SpaceAccessPage.test.tsx`：成员、邀请、会话撤销、所有权、用户组、空间生命周期和空间授权的 React 工作流；委派空间管理员不请求组织管理目录。
 - `enterprise/packages/contracts/test/contracts.test.mjs`：角色、状态、路径和严格响应合同。
 
-实现阶段只编写合同与静态检查；整阶段代码评审通过后，统一运行 API HTTP/数据库、contracts、React component 和浏览器矩阵。
+本切片已完成实现、整阶段代码评审和集中 verification。API HTTP/数据库、contracts、React component、浏览器和 P5 真实链路证据已并入 L1 第 9.3 节与 [L1 实现交接](./l1-implementation-handoff.md)，不再保留 `working` 状态。
 
 ## 边界与协作
 
