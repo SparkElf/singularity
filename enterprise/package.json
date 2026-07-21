@@ -27,7 +27,8 @@
     "verify:s0-s3": "pnpm lint:s0-s3 && pnpm typecheck:s0-s3 && pnpm test:s0-s3 && pnpm build:s0-s3",
     "verify:protyle-boundary": "node scripts/verify-protyle-browser-boundary.mjs",
     "verify:protyle-vite-closure": "node scripts/protyle-vite-closure-audit.mjs",
-    "verify:protyle-platform": "node ../scripts/singularity/resolve-protyle-browser-directives.mjs --check && node scripts/verify-protyle-browser-source.mjs"
+    "verify:protyle-platform": "node ../scripts/singularity/resolve-protyle-browser-directives.mjs --check && node scripts/verify-protyle-browser-source.mjs",
+    "verify:l3-prototype": "pnpm --filter @singularity/contracts test && pnpm --filter @singularity/realtime-prototype test && go -C ../kernel test -vet=off ./collab/... && pnpm --filter @singularity/web test:l3-prototype && node --test scripts/l3-boundary.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -50,7 +50,10 @@ export default defineConfig(({ mode }) => ({
     tailwindcss(),
     {
       name: "protyle-runtime-assets",
-      transformIndexHtml() {
+      transformIndexHtml(_html, context) {
+        if (context.filename.endsWith("l3-prototype.html")) {
+          return [];
+        }
         return [
           {
             tag: "link",
@@ -107,5 +110,13 @@ export default defineConfig(({ mode }) => ({
     fileParallelism: false,
     include: ["src/**/*.test.{js,ts,tsx}"],
     setupFiles: "./src/test/setup.ts",
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        app: resolve(webRoot, "index.html"),
+        l3Prototype: resolve(webRoot, "l3-prototype.html"),
+      },
+    },
   },
 }));
