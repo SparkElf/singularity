@@ -12,7 +12,7 @@ tags: ["verification", "l3", "realtime-collaboration", "prototype"]
 
 ## 结果
 
-L3.0 原型通过集中验证。验证对象是独立语义原型，不代表生产 Protyle、Gateway、WebSocket、Prisma 或实时协作功能已启用；L3.1 生产候选仍需另行形成方案和安全评审。
+L3.0 原型通过集中验证。验证对象是独立语义原型，不把原型路径当作生产 Protyle、Gateway 或默认 WebSocket 写入；L3.1 生产协作已按独立方案完成实现、复评和验证，证据见 [L3.1 验证报告](l3.1-realtime-collaboration.md)。
 
 唯一入口：`cd enterprise && pnpm verify:l3-prototype`
 
@@ -36,6 +36,12 @@ L3.0 原型通过集中验证。验证对象是独立语义原型，不代表生
 - 关键函数包含中文备注，异常日志保留 `name/message/stack`，日志不记录正文或凭据。
 - 本轮未启动或重配 PostgreSQL；Playwright 自带 WebServer 在命令结束后已清理，端口 4173 无残留监听。
 
-## 后续门禁
+## 阶段交接
 
-L3.0 通过只授权进入 L3.1 生产候选设计，不授权将原型接入生产编辑器、Gateway 或双向 WebSocket。生产候选必须重新评审横向扩展、持久化 operation log、ACL 撤权广播、加密内容协作、客户端升级和安全模型。
+L3.0 与 L3.1 均已完成各自的产品、架构、implementation、code-review、test-governance 和集中 verification。L3.1 首期功能开关仍默认关闭；多副本 Gateway、移动端生产体验、离线无限编辑和零知识端到端协作不属于已完成范围，进入这些方向前必须新建产品/架构方案和 ADR。
+
+## References
+
+1. [L3.1 生产实时协作产品需求](../product/l3.1-realtime-collaboration.md)
+2. [L3.1 生产实时协作架构方案](../architecture/l3.1-realtime-collaboration.md)
+3. [ADR-031：L3.1 生产实时协作边界](../adr/0031-l3-production-collaboration.md)

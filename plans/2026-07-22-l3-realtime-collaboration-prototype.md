@@ -25,8 +25,8 @@ tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 
 - L0/L1/L2 已完成并推送至 `origin/master`。
 - 生产 Go Kernel 仍是正文、块、AV 和历史唯一事实源；现有 Protyle WebSocket 只接收推送。
-- L3.0 PRD、架构、ADR 和本计划已完成复评，原型实现和集中 verification 已通过，当前处于 `verification`。
-- 仓库没有 CRDT 依赖和 L3 生产路由；依赖、端口和服务均不在本计划默认启动范围内。
+- L3.0 PRD、架构、ADR 和本计划已完成复评，原型实现和集中 verification 已通过，当前为 `verified`；L3.1 生产协作也已完成独立验证。
+- 原型没有 CRDT 依赖和生产路由；L3.1 的生产路由受功能开关保护，固定测试数据库按其计划保留。
 
 ## Locked Contracts
 
@@ -40,7 +40,7 @@ tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 
 ## Stage Boundary
 
-这是一个完整的 prototype implementation/review/verification 大阶段，包含公共 contracts、Go 语义核心、Kernel bridge、协议协调器、浏览器原型、测试夹具和文档。阶段内不逐功能运行正式测试；所有模块完成后进行一次 code-review + test-governance 复评，再执行唯一 `verify:l3-prototype` 聚合。
+这是一个完整的 prototype implementation/review/verification 大阶段，包含公共 contracts、Go 语义核心、Kernel bridge、协议协调器、浏览器原型、测试夹具和文档。所有模块完成后已进行一次 code-review + test-governance 复评，并执行唯一 `verify:l3-prototype` 聚合；本阶段现为 `verified`。
 
 ## Module Owners and File Scope
 
@@ -86,7 +86,7 @@ tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 - [x] 删除探索脚本、重复 reducer、整文档快照 fallback 和未注册 runner。
 - [x] 完成一次整阶段 code-review + test-governance 复评。
 - [x] 执行唯一 `pnpm verify:l3-prototype`，记录每条 PRD 验收证据。
-- [x] 只有全部通过后才更新权威总案为 L3.0 verified；失败则保留 review/verification 状态并停止 L3.1。
+- [x] 全部通过后已更新权威总案为 L3.0 `verified`；L3.1 已另立方案并独立完成验证。
 
 ## Verification Matrix
 
@@ -100,19 +100,19 @@ tags: ["plan", "l3", "realtime-collaboration", "crdt", "prototype"]
 6. browser prototype：两个页面的真实 DOM 结果、presence 生命周期、本地撤销和最小视口合同。
 7. cleanup：runner、临时目录、浏览器、端口和测试内容在成功/失败路径均释放。
 
-触发命令：`cd enterprise && pnpm verify:l3-prototype`。实现阶段不按模块插入测试；verification 发现失败后按共同根因整批回到 implementation，再统一复评和重跑。
+正式命令：`cd enterprise && pnpm verify:l3-prototype`，已完成并通过。实现阶段不按模块插入正式 aggregate；若后续变更原型合同，必须按共同根因整批回到 implementation，再统一复评和重跑。
 
 ## Completion Definition
 
-- L3.0 PRD、架构、ADR 和本计划门禁均已评审通过。
+- L3.0 PRD、架构、ADR 和本计划门禁均已评审通过并为 `verified`。
 - L3-SEM/HIS/ID/ACL/PRES/REC/GATE 全部通过；不存在跨空间/跨库污染、静默丢失、LWW、锁或整文档覆盖。
 - 生产 Web、Gateway、Prisma 和默认 Kernel WS 路径没有被原型接入或改变。
 - `pnpm verify:l3-prototype` 是唯一集中入口，标准 runner 可按 case 过滤，失败路径完整清理。
-- L3.1 生产候选方案另行形成，不能从 L3.0 通过自动推导。
+- L3.1 生产协作方案已另行形成并通过验证，不能把原型路径当作生产实现。
 
 ## Resume Guide
 
-方案评审通过前只修改 L3 文档，不进入 implementation。恢复时先检查：
+L3.0/L3.1 均已验证。后续恢复时先检查：
 
 ```text
 cd /root/projects/singularity
@@ -123,4 +123,4 @@ sed -n '1,260p' docs/architecture/l3-realtime-collaboration.md
 cat /root/projects/mailbox.md 2>/dev/null || true
 ```
 
-不得启动固定 PostgreSQL、生产 Web、Kernel 或 Docker 服务；L3.0 implementation 只有在方案评审完成后才建立隔离测试进程。
+不得把 L3.0 prototype runner 当作生产验收。若进入多副本、移动端、离线无限编辑或零知识协作，必须新建产品/架构方案和 ADR；固定 PostgreSQL 按 L3.1 计划复用，不创建临时数据库。
