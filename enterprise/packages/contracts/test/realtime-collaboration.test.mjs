@@ -23,6 +23,7 @@ const envelope = {
   identity,
   operation: { blockId: identity.documentId, kind: "text.insert", position: 0, text: "A" },
   operationId: "44444444-4444-4444-8444-444444444444",
+  sessionGeneration: 1,
 };
 
 describe("L3 realtime collaboration contracts", () => {
@@ -43,15 +44,15 @@ describe("L3 realtime collaboration contracts", () => {
 
   test("keeps operation outcomes explicit and serializable", () => {
     assert.equal(
-      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "accepted", serverSequence: 1 }).success,
+      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "accepted", serverSequence: 1, sessionGeneration: 1 }).success,
       true,
     );
     assert.equal(
-      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "rejected", code: "structure-conflict" }).success,
+      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "rejected", code: "structure-conflict", sessionGeneration: 1 }).success,
       true,
     );
     assert.equal(
-      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "accepted", serverSequence: 1, code: "structure-conflict" }).success,
+      collaborationOperationResultSchema.safeParse({ identity, operationId: envelope.operationId, outcome: "accepted", serverSequence: 1, sessionGeneration: 1, code: "structure-conflict" }).success,
       false,
     );
   });
@@ -61,19 +62,21 @@ describe("L3 realtime collaboration contracts", () => {
       clientId: envelope.clientId,
       cursor: { blockId: identity.documentId, offset: 2 },
       identity,
+      sessionGeneration: 1,
       ttlMs: 10_000,
     }).success, true);
     assert.equal(collaborationPresenceSchema.safeParse({
       clientId: envelope.clientId,
       cursor: null,
       identity: { ...identity, documentId: "20260722090002-otherdo" },
+      sessionGeneration: 1,
       ttlMs: 10_000,
     }).success, true);
   });
 
   test("keeps viewer capability explicit and OpenAPI strict", () => {
     assert.equal(collaborationJoinRequestSchema.safeParse({ ...identity, clientId: envelope.clientId, capability: "viewer" }).success, false);
-    assert.equal(collaborationJoinRequestSchema.safeParse({ identity, clientId: envelope.clientId, capability: "viewer" }).success, true);
+    assert.equal(collaborationJoinRequestSchema.safeParse({ featureMode: "standard", identity, clientId: envelope.clientId, capability: "viewer", protocolVersion: 1 }).success, true);
     assert.equal(COLLABORATION_OPERATION_ENVELOPE_OPENAPI_SCHEMA.additionalProperties, false);
     assert.equal(collaborationBroadcastSchema.safeParse({ identity, operation: envelope, serverSequence: 1 }).success, true);
   });

@@ -46,7 +46,7 @@ func NewState(identity DocumentIdentity) (*State, error) {
 
 // Apply 执行一条已通过协议边界解析的语义操作，并保留可重放历史所需的最小元数据。
 func (state *State) Apply(envelope OperationEnvelope) Result {
-	result := Result{Identity: envelope.Identity, OperationID: envelope.OperationID}
+	result := Result{Identity: envelope.Identity, OperationID: envelope.OperationID, SessionGeneration: envelope.SessionGeneration}
 	if err := envelope.validate(); err != nil {
 		result.Outcome = OutcomeRejected
 		if errors.Is(err, ErrMissingIdentity) {
@@ -132,7 +132,7 @@ func (state *State) applyOperation(envelope OperationEnvelope) (Operation, Rejec
 			return Operation{}, RejectInvalidOperation
 		}
 		if previous, ok := state.moves[op.BlockID]; ok && !happenedBefore(envelope, previous.Envelope) && !happenedBefore(previous.Envelope, envelope) && (previous.ParentID != op.ParentBlockID || previous.Index != op.Index) {
-			state.Conflicts = append(state.Conflicts, ConflictRecord{Identity: state.Identity, BlockID: op.BlockID, OperationIDs: []string{previous.Envelope.OperationID, envelope.OperationID}, Code: RejectStructureConflict})
+			state.Conflicts = append(state.Conflicts, ConflictRecord{ConflictID: envelope.OperationID, Identity: state.Identity, Kind: "block-move", BlockID: op.BlockID, OperationIDs: []string{previous.Envelope.OperationID, envelope.OperationID}, Code: RejectStructureConflict})
 			return Operation{}, RejectStructureConflict
 		}
 		inverse := Operation{Kind: OperationBlockMove, BlockID: op.BlockID, ParentBlockID: block.ParentID, Index: block.Index}
@@ -157,7 +157,7 @@ func (state *State) applyOperation(envelope OperationEnvelope) (Operation, Rejec
 			return Operation{}, RejectReferenceTargetMissing
 		}
 		if previous, ok := state.references[op.BlockID]; ok && block.Reference != nil && op.Target != nil && *block.Reference != *op.Target && !happenedBefore(envelope, previous) && !happenedBefore(previous, envelope) {
-			state.Conflicts = append(state.Conflicts, ConflictRecord{Identity: state.Identity, BlockID: op.BlockID, OperationIDs: []string{envelope.OperationID}, Code: RejectReferenceTargetMissing})
+			state.Conflicts = append(state.Conflicts, ConflictRecord{ConflictID: envelope.OperationID, Identity: state.Identity, Kind: "reference-target", BlockID: op.BlockID, OperationIDs: []string{envelope.OperationID}, Code: RejectReferenceTargetMissing})
 			return Operation{}, RejectReferenceTargetMissing
 		}
 		inverse := Operation{Kind: OperationReferenceUpdate, BlockID: op.BlockID, Target: block.Reference}
@@ -173,7 +173,7 @@ func (state *State) applyOperation(envelope OperationEnvelope) (Operation, Rejec
 			return Operation{}, RejectReferenceTargetMissing
 		}
 		if previous, ok := state.embeds[op.BlockID]; ok && block.Embed != nil && block.Embed.Target != nil && op.Target != nil && *block.Embed.Target != *op.Target && !happenedBefore(envelope, previous) && !happenedBefore(previous, envelope) {
-			state.Conflicts = append(state.Conflicts, ConflictRecord{Identity: state.Identity, BlockID: op.BlockID, OperationIDs: []string{previous.OperationID, envelope.OperationID}, Code: RejectReferenceTargetMissing})
+			state.Conflicts = append(state.Conflicts, ConflictRecord{ConflictID: envelope.OperationID, Identity: state.Identity, Kind: "reference-target", BlockID: op.BlockID, OperationIDs: []string{previous.OperationID, envelope.OperationID}, Code: RejectReferenceTargetMissing})
 			return Operation{}, RejectReferenceTargetMissing
 		}
 		var inverse Operation
@@ -191,7 +191,7 @@ func (state *State) applyOperation(envelope OperationEnvelope) (Operation, Rejec
 		}
 		key := cellKey(op.AttributeViewID, op.RowID, op.ColumnID)
 		if previous, ok := state.AVCells[key]; ok && !happenedBefore(envelope, previous.Envelope) && !happenedBefore(previous.Envelope, envelope) && !valuesEqual(previous.Value, op.Value) {
-			state.Conflicts = append(state.Conflicts, ConflictRecord{Identity: state.Identity, AttributeViewID: op.AttributeViewID, RowID: op.RowID, ColumnID: op.ColumnID, OperationIDs: []string{previous.OperationID, envelope.OperationID}, Code: RejectAttributeViewConflict})
+			state.Conflicts = append(state.Conflicts, ConflictRecord{ConflictID: envelope.OperationID, Identity: state.Identity, Kind: "attribute-view-cell", AttributeViewID: op.AttributeViewID, RowID: op.RowID, ColumnID: op.ColumnID, OperationIDs: []string{previous.OperationID, envelope.OperationID}, Code: RejectAttributeViewConflict})
 			return Operation{}, RejectAttributeViewConflict
 		}
 		inverse := Operation{Kind: OperationAttributeCellSet, AttributeViewID: op.AttributeViewID, RowID: op.RowID, ColumnID: op.ColumnID, Value: nil}

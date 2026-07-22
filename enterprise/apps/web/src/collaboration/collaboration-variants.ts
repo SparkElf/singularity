@@ -14,3 +14,19 @@ export const collaborationStatusVariants = cva(
     },
   },
 );
+
+export const realtimeSessionStatusVariants = cva(
+  "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]",
+  {
+    variants: {
+      status: {
+        connecting: "border-border bg-muted text-muted-foreground",
+        ready: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        reconnecting: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        conflict: "border-destructive/30 bg-destructive/10 text-destructive",
+        revoked: "border-destructive/30 bg-destructive/10 text-destructive",
+        closed: "border-border bg-background text-muted-foreground",
+      },
+    },
+  },
+);

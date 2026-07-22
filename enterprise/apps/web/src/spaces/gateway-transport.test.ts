@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createSpaceGatewayTransport,
   GatewayResponseError,
+  type SpaceGatewayCollaborationBinding,
 } from "@/spaces/gateway-transport.ts";
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
@@ -375,5 +376,93 @@ describe("SpaceGatewayTransport runtime access loss", () => {
       documentId: DOCUMENT_ID,
       type: "runtime-error",
     });
+  });
+
+  it("filters ordinary transaction pushes but keeps the explicit undo replay push", () => {
+    class TestWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 3;
+      static instance: TestWebSocket | undefined;
+
+      onclose: ((event: { readonly code: number }) => void) | null = null;
+      onmessage: ((event: { readonly data: string }) => void) | null = null;
+      readyState = TestWebSocket.OPEN;
+
+      constructor() {
+        TestWebSocket.instance = this;
+      }
+
+      close(): void {
+        this.readyState = TestWebSocket.CLOSED;
+      }
+
+      emitMessage(value: unknown): void {
+        this.onmessage?.({ data: JSON.stringify(value) });
+      }
+    }
+    vi.stubGlobal("WebSocket", TestWebSocket);
+
+    const received: unknown[] = [];
+    const { transport } = createTransport();
+    const binding: SpaceGatewayCollaborationBinding<unknown> = {
+      client: {
+        submitOperation: async () => {
+          throw new Error("not used in transaction push contract");
+        },
+        subscribe: () => () => undefined,
+      },
+      clientId: "33333333-3333-4333-8333-333333333333",
+      identity: {
+        documentId: DOCUMENT_ID,
+        notebookId: NOTEBOOK_ID,
+        organizationId: ORGANIZATION_ID,
+        spaceId: SPACE_ID,
+      },
+      mapBroadcast: () => "mapped",
+      mapOperation: () => [],
+    };
+    transport.attachCollaboration(binding);
+    transport.subscribe({
+      documentId: DOCUMENT_ID,
+      notebookId: NOTEBOOK_ID,
+      onMessage: (message) => received.push(message),
+      type: "protyle",
+    });
+
+    TestWebSocket.instance?.emitMessage({ cmd: "transactions", data: [] });
+    expect(received).toHaveLength(0);
+    TestWebSocket.instance?.emitMessage({
+      cmd: "transactions",
+      context: { isUndoReplay: true },
+      data: [],
+    });
+    expect(received).toHaveLength(1);
+  });
+
+  it("detaches collaboration broadcasts when the transport freezes", () => {
+    const unsubscribe = vi.fn();
+    const { transport } = createTransport();
+    transport.attachCollaboration({
+      client: {
+        submitOperation: async () => {
+          throw new Error("not used in freeze contract");
+        },
+        subscribe: () => unsubscribe,
+      },
+      clientId: "33333333-3333-4333-8333-333333333333",
+      identity: {
+        documentId: DOCUMENT_ID,
+        notebookId: NOTEBOOK_ID,
+        organizationId: ORGANIZATION_ID,
+        spaceId: SPACE_ID,
+      },
+      mapBroadcast: () => "mapped",
+      mapOperation: () => [],
+    });
+
+    transport.freeze();
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });

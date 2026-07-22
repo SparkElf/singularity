@@ -28,6 +28,7 @@
     "verify:protyle-boundary": "node scripts/verify-protyle-browser-boundary.mjs",
     "verify:protyle-vite-closure": "node scripts/protyle-vite-closure-audit.mjs",
     "verify:protyle-platform": "node ../scripts/singularity/resolve-protyle-browser-directives.mjs --check && node scripts/verify-protyle-browser-source.mjs",
+    "verify:l3-production": "pnpm --filter @singularity/contracts test && CGO_ENABLED=1 go -C ../kernel test -vet=off -tags \"fts5 sqlcipher\" ./collab/... ./model/... ./api/... && pnpm --filter @singularity/api test && pnpm --filter @singularity/web test && node --test scripts/l3-production-boundary.test.mjs",
     "verify:l3-prototype": "pnpm --filter @singularity/contracts test && pnpm --filter @singularity/realtime-prototype test && go -C ../kernel test -vet=off ./collab/... && pnpm --filter @singularity/web test:l3-prototype && node --test scripts/l3-boundary.test.mjs"
   },
   "devDependencies": {

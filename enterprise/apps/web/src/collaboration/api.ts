@@ -1,6 +1,7 @@
 import {
   CSRF_HEADER_NAME,
   buildDocumentAccessPolicyPath,
+  buildDocumentCollaborationFeaturePath,
   buildDocumentCommentEntriesPath,
   buildDocumentCommentMentionCandidatesPath,
   buildDocumentCommentThreadPath,
@@ -16,6 +17,7 @@ import {
   commentThreadDetailSchema,
   commentMentionCandidatesResponseSchema,
   commentThreadsResponseSchema,
+  collaborationFeatureSchema,
   createCommentReplyRequestSchema,
   createCommentThreadRequestSchema,
   documentAccessPolicySchema,
@@ -28,6 +30,7 @@ import {
   type CreateCommentReplyRequest,
   type CreateCommentThreadRequest,
   type DocumentAccessPolicy,
+  type CollaborationFeature,
   type DocumentIdentity,
   type HistoryDiff,
   type HistoryVersionsResponse,
@@ -47,6 +50,8 @@ export const collaborationThreadQueryKey = (identity: DocumentIdentity, threadId
   [...collaborationThreadsQueryKey(identity), threadId] as const;
 export const documentAccessPolicyQueryKey = (identity: DocumentIdentity) =>
   ["collaboration", identity.organizationId, identity.spaceId, identity.notebookId, identity.documentId, "access-policy"] as const;
+export const collaborationFeatureQueryKey = (identity: DocumentIdentity) =>
+  ["collaboration", identity.organizationId, identity.spaceId, identity.notebookId, identity.documentId, "feature"] as const;
 export const documentHistoryQueryKey = (identity: DocumentIdentity) =>
   ["collaboration", identity.organizationId, identity.spaceId, identity.notebookId, identity.documentId, "history"] as const;
 export const notificationsQueryKey = ["collaboration", "notifications"] as const;
@@ -108,6 +113,17 @@ export async function updateCommentStatus(identity: DocumentIdentity, threadId: 
 
 export function getDocumentAccessPolicy(identity: DocumentIdentity, signal?: AbortSignal): Promise<DocumentAccessPolicy> {
   return requestJson(documentAccessPolicySchema, buildDocumentAccessPolicyPath(identity), { signal: signal ?? null });
+}
+
+export function getCollaborationFeature(
+  identity: DocumentIdentity,
+  signal?: AbortSignal,
+): Promise<CollaborationFeature> {
+  return requestJson(
+    collaborationFeatureSchema,
+    buildDocumentCollaborationFeaturePath(identity),
+    { signal: signal ?? null },
+  );
 }
 
 export async function updateDocumentAccessPolicy(

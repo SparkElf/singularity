@@ -10,6 +10,7 @@ import {
   collaborationRevocationSchema,
   type CollaborationBroadcast,
   type CollaborationCapability,
+  type CollaborationFeatureMode,
   type CollaborationJoinResponse,
   type CollaborationOperationEnvelope,
   type CollaborationOperationResult,
@@ -33,7 +34,10 @@ export interface SemanticCore {
 export interface Session {
   readonly capability: CollaborationCapability;
   readonly clientId: string;
+  readonly featureMode: CollaborationFeatureMode;
   readonly identity: DocumentIdentity;
+  readonly protocolVersion: number;
+  readonly sessionGeneration: number;
   state: CollaborationSessionState;
 }
 
@@ -90,7 +94,10 @@ export class PrototypeCoordinator {
     const session: Session = {
       capability: collaborationCapabilitySchema.parse(request.capability),
       clientId: request.clientId,
+      featureMode: request.featureMode,
       identity: request.identity,
+      protocolVersion: request.protocolVersion,
+      sessionGeneration: 1,
       state: "connecting",
     };
     if (!this.#authorize(request.identity, request.capability)) {
@@ -103,8 +110,11 @@ export class PrototypeCoordinator {
     this.#sessions.set(key, session);
     const response = collaborationJoinResponseSchema.parse({
       capability: request.capability,
+      featureMode: request.featureMode,
       identity: request.identity,
+      protocolVersion: request.protocolVersion,
       sessionState: "ready",
+      sessionGeneration: session.sessionGeneration,
       version: this.#version(request.identity),
     });
     this.#record({ clientId: key, identity: request.identity, phase: "join", result: "ready" });
@@ -127,6 +137,9 @@ export class PrototypeCoordinator {
     if (!sameIdentity(session.identity, envelope.identity)) {
       return this.#rejected(envelope, "missing-identity");
     }
+    if (envelope.sessionGeneration !== session.sessionGeneration) {
+      return this.#rejected(envelope, "session-generation-mismatch");
+    }
     try {
       const result = this.#core.apply(envelope, this.#nextServerSequence(envelope.identity));
       this.#record({ clientId, identity: envelope.identity, operationId: envelope.operationId, phase: "operation", result: result.result.outcome });
@@ -141,7 +154,7 @@ export class PrototypeCoordinator {
   resume(input: unknown): readonly CollaborationBroadcast[] {
     const request = collaborationResumeRequestSchema.parse(input) as CollaborationResumeRequest;
     const session = this.#requireSession(request.clientId);
-    if (session.state !== "ready" || !sameIdentity(session.identity, request.identity)) {
+    if (session.state !== "ready" || !sameIdentity(session.identity, request.identity) || request.sessionGeneration !== session.sessionGeneration) {
       this.#record({ clientId: request.clientId, identity: request.identity, phase: "resume", result: "rejected" });
       return [];
     }
@@ -157,7 +170,7 @@ export class PrototypeCoordinator {
   updatePresence(input: unknown): readonly CollaborationPresence[] {
     const presence = collaborationPresenceSchema.parse(input);
     const session = this.#requireSession(presence.clientId);
-    if (session.state !== "ready" || !sameIdentity(session.identity, presence.identity)) {
+    if (session.state !== "ready" || !sameIdentity(session.identity, presence.identity) || presence.sessionGeneration !== session.sessionGeneration) {
       this.#record({ clientId: presence.clientId, identity: presence.identity, phase: "presence", result: "rejected" });
       return [];
     }
@@ -183,7 +196,12 @@ export class PrototypeCoordinator {
       }
       session.state = "revoked";
       this.#presence.delete(`${identityKey(identity)}:${session.clientId}`);
-      revocations.push(collaborationRevocationSchema.parse({ identity, reason: "permission-revoked", sessionState: "revoked" }));
+      revocations.push(collaborationRevocationSchema.parse({
+        identity,
+        reason: "permission-revoked",
+        sessionGeneration: session.sessionGeneration,
+        sessionState: "revoked",
+      }));
       this.#record({ clientId: session.clientId, identity, phase: "lifecycle", result: "revoked" });
     }
     return revocations;
@@ -211,8 +229,14 @@ export class PrototypeCoordinator {
     return session;
   }
 
-  #rejected(envelope: CollaborationOperationEnvelope, code: "permission-revoked" | "session-not-ready" | "missing-identity"): SemanticCoreApplyResult {
-    const result = collaborationOperationResultSchema.parse({ identity: envelope.identity, operationId: envelope.operationId, outcome: "rejected", code });
+  #rejected(envelope: CollaborationOperationEnvelope, code: "permission-revoked" | "session-not-ready" | "missing-identity" | "session-generation-mismatch"): SemanticCoreApplyResult {
+    const result = collaborationOperationResultSchema.parse({
+      identity: envelope.identity,
+      operationId: envelope.operationId,
+      outcome: "rejected",
+      code,
+      sessionGeneration: envelope.sessionGeneration,
+    });
     this.#record({ clientId: envelope.clientId, identity: envelope.identity, operationId: envelope.operationId, phase: "operation", result: code });
     return { broadcast: null, result };
   }
@@ -259,7 +283,7 @@ export class RecordingSemanticCore implements SemanticCore {
     if (this.#operationIds.has(envelope.operationId)) {
       return {
         broadcast: null,
-        result: collaborationOperationResultSchema.parse({ identity: envelope.identity, operationId: envelope.operationId, outcome: "duplicate", serverSequence }),
+        result: collaborationOperationResultSchema.parse({ identity: envelope.identity, operationId: envelope.operationId, outcome: "duplicate", serverSequence, sessionGeneration: envelope.sessionGeneration }),
       };
     }
     this.#operationIds.add(envelope.operationId);
@@ -269,7 +293,7 @@ export class RecordingSemanticCore implements SemanticCore {
     this.#historyByIdentity.set(key, list);
     return {
       broadcast,
-      result: collaborationOperationResultSchema.parse({ identity: envelope.identity, operationId: envelope.operationId, outcome: "accepted", serverSequence }),
+      result: collaborationOperationResultSchema.parse({ identity: envelope.identity, operationId: envelope.operationId, outcome: "accepted", serverSequence, sessionGeneration: envelope.sessionGeneration }),
     };
   }
 

@@ -23,6 +23,7 @@ import type { AuditConfiguration } from "@singularity/database";
 import { AppModule } from "./app.module.js";
 import {
   parseContentAuditIndeterminateAfterMilliseconds,
+  parseBooleanFlag,
   parseOidcClientSecretBindings,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
@@ -40,6 +41,7 @@ import {
 } from "./kernel/install-http-boundary.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
 import { KernelWebSocketGateway } from "./kernel/kernel-websocket.gateway.js";
+import { RealtimeCollaborationWebSocketGateway } from "./collaboration/realtime-websocket.gateway.js";
 import { ApiProblemFilter } from "./problem.js";
 
 export interface CreateApiApplicationOptions {
@@ -65,7 +67,8 @@ export async function createApiApplication(
     contentAuditIndeterminateAfterMilliseconds:
       parseContentAuditIndeterminateAfterMilliseconds(
         options.contentAuditIndeterminateAfterMilliseconds,
-      ),
+    ),
+    collaborationEnabled: parseBooleanFlag(process.env.SINGULARITY_COLLABORATION_ENABLED),
     oidcClientSecretBindings: parseOidcClientSecretBindings(
       options.oidcClientSecretBindings,
     ),
@@ -150,5 +153,8 @@ export async function createApiApplication(
     app.get(KernelGatewayAdmission),
   );
   app.get(KernelWebSocketGateway).attach(app.getHttpServer());
+  if (configuration.collaborationEnabled) {
+    app.get(RealtimeCollaborationWebSocketGateway).attach(app.getHttpServer());
+  }
   return app;
 }

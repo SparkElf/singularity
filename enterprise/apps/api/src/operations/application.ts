@@ -107,6 +107,7 @@ export async function runAccessOperationsApplication(
         auditConfiguration: options.auditConfiguration,
         clock: new SystemClock(),
         configuration: {
+          collaborationEnabled: false,
           contentAuditIndeterminateAfterMilliseconds:
             DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
           oidcClientSecretBindings: [],

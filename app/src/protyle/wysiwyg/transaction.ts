@@ -6,7 +6,7 @@ import {processRender} from "../util/processCode";
 import {highlightRender} from "../render/highlightRender";
 import {hasClosestBlock, hasClosestByAttribute, hasTopClosestByAttribute, isInEmbedBlock} from "../util/hasClosest";
 import {zoomOut} from "../util/zoom";
-import {disabledProtyle, enableProtyle, onGet, setReadonlyByConfig} from "../util/onGet";
+import {disabledProtyle, onGet, setReadonlyByConfig} from "../util/onGet";
 import {avRender, refreshAV} from "../render/av/render";
 import {removeFoldHeading} from "../util/heading";
 import {genEmptyElement} from "./blockElement";
@@ -30,6 +30,36 @@ const resolveTransactionContentAssetSources = (protyle: IProtyle, operations: IO
     if (operations.some(carriesContentAssetSource)) {
         resolveProtyleContentAssetSources(protyle, protyle.wysiwyg.element);
     }
+};
+
+// 在普通事务离开编辑器前记录结构位置，协作映射只消费该次事务的显式位置，不从全局状态推断身份。
+const annotateCollaborationPositions = (protyle: IProtyle, operations: IOperation[]) => {
+    operations.forEach((operation) => {
+        if (operation.action !== "insert" && operation.action !== "move") {
+            return;
+        }
+        const element = operation.id
+            ? protyle.wysiwyg.element.querySelector(`[data-node-id="${operation.id}"]`)
+            : null;
+        if (!element) {
+            return;
+        }
+        const parent = operation.parentID
+            ? protyle.wysiwyg.element.querySelector(`[data-node-id="${operation.parentID}"]`)
+            : protyle.wysiwyg.element;
+        if (!parent) {
+            return;
+        }
+        const siblings = Array.from(parent.children).filter((candidate) => candidate.hasAttribute("data-node-id"));
+        const index = siblings.indexOf(element);
+        if (index < 0) {
+            return;
+        }
+        operation.context = {
+            ...(operation.context ?? {}),
+            collaborationIndex: String(index),
+        };
+    });
 };
 
 const removeTopElement = (updateElement: Element, protyle: IProtyle) => {
@@ -375,6 +405,178 @@ const refreshSbs = (...elements: (Element | undefined | null)[]) => {
         }
     });
     sbs.forEach(sb => refreshSbResize(sb));
+};
+
+export interface ProtyleCollaborationOperation {
+    kind: string;
+    blockId?: string;
+    parentBlockId?: string | null;
+    index?: number;
+    position?: number;
+    from?: number;
+    to?: number;
+    text?: string;
+    blockType?: string;
+    content?: string;
+    target?: {
+        blockId: string;
+        documentId: string;
+        notebookId: string;
+    } | null;
+    embedType?: string;
+    attributeViewId?: string;
+    rowId?: string;
+    columnId?: string;
+    value?: unknown;
+}
+
+export interface ProtyleCollaborationOperationMessage {
+    cmd: "collaboration-operation";
+    data: {
+        identity: {
+            organizationId: string;
+            spaceId: string;
+            notebookId: string;
+            documentId: string;
+        };
+        operation: ProtyleCollaborationOperation;
+        operationId: string;
+        serverSequence: number;
+    };
+    sid: string;
+}
+
+const findCollaborationBlock = (protyle: IProtyle, blockId: string): HTMLElement | null =>
+    protyle.wysiwyg.element.querySelector(`[data-node-id="${blockId}"]`);
+
+const collaborationChildContainer = (parent: HTMLElement | null, root: HTMLElement): HTMLElement => {
+    if (!parent) {
+        return root;
+    }
+    const nestedBlocks = Array.from(parent.children).some((child) => child.hasAttribute("data-node-id"));
+    if (nestedBlocks) {
+        return parent;
+    }
+    return Array.from(parent.children).find((child) => child.getAttribute("contenteditable") === "true") as HTMLElement || parent;
+};
+
+/** 从 Kernel 读取单块 DOM 供结构语义操作局部补齐，禁止把远端操作降级为整篇文档快照。 */
+const fetchCollaborationBlock = async (protyle: IProtyle, blockId: string): Promise<HTMLElement> => {
+    const response = await protyle.runtime.transport.request<IWebSocketData>("/api/block/getBlockDOM", {id: blockId}, {
+        identity: protyleContentIdentity(protyle),
+        intent: "read",
+        signal: protyle.requestSignal,
+    });
+    if (typeof response.data?.dom !== "string") {
+        throw new Error("Collaboration block DOM response is invalid");
+    }
+    const template = document.createElement("template");
+    template.innerHTML = response.data.dom;
+    const element = template.content.firstElementChild as HTMLElement | null;
+    if (!element || element.getAttribute("data-node-id") !== blockId) {
+        throw new Error("Collaboration block DOM identity does not match the requested block");
+    }
+    return element;
+};
+
+const renderCollaborationBlock = (protyle: IProtyle, element: Element): void => {
+    processRender(element, protyle);
+    highlightRender(element, protyle);
+    avRender(element, protyle);
+    blockRender(protyle, element);
+    refreshSbs(element);
+};
+
+/** 按服务端语义操作更新当前编辑器的局部 DOM；不写入协作正文副本，也不触发整篇 reload。 */
+export const applyCollaborationOperation = async (
+    protyle: IProtyle,
+    message: ProtyleCollaborationOperationMessage,
+): Promise<void> => {
+    const identity = protyleContentIdentity(protyle);
+    if (protyle.destroyed || protyle.content.mode !== "bound" ||
+        message.data.identity.notebookId !== identity.notebookId ||
+        message.data.identity.documentId !== identity.documentId) {
+        return;
+    }
+    const operation = message.data.operation;
+    let applied = false;
+    if (operation.kind === "text.insert" || operation.kind === "text.delete") {
+        if (!operation.blockId) {
+            return;
+        }
+        const block = findCollaborationBlock(protyle, operation.blockId);
+        const editable = block ? getContenteditableElement(block) : null;
+        if (!editable) {
+            return;
+        }
+        const runes = Array.from(editable.textContent ?? "");
+        if (operation.kind === "text.insert" && operation.text) {
+            runes.splice(operation.position ?? runes.length, 0, ...Array.from(operation.text));
+            applied = true;
+        } else if (operation.kind === "text.delete") {
+            runes.splice(operation.from ?? 0, (operation.to ?? 0) - (operation.from ?? 0));
+            applied = true;
+        }
+        if (applied) {
+            editable.textContent = runes.join("");
+            renderCollaborationBlock(protyle, block!);
+        }
+    } else if (operation.kind === "block.delete") {
+        if (!operation.blockId) {
+            return;
+        }
+        const block = findCollaborationBlock(protyle, operation.blockId);
+        if (block) {
+            const parent = block.parentElement;
+            block.remove();
+            refreshSbs(parent);
+            applied = true;
+        }
+    } else if (operation.kind === "block.insert" || operation.kind === "block.move") {
+        if (!operation.blockId || operation.index === undefined) {
+            return;
+        }
+        const parent = operation.parentBlockId ? findCollaborationBlock(protyle, operation.parentBlockId) : null;
+        if (operation.parentBlockId && !parent) {
+            return;
+        }
+        let block = findCollaborationBlock(protyle, operation.blockId);
+        if (!block && operation.kind === "block.move") {
+            return;
+        }
+        if (!block) {
+            block = await fetchCollaborationBlock(protyle, operation.blockId);
+        }
+        const container = collaborationChildContainer(parent, protyle.wysiwyg.element);
+        block.remove();
+        const children = Array.from(container.children).filter((child) => child.hasAttribute("data-node-id"));
+        container.insertBefore(block, children[operation.index] ?? null);
+        renderCollaborationBlock(protyle, block);
+        applied = true;
+    } else if (operation.kind === "reference.update" || operation.kind === "embed.update") {
+        if (!operation.blockId || !findCollaborationBlock(protyle, operation.blockId)) {
+            return;
+        }
+        const block = findCollaborationBlock(protyle, operation.blockId)!;
+        const replacement = await fetchCollaborationBlock(protyle, operation.blockId);
+        block.replaceWith(replacement);
+        renderCollaborationBlock(protyle, replacement);
+        applied = true;
+    } else if (operation.kind === "attribute-view.cell-set" && operation.attributeViewId) {
+        refreshAV(protyle, {
+            action: "updateAttrViewCell",
+            avID: operation.attributeViewId,
+            data: operation.value,
+            id: operation.rowId,
+            keyID: operation.columnId,
+            rowID: operation.rowId,
+        });
+        applied = true;
+    }
+    if (applied) {
+        // 语义广播已经改变 DOM，清空旧 HTML 基线，避免下一次本地输入生成错误差分。
+        protyle.wysiwyg.lastHTMLs = {};
+    }
 };
 
 const deleteBlock = (updateElements: Element[], id: string, protyle: IProtyle, isUndo: boolean) => {
@@ -1540,6 +1742,7 @@ export const transaction = (protyle: IProtyle, doOperations: IOperation[], undoO
     if (!canWriteProtyleContent(protyle.readonlyState)) {
         return;
     }
+    annotateCollaborationPositions(protyle, doOperations);
     if (undoOperations) {
         protyle.updated = true;
         protyle.undo.add(doOperations, undoOperations, protyle);
@@ -1652,7 +1855,13 @@ const processFold = (operation: IOperation, protyle: IProtyle) => {
     }
 };
 
-export const updateTransaction = (protyle: IProtyle, element: Element, oldHTML: string) => {
+// 记录正文更新及其显式协作上下文；上下文只来自本次编辑事件，不从当前页面或全局状态补推目标。
+export const updateTransaction = (
+    protyle: IProtyle,
+    element: Element,
+    oldHTML: string,
+    collaborationContext?: Record<string, string>,
+) => {
     const id = element.getAttribute("data-node-id");
     const newHTML = element.outerHTML;
     if (newHTML === oldHTML.replace("<wbr>", "")) {
@@ -1662,11 +1871,13 @@ export const updateTransaction = (protyle: IProtyle, element: Element, oldHTML: 
     transaction(protyle, [{
         id,
         data: newHTML,
-        action: "update"
+        action: "update",
+        context: {collaborationPreviousHTML: oldHTML, ...(collaborationContext || {})},
     }], [{
         id,
         data: oldHTML,
-        action: "update"
+        action: "update",
+        context: {collaborationPreviousHTML: newHTML},
     }]);
 };
 

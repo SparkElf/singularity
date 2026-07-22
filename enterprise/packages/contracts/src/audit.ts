@@ -33,6 +33,11 @@ export const auditActions = [
   "history.view",
   "history.restore",
   "notification.read",
+  "collaboration.join",
+  "collaboration.operation",
+  "collaboration.conflict",
+  "collaboration.resume",
+  "collaboration.revoke",
 ] as const;
 export const auditActionSchema = z.enum(auditActions);
 export type AuditAction = z.infer<typeof auditActionSchema>;

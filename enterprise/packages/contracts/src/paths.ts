@@ -110,6 +110,8 @@ export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE =
 
 export const DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/access-policy";
+export const DOCUMENT_COLLABORATION_FEATURE_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/collaboration";
 export const DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/spaces/{spaceId}/notebooks/{notebookId}/documents/{documentId}/comments";
 export const DOCUMENT_COMMENT_THREAD_PATH_TEMPLATE =
@@ -155,6 +157,9 @@ export const ORGANIZATION_SPACE_DISCOVERY_GRAPH_CONTROLLER_PATH =
   toControllerPath(ORGANIZATION_SPACE_DISCOVERY_GRAPH_PATH_TEMPLATE);
 export const DOCUMENT_ACCESS_POLICY_CONTROLLER_PATH = toControllerPath(
   DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE,
+);
+export const DOCUMENT_COLLABORATION_FEATURE_CONTROLLER_PATH = toControllerPath(
+  DOCUMENT_COLLABORATION_FEATURE_PATH_TEMPLATE,
 );
 export const DOCUMENT_COMMENT_THREADS_CONTROLLER_PATH = toControllerPath(
   DOCUMENT_COMMENT_THREADS_PATH_TEMPLATE,
@@ -381,6 +386,15 @@ export function buildDocumentAccessPolicyPath(
 ): string {
   return buildDocumentIdentityPath(
     DOCUMENT_ACCESS_POLICY_PATH_TEMPLATE,
+    parameters,
+  );
+}
+
+export function buildDocumentCollaborationFeaturePath(
+  parameters: DocumentIdentity,
+): string {
+  return buildDocumentIdentityPath(
+    DOCUMENT_COLLABORATION_FEATURE_PATH_TEMPLATE,
     parameters,
   );
 }

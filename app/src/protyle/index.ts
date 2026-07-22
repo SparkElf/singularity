@@ -15,6 +15,7 @@ import {Toolbar} from "./toolbar";
 import {Gutter} from "./gutter";
 import {Breadcrumb} from "./breadcrumb";
 import {
+    applyCollaborationOperation,
     onTransaction,
     transaction,
     turnsIntoOneTransaction,
@@ -22,6 +23,7 @@ import {
     updateBatchTransaction,
     updateTransaction
 } from "./wysiwyg/transaction";
+import type {ProtyleCollaborationOperationMessage} from "./wysiwyg/transaction";
 import {getProtyleDocumentDisplayName} from "./runtime/displayName";
 import {initMirror, refreshUndoButtons, syncMirrorFromBroadcast} from "./undo/globalUndo";
 import {Title} from "./header/Title";
@@ -153,6 +155,7 @@ export class Protyle {
     private onContentUnavailable?: () => void;
     private subscription?: TProtyleSubscription;
     private readonly requestController = new AbortController();
+    private collaborationApplyQueue: Promise<void> = Promise.resolve();
     private removeOwnerAbortListener?: () => void;
     private disposed = false;
     private readonly session?: TProtyleSession;
@@ -403,6 +406,15 @@ export class Protyle {
                         }
                         case "transactions":
                             this.onTransaction(data as ProtyleTransactionsMessage);
+                            break;
+                        case "collaboration-operation":
+                            // 按服务端序列串行消费语义广播，防止局部 DOM 请求乱序覆盖。
+                            this.collaborationApplyQueue = this.collaborationApplyQueue
+                                .then(() => applyCollaborationOperation(
+                                    this.protyle,
+                                    data as ProtyleCollaborationOperationMessage,
+                                ))
+                                .catch((error) => this.reportRequestFailure(error));
                             break;
                         case "readonly":
                             this.settings.editor.setReadOnly(data.data);

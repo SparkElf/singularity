@@ -19,10 +19,18 @@ export interface OidcClientSecretBinding {
 }
 
 export interface ApiConfiguration {
+  collaborationEnabled: boolean;
   contentAuditIndeterminateAfterMilliseconds: number;
   oidcClientSecretBindings: readonly OidcClientSecretBinding[];
   publicOrigin: string;
   trustedProxyCidrs: readonly string[];
+}
+
+export function parseBooleanFlag(value: string | undefined, defaultValue = false): boolean {
+  if (value === undefined) return defaultValue;
+  if (value === "1" || value.toLowerCase() === "true") return true;
+  if (value === "0" || value.toLowerCase() === "false") return false;
+  throw new ApiConfigurationError();
 }
 
 export function parseContentAuditIndeterminateAfterMilliseconds(

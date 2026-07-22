@@ -17,11 +17,15 @@ import {
 
 export const KERNEL_NOTEBOOK_ID_HEADER = "x-singularity-notebook-id";
 export const KERNEL_DOCUMENT_ID_HEADER = "x-singularity-document-id";
+export const KERNEL_ORGANIZATION_ID_HEADER = "x-singularity-organization-id";
+export const KERNEL_SPACE_ID_HEADER = "x-singularity-space-id";
 export const kernelRequestTimeoutSchema = z.number().int().min(1).max(86_400_000);
 
 export interface KernelPrivateContentIdentity {
   readonly documentId: string;
   readonly notebookId: string;
+  readonly organizationId?: string;
+  readonly spaceId?: string;
 }
 
 export interface KernelPrivateRequest {
@@ -64,9 +68,12 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
   "x-auth-token",
   KERNEL_DOCUMENT_ID_HEADER,
   KERNEL_NOTEBOOK_ID_HEADER,
+  KERNEL_ORGANIZATION_ID_HEADER,
+  KERNEL_SPACE_ID_HEADER,
   "x-singularity-service-token",
 ]);
 const CONTENT_ID = /^\d{14}-[0-9a-z]{7}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isForbiddenRequestHeader(name: string): boolean {
   return (
@@ -116,8 +123,25 @@ function addContentIdentity(
   ) {
     throw new Error("Kernel content identity is unavailable");
   }
+  if ((identity.organizationId === undefined) !== (identity.spaceId === undefined)) {
+    throw new Error("Kernel content identity is unavailable");
+  }
+  if (
+    policy.identity === "full-content" &&
+    (identity.organizationId === undefined || identity.spaceId === undefined)
+  ) {
+    throw new Error("Kernel full content identity is unavailable");
+  }
+  if (identity.organizationId !== undefined &&
+    (!UUID.test(identity.organizationId) || !UUID.test(identity.spaceId!))) {
+    throw new Error("Kernel content identity is unavailable");
+  }
   headers[KERNEL_NOTEBOOK_ID_HEADER] = identity.notebookId;
   headers[KERNEL_DOCUMENT_ID_HEADER] = identity.documentId;
+  if (identity.organizationId !== undefined && identity.spaceId !== undefined) {
+    headers[KERNEL_ORGANIZATION_ID_HEADER] = identity.organizationId;
+    headers[KERNEL_SPACE_ID_HEADER] = identity.spaceId;
+  }
 }
 
 function selectResponseHeaders(
