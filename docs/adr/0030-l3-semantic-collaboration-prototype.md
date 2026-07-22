@@ -12,7 +12,7 @@ tags: ["adr", "l3", "collaboration", "crdt", "prototype"]
 
 ## Status
 
-Verification：L3.0 PRD、架构方案和本 ADR 已完成复评，原型实现和唯一验证入口已通过；尚未授权生产实时协作。
+Verified：L3.0 PRD、架构方案和本 ADR 已完成复评，原型实现和唯一验证入口已通过；原型路径仍不接入默认生产入口，生产实时协作由已独立验证的 L3.1 方案定义。
 
 ## Context
 
@@ -57,7 +57,7 @@ test/browser client
 - L3.0 前期没有生产用户功能，但能以较小边界验证最危险的内容语义。
 - Go semantic core 需要定义稳定操作类型、因果版本和冲突结果；这比 LWW 复杂，但失败结果诚实且可重放。
 - 原型不会污染 L2 控制面数据库和生产 WebSocket；生产化需要另行解决部署、扩展、持久化、ACL 撤权和客户端升级。
-- 只有普通块、引用、嵌入、AV、历史和撤销全部无损通过，才可评审 L3.1；任何一个核心语义失败都停止推进。
+- 普通块、引用、嵌入、AV、历史和撤销已全部无损通过，L3.1 已完成独立评审；后续多副本、移动端和零知识协作仍需新方案和 ADR。
 
 ## Implementation Checklist
 
@@ -76,3 +76,5 @@ test/browser client
 2. [L3.0 实时协作语义原型架构方案](../architecture/l3-realtime-collaboration.md)
 3. [ADR-006：实时协作技术门禁](0006-realtime-collaboration-gate.md)
 4. [ADR-029：L2 异步协作控制面边界](0029-l2-async-collaboration-boundary.md)
+5. [L3.1 生产实时协作 ADR](0031-l3-production-collaboration.md)
+6. [L3.1 集中验证报告](../verification/l3.1-realtime-collaboration.md)

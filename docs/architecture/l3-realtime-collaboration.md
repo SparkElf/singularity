@@ -193,13 +193,13 @@ L3.0 只有一个 prototype aggregate，阶段全部实现和 code-review 复评
 
 统一命令在实现阶段冻结为 `pnpm verify:l3-prototype`，顺序为 contracts -> Go semantic/bridge -> protocol harness -> browser prototype -> static/build。失败按共同根因整批回到 implementation，不能逐 case 修补或用 retry/fallback 通过。
 
-## 12. 完成定义
+## 12. 完成定义（已满足）
 
-- L3.0 PRD、架构、ADR 和实施计划全部评审通过并保持 `review`/`implementation`/`verification` 状态一致。
+- L3.0 PRD、架构、ADR 和实施计划全部评审通过并已统一为 `verified`。
 - 普通块、结构块、块引用、嵌入、AV 单元格、历史、撤销、presence、四段身份、重复/乱序/断线/撤权全部通过矩阵。
 - 没有锁、LWW、整文档覆盖、第二正文存储、隐式身份推断、未经授权操作或静默冲突丢弃。
-- `pnpm verify:l3-prototype` 是唯一集中入口，标准 runner 能按 case 过滤并清理所有本轮资源。
-- 只有完成定义全部满足后，才创建 L3.1 生产候选方案；L3.0 不自动改变 L2 或生产 Protyle 合同。
+- `pnpm verify:l3-prototype` 已通过，标准 runner 能按 case 过滤并清理所有本轮资源。
+- L3.1 生产协作方案已独立形成并通过验证；L3.0 不改变 L2 或生产 Protyle 合同，生产入口由 L3.1 的功能开关和权限边界控制。
 
 ## References
 
@@ -207,3 +207,5 @@ L3.0 只有一个 prototype aggregate，阶段全部实现和 code-review 复评
 2. [ADR-006：实时协作技术门禁](../adr/0006-realtime-collaboration-gate.md)
 3. [ADR-029：L2 异步协作控制面边界](../adr/0029-l2-async-collaboration-boundary.md)
 4. [Protyle 浏览器运行时方案](./protyle-browser-host.md)
+5. [L3.1 生产实时协作架构方案](./l3.1-realtime-collaboration.md)
+6. [L3.1 集中验证报告](../verification/l3.1-realtime-collaboration.md)
