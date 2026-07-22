@@ -127,6 +127,7 @@ import {
 } from "@/spaces/DiscoveryPanel.tsx";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
 import { CollaborationPanel } from "@/collaboration/CollaborationPanel.tsx";
+import { RealtimeCollaborationHost } from "@/collaboration/RealtimeCollaborationHost.tsx";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -655,6 +656,16 @@ function ReadyWorkspace({
               onNavigationCommandComplete={onNavigationCommandComplete}
               readOnly={readOnly}
               session={session}
+            />
+            <RealtimeCollaborationHost
+              identity={{
+                documentId: selection.documentId,
+                notebookId: selection.notebookId,
+                organizationId: identity.organizationId,
+                spaceId: identity.spaceId,
+              }}
+              readOnly={readOnly}
+              transport={session.runtime.transport}
             />
             {editorError ? (
               <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 rounded-md border bg-background/95 p-3 text-sm shadow-sm">

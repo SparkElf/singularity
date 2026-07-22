@@ -71,8 +71,10 @@ function createTestSession(
     throw new Error("Gateway upload is outside the space-search contract");
   };
   const transport = {
+    attachCollaboration: () => () => undefined,
     dispose: () => undefined,
     freeze: () => undefined,
+    requireCollaboration: () => () => undefined,
     request: <TResponse,>(
       path: string,
       body: unknown,

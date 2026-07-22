@@ -26,6 +26,7 @@ const DIRECTORY_NOTEBOOKS_PATH =
   "/internal/enterprise/directory/notebooks";
 const DIRECTORY_DOCUMENTS_PATH =
   "/internal/enterprise/directory/documents";
+const DOCUMENT_EXISTS_PATH = "/api/block/checkBlockExist";
 const MAX_DIRECTORY_RESPONSE_BYTES = 1_024 * 1_024;
 
 interface DirectoryRequestContext {
@@ -99,6 +100,60 @@ export class ContentDirectoryService {
     private readonly documentAccess: DocumentAccessPolicyService,
     private readonly kernel: KernelPrivateClient,
   ) {}
+
+  /** 在协作开关写入前向 Kernel 确认文档确实属于指定内容库，避免控制面凭复合 ID 创建孤儿记录。 */
+  async assertDocumentExists(
+    input: DirectoryRequestContext & {
+      readonly documentId: string;
+      readonly notebookId: string;
+    },
+  ): Promise<void> {
+    const authorized = await this.access.authorizeHttp({
+      action: "read",
+      organizationId: input.organizationId,
+      requestId: input.requestId,
+      spaceId: input.spaceId,
+      userId: input.actorUserId,
+    });
+    let response: KernelPrivateResponse;
+    try {
+      response = await this.kernel.request({
+        body: JSON.stringify({ id: input.documentId, notebook: input.notebookId }),
+        contentIdentity: {
+          documentId: input.documentId,
+          notebookId: input.notebookId,
+        },
+        deployment: authorized.deployment,
+        headers: { accept: "application/json", "content-type": "application/json" },
+        method: "POST",
+        path: DOCUMENT_EXISTS_PATH,
+        requestId: input.requestId,
+        signal: input.signal,
+      });
+    } catch (error) {
+      throw directoryUnavailable(error);
+    }
+    if (response.status !== 200 || !jsonContentType(response.message)) {
+      response.message.destroy();
+      throw directoryUnavailable(
+        new Error(`Kernel document existence returned HTTP ${response.status}`),
+      );
+    }
+    const value = await readDirectoryJson(response.message);
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("code" in value) ||
+      value.code !== 0 ||
+      !("data" in value) ||
+      typeof value.data !== "boolean"
+    ) {
+      throw directoryUnavailable(new Error("Kernel document existence response is invalid"));
+    }
+    if (!value.data) {
+      throw notFound();
+    }
+  }
 
   /** 获取当前授权空间的可见笔记本，不把锁定库或文档身份下沉给浏览器。 */
   listNotebooks(

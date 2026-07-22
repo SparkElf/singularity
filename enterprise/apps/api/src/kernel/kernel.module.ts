@@ -1,5 +1,6 @@
 import type { DynamicModule, Provider } from "@nestjs/common";
 import { Module } from "@nestjs/common";
+import { DiscoveryModule } from "@nestjs/core";
 import {
   KernelPrivateClient,
   KernelPrivateWebSocketClient,
@@ -11,6 +12,7 @@ import {
 import { CoreModule } from "../core.module.js";
 import {
   AccessChangedListener,
+  ACCESS_CHANGED_COLLABORATION,
 } from "./access-changed.js";
 import type { KernelGatewayRuntimeConfiguration } from "./configuration.js";
 import { ContentDirectoryController } from "./content-directory.controller.js";
@@ -35,6 +37,14 @@ import { SharePasswordRateLimiter } from "../shares/share-password-rate-limiter.
 import { ShareService } from "../shares/share.service.js";
 import { SHARE_KERNEL } from "../shares/share.types.js";
 import { KERNEL_RUNTIME_DEPLOYMENT_CONFIGURATION } from "../tokens.js";
+import { API_CONFIGURATION } from "../tokens.js";
+import { CollaborationCoordinator, COLLABORATION_FEATURE_GATE, KERNEL_COLLABORATION_PORT } from "../collaboration/realtime-coordinator.js";
+import { RealtimeCollaborationWebSocketGateway } from "../collaboration/realtime-websocket.gateway.js";
+import { CollaborationOperationDiscovery } from "../collaboration/realtime-handler-discovery.js";
+import { RealtimeOperationHandlers } from "../collaboration/realtime-operation-handlers.js";
+import { KernelProductionCollaborationPort } from "../collaboration/kernel-production-collaboration.port.js";
+import { CollaborationControlService } from "../collaboration/collaboration-control.service.js";
+import { RealtimeFeatureController } from "../collaboration/realtime-feature.controller.js";
 
 export interface KernelGatewayModuleOptions
   extends KernelGatewayRuntimeConfiguration {
@@ -91,6 +101,18 @@ function kernelProviders(options: KernelGatewayModuleOptions): Provider[] {
     SharePasswordRateLimiter,
     ShareService,
     SpaceConnectionRegistry,
+    KernelProductionCollaborationPort,
+    CollaborationControlService,
+    CollaborationCoordinator,
+    CollaborationOperationDiscovery,
+    RealtimeOperationHandlers,
+    RealtimeCollaborationWebSocketGateway,
+    {
+      provide: ACCESS_CHANGED_COLLABORATION,
+      useExisting: RealtimeCollaborationWebSocketGateway,
+    },
+    { provide: COLLABORATION_FEATURE_GATE, useExisting: CollaborationControlService },
+    { provide: KERNEL_COLLABORATION_PORT, useExisting: KernelProductionCollaborationPort },
   ];
 }
 
@@ -102,7 +124,7 @@ export class KernelGatewayModule {
   ): DynamicModule {
     return {
       module: KernelGatewayModule,
-      imports: [core],
+      imports: [core, DiscoveryModule],
       controllers: [
         ContentDirectoryController,
         SpaceDiscoveryController,
@@ -110,6 +132,7 @@ export class KernelGatewayModule {
         HistoryController,
         PublicShareController,
         ShareManagementController,
+        RealtimeFeatureController,
       ],
       providers: kernelProviders(options),
       exports: [
@@ -117,6 +140,9 @@ export class KernelGatewayModule {
         KernelGatewayAdmission,
         KernelWebSocketGateway,
         SpaceConnectionRegistry,
+        CollaborationCoordinator,
+        CollaborationOperationDiscovery,
+        RealtimeCollaborationWebSocketGateway,
       ],
     };
   }

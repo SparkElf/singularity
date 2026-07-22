@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   Logger,
   type OnApplicationBootstrap,
@@ -16,6 +17,11 @@ import { kernelErrorContext } from "./error-context.js";
 import { SpaceConnectionRegistry } from "./space-connection.registry.js";
 
 export const ACCESS_CHANGE_CHANNEL = "singularity_access_changed";
+export const ACCESS_CHANGED_COLLABORATION = Symbol("ACCESS_CHANGED_COLLABORATION");
+
+export interface AccessChangedCollaboration {
+  closeByAccessChange(change: AccessChanged): void;
+}
 
 const accessSelectorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("auth-session"), value: z.string().uuid() }).strict(),
@@ -108,6 +114,8 @@ export class AccessChangedListener
   constructor(
     private readonly database: DatabaseRuntime,
     private readonly connections: SpaceConnectionRegistry,
+    @Inject(ACCESS_CHANGED_COLLABORATION)
+    private readonly collaboration: AccessChangedCollaboration,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -159,6 +167,7 @@ export class AccessChangedListener
     }
     if (parsed.data.kind === "close") {
       this.connections.closeByAccessChange(parsed.data);
+      this.collaboration.closeByAccessChange(parsed.data);
       const selectorValues: Partial<
         Record<AccessSelector["kind"], string[]>
       > = {};

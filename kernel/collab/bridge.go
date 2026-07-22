@@ -6,6 +6,11 @@ type Bridge struct {
 	history []OperationEnvelope
 }
 
+type HistoryEntry struct {
+	Envelope       OperationEnvelope `json:"operation"`
+	ServerSequence uint64            `json:"serverSequence"`
+}
+
 func NewBridge(identity DocumentIdentity) (*Bridge, error) {
 	state, err := NewState(identity)
 	if err != nil {
@@ -29,6 +34,15 @@ func (bridge *Bridge) State() *State {
 
 func (bridge *Bridge) History() []OperationEnvelope {
 	return append([]OperationEnvelope(nil), bridge.history...)
+}
+
+// HistoryEntries 返回 canonical history 的操作和序列，供恢复协议生成最小消息。
+func (bridge *Bridge) HistoryEntries() []HistoryEntry {
+	entries := make([]HistoryEntry, 0, len(bridge.history))
+	for _, envelope := range bridge.history {
+		entries = append(entries, HistoryEntry{Envelope: envelope, ServerSequence: bridge.state.sequenceFor(envelope.OperationID)})
+	}
+	return entries
 }
 
 // Replay 在新的隔离状态中按历史顺序重放，验证历史与实时结果保持一致。

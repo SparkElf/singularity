@@ -19,15 +19,16 @@ const (
 type RejectionCode string
 
 const (
-	RejectInvalidOperation       RejectionCode = "invalid-operation"
-	RejectMissingIdentity        RejectionCode = "missing-identity"
-	RejectPermissionRevoked      RejectionCode = "permission-revoked"
-	RejectCausalContextExpired   RejectionCode = "causal-context-expired"
-	RejectDuplicateOperation     RejectionCode = "duplicate-operation-conflict"
-	RejectStructureConflict      RejectionCode = "structure-conflict"
-	RejectReferenceTargetMissing RejectionCode = "reference-target-missing"
-	RejectAttributeViewConflict  RejectionCode = "attribute-view-conflict"
-	RejectSessionNotReady        RejectionCode = "session-not-ready"
+	RejectInvalidOperation          RejectionCode = "invalid-operation"
+	RejectMissingIdentity           RejectionCode = "missing-identity"
+	RejectPermissionRevoked         RejectionCode = "permission-revoked"
+	RejectCausalContextExpired      RejectionCode = "causal-context-expired"
+	RejectDuplicateOperation        RejectionCode = "duplicate-operation-conflict"
+	RejectStructureConflict         RejectionCode = "structure-conflict"
+	RejectReferenceTargetMissing    RejectionCode = "reference-target-missing"
+	RejectAttributeViewConflict     RejectionCode = "attribute-view-conflict"
+	RejectSessionNotReady           RejectionCode = "session-not-ready"
+	RejectSessionGenerationMismatch RejectionCode = "session-generation-mismatch"
 )
 
 type DocumentIdentity struct {
@@ -86,19 +87,20 @@ type Operation struct {
 }
 
 type OperationEnvelope struct {
-	Identity       DocumentIdentity `json:"identity"`
-	OperationID    string           `json:"operationId"`
-	ClientID       string           `json:"clientId"`
-	ClientSequence uint64           `json:"clientSequence"`
-	CausalContext  VersionVector    `json:"causalContext"`
-	Operation      Operation        `json:"operation"`
+	Identity          DocumentIdentity `json:"identity"`
+	OperationID       string           `json:"operationId"`
+	ClientID          string           `json:"clientId"`
+	ClientSequence    uint64           `json:"clientSequence"`
+	CausalContext     VersionVector    `json:"causalContext"`
+	Operation         Operation        `json:"operation"`
+	SessionGeneration uint64           `json:"sessionGeneration"`
 }
 
 func (envelope OperationEnvelope) validate() error {
 	if !envelope.Identity.valid() {
 		return fmt.Errorf("%w: document identity is incomplete", ErrMissingIdentity)
 	}
-	if envelope.OperationID == "" || envelope.ClientID == "" || envelope.ClientSequence == 0 {
+	if envelope.OperationID == "" || envelope.ClientID == "" || envelope.ClientSequence == 0 || envelope.SessionGeneration == 0 {
 		return fmt.Errorf("%w: operation identity is incomplete", ErrInvalidOperation)
 	}
 	op := envelope.Operation
@@ -129,24 +131,34 @@ func (envelope OperationEnvelope) validate() error {
 	return nil
 }
 
+// ValidateOperationEnvelope 暴露 Kernel 内部协议验证结果给生产协调器，避免重复实现字段校验。
+func ValidateOperationEnvelope(envelope OperationEnvelope) error {
+	return envelope.validate()
+}
+
 type Outcome string
 
 const (
 	OutcomeAccepted  Outcome = "accepted"
 	OutcomeDuplicate Outcome = "duplicate"
 	OutcomeRejected  Outcome = "rejected"
+	OutcomeConflict  Outcome = "conflict"
 )
 
 type Result struct {
-	Outcome        Outcome          `json:"outcome"`
-	Identity       DocumentIdentity `json:"identity"`
-	OperationID    string           `json:"operationId"`
-	ServerSequence uint64           `json:"serverSequence,omitempty"`
-	Code           RejectionCode    `json:"code,omitempty"`
+	Outcome           Outcome          `json:"outcome"`
+	Identity          DocumentIdentity `json:"identity"`
+	OperationID       string           `json:"operationId"`
+	ServerSequence    uint64           `json:"serverSequence,omitempty"`
+	SessionGeneration uint64           `json:"sessionGeneration"`
+	Code              RejectionCode    `json:"code,omitempty"`
+	Conflict          *ConflictRecord  `json:"conflict,omitempty"`
 }
 
 type ConflictRecord struct {
+	ConflictID      string           `json:"conflictId"`
 	Identity        DocumentIdentity `json:"identity"`
+	Kind            string           `json:"kind"`
 	BlockID         string           `json:"blockId,omitempty"`
 	AttributeViewID string           `json:"attributeViewId,omitempty"`
 	RowID           string           `json:"rowId,omitempty"`

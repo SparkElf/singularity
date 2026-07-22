@@ -32,6 +32,8 @@ export {
 export {
   KERNEL_DOCUMENT_ID_HEADER,
   KERNEL_NOTEBOOK_ID_HEADER,
+  KERNEL_ORGANIZATION_ID_HEADER,
+  KERNEL_SPACE_ID_HEADER,
   kernelRequestTimeoutSchema,
   KernelPrivateClient,
   type KernelPrivateContentIdentity,

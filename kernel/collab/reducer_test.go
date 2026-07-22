@@ -7,7 +7,7 @@ func testIdentity() DocumentIdentity {
 }
 
 func envelope(identity DocumentIdentity, operationID, clientID string, sequence uint64, context VersionVector, operation Operation) OperationEnvelope {
-	return OperationEnvelope{Identity: identity, OperationID: operationID, ClientID: clientID, ClientSequence: sequence, CausalContext: context, Operation: operation}
+	return OperationEnvelope{Identity: identity, OperationID: operationID, ClientID: clientID, ClientSequence: sequence, CausalContext: context, Operation: operation, SessionGeneration: 1}
 }
 
 func TestConcurrentTextInsertConverges(t *testing.T) {

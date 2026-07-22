@@ -608,7 +608,11 @@ export const refMenu = (protyle: IProtyle, element: HTMLElement) => {
                     nodeElement.insertAdjacentHTML("afterend", `<div data-content="select * from blocks where id='${refBlockId}'" data-node-id="${id}" data-type="NodeBlockQueryEmbed" class="render-node" updated="${dayjs().format("YYYYMMDDHHmmss")}">${nodeElement.querySelector(".protyle-attr")!.outerHTML}</div>`);
                     nodeElement = nodeElement.nextElementSibling as HTMLElement;
                     nodeElement.previousElementSibling!.remove();
-                    updateTransaction(protyle, nodeElement, oldHTML);
+                    updateTransaction(protyle, nodeElement, oldHTML, {
+                        collaborationTargetBlockID: refBlockId,
+                        collaborationTargetDocumentID: targetDocumentId,
+                        collaborationTargetNotebookID: targetNotebookId,
+                    });
                     blockRender(protyle, protyle.wysiwyg.element);
                     oldHTML = nodeElement.outerHTML;
                 },

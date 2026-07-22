@@ -11,7 +11,7 @@ export const kernelContentModes = [
 ] as const;
 export type KernelContentMode = (typeof kernelContentModes)[number];
 
-export type KernelIdentityRequirement = "content" | "service";
+export type KernelIdentityRequirement = "content" | "full-content" | "service";
 export const kernelAuditModes = [
   "content.edit",
   "content.delete",
@@ -59,12 +59,13 @@ function jsonPolicy(
   path: `/${string}`,
   action: KernelAction,
   audit?: KernelAuditMode,
+  identity: KernelIdentityRequirement = "content",
 ): KernelRoutePolicy {
   return {
     action,
     ...(audit === undefined ? {} : { audit }),
     contentMode: "json",
-    identity: "content",
+    identity,
     method: "POST",
     path,
     requestHeaders: JSON_REQUEST_HEADERS,
@@ -212,6 +213,7 @@ export const kernelRoutePolicies: readonly KernelRoutePolicy[] = Object.freeze([
     jsonPolicy(path, "write", "content.edit"),
   ),
   jsonPolicy("/api/transactions", "write", "content.mutation"),
+  jsonPolicy("/internal/enterprise/collaboration", "write", "content.mutation", "full-content"),
   ...PROTYLE_EXPORT_ROUTES.map((path) =>
     jsonPolicy(path, "read", "content.export"),
   ),

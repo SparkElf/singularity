@@ -24,10 +24,11 @@ describe("L3 prototype production boundary", () => {
     assert.equal(viteSource.includes("l3-prototype.html"), true);
   });
 
-  test("does not add a PostgreSQL schema or production WebSocket route", async () => {
+  test("keeps the prototype verification entry independent from production services", async () => {
     const packageJson = await readJson("package.json");
     assert.equal(packageJson.scripts["verify:l3-prototype"].includes("pnpm --filter @singularity/api"), false);
-    const schema = await readFile(resolve(root, "packages/database/prisma/schema.prisma"), "utf8");
-    assert.equal(schema.includes("RealtimeCollaboration"), false);
+    assert.match(packageJson.scripts["verify:l3-production"], /pnpm --filter @singularity\/api test/);
+    const gateway = await readFile(resolve(root, "apps/api/src/collaboration/realtime-websocket.gateway.ts"), "utf8");
+    assert.match(gateway, /COLLABORATION_PATH/);
   });
 });

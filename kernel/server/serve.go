@@ -219,6 +219,7 @@ func Serve(fastMode bool, cookieKey string) {
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/share/asset", serviceauth.ContentIdentityRequired, api.EnterpriseReadSharedAsset)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/backup", serviceauth.ServiceIdentityRequired, api.EnterpriseCreateBackupHandler(enterpriseServiceAuth.SpaceID()))
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/observation", serviceauth.ServiceIdentityRequired, api.EnterpriseReadObservation)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/collaboration", serviceauth.FullContentIdentityRequired, api.EnterpriseCollaboration)
 	}
 	api.ServeAPI(ginServer)
 

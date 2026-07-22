@@ -173,6 +173,11 @@ enum AuditAction {
   history_view         @map("history.view")
   history_restore      @map("history.restore")
   notification_read    @map("notification.read")
+  collaboration_join      @map("collaboration.join")
+  collaboration_operation @map("collaboration.operation")
+  collaboration_conflict  @map("collaboration.conflict")
+  collaboration_resume    @map("collaboration.resume")
+  collaboration_revoke    @map("collaboration.revoke")
 
   @@map("audit_action")
 }
@@ -191,6 +196,24 @@ enum KernelObservationStatus {
   unavailable
 
   @@map("kernel_observation_status")
+}
+
+enum CollaborationFeatureMode {
+  standard
+  restricted_encrypted @map("restricted-encrypted")
+
+  @@map("collaboration_feature_mode")
+}
+
+enum CollaborationSessionStatus {
+  connecting
+  ready
+  reconnecting
+  conflict
+  revoked
+  closed
+
+  @@map("collaboration_session_status")
 }
 
 model User {
@@ -214,6 +237,7 @@ model User {
   commentEntries           CommentEntry[]            @relation("CommentEntryAuthorUser")
   receivedNotifications    Notification[]            @relation("NotificationRecipientUser")
   actedNotifications       Notification[]            @relation("NotificationActorUser")
+  collaborationSessions    CollaborationSession[]
 
   @@map("users")
 }
@@ -234,6 +258,7 @@ model AuthSession {
   idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
   revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
   user              User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "auth_sessions_user_id_fkey")
+  collaborationSessions CollaborationSession[]
 
   @@index([userId], map: "auth_sessions_user_id_idx")
   @@map("auth_sessions")
@@ -259,6 +284,9 @@ model Organization {
   spaceBackups  SpaceBackup[]
   spaceRestores SpaceRestoreJob[]
   workerJobs    WorkerJob[]
+  collaborationFeatures CollaborationFeature[]
+  collaborationSessions CollaborationSession[]
+  collaborationAuditEvents CollaborationAuditEvent[]
 
   @@map("organizations")
 }
@@ -304,6 +332,9 @@ model Space {
   documentAccessPolicies DocumentAccessPolicy[]
   commentThreads CommentThread[]
   notifications Notification[]
+  collaborationFeatures CollaborationFeature[]
+  collaborationSessions CollaborationSession[]
+  collaborationAuditEvents CollaborationAuditEvent[]
 
   @@unique([id, organizationId], map: "spaces_id_organization_id_key")
   @@index([organizationId], map: "spaces_organization_id_idx")
@@ -484,6 +515,77 @@ model Notification {
   @@index([recipientUserId, readAt, createdAt, id], map: "notifications_recipient_read_idx")
   @@index([organizationId, spaceId, notebookId, documentId, createdAt], map: "notifications_document_created_idx")
   @@map("notifications")
+}
+
+model CollaborationFeature {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId           String   @map("organization_id") @db.Uuid
+  spaceId                  String   @map("space_id") @db.Uuid
+  notebookId               String   @map("notebook_id")
+  documentId               String   @map("document_id")
+  standardEnabled          Boolean  @map("standard_enabled")
+  restrictedEncryptedEnabled Boolean @map("restricted_encrypted_enabled")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_features_organization_id_fkey")
+  space                    Space @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_features_space_id_organization_id_fkey")
+
+  @@unique([organizationId, spaceId, notebookId, documentId], map: "collaboration_features_identity_key")
+  @@index([organizationId, spaceId, updatedAt], map: "collaboration_features_space_updated_idx")
+  @@map("collaboration_features")
+}
+
+model CollaborationSession {
+  id               String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String                     @map("organization_id") @db.Uuid
+  spaceId          String                     @map("space_id") @db.Uuid
+  notebookId       String                     @map("notebook_id")
+  documentId       String                     @map("document_id")
+  authSessionId    String                     @map("auth_session_id") @db.Uuid
+  actorUserId      String                     @map("actor_user_id") @db.Uuid
+  clientId         String                     @map("client_id") @db.Uuid
+  connectionId     String                     @unique(map: "collaboration_sessions_connection_id_key") @map("connection_id") @db.Uuid
+  featureMode      CollaborationFeatureMode  @map("feature_mode")
+  protocolVersion  Int                      @map("protocol_version")
+  sessionGeneration BigInt                   @map("session_generation")
+  status           CollaborationSessionStatus
+  openedAt         DateTime                  @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedAt         DateTime?                 @map("closed_at") @db.Timestamptz(3)
+  organization     Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_sessions_organization_id_fkey")
+  space            Space                     @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_sessions_space_id_organization_id_fkey")
+  authSession      AuthSession               @relation(fields: [authSessionId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_sessions_auth_session_id_fkey")
+  actor            User                      @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_sessions_actor_user_id_fkey")
+
+  @@index([clientId, sessionGeneration, status], map: "collaboration_sessions_client_generation_status_idx")
+  @@index([organizationId, spaceId, notebookId, documentId, status], map: "collaboration_sessions_identity_status_idx")
+  @@index([authSessionId, status], map: "collaboration_sessions_auth_session_status_idx")
+  @@map("collaboration_sessions")
+}
+
+model CollaborationAuditEvent {
+  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String                    @map("organization_id") @db.Uuid
+  spaceId           String                    @map("space_id") @db.Uuid
+  notebookId        String                    @map("notebook_id")
+  documentId        String                    @map("document_id")
+  authSessionId     String?                   @map("auth_session_id") @db.Uuid
+  actorUserId       String?                   @map("actor_user_id") @db.Uuid
+  clientId          String?                   @map("client_id") @db.Uuid
+  featureMode       CollaborationFeatureMode? @map("feature_mode")
+  sessionGeneration BigInt?                   @map("session_generation")
+  operationId       String?                   @map("operation_id") @db.Uuid
+  event             String
+  outcome           String
+  resultCode        String?                   @map("result_code")
+  requestId         String                    @map("request_id") @db.Uuid
+  durationMs        Int?                      @map("duration_ms")
+  occurredAt        DateTime                  @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  organization      Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_audit_events_organization_id_fkey")
+  space             Space                     @relation(fields: [spaceId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "collaboration_audit_events_space_id_organization_id_fkey")
+
+  @@index([organizationId, spaceId, occurredAt, id], map: "collaboration_audit_events_scope_occurred_idx")
+  @@index([clientId, occurredAt], map: "collaboration_audit_events_client_occurred_idx")
+  @@map("collaboration_audit_events")
 }
 
 model OidcProvider {

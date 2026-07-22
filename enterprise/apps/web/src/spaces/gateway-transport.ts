@@ -6,7 +6,15 @@ import {
   type ApiProblem,
 } from "@singularity/contracts";
 import type {
+  CollaborationBroadcast,
+  CollaborationOperation,
+  CollaborationOperationResult,
+  CollaborationServerMessage,
+  DocumentIdentity,
+} from "@singularity/contracts";
+import type {
   ProtyleRequestOptions,
+  ProtyleContentIdentity,
   ProtyleRuntimeErrorEvent,
   ProtyleSubscription,
   ProtyleSubscriptionOptions,
@@ -29,8 +37,21 @@ import {
 } from "@/spaces/gateway-paths.ts";
 
 export interface SpaceGatewayTransport<TMessage> extends ProtyleTransport<TMessage> {
+  attachCollaboration: (binding: SpaceGatewayCollaborationBinding<TMessage>) => () => void;
   freeze: () => void;
+  requireCollaboration: (identity: DocumentIdentity) => () => void;
   resumeSubmission: () => void;
+}
+
+export interface SpaceGatewayCollaborationBinding<TMessage> {
+  readonly clientId: string;
+  readonly identity: DocumentIdentity;
+  readonly mapOperation: (operation: unknown) => readonly CollaborationOperation[] | null;
+  readonly mapBroadcast: (broadcast: CollaborationBroadcast) => TMessage;
+  readonly client: {
+    readonly submitOperation: (operation: CollaborationOperation) => Promise<CollaborationOperationResult>;
+    readonly subscribe: (listener: (message: CollaborationServerMessage) => void) => () => void;
+  };
 }
 
 interface CreateSpaceGatewayTransportOptions {
@@ -150,12 +171,31 @@ function isRuntimeAccessLost(value: string | null): boolean {
   return value === RUNTIME_ACCESS_LOST_HEADER_VALUE;
 }
 
+function isTransactionPush(value: unknown): boolean {
+  return typeof value === "object" && value !== null && (value as {cmd?: unknown}).cmd === "transactions";
+}
+
+/** 只放行 Kernel 明确标记的 undo/redo 重放，普通 transactions 仍由协作语义广播替代。 */
+function isCollaborationReplayPush(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const context = (value as {context?: unknown}).context;
+  return typeof context === "object" && context !== null &&
+    (context as {isUndoReplay?: unknown}).isUndoReplay === true;
+}
+
 /** 创建绑定单一空间身份的 Protyle 传输层，统一处理 CSRF、HTTP、上传、WebSocket 和生命周期冻结。 */
 export function createSpaceGatewayTransport<TMessage>(
   options: CreateSpaceGatewayTransportOptions,
 ): SpaceGatewayTransport<TMessage> {
   const lifecycle = new AbortController();
-  const subscriptions = new Set<() => void>();
+  const subscriptions = new Map<() => void, ProtyleSubscriptionOptions<TMessage>>();
+  let collaborationBinding: {
+    readonly value: SpaceGatewayCollaborationBinding<TMessage>;
+    readonly disconnect: () => void;
+  } | null = null;
+  let requiredCollaborationIdentity: DocumentIdentity | null = null;
   let disposed = false;
   let frozen = false;
   let submissionBlocked = false;
@@ -175,8 +215,77 @@ export function createSpaceGatewayTransport<TMessage>(
   };
 
   const closeSubscriptions = () => {
-    subscriptions.forEach((disconnect) => disconnect());
+    subscriptions.forEach((_, disconnect) => disconnect());
     subscriptions.clear();
+  };
+
+  const sameDocument = (left: DocumentIdentity, right: ProtyleContentIdentity) =>
+    left.organizationId === options.space.organizationId &&
+    left.spaceId === options.space.spaceId &&
+    left.notebookId === right.notebookId &&
+    left.documentId === right.documentId;
+
+  /** 将协作广播送入当前文档的既有 Protyle push 消费点，远端消息不会携带正文快照。 */
+  const publishCollaborationMessage = (broadcast: CollaborationBroadcast) => {
+    const binding = collaborationBinding?.value;
+    if (!binding || !sameDocument(binding.identity, {
+      notebookId: broadcast.identity.notebookId,
+      documentId: broadcast.identity.documentId,
+    })) {
+      return;
+    }
+    const message = binding.mapBroadcast(broadcast);
+    subscriptions.forEach((subscription) => {
+      if (subscription.notebookId === broadcast.identity.notebookId &&
+        subscription.documentId === broadcast.identity.documentId) {
+        subscription.onMessage(message);
+      }
+    });
+  };
+
+  const submitCollaborationTransaction = async (
+    body: unknown,
+    identity: ProtyleContentIdentity,
+  ): Promise<unknown> => {
+    const binding = collaborationBinding?.value;
+    if (!binding || !sameDocument(binding.identity, identity)) {
+      return null;
+    }
+    if (typeof body !== "object" || body === null || !Array.isArray((body as {transactions?: unknown}).transactions)) {
+      throw new Error("Collaboration transaction request is invalid");
+    }
+    const transactions = (body as {transactions: Array<{doOperations?: unknown}>}).transactions;
+    for (const transaction of transactions) {
+      if (!Array.isArray(transaction.doOperations)) {
+        throw new Error("Collaboration transaction operations are invalid");
+      }
+      for (const operation of transaction.doOperations) {
+        const mapped = binding.mapOperation(operation);
+        if (mapped === null || mapped.length === 0) {
+          throw new Error("Protyle operation has no approved collaboration semantic mapping");
+        }
+        for (const semanticOperation of mapped) {
+          const result = await binding.client.submitOperation(semanticOperation);
+          if (result.outcome !== "accepted" && result.outcome !== "duplicate") {
+            throw new Error(`Collaboration operation was rejected: ${result.outcome === "rejected" ? result.code : result.conflict.kind}`);
+          }
+        }
+      }
+    }
+    return {code: 0, data: transactions};
+  };
+
+  const requireCollaboration = (identity: DocumentIdentity) => {
+    requiredCollaborationIdentity = identity;
+    return () => {
+      if (requiredCollaborationIdentity !== null &&
+        requiredCollaborationIdentity.organizationId === identity.organizationId &&
+        requiredCollaborationIdentity.spaceId === identity.spaceId &&
+        requiredCollaborationIdentity.notebookId === identity.notebookId &&
+        requiredCollaborationIdentity.documentId === identity.documentId) {
+        requiredCollaborationIdentity = null;
+      }
+    };
   };
 
   /** 终止当前空间的请求和订阅，防止旧空间事件在权限变化后继续抵达编辑器。 */
@@ -186,6 +295,7 @@ export function createSpaceGatewayTransport<TMessage>(
     }
     frozen = true;
     lifecycle.abort();
+    collaborationBinding?.disconnect();
     closeSubscriptions();
   };
 
@@ -249,6 +359,19 @@ export function createSpaceGatewayTransport<TMessage>(
     requestOptions: ProtyleRequestOptions,
   ): Promise<TResponse> => {
     assertAvailable(requestOptions.intent);
+    if (path === "/api/transactions" && requestOptions.intent === "write") {
+      if (requiredCollaborationIdentity !== null &&
+        !sameDocument(requiredCollaborationIdentity, requestOptions.identity)) {
+        throw new Error("Collaboration write identity does not match the required document");
+      }
+      const collaborationResponse = await submitCollaborationTransaction(body, requestOptions.identity);
+      if (requiredCollaborationIdentity !== null && collaborationResponse === null) {
+        throw new Error("Realtime collaboration session is not ready for document writes");
+      }
+      if (collaborationResponse !== null) {
+        return collaborationResponse as TResponse;
+      }
+    }
     const signal = requestOptions.signal
       ? AbortSignal.any([lifecycle.signal, requestOptions.signal])
       : lifecycle.signal;
@@ -618,7 +741,11 @@ export function createSpaceGatewayTransport<TMessage>(
         );
         return;
       }
-      subscriptionOptions.onMessage(message);
+      // 协作会话的普通正文变更只由语义广播驱动；Kernel undo/redo 使用明确的
+      // isUndoReplay 标记回到既有 Protyle 消费点，避免另造一套重放协议。
+      if (!(collaborationBinding !== null && isTransactionPush(message) && !isCollaborationReplayPush(message))) {
+        subscriptionOptions.onMessage(message);
+      }
     };
     socket.onclose = (event) => {
       if (!active) {
@@ -640,8 +767,39 @@ export function createSpaceGatewayTransport<TMessage>(
       }
     };
 
-    subscriptions.add(disconnect);
+    subscriptions.set(disconnect, subscriptionOptions);
     return { disconnect };
+  };
+
+  const attachCollaboration = (binding: SpaceGatewayCollaborationBinding<TMessage>) => {
+    if (binding.identity.organizationId !== options.space.organizationId ||
+      binding.identity.spaceId !== options.space.spaceId) {
+      throw new Error("Collaboration binding does not belong to the current space");
+    }
+    if (collaborationBinding !== null) {
+      collaborationBinding.disconnect();
+    }
+    const disconnectClient = binding.client.subscribe((message) => {
+      if (message.type === "operation-broadcast") {
+        if (message.broadcast.operation.clientId !== binding.clientId) {
+          publishCollaborationMessage(message.broadcast);
+        }
+      } else if (message.type === "resumed") {
+        message.broadcasts.forEach((broadcast) => {
+          if (broadcast.operation.clientId !== binding.clientId) {
+            publishCollaborationMessage(broadcast);
+          }
+        });
+      }
+    });
+    const disconnect = () => {
+      disconnectClient();
+      if (collaborationBinding?.value === binding) {
+        collaborationBinding = null;
+      }
+    };
+    collaborationBinding = {disconnect, value: binding};
+    return disconnect;
   };
 
   return {
@@ -650,9 +808,12 @@ export function createSpaceGatewayTransport<TMessage>(
         return;
       }
       disposed = true;
+      collaborationBinding?.disconnect();
       freeze();
     },
     freeze,
+    attachCollaboration,
+    requireCollaboration,
     request,
     resumeSubmission: () => {
       if (disposed || frozen) {
