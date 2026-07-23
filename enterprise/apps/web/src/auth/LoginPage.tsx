@@ -9,7 +9,7 @@ import {
   NetworkFailureError,
   isApiProblem,
 } from "@/api/http.ts";
-import { getOidcProviders, login, startOidc } from "@/auth/api.ts";
+import { getOidcProviders, login, startOidc, verifyMfaChallenge } from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { SPACES_PATH, parseReturnTo } from "@/auth/return-to.ts";
 import { clearClientSession } from "@/auth/session-state.ts";
@@ -44,11 +44,22 @@ interface OidcState {
   pendingProviderId: string | null;
 }
 
+interface MfaChallengeState {
+  readonly challengeToken: string;
+  readonly expiresAt: string;
+}
+
+interface MfaVerificationState {
+  readonly error: unknown;
+  readonly pending: boolean;
+}
+
 const IDLE_LOGIN_STATE: LoginState = { error: null, pending: false };
 const IDLE_OIDC_STATE: OidcState = {
   error: null,
   pendingProviderId: null,
 };
+const IDLE_MFA_STATE: MfaVerificationState = { error: null, pending: false };
 
 function loginErrorMessage(error: unknown, cooldownSeconds: number): string {
   if (isApiProblem(error, "unauthenticated")) {
@@ -80,6 +91,9 @@ export function LoginPage() {
   const [validationError, setValidationError] = useState(false);
   const [loginState, setLoginState] = useState<LoginState>(IDLE_LOGIN_STATE);
   const [oidcState, setOidcState] = useState<OidcState>(IDLE_OIDC_STATE);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaState, setMfaState] = useState<MfaVerificationState>(IDLE_MFA_STATE);
   const [cooldown, setCooldown] = useState<LoginCooldown | null>(null);
   const activeController = useRef<AbortController | null>(null);
   const attemptGeneration = useRef(0);
@@ -159,7 +173,7 @@ export function LoginPage() {
     setLoginState({ error: null, pending: true });
 
     try {
-      const { csrfToken } = await login(request.data, controller.signal);
+      const loginResult = await login(request.data, controller.signal);
       if (
         !mounted.current ||
         controller.signal.aborted ||
@@ -168,10 +182,17 @@ export function LoginPage() {
         return;
       }
 
-      queryClient.removeQueries();
-      setCsrfToken(csrfToken);
-      const returnTo = parseReturnTo(location.search, window.location.origin);
-      void navigate(returnTo ?? SPACES_PATH, { replace: true });
+      if ("challengeToken" in loginResult) {
+        setMfaChallenge(loginResult);
+        setMfaCode("");
+        setMfaState(IDLE_MFA_STATE);
+        setLoginState(IDLE_LOGIN_STATE);
+      } else {
+        queryClient.removeQueries();
+        setCsrfToken(loginResult.csrfToken);
+        const returnTo = parseReturnTo(location.search, window.location.origin);
+        void navigate(returnTo ?? SPACES_PATH, { replace: true });
+      }
     } catch (error) {
       if (
         !mounted.current ||
@@ -189,6 +210,43 @@ export function LoginPage() {
         });
       }
       setLoginState({ error, pending: false });
+    } finally {
+      if (generation === attemptGeneration.current) {
+        activeController.current = null;
+      }
+    }
+  };
+
+  // MFA challenge 只允许一次成功消费；验证通过后复用普通登录的会话落地和返回地址逻辑。
+  const handleMfaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (mfaChallenge === null || !/^\d{6}$/.test(mfaCode)) {
+      setMfaState({ error: new Error("请输入 6 位验证码"), pending: false });
+      return;
+    }
+    activeController.current?.abort();
+    const controller = new AbortController();
+    const generation = attemptGeneration.current + 1;
+    attemptGeneration.current = generation;
+    activeController.current = controller;
+    setMfaState({ error: null, pending: true });
+    try {
+      const result = await verifyMfaChallenge(
+        { challengeToken: mfaChallenge.challengeToken, code: mfaCode },
+        controller.signal,
+      );
+      if (!mounted.current || controller.signal.aborted || generation !== attemptGeneration.current) {
+        return;
+      }
+      queryClient.removeQueries();
+      setCsrfToken(result.csrfToken);
+      const returnTo = parseReturnTo(location.search, window.location.origin);
+      void navigate(returnTo ?? SPACES_PATH, { replace: true });
+    } catch (error) {
+      if (mounted.current && !controller.signal.aborted && generation === attemptGeneration.current) {
+        console.error("[auth.mfa.challenge]", { error, result: "verification-failed" });
+        setMfaState({ error, pending: false });
+      }
     } finally {
       if (generation === attemptGeneration.current) {
         activeController.current = null;
@@ -253,7 +311,7 @@ export function LoginPage() {
           <p className="text-sm text-muted-foreground">进入你的企业知识空间</p>
         </div>
 
-        <form
+        {mfaChallenge === null ? <form
           className="flex flex-col gap-5"
           onInput={() => {
             setValidationError(false);
@@ -314,7 +372,34 @@ export function LoginPage() {
             ) : null}
             登录
           </Button>
-        </form>
+        </form> : <form className="flex flex-col gap-5" onSubmit={(event) => void handleMfaSubmit(event)}>
+          <Alert>
+            <AlertTitle>需要二次验证</AlertTitle>
+            <AlertDescription>请输入验证器生成的 6 位验证码。挑战有效期至 <time dateTime={mfaChallenge.expiresAt}>{new Date(mfaChallenge.expiresAt).toLocaleTimeString()}</time>。</AlertDescription>
+          </Alert>
+          <Field data-invalid={mfaState.error !== null || undefined}>
+            <FieldLabel htmlFor="mfa-login-code">验证码</FieldLabel>
+            <Input
+              autoComplete="one-time-code"
+              id="mfa-login-code"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(event) => {
+                setMfaCode(event.currentTarget.value.replace(/\D/g, "").slice(0, 6));
+                setMfaState((current) => current.error === null ? current : IDLE_MFA_STATE);
+              }}
+              value={mfaCode}
+            />
+          </Field>
+          {mfaState.error !== null ? <Alert variant="destructive"><AlertTitle>验证失败</AlertTitle><AlertDescription>验证码无效或已过期，请重新登录。</AlertDescription></Alert> : null}
+          <div className="flex gap-2">
+            <Button className="flex-1" disabled={mfaState.pending || mfaCode.length !== 6} type="submit">
+              {mfaState.pending ? <Spinner data-icon="inline-start" aria-label="正在验证" /> : null}
+              验证并登录
+            </Button>
+            <Button onClick={() => { setMfaChallenge(null); setMfaCode(""); setMfaState(IDLE_MFA_STATE); }} type="button" variant="outline">返回</Button>
+          </div>
+        </form>}
 
         <div className="my-5 flex items-center gap-3">
           <Separator className="flex-1" />

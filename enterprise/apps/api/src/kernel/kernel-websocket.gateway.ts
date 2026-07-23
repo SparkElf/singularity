@@ -9,7 +9,10 @@ import {
   Logger,
   type BeforeApplicationShutdown,
 } from "@nestjs/common";
-import { AUTH_SESSION_COOKIE_NAME } from "@singularity/contracts";
+import {
+  AUTH_SESSION_COOKIE_NAME,
+  COLLABORATION_WEBSOCKET_PATH,
+} from "@singularity/contracts";
 import {
   KernelPrivateWebSocketClient,
   KernelRoutePolicyRegistry,
@@ -120,6 +123,16 @@ export class KernelWebSocketGateway implements BeforeApplicationShutdown {
   ): void => {
     if (this.#shuttingDown || socket.destroyed) {
       socket.destroy();
+      return;
+    }
+    const pathname = new URL(
+      request.url ?? "/",
+      "https://gateway.invalid",
+    ).pathname;
+    if (
+      this.configuration.collaborationEnabled &&
+      pathname === COLLABORATION_WEBSOCKET_PATH
+    ) {
       return;
     }
     const requestId = randomUUID();

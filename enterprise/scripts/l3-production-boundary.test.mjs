@@ -20,6 +20,17 @@ describe("L3.1 production collaboration boundary", () => {
     assert.match(script, /CGO_ENABLED=1 go -C \.\.\/kernel test -vet=off -tags [\"']fts5 sqlcipher[\"']/);
   });
 
+  test("keeps production release certification separate and complete", async () => {
+    const packageData = await packageJson();
+    assert.match(packageData.scripts["verify:l3-release-certification"], /l3-release-certification\.mjs/);
+    const runner = await source("scripts/l3-release-certification.mjs");
+    assert.match(runner, /verify:l3-production/);
+    assert.match(runner, /test:release-certification/);
+    assert.match(runner, /l3-supervisor-rollback-drill\.mjs/);
+    assert.match(runner, /"--grep",\s*"@l3-release"/);
+    assert.match(runner, /releasecert/);
+  });
+
   test("persists only control-plane collaboration metadata", async () => {
     const schema = await source("packages/database/prisma/schema.prisma");
     assert.match(schema, /model CollaborationFeature/);
@@ -30,9 +41,11 @@ describe("L3.1 production collaboration boundary", () => {
 
   test("keeps the production protocol on the dedicated WSS and Kernel bridge", async () => {
     const gateway = await source("apps/api/src/collaboration/realtime-websocket.gateway.ts");
+    const contracts = await source("packages/contracts/src/paths.ts");
     const port = await source("apps/api/src/collaboration/kernel-production-collaboration.port.ts");
     const kernel = await source("../kernel/collab/production.go");
-    assert.match(gateway, /\/api\/v1\/collaboration\/ws/);
+    assert.match(gateway, /COLLABORATION_WEBSOCKET_PATH/);
+    assert.match(contracts, /COLLABORATION_WEBSOCKET_PATH\s*=\s*["']\/api\/v1\/collaboration\/ws["']/);
     assert.match(port, /\/internal\/enterprise\/collaboration/);
     assert.match(kernel, /persistJournal/);
     assert.match(kernel, /ErrEncryptedCollaborationUnavailable/);

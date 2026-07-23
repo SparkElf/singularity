@@ -1,0 +1,103 @@
+{
+  "caseId": "L3-REL-10",
+  "candidateRevision": "2a5b998e86dbc07b7c3060807fb8bee7983a21a0+dirty",
+  "approvedRevision": "6f33ba90eab00afb1848ea673af257ef664d996b",
+  "mode": "local-supervisor-rehearsal",
+  "stages": [
+    {
+      "approvedRevision": "6f33ba90eab00afb1848ea673af257ef664d996b",
+      "candidateRevision": "2a5b998e86dbc07b7c3060807fb8bee7983a21a0+dirty",
+      "health": {
+        "api": {
+          "openApiStatus": 200,
+          "readinessStatus": 200
+        },
+        "kernelStatus": 200,
+        "worker": {
+          "status": "succeeded::1"
+        }
+      },
+      "label": "l3-candidate",
+      "ownership": {
+        "api": {
+          "command": "node /root/projects/singularity/enterprise/apps/api/dist/main.js",
+          "pid": 830401,
+          "ppid": 828919
+        },
+        "kernel": {
+          "command": "/tmp/singularity-p5-e2e-runtime-828718/singularity-kernel serve --workspace /tmp/singularity-p5-e2e-runtime-828718/workspace --wd /root/projects/singularity/app --port 36807 --mode prod",
+          "pid": 830355,
+          "ppid": 828919
+        },
+        "supervisorPid": 828919,
+        "worker": {
+          "command": "node /root/projects/singularity/enterprise/apps/worker/dist/main.js",
+          "pid": 830432,
+          "ppid": 828919
+        }
+      },
+      "revision": "2a5b998e86dbc07b7c3060807fb8bee7983a21a0+dirty",
+      "startedAt": "2026-07-23T05:17:06.233Z",
+      "startupDurationMilliseconds": 52171,
+      "state": {
+        "apiOrigin": "http://127.0.0.1:39112",
+        "kernelInstanceId": "44d2b0bb-f392-4fa0-a4e9-ebd94a13dadc",
+        "kernelPort": 36807,
+        "schema": "singularity_p5_e2e_828718",
+        "spaceId": "bbba0e08-0ce1-4aa2-ab0b-88f71984f859"
+      }
+    },
+    {
+      "approvedRevision": "6f33ba90eab00afb1848ea673af257ef664d996b",
+      "candidateRevision": "2a5b998e86dbc07b7c3060807fb8bee7983a21a0+dirty",
+      "health": {
+        "api": {
+          "openApiStatus": 200,
+          "readinessStatus": 200
+        },
+        "kernelStatus": 200,
+        "worker": {
+          "status": "succeeded::1"
+        }
+      },
+      "label": "l3-approved",
+      "ownership": {
+        "api": {
+          "command": "node /tmp/singularity-l3-approved-828718/enterprise/apps/api/dist/main.js",
+          "pid": 831726,
+          "ppid": 830463
+        },
+        "kernel": {
+          "command": "/tmp/singularity-p5-e2e-runtime-828718/singularity-kernel serve --workspace /tmp/singularity-p5-e2e-runtime-828718/workspace --wd /tmp/singularity-l3-approved-828718/app --port 36807 --mode prod",
+          "pid": 831684,
+          "ppid": 830463
+        },
+        "supervisorPid": 830463,
+        "worker": {
+          "command": "node /tmp/singularity-l3-approved-828718/enterprise/apps/worker/dist/main.js",
+          "pid": 831754,
+          "ppid": 830463
+        }
+      },
+      "revision": "6f33ba90eab00afb1848ea673af257ef664d996b",
+      "startedAt": "2026-07-23T05:17:59.611Z",
+      "startupDurationMilliseconds": 50637,
+      "state": {
+        "apiOrigin": "http://127.0.0.1:39112",
+        "kernelInstanceId": "44d2b0bb-f392-4fa0-a4e9-ebd94a13dadc",
+        "kernelPort": 36807,
+        "schema": "singularity_p5_e2e_828718",
+        "spaceId": "bbba0e08-0ce1-4aa2-ab0b-88f71984f859"
+      }
+    }
+  ],
+  "switch": {
+    "candidateProcessesStopped": true,
+    "candidateStopped": true,
+    "sharedPortsReused": true
+  },
+  "durationMilliseconds": 111434,
+  "targetDeploymentSupervisorCertification": "pending",
+  "resourceCleanup": "passed",
+  "status": "passed"
+}

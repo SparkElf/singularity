@@ -10,6 +10,7 @@ import type {
   OidcClientSecretResolver,
   OidcHttpTransport,
 } from "../../src/identity/oidc.service.js";
+import type { AiProvider } from "../../src/governance/ai-provider.js";
 import { OidcHttpTransportError } from "../../src/identity/oidc-http-transport.js";
 import { testAuditConfiguration } from "./audit-configuration.js";
 import {
@@ -35,6 +36,7 @@ export interface TestApiApplicationOptions {
   logger?: LoggerService;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
+  aiProvider?: AiProvider;
   trustedProxyCidrs?: string;
 }
 
@@ -92,6 +94,7 @@ export async function startTestApiApplication(
     oidcClientSecretResolver:
       options.oidcClientSecretResolver ?? testOidcClientSecretResolver,
     oidcHttpTransport: options.oidcHttpTransport ?? testOidcHttpTransport,
+    ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
     publicOrigin: `${TEST_PUBLIC_ORIGIN}/`,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
     ...(options.trustedProxyCidrs === undefined

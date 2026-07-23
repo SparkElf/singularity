@@ -29,6 +29,8 @@ export function isExpectedIconNetworkChange(message: ConsoleMessage): boolean {
 }
 
 interface BrowserHealthEvidence {
+  /** 允许调用方明确列出因 AbortSignal 取消而产生的预期失败请求。 */
+  expectedRequestFailures?: readonly Request[];
   unexpectedConsoleMessages?: readonly ConsoleMessage[];
   unexpectedErrorResponses?: readonly Response[];
   unexpectedRequestFailures?: readonly Request[];
@@ -119,8 +121,11 @@ export function expectBrowserHealthy(
     evidence.unexpectedErrorResponses ??
       diagnostics.responses.filter((response) => response.status() >= 400),
   ).toEqual([]);
+  const expectedRequestFailures = new Set(evidence.expectedRequestFailures ?? []);
   expect(
-    evidence.unexpectedRequestFailures ?? diagnostics.requestFailures,
+    (evidence.unexpectedRequestFailures ?? diagnostics.requestFailures).filter(
+      (request) => !expectedRequestFailures.has(request),
+    ),
   ).toEqual([]);
   // 允许调用方明确列出仍在等待终态的已取消请求，其他请求仍必须完成。
   const expectedPendingRequests = new Set(evidence.expectedPendingRequests ?? []);

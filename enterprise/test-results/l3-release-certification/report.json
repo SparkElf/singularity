@@ -1,0 +1,71 @@
+{
+  "generatedAt": "2026-07-23T05:19:58.966Z",
+  "results": [
+    {
+      "caseIds": [
+        "L3-REL-01"
+      ],
+      "code": 0,
+      "durationMilliseconds": 178894,
+      "label": "L3 technical verification",
+      "signal": null
+    },
+    {
+      "caseIds": [
+        "L3-REL-06",
+        "L3-REL-08"
+      ],
+      "code": 0,
+      "durationMilliseconds": 328,
+      "label": "Kernel release certification",
+      "signal": null
+    },
+    {
+      "caseIds": [
+        "L3-REL-02",
+        "L3-REL-03",
+        "L3-REL-04",
+        "L3-REL-05",
+        "L3-REL-07",
+        "L3-REL-08",
+        "L3-REL-09",
+        "L3-REL-11",
+        "L3-REL-12"
+      ],
+      "code": 0,
+      "durationMilliseconds": 15759,
+      "label": "API and WSS release certification",
+      "signal": null
+    },
+    {
+      "caseIds": [
+        "L3-REL-10"
+      ],
+      "code": 0,
+      "durationMilliseconds": 115784,
+      "label": "Controlled release rollback drill",
+      "signal": null
+    },
+    {
+      "caseIds": [
+        "L3-REL-02",
+        "L3-REL-07",
+        "L3-REL-09",
+        "L3-REL-11",
+        "L3-REL-12"
+      ],
+      "code": 0,
+      "durationMilliseconds": 66919,
+      "label": "Browser release certification",
+      "signal": null
+    }
+  ],
+  "manualEvidence": {
+    "rollback": "local-supervisor-rehearsal;target-supervisor-manual-pending",
+    "rollbackReport": "test-results/l3-release-certification/rollback.json",
+    "targetSupervisorReport": "test-results/l3-release-certification/target-supervisor.json",
+    "targetDeploymentSupervisorCertification": "pending",
+    "teardown": "automated-runner"
+  },
+  "status": "automated-passed"
+}

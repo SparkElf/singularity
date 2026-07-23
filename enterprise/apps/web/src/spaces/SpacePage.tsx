@@ -88,6 +88,7 @@ import {
 import { roleBadgeVariant, roleLabel } from "@/spaces/space-labels.ts";
 import {
   EXPLICIT_SPACE_LIST_STATE,
+  readSpaceDocumentNavigationState,
   spacePagePath,
 } from "@/spaces/space-route.ts";
 import {
@@ -119,6 +120,7 @@ import { useAuthorizedSpaces } from "@/spaces/use-authorized-spaces.ts";
 import {
   contentDirectoryNotebooksQueryKey,
   contentDirectorySpaceQueryKey,
+  getContentDirectoryNotebooks,
 } from "@/spaces/content-directory-api.ts";
 import type { ContentSelectionTarget } from "@/spaces/content-selection.ts";
 import {
@@ -128,6 +130,7 @@ import {
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
 import { CollaborationPanel } from "@/collaboration/CollaborationPanel.tsx";
 import { RealtimeCollaborationHost } from "@/collaboration/RealtimeCollaborationHost.tsx";
+import { DocumentGovernancePanel } from "@/enterprise/DocumentGovernancePanel.tsx";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -531,6 +534,7 @@ interface ReadyWorkspaceProps {
   readonly composition: SpaceSessionComposition;
   readonly createProtyleFactoryForSpace: SpaceProtyleFactoryProvider;
   readonly identity: SpaceRuntimePathParameters;
+  readonly initialDocument: { readonly documentId: string; readonly notebookId: string } | null;
   readonly navigationCommand: ProtyleHostNavigationCommand | null;
   readonly onDirectoryAccessLost: (category: ContentDirectoryAccessLoss) => void;
   readonly onDirectoryStatusChange: (status: ContentDirectoryStatus) => void;
@@ -544,6 +548,7 @@ function ReadyWorkspace({
   composition,
   createProtyleFactoryForSpace,
   identity,
+  initialDocument,
   navigationCommand,
   onDirectoryAccessLost,
   onDirectoryStatusChange,
@@ -554,6 +559,16 @@ function ReadyWorkspace({
 }: ReadyWorkspaceProps) {
   const { selection, session } = composition;
   const queryClient = useQueryClient();
+  const initialDocumentKey = initialDocument === null
+    ? null
+    : `${identity.organizationId}:${identity.spaceId}:${initialDocument.notebookId}:${initialDocument.documentId}`;
+  const appliedInitialDocumentRef = useRef<string | null>(null);
+  const initialNotebooksQuery = useQuery({
+    enabled: initialDocument !== null,
+    queryKey: contentDirectoryNotebooksQueryKey(identity),
+    queryFn: ({ signal }) => getContentDirectoryNotebooks(identity, signal),
+    staleTime: 0,
+  });
   const previousSessionRef = useRef(session);
   const factory = useMemo(
     () => createProtyleFactoryForSpace(identity.spaceId),
@@ -619,6 +634,26 @@ function ReadyWorkspace({
       composition.selectDocument(resolved);
     }
   }, [composition, identity, queryClient]);
+
+  useEffect(() => {
+    if (initialDocument === null || initialDocumentKey === null || initialNotebooksQuery.data === undefined || appliedInitialDocumentRef.current === initialDocumentKey) {
+      return;
+    }
+    const resolved = resolveContentSelectionTarget(queryClient, identity, initialDocument);
+    if (resolved === null) {
+      console.warn("[space.navigation]", {
+        documentId: initialDocument.documentId,
+        notebookId: initialDocument.notebookId,
+        result: "document-not-authorized-or-not-found",
+        spaceId: identity.spaceId,
+      });
+      appliedInitialDocumentRef.current = initialDocumentKey;
+      return;
+    }
+    if (composition.selectDocument(resolved)) {
+      appliedInitialDocumentRef.current = initialDocumentKey;
+    }
+  }, [composition, identity, initialDocument, initialDocumentKey, initialNotebooksQuery.data, queryClient]);
 
   return (
     <div
@@ -703,6 +738,29 @@ function ReadyWorkspace({
         }
         onNavigate={navigateToDocument}
       />
+      {selection ? (
+        <DocumentGovernancePanel
+          key={`${identity.organizationId}:${identity.spaceId}:${selection.notebookId}:${selection.documentId}`}
+          identity={{
+            documentId: selection.documentId,
+            notebookId: selection.notebookId,
+            organizationId: identity.organizationId,
+            spaceId: identity.spaceId,
+          }}
+          onNavigateCitation={(target) => {
+            if (target.organizationId !== identity.organizationId || target.spaceId !== identity.spaceId) {
+              console.warn("[governance.ai-citation]", {
+                documentId: target.documentId,
+                organizationId: target.organizationId,
+                result: "cross-space-navigation-rejected",
+                spaceId: target.spaceId,
+              });
+              return;
+            }
+            navigateToDocument(target);
+          }}
+        />
+      ) : null}
       {session ? (
         <DiscoveryPanel
           onNavigate={onDiscoveryNavigate}
@@ -888,6 +946,7 @@ export function SpacePage({
   createProtyleMenuSurface,
 }: SpacePageProps) {
   const location = useLocation();
+  const requestedDocument = useMemo(() => readSpaceDocumentNavigationState(location.state), [location.state]);
   const params = useParams();
   const organizationId = params.organizationId ?? "";
   const spaceId = params.spaceId ?? "";
@@ -1615,6 +1674,7 @@ export function SpacePage({
               composition={composition}
               createProtyleFactoryForSpace={createProtyleFactoryForSpace}
               identity={sessionBootstrap}
+              initialDocument={requestedDocument}
               navigationCommand={
                 navigationCommand?.spaceId === sessionBootstrap.spaceId
                   ? navigationCommand

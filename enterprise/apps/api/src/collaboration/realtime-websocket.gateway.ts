@@ -6,6 +6,7 @@ import { fastifyCookie } from "@fastify/cookie";
 import { Inject, Injectable, Logger, type BeforeApplicationShutdown } from "@nestjs/common";
 import {
   AUTH_SESSION_COOKIE_NAME,
+  COLLABORATION_WEBSOCKET_PATH,
   collaborationClientMessageSchema,
   collaborationServerMessageSchema,
   type CollaborationClientMessage,
@@ -22,15 +23,16 @@ import { API_CONFIGURATION } from "../tokens.js";
 import type { AccessChanged, AccessSelector } from "../kernel/access-changed.js";
 import { CollaborationAdmissionError, CollaborationCoordinator } from "./realtime-coordinator.js";
 import { CollaborationControlService, type CollaborationFeatureChange } from "./collaboration-control.service.js";
+import { collaborationErrorContext as logError } from "./error-context.js";
 
-export const COLLABORATION_PATH = "/api/v1/collaboration/ws";
+export const COLLABORATION_PATH = COLLABORATION_WEBSOCKET_PATH;
 const MAX_MESSAGE_BYTES = 1 * 1_024 * 1_024;
 
 interface Connection {
   readonly authSessionId: string;
   readonly actorUserId: string;
   readonly connectionId: string;
-  readonly close: () => void;
+  readonly close: () => Promise<void>;
   readonly requestId: string;
   readonly socket: WebSocket;
   messageQueue: Promise<void>;
@@ -143,9 +145,22 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
       this.#httpServer.off("upgrade", this.#handleUpgrade);
       this.#httpServer = undefined;
     }
-    for (const connection of [...this.#connections]) {
-      connection.close();
-    }
+    const connections = [...this.#connections];
+    // 先排空已经进入队列的 join/submit，再关闭连接，避免待处理消息在 shutdown 后补建 session。
+    await Promise.all(connections.map(async (connection) => {
+      try {
+        await connection.messageQueue;
+      } catch (error) {
+        this.#logger.error({
+          error: logError(error),
+          event: "collaboration.lifecycle",
+          outcome: "shutdown-message-drain-failed",
+          requestId: connection.requestId,
+        });
+      }
+    }));
+    await Promise.all(connections.map((connection) => connection.close()));
+    await this.coordinator.flushPersistence();
     await new Promise<void>((resolve) => {
       this.#server.close(() => resolve());
     });
@@ -163,13 +178,20 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
       if (revocation !== null) {
         this.#send(connection, { revocation, type: "revoked" });
       }
-      connection.close();
+      void connection.close();
     }
   }
 
   readonly #handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
     if (this.#shuttingDown || socket.destroyed) {
       socket.destroy();
+      return;
+    }
+    const pathname = new URL(
+      request.url ?? "/",
+      "https://singularity.invalid",
+    ).pathname;
+    if (pathname !== COLLABORATION_PATH) {
       return;
     }
     const requestId = randomUUID();
@@ -192,30 +214,29 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
           };
           this.#connections.add(connection);
           browser.on("message", (data, isBinary) => {
+            if (this.#shuttingDown) {
+              return;
+            }
             connection.messageQueue = connection.messageQueue.then(
               () => this.#handleMessage(connection, data, isBinary),
               () => this.#handleMessage(connection, data, isBinary),
             );
           });
-          browser.on("close", () => this.#close(connection));
+          browser.on("close", () => { void this.#close(connection); });
           browser.on("error", (error) => {
             this.#logger.error({
-              error: {
-                name: error.name,
-                message: error.message,
-                stack: error.stack,
-              },
+              error: logError(error),
               event: "collaboration.lifecycle",
               outcome: "browser-websocket-error",
               requestId,
             });
-            this.#close(connection);
+            void this.#close(connection);
           });
         });
       })
       .catch((error: unknown) => {
         this.#logger.warn({
-          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: "UnknownError", message: String(error), stack: undefined },
+          error: logError(error),
           event: "collaboration.join",
           outcome: "upgrade-rejected",
           requestId,
@@ -251,7 +272,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
       message = collaborationClientMessageSchema.parse(value);
     } catch (error) {
       this.#logger.warn({
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: "UnknownError", message: String(error), stack: undefined },
+        error: logError(error),
         event: "collaboration.lifecycle",
         outcome: "invalid-message",
         requestId: connection.requestId,
@@ -263,7 +284,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
       await this.#dispatch(connection, message);
     } catch (error) {
       this.#logger.error({
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: "UnknownError", message: String(error), stack: undefined },
+        error: logError(error),
         event: "collaboration.lifecycle",
         outcome: "message-failed",
         requestId: connection.requestId,
@@ -300,7 +321,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
           throw error;
         }
         if (!this.#connections.has(connection)) {
-          this.coordinator.close(message.request.clientId, connection.connectionId);
+          void this.coordinator.close(message.request.clientId, connection.connectionId);
           return;
         }
         connection.joined = true;
@@ -355,7 +376,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
         return;
       }
       case "leave":
-        this.#close(connection);
+        await this.#close(connection);
         return;
     }
   }
@@ -382,7 +403,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
         continue;
       }
       this.#send(connection, { code: "collaboration-disabled", type: "error" });
-      this.#close(connection);
+      void this.#close(connection);
     }
   }
 
@@ -393,7 +414,8 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
     connection.socket.send(JSON.stringify(collaborationServerMessageSchema.parse(message)));
   }
 
-  #close(connection: Connection): void {
+  /** 先从广播集合摘除连接，再等待会话投影落盘，最后关闭浏览器 socket。 */
+  async #close(connection: Connection): Promise<void> {
     if (!this.#connections.delete(connection)) {
       return;
     }
@@ -401,7 +423,7 @@ export class RealtimeCollaborationWebSocketGateway implements BeforeApplicationS
     connection.joined = false;
     const identity = connection.identity;
     if (connection.clientId !== undefined) {
-      this.coordinator.close(connection.clientId, connection.connectionId);
+      await this.coordinator.close(connection.clientId, connection.connectionId);
     }
     if (hadSession && identity !== undefined) {
       this.#broadcast(identity, { presence: [...this.coordinator.presence(identity)], type: "presence" });

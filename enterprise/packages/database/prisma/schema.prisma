@@ -120,6 +120,7 @@ enum WorkerJobKind {
   reconcile_content_audit @map("reconcile-content-audit")
   restore_space  @map("restore-space")
   sample_kernel  @map("sample-kernel")
+  governance_task @map("governance-task")
 
   @@map("worker_job_kind")
 }
@@ -216,6 +217,98 @@ enum CollaborationSessionStatus {
   @@map("collaboration_session_status")
 }
 
+enum GovernanceLifecycleStatus {
+  draft
+  in_review
+  approved
+  published
+  archived
+  rejected
+
+  @@map("governance_lifecycle_status")
+}
+
+enum GovernanceVerificationStatus {
+  verified
+  needs_review
+  expired
+
+  @@map("governance_verification_status")
+}
+
+enum GovernanceClassification {
+  public
+  internal
+  confidential
+  restricted
+
+  @@map("governance_classification")
+}
+
+enum GovernanceApprovalStatus {
+  pending
+  approved
+  rejected
+
+  @@map("governance_approval_status")
+}
+
+enum GovernanceTaskKind {
+  verify
+  archive
+  retain
+  export_watermark
+
+  @@map("governance_task_kind")
+}
+
+enum GovernanceTaskStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+
+  @@map("governance_task_status")
+}
+
+enum GovernanceTemplateStatus {
+  draft
+  published
+  archived
+
+  @@map("governance_template_status")
+}
+
+enum EnterpriseIdentityProviderStatus {
+  active
+  disabled
+
+  @@map("enterprise_identity_provider_status")
+}
+
+enum ScimExternalIdentityKind {
+  user
+  group
+
+  @@map("scim_external_identity_kind")
+}
+
+enum EmbeddedObjectKind {
+  drawio
+  excalidraw
+
+  @@map("embedded_object_kind")
+}
+
+enum EmbeddedObjectStatus {
+  active
+  unavailable
+  deleted
+
+  @@map("embedded_object_status")
+}
+
 model User {
   id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   loginIdentifier         String                   @unique(map: "users_login_identifier_key") @map("login_identifier")
@@ -307,6 +400,7 @@ model OrganizationMembership {
   createdDocumentShares DocumentShare[] @relation("DocumentShareCreatedByMembership")
   createdSpaceBackups SpaceBackup[]   @relation("SpaceBackupCreatedByMembership")
   createdSpaceRestores SpaceRestoreJob[] @relation("SpaceRestoreCreatedByMembership")
+  personalSpaces PersonalSpace[] @relation("PersonalSpaceOwnerMembership")
 
   @@unique([organizationId, userId], map: "organization_memberships_organization_id_user_id_key")
   @@index([userId], map: "organization_memberships_user_id_idx")
@@ -907,4 +1001,301 @@ model SpaceCapacityObservation {
   @@index([kernelInstanceId, sampledAt], map: "space_capacity_observations_kernel_instance_id_sampled_at_idx")
   @@index([spaceId, sampledAt], map: "space_capacity_observations_space_id_sampled_at_idx")
   @@map("space_capacity_observations")
+}
+
+/// L4 控制面只保存治理事实与索引，不保存正文、块或 Kernel 历史。
+model GovernancePolicy {
+  id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId          String                   @map("organization_id") @db.Uuid
+  spaceId                 String                   @map("space_id") @db.Uuid
+  verificationIntervalDays Int                     @default(180) @map("verification_interval_days")
+  verificationGraceDays   Int                     @default(30) @map("verification_grace_days")
+  archiveAfterDays        Int                     @default(365) @map("archive_after_days")
+  retentionDays           Int                     @default(2555) @map("retention_days")
+  defaultClassification   GovernanceClassification @default(internal) @map("default_classification")
+  watermarkEnabled        Boolean                 @default(true) @map("watermark_enabled")
+  governanceEnabled       Boolean                 @default(false) @map("governance_enabled")
+  createdByUserId         String                  @map("created_by_user_id") @db.Uuid
+  createdAt               DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId], map: "governance_policies_organization_space_key")
+  @@index([organizationId, updatedAt], map: "governance_policies_organization_updated_idx")
+  @@map("governance_policies")
+}
+
+model DocumentGovernance {
+  id                    String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId        String                     @map("organization_id") @db.Uuid
+  spaceId               String                     @map("space_id") @db.Uuid
+  notebookId            String                     @map("notebook_id")
+  documentId            String                     @map("document_id")
+  lifecycle             GovernanceLifecycleStatus
+  verification          GovernanceVerificationStatus
+  classification        GovernanceClassification
+  ownerUserId           String?                    @map("owner_user_id") @db.Uuid
+  currentVersion        String?                    @map("current_version")
+  nextVerificationAt    DateTime?                  @map("next_verification_at") @db.Timestamptz(3)
+  archivedAt            DateTime?                  @map("archived_at") @db.Timestamptz(3)
+  retentionUntil        DateTime?                  @map("retention_until") @db.Timestamptz(3)
+  legalHold             Boolean                    @default(false) @map("legal_hold")
+  createdAt             DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId, notebookId, documentId], map: "document_governance_identity_key")
+  @@index([organizationId, spaceId, verification, nextVerificationAt], map: "document_governance_verification_idx")
+  @@index([organizationId, spaceId, lifecycle, updatedAt], map: "document_governance_lifecycle_idx")
+  @@map("document_governance")
+}
+
+model GovernanceApprovalRequest {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                   @map("organization_id") @db.Uuid
+  spaceId            String                   @map("space_id") @db.Uuid
+  notebookId         String                   @map("notebook_id")
+  documentId         String                   @map("document_id")
+  versionToken       String                   @map("version_token")
+  status             GovernanceApprovalStatus
+  submittedByUserId  String                   @map("submitted_by_user_id") @db.Uuid
+  decidedByUserId    String?                  @map("decided_by_user_id") @db.Uuid
+  decisionComment    String?                  @map("decision_comment")
+  submittedAt        DateTime                 @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  decidedAt          DateTime?                @map("decided_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId, notebookId, documentId, versionToken], map: "governance_approval_identity_version_key")
+  @@index([organizationId, spaceId, status, submittedAt], map: "governance_approval_queue_idx")
+  @@map("governance_approval_requests")
+}
+
+model GovernanceTemplate {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId           String                     @map("organization_id") @db.Uuid
+  spaceId                  String                     @map("space_id") @db.Uuid
+  name                     String
+  description              String?
+  initialContent           Json                       @map("initial_content")
+  defaultClassification    GovernanceClassification  @default(internal) @map("default_classification")
+  verificationIntervalDays Int                        @default(180) @map("verification_interval_days")
+  status                   GovernanceTemplateStatus
+  createdByUserId          String                     @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId, name], map: "governance_templates_scope_name_key")
+  @@index([organizationId, spaceId, status], map: "governance_templates_scope_status_idx")
+  @@map("governance_templates")
+}
+
+model GovernanceTask {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String               @map("organization_id") @db.Uuid
+  spaceId            String               @map("space_id") @db.Uuid
+  notebookId         String               @map("notebook_id")
+  documentId         String               @map("document_id")
+  kind               GovernanceTaskKind
+  status             GovernanceTaskStatus
+  idempotencyKey     String               @unique(map: "governance_tasks_idempotency_key_key") @map("idempotency_key")
+  attempts           Int                  @default(0)
+  availableAt        DateTime             @default(now()) @map("available_at") @db.Timestamptz(3)
+  lastErrorName      String?              @map("last_error_name")
+  lastErrorMessage   String?              @map("last_error_message")
+  lastErrorStack     String?              @map("last_error_stack")
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([organizationId, spaceId, status, availableAt], map: "governance_tasks_queue_idx")
+  @@index([organizationId, spaceId, notebookId, documentId], map: "governance_tasks_document_idx")
+  @@map("governance_tasks")
+}
+
+model EnterpriseApiKey {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  name               String
+  keyPrefix          String    @map("key_prefix")
+  secretDigest       String    @unique(map: "enterprise_api_keys_secret_digest_key") @map("secret_digest")
+  scopes             Json
+  expiresAt          DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt         DateTime? @map("last_used_at") @db.Timestamptz(3)
+
+  @@index([organizationId, userId, revokedAt], map: "enterprise_api_keys_owner_idx")
+  @@map("enterprise_api_keys")
+}
+
+model MfaFactor {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  label              String
+  encryptedSecret    String    @map("encrypted_secret")
+  enabledAt          DateTime? @map("enabled_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt         DateTime? @map("last_used_at") @db.Timestamptz(3)
+
+  @@unique([userId, label], map: "mfa_factors_user_label_key")
+  @@index([userId, enabledAt], map: "mfa_factors_user_enabled_idx")
+  @@map("mfa_factors")
+}
+
+model MfaLoginChallenge {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenDigest String    @unique(map: "mfa_login_challenges_token_digest_key") @map("token_digest")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  attempts    Int       @default(0)
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId, expiresAt], map: "mfa_login_challenges_user_expires_idx")
+  @@map("mfa_login_challenges")
+}
+
+model SamlProvider {
+  id                 String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                       @map("organization_id") @db.Uuid
+  name               String
+  entityId           String                       @map("entity_id")
+  ssoUrl             String                       @map("sso_url")
+  certificatePem     String                       @map("certificate_pem")
+  status             EnterpriseIdentityProviderStatus
+  createdByUserId    String                       @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, name], map: "saml_providers_organization_name_key")
+  @@index([organizationId, status], map: "saml_providers_organization_status_idx")
+  @@map("saml_providers")
+}
+
+model ScimToken {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  tokenPrefix        String    @map("token_prefix")
+  tokenDigest        String    @unique(map: "scim_tokens_token_digest_key") @map("token_digest")
+  expiresAt          DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdByUserId    String    @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt         DateTime? @map("last_used_at") @db.Timestamptz(3)
+
+  @@index([organizationId, revokedAt], map: "scim_tokens_organization_revoked_idx")
+  @@map("scim_tokens")
+}
+
+model ScimExternalIdentity {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                   @map("organization_id") @db.Uuid
+  externalId         String                   @map("external_id")
+  kind               ScimExternalIdentityKind
+  userId             String?                  @map("user_id") @db.Uuid
+  groupId            String?                  @map("group_id") @db.Uuid
+  lastSyncedAt       DateTime                 @map("last_synced_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, externalId], map: "scim_external_identities_scope_external_key")
+  @@index([organizationId, kind, lastSyncedAt], map: "scim_external_identities_sync_idx")
+  @@map("scim_external_identities")
+}
+
+model PersonalSpace {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  spaceId            String    @unique(map: "personal_spaces_space_id_key") @map("space_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  ownerMembership    OrganizationMembership @relation("PersonalSpaceOwnerMembership", fields: [organizationId, userId], references: [organizationId, userId], onDelete: Restrict, onUpdate: Cascade, map: "personal_spaces_owner_membership_fkey")
+
+  @@unique([organizationId, userId], map: "personal_spaces_organization_user_key")
+  @@map("personal_spaces")
+}
+
+model SearchDocumentIndex {
+  id                 String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                     @map("organization_id") @db.Uuid
+  spaceId            String                     @map("space_id") @db.Uuid
+  notebookId         String                     @map("notebook_id")
+  documentId         String                     @map("document_id")
+  title              String
+  excerpt            String
+  classification     GovernanceClassification
+  updatedAt          DateTime                   @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId, notebookId, documentId], map: "search_document_index_identity_key")
+  @@index([organizationId, spaceId, updatedAt], map: "search_document_index_scope_updated_idx")
+  @@map("search_document_index")
+}
+
+model EmbeddedObject {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String              @map("organization_id") @db.Uuid
+  spaceId            String              @map("space_id") @db.Uuid
+  notebookId         String              @map("notebook_id")
+  documentId         String              @map("document_id")
+  kind               EmbeddedObjectKind
+  version            Int                 @default(1)
+  payload            Json
+  status             EmbeddedObjectStatus
+  createdByUserId    String              @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, spaceId, notebookId, documentId, id], map: "embedded_objects_identity_key")
+  @@index([organizationId, spaceId, documentId, status], map: "embedded_objects_document_status_idx")
+  @@map("embedded_objects")
+}
+
+model AiConversation {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  title              String?
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([organizationId, userId, updatedAt], map: "ai_conversations_owner_updated_idx")
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId     String    @map("conversation_id") @db.Uuid
+  role               String
+  content            String
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([conversationId, createdAt], map: "ai_messages_conversation_created_idx")
+  @@map("ai_messages")
+}
+
+model AiCitation {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId          String    @map("message_id") @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  spaceId            String    @map("space_id") @db.Uuid
+  notebookId         String    @map("notebook_id")
+  documentId         String    @map("document_id")
+  excerpt            String
+  verifiedAt         DateTime? @map("verified_at") @db.Timestamptz(3)
+
+  @@index([organizationId, spaceId, notebookId, documentId], map: "ai_citations_document_idx")
+  @@map("ai_citations")
+}
+
+model ExportAudit {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  spaceId        String    @map("space_id") @db.Uuid
+  notebookId     String    @map("notebook_id")
+  documentId     String    @map("document_id")
+  actorUserId    String    @map("actor_user_id") @db.Uuid
+  requestId      String    @map("request_id") @db.Uuid
+  format         String
+  watermarkRef   String?   @map("watermark_ref")
+  outcome        String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([organizationId, spaceId, createdAt], map: "export_audits_scope_created_idx")
+  @@index([requestId], map: "export_audits_request_idx")
+  @@map("export_audits")
 }

@@ -7,9 +7,9 @@ import {
   type PoolConfig,
 } from "pg";
 
-import { Prisma, PrismaClient } from "./generated/prisma/client.js";
+import { Prisma, PrismaClient, $Enums } from "./generated/prisma/client.js";
 
-export { Prisma };
+export { Prisma, $Enums };
 export * from "./audit.js";
 
 const DATABASE_CONNECTION_TIMEOUT_MS = 3_000;

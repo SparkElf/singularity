@@ -3,6 +3,7 @@ import type {
   IncomingMessage,
   ServerResponse,
 } from "node:http";
+import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -13,6 +14,7 @@ import {
   KernelPrivateClient,
   KernelTransportError,
 } from "@singularity/kernel-client";
+import { DatabaseRuntime } from "@singularity/database";
 
 import {
   ContentAuditIntentService,
@@ -266,6 +268,7 @@ export class KernelGatewayService {
     private readonly client: KernelPrivateClient,
     private readonly contentAudit: ContentAuditIntentService,
     private readonly documentAccess: DocumentAccessPolicyService,
+    private readonly database: DatabaseRuntime,
   ) {}
 
   /** 按路由策略完成授权、审计、Kernel 请求及响应转发，并维持流式响应的生命周期。 */
@@ -293,6 +296,7 @@ export class KernelGatewayService {
     });
 
     const body = serializedBody(input.body);
+    const exportWatermark = await this.#resolveExportWatermark(input);
     const contentAuditAction = auditAction(
       input.target.policy.audit,
       input.body,
@@ -455,6 +459,7 @@ export class KernelGatewayService {
         "succeeded",
         startedAt,
       );
+      await this.#recordExportAudit(input, exportWatermark, upstream.status, upstream.headers);
       this.#sendBufferedResponse(
         input,
         reply,
@@ -463,6 +468,7 @@ export class KernelGatewayService {
         result.body,
         startedAt,
         authorized.deployment.kernelInstanceId,
+        exportWatermark,
       );
       return;
     }
@@ -473,6 +479,14 @@ export class KernelGatewayService {
       startedAt,
     );
 
+    try {
+      await this.#recordExportAudit(input, exportWatermark, upstream.status, upstream.headers);
+    } catch (error) {
+      // 审计失败时流尚未交给 Fastify；先销毁上游连接，避免未消费响应悬挂。
+      upstream.message.destroy(error instanceof Error ? error : new Error("Export audit failed", { cause: error }));
+      throw error;
+    }
+
     reply.hijack();
     const response = reply.raw;
     response.statusCode = upstream.status;
@@ -481,6 +495,7 @@ export class KernelGatewayService {
       upstream.headers,
       response,
       input.requestId,
+      exportWatermark,
     );
     upstream.message.once("error", (error) => {
       this.#logger.error({
@@ -595,6 +610,7 @@ export class KernelGatewayService {
     body: Buffer,
     startedAt: number,
     kernelInstanceId: string,
+    exportWatermark: string | undefined,
   ): void {
     reply.hijack();
     const response = reply.raw;
@@ -604,6 +620,7 @@ export class KernelGatewayService {
       headers,
       response,
       input.requestId,
+      exportWatermark,
     );
     response.end(body);
     this.#log(input, "proxied", status, startedAt, kernelInstanceId);
@@ -615,6 +632,7 @@ export class KernelGatewayService {
     headers: IncomingHttpHeaders,
     response: ServerResponse,
     requestId: string,
+    exportWatermark: string | undefined,
   ): void {
     for (const [name, value] of Object.entries(headers)) {
       if (value !== undefined) {
@@ -624,6 +642,9 @@ export class KernelGatewayService {
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Request-Id", requestId);
+    if (exportWatermark !== undefined) {
+      response.setHeader("X-Singularity-Export-Watermark", exportWatermark);
+    }
 
     if (target.surface === "api" || target.surface === "upload") {
       response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -667,6 +688,59 @@ export class KernelGatewayService {
         ? "application/pdf"
         : "application/octet-stream",
     );
+  }
+
+  /** 在导出响应边界生成可追溯水印头；水印不写入 Kernel 正文、历史或浏览器存储。 */
+  async #resolveExportWatermark(input: KernelGatewayProxyRequest): Promise<string | undefined> {
+    if (input.target.surface !== "export") {
+      return undefined;
+    }
+    try {
+      const policy = await this.database.client.governancePolicy.findUnique({
+        where: { organizationId_spaceId: { organizationId: input.target.organizationId, spaceId: input.target.spaceId } },
+        select: { governanceEnabled: true, watermarkEnabled: true },
+      });
+      if (policy === null || !policy.governanceEnabled || !policy.watermarkEnabled) {
+        return undefined;
+      }
+      const issuedAt = new Date().toISOString();
+      const reference = createHash("sha256").update(`${input.target.organizationId}\0${input.target.spaceId}\0${input.target.identity.notebookId}\0${input.target.identity.documentId}\0${input.userId}\0${issuedAt}`).digest("hex").slice(0, 16);
+      return `organization=${input.target.organizationId};space=${input.target.spaceId};document=${input.target.identity.documentId};user=${input.userId};issuedAt=${issuedAt};ref=${reference}`;
+    } catch (error) {
+      this.#logger.error({ event: "governance.export-watermark", error, outcome: "unavailable", requestId: input.requestId, spaceId: input.target.spaceId });
+      throw new ApiProblemError("service-unavailable", 503, undefined, { cause: error });
+    }
+  }
+
+  /** 在 PDF/导出响应已通过 Kernel 合同后落一条最小审计记录，不保存正文或文件内容。 */
+  async #recordExportAudit(
+    input: KernelGatewayProxyRequest,
+    watermark: string | undefined,
+    status: number,
+    headers: IncomingHttpHeaders,
+  ): Promise<void> {
+    if (input.target.surface !== "export") {
+      return;
+    }
+    try {
+      const watermarkRef = watermark?.match(/(?:^|;)ref=([^;]+)/)?.[1];
+      await this.database.client.exportAudit.create({
+        data: {
+          actorUserId: input.userId,
+          documentId: input.target.identity.documentId,
+          format: normalizedContentType(headers) ?? "application/octet-stream",
+          notebookId: input.target.identity.notebookId,
+          organizationId: input.target.organizationId,
+          outcome: status >= 200 && status < 300 ? "succeeded" : "failed",
+          requestId: input.requestId,
+          ...(watermarkRef === undefined ? {} : { watermarkRef }),
+          spaceId: input.target.spaceId,
+        },
+      });
+    } catch (error) {
+      this.#logger.error({ documentId: input.target.identity.documentId, error, event: "governance.export-audit", outcome: "unavailable", requestId: input.requestId, spaceId: input.target.spaceId });
+      throw new ApiProblemError("service-unavailable", 503, undefined, { cause: error });
+    }
   }
 
   #log(

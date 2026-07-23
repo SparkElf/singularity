@@ -249,7 +249,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
     const ownerAccess = (await readManagementAccess(owner)).organizations[0];
     expect(ownerAccess).toBeDefined();
     expect(ownerAccess?.organizationId).toBe(organizationId);
-    expect(ownerAccess?.organizationCapabilities).toHaveLength(6);
+    expect(ownerAccess?.organizationCapabilities).toHaveLength(7);
     expect(ownerAccess?.organizationCapabilities).toEqual(
       expect.arrayContaining([
         "members",
@@ -257,6 +257,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
         "spaces",
         "oidc",
         "audit",
+        "governance",
         "ownership",
       ]),
     );
@@ -265,7 +266,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
       betaSpaceId,
     ]);
     for (const space of ownerAccess?.spaces ?? []) {
-      expect(space.capabilities).toHaveLength(5);
+      expect(space.capabilities).toHaveLength(6);
       expect(space.capabilities).toEqual(
         expect.arrayContaining([
           "access",
@@ -273,15 +274,16 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
           "audit",
           "backups",
           "observability",
+          "governance",
         ]),
       );
     }
 
     const adminAccess = (await readManagementAccess(admin)).organizations[0];
     expect(adminAccess?.organizationId).toBe(organizationId);
-    expect(adminAccess?.organizationCapabilities).toHaveLength(4);
+    expect(adminAccess?.organizationCapabilities).toHaveLength(5);
     expect(adminAccess?.organizationCapabilities).toEqual(
-      expect.arrayContaining(["members", "groups", "spaces", "audit"]),
+      expect.arrayContaining(["members", "groups", "spaces", "audit", "governance"]),
     );
     expect(adminAccess?.organizationCapabilities).not.toContain("oidc");
     expect(adminAccess?.organizationCapabilities).not.toContain("ownership");
@@ -354,6 +356,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
                 "audit",
                 "backups",
                 "observability",
+                "governance",
               ]),
               spaceId: directSpaceId,
               spaceName: "Direct administration",
@@ -365,6 +368,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
                 "audit",
                 "backups",
                 "observability",
+                "governance",
               ]),
               spaceId: groupSpaceId,
               spaceName: "Group administration",
@@ -420,7 +424,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
       ).toEqual({
         organizations: [
           {
-            organizationCapabilities: ["members", "groups", "spaces", "audit"],
+            organizationCapabilities: ["members", "groups", "spaces", "audit", "governance"],
             organizationId,
             organizationName: "Snapshot organization",
             spaces: [
@@ -431,6 +435,7 @@ describe("enterprise management access HTTP contract with PostgreSQL", () => {
                   "audit",
                   "backups",
                   "observability",
+                  "governance",
                 ],
                 spaceId,
                 spaceName: "Snapshot space",

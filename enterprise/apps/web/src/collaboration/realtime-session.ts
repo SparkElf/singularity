@@ -250,9 +250,24 @@ export function createRealtimeCollaborationClient(input: {
       if (socket !== currentSocket || manualClose) {
         return;
       }
+      let message: CollaborationServerMessage;
       try {
-        const message = collaborationServerMessageSchema.parse(JSON.parse(String(event.data)));
+        message = collaborationServerMessageSchema.parse(JSON.parse(String(event.data)));
         assertMessageBinding(message, input.identity, sessionGeneration);
+      } catch (error) {
+        console.error("[collaboration.websocket]", {
+          error: error instanceof Error
+            ? { name: error.name, message: error.message, stack: error.stack }
+            : { name: "UnknownError", message: String(error), stack: undefined },
+          event: "message",
+          outcome: "invalid-server-message",
+          identity: input.identity,
+        });
+        currentSocket.close(1000, "invalid server message");
+        onState("reconnecting");
+        return;
+      }
+      try {
         const boundStore = useRealtimeSessionStore.getState();
         if (boundStore.identity !== null && !sameIdentity(boundStore.identity, input.identity)) {
           return;
@@ -318,10 +333,10 @@ export function createRealtimeCollaborationClient(input: {
           if (!hasJoined || terminal) {
             manualClose = true;
             onState("closed");
-            currentSocket.close(1008, message.code);
+            currentSocket.close(1000, message.code);
           } else {
             onState("reconnecting");
-            currentSocket.close(1011, message.code);
+            currentSocket.close(1000, message.code);
           }
         }
         input.onMessage?.(message);
@@ -339,12 +354,17 @@ export function createRealtimeCollaborationClient(input: {
           }
         });
       } catch (error) {
+        const errorDetails = error instanceof Error
+          ? { name: error.name, message: error.message, stack: error.stack }
+          : { name: "UnknownError", message: String(error), stack: undefined };
         console.error("[collaboration.websocket]", {
-          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: "UnknownError", message: String(error), stack: undefined },
+          error: errorDetails,
           event: "message",
-          outcome: "invalid-server-message",
+          identity: input.identity,
+          messageType: message.type,
+          outcome: "message-handler-failed",
         });
-        currentSocket.close(1002, "invalid server message");
+        currentSocket.close(1000, "message handler failed");
         onState("reconnecting");
       }
     });

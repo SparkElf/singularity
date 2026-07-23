@@ -4,10 +4,12 @@ import {
   AUTH_INVITATION_ACCEPT_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
+  AUTH_MFA_CHALLENGE_VERIFY_PATH,
   AUTH_OIDC_PROVIDERS_PATH,
   AUTH_OIDC_START_PATH,
   CSRF_HEADER_NAME,
   csrfResponseSchema,
+  loginAttemptResponseSchema,
   loginResponseSchema,
   oidcProvidersResponseSchema,
   oidcStartResponseSchema,
@@ -15,6 +17,8 @@ import {
   type AcceptOrganizationInvitationRequest,
   type LoginRequest,
   type LoginResponse,
+  type LoginAttemptResponse,
+  type MfaLoginChallengeVerifyRequest,
   type OidcProvidersResponse,
   type OidcStartRequest,
   type OidcStartResponse,
@@ -124,8 +128,21 @@ function waitForCsrfFetch(
 export function login(
   request: LoginRequest,
   signal?: AbortSignal,
+): Promise<LoginAttemptResponse> {
+  return requestJson(loginAttemptResponseSchema, AUTH_LOGIN_PATH, {
+    body: JSON.stringify(request),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal: signal ?? null,
+  });
+}
+
+// 完成密码之后的 MFA challenge；只有该请求成功才会得到可写会话的 CSRF token。
+export function verifyMfaChallenge(
+  request: MfaLoginChallengeVerifyRequest,
+  signal?: AbortSignal,
 ): Promise<LoginResponse> {
-  return requestJson(loginResponseSchema, AUTH_LOGIN_PATH, {
+  return requestJson(loginResponseSchema, AUTH_MFA_CHALLENGE_VERIFY_PATH, {
     body: JSON.stringify(request),
     headers: { "Content-Type": "application/json" },
     method: "POST",

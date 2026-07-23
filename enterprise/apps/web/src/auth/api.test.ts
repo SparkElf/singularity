@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProblemError } from "@/api/http.ts";
-import { getOrFetchCsrfToken } from "@/auth/api.ts";
+import { getOrFetchCsrfToken, login, verifyMfaChallenge } from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 
 const FIRST_CSRF_TOKEN = "A".repeat(42) + "E";
@@ -154,5 +154,20 @@ describe("getOrFetchCsrfToken", () => {
     await expect(getOrFetchCsrfToken(controller.signal)).rejects.toMatchObject({
       name: "AbortError",
     });
+  });
+});
+
+describe("MFA login contract", () => {
+  it("keeps a password login challenge distinct from an authenticated CSRF response", async () => {
+    const challengeToken = "challenge_" + "A".repeat(32);
+    const csrfToken = "C".repeat(42) + "M";
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ challengeToken, expiresAt: "2026-07-23T10:00:00.000Z" }), { status: 202, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(csrfResponse(csrfToken));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(login({ loginIdentifier: "user@example.com", password: "a".repeat(12) })).resolves.toMatchObject({ challengeToken });
+    await expect(verifyMfaChallenge({ challengeToken, code: "123456" })).resolves.toEqual({ csrfToken });
+    expect(new URL(String(fetchMock.mock.calls[1]?.[0]), window.location.origin).pathname).toBe("/api/v1/auth/mfa/challenge/verify");
   });
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { UsersIcon, XCircleIcon } from "lucide-react";
 import type {
   CollaborationOperationResult,
@@ -112,7 +113,8 @@ export function RealtimeCollaborationHost({
     () => clientIdentityKey === null ? null : globalThis.crypto.randomUUID(),
     [clientIdentityKey],
   );
-  const session = useRealtimeSessionStore((current): SessionView => {
+  // 订阅派生视图必须使用浅比较，避免每次 store 更新都创建新快照触发 React 无限更新。
+  const session = useRealtimeSessionStore(useShallow((current): SessionView => {
     if (identity === null || !sameIdentity(current.identity, identity)) {
       return {
         lastErrorCode: null,
@@ -127,7 +129,7 @@ export function RealtimeCollaborationHost({
       presenceCount: current.presence.length,
       state: current.state,
     };
-  });
+  }));
 
   useEffect(() => {
     const currentIdentity = boundIdentity;

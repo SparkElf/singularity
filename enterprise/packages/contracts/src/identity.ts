@@ -63,6 +63,25 @@ export const csrfTokenResponseSchema = z
 export const loginResponseSchema = csrfTokenResponseSchema;
 export const csrfResponseSchema = csrfTokenResponseSchema;
 
+export const mfaLoginChallengeResponseSchema = z.object({
+  challengeToken: z.string().min(32).max(512),
+  expiresAt: z.string().datetime({ offset: true }),
+}).strict();
+export type MfaLoginChallengeResponse = z.infer<typeof mfaLoginChallengeResponseSchema>;
+
+export const mfaLoginChallengeVerifyRequestSchema = z.object({
+  challengeToken: z.string().min(32).max(512),
+  code: z.string().regex(/^[0-9]{6}$/),
+}).strict();
+export type MfaLoginChallengeVerifyRequest = z.infer<typeof mfaLoginChallengeVerifyRequestSchema>;
+
+// 本地登录在启用 MFA 时先返回一次性 challenge；客户端必须按这个联合合同进入二次验证，不能把 challenge 当成已建立会话。
+export const loginAttemptResponseSchema = z.union([
+  loginResponseSchema,
+  mfaLoginChallengeResponseSchema,
+]);
+export type LoginAttemptResponse = z.infer<typeof loginAttemptResponseSchema>;
+
 export type CsrfTokenResponse = z.infer<typeof csrfTokenResponseSchema>;
 export type LoginResponse = CsrfTokenResponse;
 export type CsrfResponse = CsrfTokenResponse;
