@@ -8,6 +8,7 @@ import type {
 type OrganizationSettingsSection =
   | "audit"
   | "groups"
+  | "governance"
   | "members"
   | "oidc"
   | "spaces";
@@ -17,6 +18,7 @@ const organizationManagementRoutePriority = [
   { capability: "members", section: "members" },
   { capability: "ownership", section: "members" },
   { capability: "groups", section: "groups" },
+  { capability: "governance", section: "governance" },
   { capability: "spaces", section: "spaces" },
   { capability: "oidc", section: "oidc" },
   { capability: "audit", section: "audit" },

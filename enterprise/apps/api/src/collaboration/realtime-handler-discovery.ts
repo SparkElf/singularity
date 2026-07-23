@@ -3,7 +3,6 @@ import { DiscoveryService } from "@nestjs/core";
 import type {
   CollaborationFeatureMode,
   CollaborationOperationEnvelope,
-  CollaborationOperationKind,
 } from "@singularity/contracts";
 import type { CollaborationSubmitResult } from "./realtime-coordinator.js";
 

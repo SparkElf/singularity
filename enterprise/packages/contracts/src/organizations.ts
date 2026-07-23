@@ -36,6 +36,7 @@ export const organizationManagementCapabilities = [
   "spaces",
   "oidc",
   "audit",
+  "governance",
   "ownership",
 ] as const;
 export const organizationManagementCapabilitySchema = z.enum(
@@ -51,6 +52,7 @@ export const spaceManagementCapabilities = [
   "audit",
   "backups",
   "observability",
+  "governance",
 ] as const;
 export const spaceManagementCapabilitySchema = z.enum(
   spaceManagementCapabilities,

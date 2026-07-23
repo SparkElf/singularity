@@ -6,6 +6,7 @@ import { forbidden, unauthenticated } from "../problem.js";
 import type { Clock } from "./clock.js";
 import { CLOCK } from "../tokens.js";
 import { LoginRateLimiter } from "./login-rate-limiter.js";
+import { MfaService } from "./mfa.service.js";
 import { KdfAdmissionError, PasswordHasher } from "./password-hasher.js";
 import {
   createSessionToken,
@@ -24,6 +25,13 @@ export interface AuthenticatedSession {
 export interface LoginResult extends AuthenticatedSession {
   tokenValue: string;
 }
+
+export interface MfaLoginChallengeResult {
+  challengeToken: string;
+  expiresAt: string;
+}
+
+export type LoginAttemptResult = LoginResult | MfaLoginChallengeResult;
 
 interface RenewedSessionRow {
   authSessionId: string;
@@ -66,20 +74,21 @@ export class IdentityService {
     private readonly clock: Clock,
     private readonly accessChanges: AccessChangedPublisher,
     private readonly audit: AuditWriter,
+    private readonly mfa: MfaService,
   ) {}
 
   hashPassword(password: string): Promise<string> {
     return this.passwordHasher.hashPassword(password);
   }
 
-  /** 校验本地凭据并轮换会话 token，登录失败只返回统一错误且保留完整审计上下文。 */
+  /** 校验本地凭据；启用 MFA 时只创建一次性 challenge，普通登录才进入会话轮换路径。 */
   async login(input: {
     currentTokenValue: string | undefined;
     loginIdentifier: string;
     password: string;
     requestId: string;
     sourceAddress: string;
-  }): Promise<LoginResult> {
+  }): Promise<LoginAttemptResult> {
     await this.loginRateLimiter.consume(
       input.sourceAddress,
       input.loginIdentifier,
@@ -126,10 +135,32 @@ export class IdentityService {
       throw unauthenticated();
     }
 
+    if (await this.mfa.hasEnabledFactor(candidate.id)) {
+      // 密码已经通过但 MFA 尚未完成时不创建会话，只发放一次性 challenge。
+      return this.mfa.createLoginChallenge(candidate.id);
+    }
     return this.issueSessionForUser({
       currentTokenValue: input.currentTokenValue,
       requestId: input.requestId,
       userId: candidate.id,
+    });
+  }
+
+  /** 验证登录 challenge 后复用唯一会话签发路径，避免 MFA 绕过会话审计与撤权广播。 */
+  async verifyMfaLogin(input: {
+    challengeToken: string;
+    code: string;
+    currentTokenValue: string | undefined;
+    requestId: string;
+  }): Promise<LoginResult> {
+    const verified = await this.mfa.verifyLoginChallenge(
+      { challengeToken: input.challengeToken, code: input.code },
+      input.requestId,
+    );
+    return this.issueSessionForUser({
+      currentTokenValue: input.currentTokenValue,
+      requestId: input.requestId,
+      userId: verified.userId,
     });
   }
 

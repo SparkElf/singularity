@@ -41,12 +41,22 @@ export interface SampleKernelJob extends WorkerJobBase {
   spaceId: string;
 }
 
+export interface GovernanceTaskJob extends WorkerJobBase {
+  documentId: string;
+  kind: "governance-task";
+  notebookId: string;
+  spaceId: string;
+  taskId: string;
+  taskKind: "verify" | "archive" | "retain" | "export_watermark";
+}
+
 export type ClaimedWorkerJob =
   | ArchiveAuditJob
   | BackupSpaceJob
   | ReconcileContentAuditJob
   | RestoreSpaceJob
-  | SampleKernelJob;
+  | SampleKernelJob
+  | GovernanceTaskJob;
 
 export const workerJobKinds = [
   "archive-audit",
@@ -54,6 +64,7 @@ export const workerJobKinds = [
   "reconcile-content-audit",
   "restore-space",
   "sample-kernel",
+  "governance-task",
 ] as const satisfies readonly ClaimedWorkerJob["kind"][];
 
 export type WorkerJobKind = (typeof workerJobKinds)[number];

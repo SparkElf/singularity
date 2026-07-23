@@ -32,6 +32,60 @@ import {
   ORGANIZATION_SPACE_SHARE_PATH_TEMPLATE,
   ORGANIZATION_SPACE_SHARES_PATH_TEMPLATE,
   ORGANIZATION_SPACES_PATH_TEMPLATE,
+  ORGANIZATION_GOVERNANCE_DASHBOARD_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GOVERNANCE_POLICY_PATH_TEMPLATE,
+  ORGANIZATION_API_KEYS_PATH_TEMPLATE,
+  ORGANIZATION_API_KEY_PATH_TEMPLATE,
+  ORGANIZATION_SAML_PROVIDERS_PATH_TEMPLATE,
+  ORGANIZATION_SAML_PROVIDER_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE,
+  ORGANIZATION_PERSONAL_SPACE_PATH_TEMPLATE,
+  ORGANIZATION_GOVERNANCE_SEARCH_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GOVERNANCE_TEMPLATES_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GOVERNANCE_TEMPLATE_PUBLISH_PATH_TEMPLATE,
+  ORGANIZATION_SPACE_GOVERNANCE_TEMPLATE_DOCUMENTS_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_TRANSITION_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_CLASSIFICATION_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_LEGAL_HOLD_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_APPROVALS_PATH_TEMPLATE,
+  DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE,
+  DOCUMENT_AI_CHAT_PATH_TEMPLATE,
+  AUTH_MFA_FACTORS_PATH,
+  AUTH_MFA_VERIFY_PATH,
+  governanceDashboardSchema,
+  governancePolicyResponseSchema,
+  governanceTemplatesResponseSchema,
+  governanceTemplateSchema,
+  documentGovernanceSchema,
+  governanceApprovalsResponseSchema,
+  governanceEmbeddedObjectsResponseSchema,
+  governanceEmbeddedObjectSchema,
+  governanceSearchResponseSchema,
+  aiChatResponseSchema,
+  mfaFactorsResponseSchema,
+  mfaFactorEnrollmentResponseSchema,
+  mfaVerificationResponseSchema,
+  personalSpaceResponseSchema,
+  scimTokenResponseSchema,
+  samlProviderMutationResponseSchema,
+  enterpriseApiKeyResponseSchema,
+  enterpriseApiKeysResponseSchema,
+  scimTokensResponseSchema,
+  samlProvidersResponseSchema,
+  documentIdentitySchema,
+  type GovernanceTemplateRequest,
+  type GovernanceTemplateDocumentRequest,
+  type GovernanceTransitionRequest,
+  type GovernanceClassificationRequest,
+  type GovernanceLegalHoldRequest,
+  type GovernanceEmbeddedObjectRequest,
+  type AiChatRequest,
+  type EnterpriseApiKeyRequest,
+  type MfaFactorRequest,
+  type MfaVerifyRequest,
+  type GovernancePolicy,
   auditEventsResponseSchema,
   createdDocumentShareSchema,
   createdOrganizationInvitationSchema,
@@ -71,6 +125,7 @@ import {
   type UpdateSpaceRequest,
   type UpdateUserGroupRequest,
 } from "@singularity/contracts";
+import type { DocumentIdentity } from "@singularity/contracts";
 
 import { requestJson, requestNoContent } from "@/api/http.ts";
 import { buildApiPath as buildPath } from "@/api/path.ts";
@@ -248,12 +303,146 @@ export const spaceObservabilityQueryKey = (
 ) =>
   ["enterprise", organizationId, "spaces", spaceId, "observability"] as const;
 
+export const governanceDashboardQueryKey = (organizationId: string) =>
+  ["enterprise", organizationId, "governance", "dashboard"] as const;
+
+export const governancePolicyQueryKey = (organizationId: string, spaceId: string) =>
+  ["enterprise", organizationId, "spaces", spaceId, "governance", "policy"] as const;
+
+export const governanceTemplatesQueryKey = (organizationId: string, spaceId: string) =>
+  ["enterprise", organizationId, "spaces", spaceId, "governance", "templates"] as const;
+export const governanceSearchQueryKey = (organizationId: string, query: string, spaceIds: readonly string[]) =>
+  ["enterprise", organizationId, "governance", "search", query, ...spaceIds] as const;
+export const enterpriseApiKeysQueryKey = (organizationId: string) => ["enterprise", organizationId, "api-keys"] as const;
+export const samlProvidersQueryKey = (organizationId: string) => ["enterprise", organizationId, "saml-providers"] as const;
+export const scimTokensQueryKey = (organizationId: string) => ["enterprise", organizationId, "scim-tokens"] as const;
+export const mfaFactorsQueryKey = ["identity", "mfa-factors"] as const;
+export const documentGovernanceQueryKey = (identity: DocumentIdentity) => ["governance", "document", identity.organizationId, identity.spaceId, identity.notebookId, identity.documentId] as const;
+export const documentEmbedsQueryKey = (identity: DocumentIdentity) => ["governance", "embeds", identity.organizationId, identity.spaceId, identity.notebookId, identity.documentId] as const;
+
+function documentPath(template: string, identity: DocumentIdentity): string {
+  return buildPath(template, identity);
+}
+
 export function getEnterpriseManagementAccess(signal?: AbortSignal) {
   return requestJson(
     enterpriseManagementAccessResponseSchema,
     ENTERPRISE_MANAGEMENT_ACCESS_PATH,
     { signal: signal ?? null },
   );
+}
+
+export function getMfaFactors(signal?: AbortSignal) {
+  return requestJson(mfaFactorsResponseSchema, AUTH_MFA_FACTORS_PATH, { signal: signal ?? null });
+}
+
+export async function enrollMfaFactor(request: MfaFactorRequest) {
+  return requestJson(mfaFactorEnrollmentResponseSchema, AUTH_MFA_FACTORS_PATH, { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function verifyMfaFactor(request: MfaVerifyRequest) {
+  return requestJson(mfaVerificationResponseSchema, AUTH_MFA_VERIFY_PATH, { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export function getGovernanceTemplates(organizationId: string, spaceId: string, signal?: AbortSignal) {
+  return requestJson(governanceTemplatesResponseSchema, buildPath(ORGANIZATION_SPACE_GOVERNANCE_TEMPLATES_PATH_TEMPLATE, { organizationId, spaceId }), { signal: signal ?? null });
+}
+
+export async function createGovernanceTemplate(organizationId: string, spaceId: string, request: GovernanceTemplateRequest) {
+  return requestJson(governanceTemplateSchema, buildPath(ORGANIZATION_SPACE_GOVERNANCE_TEMPLATES_PATH_TEMPLATE, { organizationId, spaceId }), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function publishGovernanceTemplate(organizationId: string, spaceId: string, templateId: string) {
+  return requestJson(governanceTemplateSchema, buildPath(ORGANIZATION_SPACE_GOVERNANCE_TEMPLATE_PUBLISH_PATH_TEMPLATE, { organizationId, spaceId, templateId }), { headers: await mutationHeaders(), method: "POST" });
+}
+
+export async function createDocumentFromGovernanceTemplate(
+  organizationId: string,
+  spaceId: string,
+  templateId: string,
+  request: GovernanceTemplateDocumentRequest,
+) {
+  return requestJson(
+    documentIdentitySchema,
+    buildPath(ORGANIZATION_SPACE_GOVERNANCE_TEMPLATE_DOCUMENTS_PATH_TEMPLATE, { organizationId, spaceId, templateId }),
+    { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" },
+  );
+}
+
+export function getEnterpriseApiKeys(organizationId: string, signal?: AbortSignal) {
+  return requestJson(enterpriseApiKeysResponseSchema, organizationPath(ORGANIZATION_API_KEYS_PATH_TEMPLATE, organizationId), { signal: signal ?? null });
+}
+
+export async function createEnterpriseApiKey(organizationId: string, request: EnterpriseApiKeyRequest) {
+  return requestJson(enterpriseApiKeyResponseSchema, organizationPath(ORGANIZATION_API_KEYS_PATH_TEMPLATE, organizationId), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function revokeEnterpriseApiKey(organizationId: string, apiKeyId: string) {
+  return requestNoContent(buildPath(ORGANIZATION_API_KEY_PATH_TEMPLATE, { organizationId, apiKeyId }), { headers: await mutationHeaders(), method: "DELETE" });
+}
+
+export function getSamlProviders(organizationId: string, signal?: AbortSignal) {
+  return requestJson(samlProvidersResponseSchema, organizationPath(ORGANIZATION_SAML_PROVIDERS_PATH_TEMPLATE, organizationId), { signal: signal ?? null });
+}
+
+export async function createSamlProvider(organizationId: string, request: { name: string; entityId: string; ssoUrl: string; certificatePem: string }) {
+  return requestJson(samlProviderMutationResponseSchema, organizationPath(ORGANIZATION_SAML_PROVIDERS_PATH_TEMPLATE, organizationId), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function setSamlProviderStatus(organizationId: string, providerId: string, status: "active" | "disabled") {
+  return requestJson(samlProviderMutationResponseSchema, buildPath(ORGANIZATION_SAML_PROVIDER_PATH_TEMPLATE, { organizationId, providerId }), { body: JSON.stringify({ status }), headers: await mutationHeaders(undefined, true), method: "PATCH" });
+}
+
+export function getScimTokens(organizationId: string, signal?: AbortSignal) {
+  return requestJson(scimTokensResponseSchema, organizationPath(ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE, organizationId), { signal: signal ?? null });
+}
+
+export async function createScimToken(organizationId: string, expiresAt?: string) {
+  return requestJson(scimTokenResponseSchema, organizationPath(ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE, organizationId), { body: JSON.stringify(expiresAt === undefined ? {} : { expiresAt }), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function revokeScimToken(organizationId: string, tokenId: string) {
+  return requestNoContent(buildPath(ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE, { organizationId, tokenId }), { headers: await mutationHeaders(), method: "DELETE" });
+}
+
+export async function getPersonalSpace(organizationId: string) {
+  return requestJson(personalSpaceResponseSchema, organizationPath(ORGANIZATION_PERSONAL_SPACE_PATH_TEMPLATE, organizationId), { headers: await mutationHeaders(), method: "POST" });
+}
+
+export async function searchAuthorizedSpaces(organizationId: string, request: { query: string; spaceIds: string[] }, signal?: AbortSignal) {
+  return requestJson(governanceSearchResponseSchema, organizationPath(ORGANIZATION_GOVERNANCE_SEARCH_PATH_TEMPLATE, organizationId), { body: JSON.stringify(request), headers: await mutationHeaders(signal, true), method: "POST", signal: signal ?? null });
+}
+
+export function getDocumentGovernance(identity: DocumentIdentity, signal?: AbortSignal) {
+  return requestJson(documentGovernanceSchema, documentPath(DOCUMENT_GOVERNANCE_PATH_TEMPLATE, identity), { signal: signal ?? null });
+}
+
+export async function transitionDocumentGovernance(identity: DocumentIdentity, request: GovernanceTransitionRequest) {
+  return requestJson(documentGovernanceSchema, documentPath(DOCUMENT_GOVERNANCE_TRANSITION_PATH_TEMPLATE, identity), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
+}
+
+export async function setDocumentClassification(identity: DocumentIdentity, request: GovernanceClassificationRequest) {
+  return requestJson(documentGovernanceSchema, documentPath(DOCUMENT_GOVERNANCE_CLASSIFICATION_PATH_TEMPLATE, identity), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "PUT" });
+}
+
+export async function setDocumentLegalHold(identity: DocumentIdentity, request: GovernanceLegalHoldRequest) {
+  return requestJson(documentGovernanceSchema, documentPath(DOCUMENT_GOVERNANCE_LEGAL_HOLD_PATH_TEMPLATE, identity), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "PUT" });
+}
+
+export function getDocumentApprovals(identity: DocumentIdentity, signal?: AbortSignal) {
+  return requestJson(governanceApprovalsResponseSchema, documentPath(DOCUMENT_GOVERNANCE_APPROVALS_PATH_TEMPLATE, identity), { signal: signal ?? null });
+}
+
+export function getDocumentEmbeds(identity: DocumentIdentity, signal?: AbortSignal) {
+  return requestJson(governanceEmbeddedObjectsResponseSchema, documentPath(DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE, identity), { signal: signal ?? null });
+}
+
+export async function upsertDocumentEmbed(identity: DocumentIdentity, request: GovernanceEmbeddedObjectRequest) {
+  return requestJson(governanceEmbeddedObjectSchema, documentPath(DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE, identity), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "PUT" });
+}
+
+export async function askDocumentAi(identity: DocumentIdentity, request: AiChatRequest) {
+  return requestJson(aiChatResponseSchema, documentPath(DOCUMENT_AI_CHAT_PATH_TEMPLATE, identity), { body: JSON.stringify(request), headers: await mutationHeaders(undefined, true), method: "POST" });
 }
 
 export function getOrganizationMembers(
@@ -918,5 +1107,29 @@ export function getSpaceObservability(
       spaceId,
     ),
     { signal: signal ?? null },
+  );
+}
+
+export function getGovernanceDashboard(organizationId: string, signal?: AbortSignal) {
+  return requestJson(
+    governanceDashboardSchema,
+    organizationPath(ORGANIZATION_GOVERNANCE_DASHBOARD_PATH_TEMPLATE, organizationId),
+    { signal: signal ?? null },
+  );
+}
+
+export function getGovernancePolicy(organizationId: string, spaceId: string, signal?: AbortSignal) {
+  return requestJson(
+    governancePolicyResponseSchema,
+    spacePath(ORGANIZATION_SPACE_GOVERNANCE_POLICY_PATH_TEMPLATE, organizationId, spaceId),
+    { signal: signal ?? null },
+  );
+}
+
+export async function updateGovernancePolicy(organizationId: string, spaceId: string, value: GovernancePolicy) {
+  return requestJson(
+    governancePolicyResponseSchema,
+    spacePath(ORGANIZATION_SPACE_GOVERNANCE_POLICY_PATH_TEMPLATE, organizationId, spaceId),
+    { body: JSON.stringify(value), headers: await mutationHeaders(undefined, true), method: "PUT" },
   );
 }

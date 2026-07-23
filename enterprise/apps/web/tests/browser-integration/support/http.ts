@@ -1,6 +1,6 @@
 import type { Route } from "@playwright/test";
 
-/** 为未覆盖协作交互的浏览器 fixture 提供合法空投影，保持 L2 HTTP 边界可达。 */
+/** 为未覆盖协作或治理交互的浏览器 fixture 提供合法空投影，保持 HTTP 边界可达。 */
 export async function fulfillEmptyCollaborationRoute(route: Route): Promise<boolean> {
   const request = route.request();
   if (request.method() !== "GET") {
@@ -37,6 +37,33 @@ export async function fulfillEmptyCollaborationRoute(route: Route): Promise<bool
   }
   if (identity !== null && path.endsWith("/access-policy")) {
     await fulfillJson(route, { ...identity, grants: [], mode: "inherit" });
+    return true;
+  }
+  if (identity !== null && path.endsWith("/governance")) {
+    // 治理面板随文档挂载；未覆盖治理交互的用例使用合法的只读空投影。
+    await fulfillJson(route, {
+      classification: "internal",
+      document: identity,
+      legalHold: false,
+      lifecycle: "draft",
+      verification: "needs-review",
+    });
+    return true;
+  }
+  if (identity !== null && path.endsWith("/governance/approvals")) {
+    await fulfillJson(route, { approvals: [] });
+    return true;
+  }
+  if (identity !== null && path.endsWith("/governance/embeds")) {
+    await fulfillJson(route, { embeds: [] });
+    return true;
+  }
+  if (identity !== null && path.endsWith("/collaboration")) {
+    await fulfillJson(route, {
+      ...identity,
+      restrictedEncryptedEnabled: false,
+      standardEnabled: false,
+    });
     return true;
   }
   if (identity !== null && path.endsWith("/history")) {

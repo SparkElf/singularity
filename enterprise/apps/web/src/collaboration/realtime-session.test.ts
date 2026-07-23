@@ -25,6 +25,7 @@ class TestWebSocket {
 
   readonly sent: string[] = [];
   readonly url: string;
+  readonly closeCalls: Array<{ readonly code: number | undefined; readonly reason: string | undefined }> = [];
   readyState = TestWebSocket.CONNECTING;
   private readonly listeners = new Map<string, Set<EventListener>>();
 
@@ -46,7 +47,8 @@ class TestWebSocket {
     this.sent.push(data);
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
+    this.closeCalls.push({ code, reason });
     this.readyState = TestWebSocket.CLOSED;
   }
 
@@ -204,5 +206,21 @@ describe("realtime collaboration session lifecycle", () => {
     await expect(resultPromise).rejects.toThrow("interrupted by disconnect");
     expect(useRealtimeSessionStore.getState().pendingOperationIds).toEqual([]);
     client.close();
+  });
+
+  it("settles a terminal server error without reporting a protocol error", () => {
+    const { client, socket } = connectReady();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      socket.emitMessage({ code: "collaboration-disabled", type: "error" });
+
+      expect(useRealtimeSessionStore.getState().state).toBe("closed");
+      expect(useRealtimeSessionStore.getState().lastErrorCode).toBe("collaboration-disabled");
+      expect(socket.closeCalls.at(-1)?.code).toBe(1000);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+      client.close();
+    }
   });
 });

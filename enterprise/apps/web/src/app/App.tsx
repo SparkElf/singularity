@@ -6,6 +6,7 @@ import { AuditPage } from "@/enterprise/AuditPage.tsx";
 import { BackupsPage } from "@/enterprise/BackupsPage.tsx";
 import { EnterpriseAdminLayout } from "@/enterprise/EnterpriseAdminLayout.tsx";
 import { GroupsPage } from "@/enterprise/GroupsPage.tsx";
+import { GovernancePage } from "@/enterprise/GovernancePage.tsx";
 import { InvitationAcceptPage } from "@/enterprise/InvitationAcceptPage.tsx";
 import { MembersPage } from "@/enterprise/MembersPage.tsx";
 import { OidcPage } from "@/enterprise/OidcPage.tsx";
@@ -52,6 +53,7 @@ export function App({
         <Route index element={<Navigate replace to="members" />} />
         <Route path="members" element={<MembersPage />} />
         <Route path="groups" element={<GroupsPage />} />
+        <Route path="governance" element={<GovernancePage />} />
         <Route path="spaces" element={<SpacesManagementPage />} />
         <Route path="oidc" element={<OidcPage />} />
         <Route path="audit" element={<AuditPage scope="organization" />} />

@@ -33,6 +33,7 @@ import type {
   OidcClientSecretResolver,
   OidcHttpTransport,
 } from "./identity/oidc.service.js";
+import type { AiProvider } from "./governance/ai-provider.js";
 import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
@@ -56,6 +57,7 @@ export interface CreateApiApplicationOptions {
   oidcClientSecretBindings?: string | undefined;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
+  aiProvider?: AiProvider;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
 }
@@ -107,6 +109,7 @@ export async function createApiApplication(
       ...(options.oidcHttpTransport === undefined
         ? {}
         : { oidcHttpTransport: options.oidcHttpTransport }),
+      ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
     }),
     adapter,
     {

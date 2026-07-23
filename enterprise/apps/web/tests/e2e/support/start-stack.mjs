@@ -19,9 +19,15 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const enterpriseRoot = resolve(webRoot, "../..");
-const repositoryRoot = resolve(enterpriseRoot, "..");
+const defaultWebRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const defaultEnterpriseRoot = resolve(defaultWebRoot, "../..");
+const defaultRepositoryRoot = resolve(defaultEnterpriseRoot, "..");
+const artifactRoot = resolve(
+  process.env.SINGULARITY_E2E_ARTIFACT_ROOT ?? defaultRepositoryRoot,
+);
+const webRoot = join(artifactRoot, "enterprise/apps/web");
+const enterpriseRoot = join(artifactRoot, "enterprise");
+const repositoryRoot = artifactRoot;
 const apiRoot = join(enterpriseRoot, "apps/api");
 const appRoot = join(repositoryRoot, "app");
 const databaseRoot = join(enterpriseRoot, "packages/database");
@@ -34,6 +40,8 @@ const workspaceRoot = join(runtimeRoot, "workspace");
 const kernelBinary = join(runtimeRoot, "singularity-kernel");
 const schema = process.env.SINGULARITY_E2E_SCHEMA ?? "";
 const stateFile = process.env.SINGULARITY_E2E_STATE_FILE;
+const reuseSchema = process.env.SINGULARITY_E2E_REUSE_SCHEMA === "1";
+const preserveSchema = process.env.SINGULARITY_E2E_PRESERVE_SCHEMA === "1";
 const apiPort = Number(process.env.SINGULARITY_E2E_API_PORT ?? "3012");
 const kernelPort = Number(process.env.SINGULARITY_E2E_KERNEL_PORT ?? "6807");
 const restorePortFirst = Number(
@@ -47,12 +55,13 @@ const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const webOrigin = `https://127.0.0.1:${webPort}`;
 const deploymentHandle = "p5-e2e-kernel";
 const serviceKeyId = "p5-e2e";
+const identitySuffix = process.env.SINGULARITY_E2E_IDENTITY_SUFFIX ?? "p5";
 const editorCredentials = {
-  loginIdentifier: "p5-editor",
+  loginIdentifier: `${identitySuffix}-editor`,
   password: "P5-editor-password-2026",
 };
 const viewerCredentials = {
-  loginIdentifier: "p5-viewer",
+  loginIdentifier: `${identitySuffix}-viewer`,
   password: "P5-viewer-password-2026",
 };
 const organizationName = "奇点 P5 企业";
@@ -218,7 +227,10 @@ async function runCommand(command, args, options = {}) {
         ));
         return;
       }
-      if (code === 0) {
+      if (
+        code === 0 ||
+        (options.acceptedExitCodes ?? []).includes(code)
+      ) {
         resolveCommand({ stderr, stdout });
         return;
       }
@@ -265,6 +277,8 @@ function psqlConnection(databaseUrl) {
   const url = new URL(databaseUrl);
   const password = decodeURIComponent(url.password);
   url.password = "";
+  // Prisma 用 query 参数选择 schema，libpq 不识别该参数；SQL 查询会显式限定受控 schema。
+  url.searchParams.delete("schema");
   const environment = { ...process.env };
   delete environment.DATABASE_URL;
   delete environment.SINGULARITY_TEST_DATABASE_URL;
@@ -277,27 +291,126 @@ function psqlConnection(databaseUrl) {
   };
 }
 
+// 将夹具身份约束转为 SQL 字符串字面量；只做单引号转义，不改变查询语义。
+function sqlStringLiteral(value) {
+  if (typeof value !== "string") {
+    throw new Error("P5 E2E SQL identity value must be text");
+  }
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+// 读取回滚复用 schema 中的既有身份；查询条件必须来自本阶段显式命令，不从响应顺序推断空间归属。
+async function readPsqlRows(databaseUrl, query) {
+  const connection = psqlConnection(databaseUrl);
+  const arguments_ = [
+    "--no-psqlrc",
+    "--set=ON_ERROR_STOP=1",
+    "--tuples-only",
+    "--no-align",
+  ];
+  arguments_.push(connection.url, "--command", query);
+  const { stdout } = await runCommand("psql", arguments_, {
+    env: connection.environment,
+  });
+  return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+// 按稳定的组织名、空间名和 owner 关系恢复三段控制面 UUID，拒绝多行或缺失结果。
+async function readExistingInstallation(databaseUrl) {
+  const rows = await readPsqlRows(
+    databaseUrl,
+    `SELECT users."id" || '|' || organizations."id" || '|' || spaces."id"
+       FROM "${schema}"."users" AS users
+       INNER JOIN "${schema}"."organization_memberships" AS organization_memberships
+         ON organization_memberships."user_id" = users."id"
+       INNER JOIN "${schema}"."organizations" AS organizations
+         ON organizations."id" = organization_memberships."organization_id"
+       INNER JOIN "${schema}"."spaces" AS spaces
+         ON spaces."organization_id" = organizations."id"
+       INNER JOIN "${schema}"."space_memberships" AS space_memberships
+         ON space_memberships."space_id" = spaces."id"
+        AND space_memberships."user_id" = users."id"
+      WHERE organizations."name" = ${sqlStringLiteral(organizationName)}
+        AND spaces."name" = ${sqlStringLiteral(spaceName)}
+        AND users."status" = 'active'
+        AND organizations."status" = 'active'
+        AND spaces."status" = 'active'
+        AND organization_memberships."status" = 'active'
+        AND organization_memberships."role" = 'owner'
+        AND space_memberships."status" = 'active';`,
+  );
+  const identity = rows[0]?.split("|");
+  if (
+    rows.length !== 1 ||
+    identity?.length !== 3 ||
+    identity.some((value) => value.length === 0)
+  ) {
+    throw new Error("P5 E2E reused installation identity is unavailable");
+  }
+  return {
+    organizationId: identity[1],
+    spaceId: identity[2],
+    userId: identity[0],
+  };
+}
+
+// 按组织边界恢复复用阶段的 viewer UUID，避免把其他组织的同名身份带入切换。
+async function readExistingUserId(databaseUrl, organizationId, loginIdentifier) {
+  const rows = await readPsqlRows(
+    databaseUrl,
+    `SELECT users."id"
+       FROM "${schema}"."users" AS users
+       INNER JOIN "${schema}"."organization_memberships" AS memberships
+         ON memberships."user_id" = users."id"
+      WHERE users."login_identifier" = ${sqlStringLiteral(loginIdentifier)}
+        AND memberships."organization_id" = ${sqlStringLiteral(organizationId)}::uuid
+        AND users."status" = 'active'
+        AND memberships."status" = 'active';`,
+  );
+  if (rows.length !== 1 || rows[0].length === 0) {
+    throw new Error("P5 E2E reused viewer identity is unavailable");
+  }
+  return rows[0];
+}
+
 async function resetAndMigrateDatabase(baseDatabaseUrl, databaseUrl) {
   const connection = psqlConnection(baseDatabaseUrl);
-  await runCommand(
-    "psql",
-    [
-      "--no-psqlrc",
-      "--set=ON_ERROR_STOP=1",
-      connection.url,
-      "--command",
-      `DROP SCHEMA IF EXISTS "${schema}" CASCADE; CREATE SCHEMA "${schema}";`,
-    ],
-    { env: connection.environment },
-  );
-  await runCommand(
-    "pnpm",
-    ["exec", "prisma", "migrate", "deploy", "--config", "prisma.config.ts"],
-    {
-      cwd: databaseRoot,
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-    },
-  );
+  if (reuseSchema) {
+    // 回滚切换保留同一控制面 schema；候选 supervisor 已完成清理，批准版本只需继续迁移。
+    await runCommand(
+      "psql",
+      [
+        "--no-psqlrc",
+        "--set=ON_ERROR_STOP=1",
+        connection.url,
+        "--command",
+        `CREATE SCHEMA IF NOT EXISTS "${schema}";`,
+      ],
+      { env: connection.environment },
+    );
+  } else {
+    await runCommand(
+      "psql",
+      [
+        "--no-psqlrc",
+        "--set=ON_ERROR_STOP=1",
+        connection.url,
+        "--command",
+        `DROP SCHEMA IF EXISTS "${schema}" CASCADE; CREATE SCHEMA "${schema}";`,
+      ],
+      { env: connection.environment },
+    );
+  }
+  if (!reuseSchema) {
+    await runCommand(
+      "pnpm",
+      ["exec", "prisma", "migrate", "deploy", "--config", "prisma.config.ts"],
+      {
+        cwd: databaseRoot,
+        env: { ...process.env, DATABASE_URL: databaseUrl },
+      },
+    );
+  }
 }
 
 async function readKernelInstanceId(baseDatabaseUrl, spaceId) {
@@ -365,14 +478,39 @@ async function runAccessOperation(databaseUrl, auditKey, command) {
       SINGULARITY_AUDIT_KEY_VERSION: "p5-e2e-v1",
     },
     input: JSON.stringify(command),
+    acceptedExitCodes: reuseSchema &&
+      ["initialize", "create-user"].includes(command.operation)
+      ? [2]
+      : undefined,
   });
   const result = JSON.parse(lastOutputLine(stdout));
+  const reusedInitialization = reuseSchema &&
+    command.operation === "initialize" &&
+    result?.outcome === "already-initialized";
+  const reusedUser = reuseSchema &&
+    command.operation === "create-user" &&
+    result?.outcome === "conflict";
   if (
     result === null ||
     typeof result !== "object" ||
-    !["created", "updated", "revoked"].includes(result.outcome)
+    (!["created", "updated", "revoked"].includes(result.outcome) &&
+      !reusedInitialization &&
+      !reusedUser)
   ) {
     throw new Error(`P5 E2E access operation ${command.operation} was rejected`);
+  }
+  if (reusedInitialization) {
+    return { ...result, ...await readExistingInstallation(databaseUrl) };
+  }
+  if (reusedUser) {
+    return {
+      ...result,
+      userId: await readExistingUserId(
+        databaseUrl,
+        command.organizationId,
+        command.loginIdentifier,
+      ),
+    };
   }
   return result;
 }
@@ -1153,7 +1291,7 @@ async function performShutdown(trigger) {
   await cleanup("P5 E2E source Kernel cleanup failed", () =>
     stopProcess(stack?.kernelProcess));
 
-  if (stack?.baseDatabaseUrl !== undefined) {
+  if (stack?.baseDatabaseUrl !== undefined && !preserveSchema) {
     await cleanup("P5 E2E schema cleanup failed", async () => {
       const connection = psqlConnection(stack.baseDatabaseUrl);
       await runCommand(

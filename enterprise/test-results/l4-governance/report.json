@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-07-23T08:01:32.121Z",
+  "results": [
+    {
+      "code": 0,
+      "durationMilliseconds": 3395,
+      "label": "Architecture and contract boundary",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 3926,
+      "label": "Contracts contract runner",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 3047,
+      "label": "Prisma schema and database typecheck",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 8025,
+      "label": "Nest API typecheck",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 4198,
+      "label": "Worker typecheck",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 10213,
+      "label": "React web typecheck",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 37827,
+      "label": "Prisma governance integration",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 126197,
+      "label": "Nest governance HTTP and unit",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 8309,
+      "label": "Governance worker task integration",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 41835,
+      "label": "React governance components",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 252281,
+      "label": "Browser governance paths",
+      "signal": null
+    },
+    {
+      "code": 0,
+      "durationMilliseconds": 273445,
+      "label": "L3 production regression aggregate",
+      "signal": null
+    }
+  ],
+  "status": "automated-passed"
+}

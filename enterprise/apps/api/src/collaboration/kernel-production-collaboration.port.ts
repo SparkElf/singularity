@@ -23,6 +23,7 @@ import type {
   KernelCollaborationPort,
 } from "./realtime-coordinator.js";
 import { CollaborationAdmissionError } from "./realtime-coordinator.js";
+import { collaborationErrorContext } from "./error-context.js";
 
 const COLLABORATION_PATH = "/internal/enterprise/collaboration";
 const MAX_RESPONSE_BYTES = 1 * 1_024 * 1_024;
@@ -282,7 +283,7 @@ export class KernelProductionCollaborationPort implements KernelCollaborationPor
       });
     } catch (error) {
       this.#logger.error({
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { name: "UnknownError", message: String(error), stack: undefined },
+        error: collaborationErrorContext(error),
         event: "collaboration.kernel-request",
         outcome: "failed",
         requestId,

@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-07-23T05:29:45.000Z",
+  "status": "pending",
+  "scope": "target-deployment-supervisor",
+  "reason": "真实部署 supervisor 的候选/批准制品回滚尚未执行；本地 supervisor 演练不能替代目标部署证据。",
+  "requiredCommand": "pnpm verify:l3-target-supervisor",
+  "requiredInput": "enterprise/test-results/l3-release-certification/target-supervisor-evidence.json",
+  "releaseDecision": "blocked-until-target-supervisor-evidence"
+}

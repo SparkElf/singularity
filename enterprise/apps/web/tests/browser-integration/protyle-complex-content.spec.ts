@@ -733,6 +733,7 @@ test.describe("Protyle complex-content identity integration", () => {
     expect(JSON.stringify(transaction.body)).toContain("单元格已更新");
 
     expect(boundary.unexpectedRequests).toEqual([]);
+    await expect.poll(() => diagnostics.pendingRequests.size).toBe(0);
     expectBrowserHealthy(diagnostics, MAX_REQUEST_DURATION_MS);
   });
 

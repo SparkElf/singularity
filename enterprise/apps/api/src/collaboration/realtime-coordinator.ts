@@ -23,6 +23,7 @@ import { DocumentAccessPolicyService } from "../document-access/document-access.
 import { CLOCK } from "../tokens.js";
 import type { Clock } from "../identity/clock.js";
 import { CollaborationOperationDiscovery } from "./realtime-handler-discovery.js";
+import { collaborationErrorContext as logError } from "./error-context.js";
 
 export const KERNEL_COLLABORATION_PORT = Symbol("KERNEL_COLLABORATION_PORT");
 export const COLLABORATION_FEATURE_GATE = Symbol("COLLABORATION_FEATURE_GATE");
@@ -174,13 +175,6 @@ function sameIdentity(left: DocumentIdentity, right: DocumentIdentity): boolean 
   return identityKey(left) === identityKey(right);
 }
 
-function logError(error: unknown): { readonly name: string; readonly message: string; readonly stack: string | undefined } {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
-  }
-  return { name: "UnknownError", message: String(error), stack: undefined };
-}
-
 /** 去除只供单副本 TTL 清理使用的内部字段，避免 presence 把协调器状态泄露给客户端。 */
 function publicPresence(entry: PresenceEntry): CollaborationPresence {
   return {
@@ -202,6 +196,7 @@ export class CollaborationCoordinator {
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #pendingJoins = new Map<string, PendingJoin>();
   readonly #presence = new Map<string, PresenceEntry>();
+  readonly #pendingPersistence = new Set<Promise<void>>();
 
   constructor(
     private readonly access: DocumentAccessPolicyService,
@@ -418,7 +413,7 @@ export class CollaborationCoordinator {
       ) {
         const rejected = await rejectWithOperationAudit(error.code);
         session.state = "closed";
-        void this.featureGate.closeSession({
+        this.#trackPersistence(this.featureGate.closeSession({
           clientId: session.clientId,
           connectionId: session.connectionId,
           requestId: session.requestId,
@@ -431,7 +426,7 @@ export class CollaborationCoordinator {
             event: "collaboration.session",
             outcome: "encrypted-admission-close-failed",
           });
-        });
+        }));
         return rejected;
       }
       this.#logger.error({
@@ -518,7 +513,7 @@ export class CollaborationCoordinator {
       return null;
     }
     session.state = "revoked";
-    void this.featureGate.closeSession({
+    this.#trackPersistence(this.featureGate.closeSession({
       clientId: session.clientId,
       connectionId: session.connectionId,
       requestId: requestId ?? session.requestId,
@@ -526,7 +521,7 @@ export class CollaborationCoordinator {
       status: "revoked",
     }).catch((error: unknown) => {
       this.#logger.error({ ...logError(error), clientId: session.clientId, event: "collaboration.session", outcome: "revoke-persist-failed" });
-    });
+    }));
     this.#presence.delete(`${identityKey(session.identity)}:${session.clientId}`);
     // 撤权提交后立即从活跃表删除，迟到的 submit/resume/presence 只能命中 session-not-ready。
     this.#sessions.delete(session.clientId);
@@ -538,23 +533,38 @@ export class CollaborationCoordinator {
     });
   }
 
-  close(clientId: string, connectionId: string): void {
+  /** 关闭连接并等待控制面状态落盘，供 API shutdown 证明没有 ready session 残留。 */
+  async close(clientId: string, connectionId: string): Promise<void> {
     const session = this.#sessions.get(clientId);
     if (session === undefined || session.connectionId !== connectionId) {
       return;
     }
     session.state = "closed";
-    void this.featureGate.closeSession({
-      clientId: session.clientId,
-      connectionId: session.connectionId,
-      requestId: session.requestId,
-      sessionGeneration: session.sessionGeneration,
-      status: "closed",
-    }).catch((error: unknown) => {
-      this.#logger.error({ ...logError(error), clientId, event: "collaboration.session", outcome: "close-persist-failed" });
-    });
     this.#presence.delete(`${identityKey(session.identity)}:${clientId}`);
+    // 先摘除活跃表，迟到的 submit/resume/presence 立即失败；数据库投影随后异步收口。
     this.#sessions.delete(clientId);
+    try {
+      await this.featureGate.closeSession({
+        clientId: session.clientId,
+        connectionId: session.connectionId,
+        requestId: session.requestId,
+        sessionGeneration: session.sessionGeneration,
+        status: "closed",
+      });
+    } catch (error) {
+      this.#logger.error({ ...logError(error), clientId, event: "collaboration.session", outcome: "close-persist-failed" });
+    }
+  }
+
+  /** 等待撤权等异步投影完成，避免应用退出先断数据库再丢失 session close。 */
+  async flushPersistence(): Promise<void> {
+    await Promise.all([...this.#pendingPersistence]);
+  }
+
+  /** 登记撤权等不阻塞客户端响应的控制面写入，由 shutdown 统一等待其完成。 */
+  #trackPersistence(operation: Promise<void>): void {
+    this.#pendingPersistence.add(operation);
+    void operation.finally(() => this.#pendingPersistence.delete(operation));
   }
 
   #rejected(

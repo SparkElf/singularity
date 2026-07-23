@@ -27,6 +27,7 @@ const ORGANIZATION_ADMIN_CAPABILITIES = [
   "groups",
   "spaces",
   "audit",
+  "governance",
 ] as const satisfies readonly OrganizationManagementCapability[];
 const ORGANIZATION_OWNER_CAPABILITIES = [
   ...ORGANIZATION_ADMIN_CAPABILITIES,
@@ -39,6 +40,7 @@ const SPACE_ADMIN_CAPABILITIES = [
   "audit",
   "backups",
   "observability",
+  "governance",
 ] as const satisfies readonly SpaceManagementCapability[];
 const INVITATION_DIGEST_DOMAIN = Buffer.from(
   "singularity.organization-invitation.v1",
@@ -772,6 +774,53 @@ export class OrganizationManagementService {
       throw forbidden();
     }
     return membership.role;
+  }
+
+  /** 校验操作者仍是活跃组织成员；个人空间等成员级能力只能复用这个组织边界。 */
+  async requireMember(actorUserId: string, organizationId: string): Promise<void> {
+    const membership = await this.database.client.organizationMembership.findFirst({
+      where: {
+        organizationId,
+        status: "active",
+        userId: actorUserId,
+        user: { status: "active" },
+        organization: { status: "active" },
+      },
+      select: { id: true },
+    });
+    if (membership === null) {
+      throw notFound();
+    }
+  }
+
+  /** 在已有事务中锁定组织、用户和成员关系，保证成员校验与后续空间操作观察同一授权事实。 */
+  async requireMemberInTransaction(
+    transaction: Transaction,
+    actorUserId: string,
+    organizationId: string,
+  ): Promise<void> {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "organizations" WHERE "id" = ${organizationId} FOR UPDATE`,
+    );
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${actorUserId} FOR UPDATE`,
+    );
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "organization_memberships" WHERE "organization_id" = ${organizationId} AND "user_id" = ${actorUserId} FOR UPDATE`,
+    );
+    const membership = await transaction.organizationMembership.findFirst({
+      where: {
+        organizationId,
+        status: "active",
+        userId: actorUserId,
+        user: { status: "active" },
+        organization: { status: "active" },
+      },
+      select: { id: true },
+    });
+    if (membership === null) {
+      throw notFound();
+    }
   }
 
   /** 在已有事务中锁定并校验组织管理员，避免权限检查与写入之间出现竞态。 */

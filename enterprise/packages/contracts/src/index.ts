@@ -7,6 +7,7 @@ export * from "./document-identity.js";
 export * from "./discovery.js";
 export * from "./identity.js";
 export * from "./groups.js";
+export * from "./governance.js";
 export * from "./history.js";
 export * from "./observability.js";
 export * from "./openapi.js";

@@ -27,6 +27,7 @@ const DIRECTORY_NOTEBOOKS_PATH =
 const DIRECTORY_DOCUMENTS_PATH =
   "/internal/enterprise/directory/documents";
 const DOCUMENT_EXISTS_PATH = "/api/block/checkBlockExist";
+const DOCUMENT_CREATE_PATH = "/api/filetree/createDocWithMd";
 const MAX_DIRECTORY_RESPONSE_BYTES = 1_024 * 1_024;
 
 interface DirectoryRequestContext {
@@ -35,6 +36,10 @@ interface DirectoryRequestContext {
   readonly requestId: string;
   readonly signal: AbortSignal;
   readonly spaceId: string;
+}
+
+export interface CreatedKernelDocument {
+  readonly documentId: string;
 }
 
 interface DirectoryLogContext {
@@ -122,6 +127,8 @@ export class ContentDirectoryService {
         contentIdentity: {
           documentId: input.documentId,
           notebookId: input.notebookId,
+          organizationId: input.organizationId,
+          spaceId: input.spaceId,
         },
         deployment: authorized.deployment,
         headers: { accept: "application/json", "content-type": "application/json" },
@@ -153,6 +160,66 @@ export class ContentDirectoryService {
     if (!value.data) {
       throw notFound();
     }
+  }
+
+  /**
+   * 通过 Kernel 原生 createDocWithMd 创建正文，并把模板应用所需的四段身份固定在同一次请求中。
+   * 创建成功只返回 Kernel 生成的 documentId；治理元数据由上层在 Kernel 成功后提交。
+   */
+  async createDocument(
+    input: DirectoryRequestContext & {
+      readonly markdown: string;
+      readonly notebookId: string;
+      readonly parentDocumentId?: string;
+      readonly title: string;
+      readonly documentId: string;
+    },
+  ): Promise<CreatedKernelDocument> {
+    const authorized = await this.access.authorizeHttp({
+      action: "write",
+      organizationId: input.organizationId,
+      requestId: input.requestId,
+      spaceId: input.spaceId,
+      userId: input.actorUserId,
+    });
+    const hPath = `/${input.title}.sy`;
+    let response: KernelPrivateResponse;
+    try {
+      response = await this.kernel.request({
+        body: JSON.stringify({
+          markdown: input.markdown,
+          notebook: input.notebookId,
+          parentID: input.parentDocumentId ?? "",
+          path: hPath,
+        }),
+        contentIdentity: {
+          documentId: input.documentId,
+          notebookId: input.notebookId,
+          organizationId: input.organizationId,
+          spaceId: input.spaceId,
+        },
+        deployment: authorized.deployment,
+        headers: { accept: "application/json", "content-type": "application/json" },
+        method: "POST",
+        path: DOCUMENT_CREATE_PATH,
+        requestId: input.requestId,
+        signal: input.signal,
+      });
+    } catch (error) {
+      throw directoryUnavailable(error);
+    }
+    if (response.status !== 200 || !jsonContentType(response.message)) {
+      response.message.destroy();
+      throw directoryUnavailable(new Error(`Kernel document creation returned HTTP ${response.status}`));
+    }
+    const value = await readDirectoryJson(response.message);
+    if (typeof value !== "object" || value === null || !("code" in value) || value.code !== 0 || !("data" in value) || typeof value.data !== "string") {
+      throw directoryUnavailable(new Error("Kernel document creation response is invalid"));
+    }
+    if (value.data !== input.documentId) {
+      throw directoryUnavailable(new Error("Kernel document creation returned an unexpected document identity"));
+    }
+    return { documentId: value.data };
   }
 
   /** 获取当前授权空间的可见笔记本，不把锁定库或文档身份下沉给浏览器。 */
