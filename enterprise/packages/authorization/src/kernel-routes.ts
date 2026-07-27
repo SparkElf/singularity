@@ -314,6 +314,15 @@ export const kernelRoutePolicies: readonly KernelRoutePolicy[] = Object.freeze([
   {
     action: "read",
     contentMode: "json",
+    identity: "full-content",
+    method: "GET",
+    path: "/internal/enterprise/discovery/document-content",
+    requestHeaders: ["accept"],
+    responseHeaders: ["cache-control", "content-type", "x-content-type-options"],
+  },
+  {
+    action: "read",
+    contentMode: "json",
     identity: "content",
     method: "POST",
     path: "/internal/enterprise/share/verify",

@@ -1162,6 +1162,8 @@ async function startStack() {
       SINGULARITY_KERNEL_RUNTIME_TLS_PROFILE: "p5-e2e",
       SINGULARITY_KERNEL_SERVICE_KEY_ID: serviceKeyId,
       SINGULARITY_KERNEL_SERVICE_PRIVATE_KEY_FILE: serviceIdentity.servicePrivateKeyFile,
+      // P5 先用固定测试身份构造内容链；生产 API 默认在首次部署自动生成 admin。
+      SINGULARITY_INITIAL_ADMIN_BOOTSTRAP: "0",
       SINGULARITY_PUBLIC_ORIGIN: webOrigin,
     },
     label: "Nest API",

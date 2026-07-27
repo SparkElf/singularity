@@ -1,6 +1,6 @@
 ---
 title: "Protyle浏览器宿主与Vite抽取方案"
-description: "定义奇点React应用与思源Protyle之间的运行时、传输、插件和生命周期边界"
+description: "定义奇点企业React模块与思源Protyle之间的运行时、传输、插件和生命周期边界"
 author: "Codex"
 date: "2026-07-13"
 version: "2.6.5"
@@ -76,7 +76,7 @@ tags: ["architecture", "protyle", "react", "vite", "testing"]
 
 ## 1. 目标与范围
 
-本方案细化[ADR-002](../adr/0002-react-shell-protyle-editor.md)，让React 19与Vite 8可以挂载真实Protyle，同时保留块编辑、块引用、属性视图、快捷键和内容插件语义。
+本方案细化[ADR-035](../adr/0035-native-siyuan-workspace-react-enterprise-mount.md)，让企业React模块使用React 19与Vite 8挂载真实Protyle，同时保留块编辑、块引用、属性视图、快捷键和内容插件语义。思源原生 `App/layout/Dock/Tab/Protyle` 仍拥有主工作区；本方案不授权React重建原生工作区。
 
 本批不重写编辑器，不引入Electron、原生移动端、本地内容或离线同步，也不建立旧Webpack Web入口与Vite入口的双运行路径。
 
@@ -132,7 +132,7 @@ tags: ["architecture", "protyle", "react", "vite", "testing"]
 ## 3. 目标模块边界
 
 ```text
-React workspace
+Enterprise React module (only for enterprise routes/panels)
   | authorized SpaceRuntimeBootstrap
   v
 Space route composition root

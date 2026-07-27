@@ -797,7 +797,7 @@ export function ContentDirectory({
   return (
     <aside
       aria-busy={status === "loading"}
-      className="flex min-h-0 w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground max-md:w-full"
+      className="flex min-h-0 w-[232px] shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground max-md:w-full"
       data-content-directory-status={status}
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-2">

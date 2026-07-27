@@ -30,6 +30,7 @@
     "@singularity/contracts": "workspace:*",
     "@singularity/database": "workspace:*",
     "@singularity/kernel-client": "workspace:*",
+    "nodemailer": "9.0.3",
     "rate-limiter-flexible": "11.2.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "@types/nodemailer": "7.0.4",
     "@types/ws": "8.18.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

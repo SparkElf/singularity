@@ -34,6 +34,30 @@ interface LoggedError {
   readonly stack?: string;
 }
 
+/** SCIM 协议错误保留标准 detail/scimType，同时沿用 API Problem 的日志和状态映射。 */
+export class ScimProblemError extends ApiProblemError {
+  constructor(
+    status: 400 | 401 | 404 | 409,
+    readonly detail: string,
+    readonly scimType?: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      status === 401
+        ? "unauthenticated"
+        : status === 404
+          ? "not-found"
+          : status === 409
+            ? "conflict"
+            : "validation-failed",
+      status,
+      undefined,
+      options,
+    );
+    this.name = "ScimProblemError";
+  }
+}
+
 /** 将异常及其 cause 链投影为可检索日志字段，同时保留原始 Error 对象和完整堆栈。 */
 function loggedErrorContext(exception: unknown): {
   readonly error: Error;
@@ -185,6 +209,16 @@ export class ApiProblemFilter implements ExceptionFilter {
     if (retryAfter !== undefined) {
       reply.header("Retry-After", Math.max(1, Math.ceil(retryAfter)));
     }
+    if (exception instanceof ScimProblemError) {
+      reply.header("Content-Type", "application/scim+json; charset=utf-8");
+      reply.send({
+        detail: exception.detail,
+        ...(exception.scimType === undefined ? {} : { scimType: exception.scimType }),
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
+        status: String(status),
+      });
+      return;
+    }
     reply.send({ code, requestId: request.id, status });
   }
 }
@@ -215,4 +249,13 @@ export function conflict(options?: ErrorOptions): ApiProblemError {
 
 export function serviceUnavailable(options?: ErrorOptions): ApiProblemError {
   return new ApiProblemError("service-unavailable", 503, undefined, options);
+}
+
+export function scimError(
+  status: 400 | 401 | 404 | 409,
+  detail: string,
+  scimType?: string,
+  options?: ErrorOptions,
+): ScimProblemError {
+  return new ScimProblemError(status, detail, scimType, options);
 }

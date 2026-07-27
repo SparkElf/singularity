@@ -5,6 +5,10 @@ import {
   sign,
   type KeyObject,
 } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { inflateRawSync } from "node:zlib";
+
+import { signXml } from "@node-saml/node-saml/lib/xml.js";
 
 import {
   AUTH_CSRF_PATH,
@@ -14,6 +18,8 @@ import {
   AUTH_OIDC_CALLBACK_PATH,
   AUTH_OIDC_PROVIDERS_PATH,
   AUTH_OIDC_START_PATH,
+  AUTH_SAML_CALLBACK_PATH,
+  AUTH_SAML_START_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
   ORGANIZATION_OIDC_PROVIDERS_PATH_TEMPLATE,
@@ -62,6 +68,15 @@ const oidcFlowCookieName = "__Host-singularity_oidc_flow";
 const oidcKeyId = "singularity-http-contract-key";
 const trustedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const forgedOidcKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const samlIdpCertificate = readFileSync(
+  new URL("./fixtures/saml-idp.crt", import.meta.url),
+  "utf8",
+);
+const samlIdpPrivateKey = readFileSync(
+  new URL("./fixtures/saml-idp.key", import.meta.url),
+  "utf8",
+);
+const samlIdpEntityId = "https://idp.example.test/entity";
 
 type OidcIdTokenMode = "valid" | "forged-signature" | "wrong-nonce";
 type OidcJwksMode = "available" | "malformed" | "unavailable";
@@ -408,6 +423,98 @@ function oidcCallbackRequest(
   });
 }
 
+/** 从 HTTP-Redirect 的压缩 AuthnRequest 提取 node-saml 生成的请求 ID。 */
+function samlRequestId(authorizationUrl: string): string {
+  const request = new URL(authorizationUrl).searchParams.get("SAMLRequest");
+  if (request === null) {
+    throw new Error("The SAML authorization URL is missing SAMLRequest");
+  }
+  const xml = inflateRawSync(Buffer.from(request, "base64")).toString("utf8");
+  const match = xml.match(/\bID="([^"]+)"/);
+  if (match?.[1] === undefined) {
+    throw new Error("The SAML AuthnRequest is missing ID");
+  }
+  return match[1];
+}
+
+/** 生成固定 IdP 签名的最小 SAML Response，供真实 ACS HTTP 链路验证使用。 */
+function signedSamlResponse(input: {
+  email: string;
+  inResponseTo: string;
+  providerId: string;
+}): string {
+  const issuedAt = new Date().toISOString();
+  const notBefore = new Date(Date.now() - 60_000).toISOString();
+  const notOnOrAfter = new Date(Date.now() + 5 * 60_000).toISOString();
+  const responseId = `_response-${randomUUID()}`;
+  const assertionId = `_assertion-${randomUUID()}`;
+  const callbackUrl = `${TEST_PUBLIC_ORIGIN}${AUTH_SAML_CALLBACK_PATH}?providerId=${encodeURIComponent(input.providerId)}`;
+  const unsignedAssertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${assertionId}" Version="2.0" IssueInstant="${issuedAt}"><saml:Issuer>${samlIdpEntityId}</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${input.email}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="${input.inResponseTo}" Recipient="${callbackUrl}" NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}" /></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}"><saml:AudienceRestriction><saml:Audience>singularity-enterprise</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="${issuedAt}" SessionIndex="_session-${randomUUID()}" /><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>${input.email}</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>`;
+  const signedAssertion = signXml(
+    unsignedAssertion,
+    '//*[local-name(.)="Assertion" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:assertion"]',
+    {
+      reference:
+        '//*[local-name(.)="Assertion" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:assertion"]',
+      action: "append",
+    },
+    {
+      privateKey: samlIdpPrivateKey,
+      publicCert: samlIdpCertificate,
+      signatureAlgorithm: "sha256",
+    },
+  );
+  const unsignedResponse = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${responseId}" Version="2.0" IssueInstant="${issuedAt}" InResponseTo="${input.inResponseTo}" Destination="${callbackUrl}"><saml:Issuer>${samlIdpEntityId}</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success" /></samlp:Status>${signedAssertion}</samlp:Response>`;
+  const signedResponse = signXml(
+    unsignedResponse,
+    '//*[local-name(.)="Response" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:protocol"]',
+    {
+      reference:
+        '//*[local-name(.)="Response" and namespace-uri(.)="urn:oasis:names:tc:SAML:2.0:protocol"]',
+      action: "append",
+    },
+    {
+      privateKey: samlIdpPrivateKey,
+      publicCert: samlIdpCertificate,
+      signatureAlgorithm: "sha256",
+    },
+  );
+  return Buffer.from(signedResponse, "utf8").toString("base64");
+}
+
+/** 修改断言中的邮箱后重新编码，构造签名失效但格式仍合法的拒绝样本。 */
+function tamperSamlResponse(encodedResponse: string, email: string): string {
+  const xml = Buffer.from(encodedResponse, "base64").toString("utf8");
+  return Buffer.from(xml.replace(email, `tampered-${email}`), "utf8").toString(
+    "base64",
+  );
+}
+
+/** 通过真实 HTTP GET 启动 SAML 登录，并返回服务端生成的 IdP 跳转响应。 */
+function samlStartRequest(baseUrl: string, providerId: string): Promise<Response> {
+  const url = new URL(AUTH_SAML_START_PATH, baseUrl);
+  url.searchParams.set("providerId", providerId);
+  return fetch(url, { headers: { Origin: TEST_PUBLIC_ORIGIN } });
+}
+
+/** 通过真实 HTTP POST 将 IdP 的 Base64 SAMLResponse 提交到 ACS 回调。 */
+function samlCallbackRequest(
+  baseUrl: string,
+  providerId: string,
+  encodedResponse: string,
+): Promise<Response> {
+  const url = new URL(AUTH_SAML_CALLBACK_PATH, baseUrl);
+  url.searchParams.set("providerId", providerId);
+  return fetch(url, {
+    body: new URLSearchParams({
+      RelayState: "saml-http-contract",
+      SAMLResponse: encodedResponse,
+    }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    method: "POST",
+  });
+}
+
 async function holdUserRowLock(
   database: DatabaseClient,
   userId: string,
@@ -573,6 +680,45 @@ describe("identity HTTP contract with PostgreSQL", () => {
       subject,
       userId,
     };
+  }
+
+  async function createSamlIdentityGraph(): Promise<{
+    email: string;
+    organizationId: string;
+    providerId: string;
+    userId: string;
+  }> {
+    const organizationId = randomUUID();
+    const email = `saml-existing-${randomUUID()}@example.test`;
+    const userId = await createUser(email);
+    await database.organization.create({
+      data: {
+        id: organizationId,
+        name: "SAML HTTP contract",
+        status: "active",
+      },
+    });
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        role: "member",
+        status: "active",
+        userId,
+      },
+    });
+    const provider = await database.samlProvider.create({
+      data: {
+        certificatePem: samlIdpCertificate,
+        createdByUserId: userId,
+        entityId: samlIdpEntityId,
+        name: "Corporate SAML",
+        organizationId,
+        ssoUrl: "https://idp.example.test/sso",
+        status: "active",
+      },
+      select: { id: true },
+    });
+    return { email, organizationId, providerId: provider.id, userId };
   }
 
   async function restartApplication(trustedProxyCidrs?: string): Promise<void> {
@@ -1318,6 +1464,78 @@ describe("identity HTTP contract with PostgreSQL", () => {
         },
       }),
     ).resolves.toBe(2);
+  });
+
+  test("completes a signed SAML start and callback over real HTTP, then rejects replay", async () => {
+    const graph = await createSamlIdentityGraph();
+    const start = await samlStartRequest(testApi.baseUrl, graph.providerId);
+    expect(start.status).toBe(200);
+    expect(start.headers.get("cache-control")).toBe("no-store");
+    const startBody = (await start.json()) as { location: string };
+    const authorizationUrl = new URL(startBody.location);
+    expect(authorizationUrl.origin).toBe("https://idp.example.test");
+    expect(authorizationUrl.searchParams.get("RelayState")).not.toBeNull();
+    const encodedResponse = signedSamlResponse({
+      email: graph.email,
+      inResponseTo: samlRequestId(startBody.location),
+      providerId: graph.providerId,
+    });
+
+    const callback = await samlCallbackRequest(
+      testApi.baseUrl,
+      graph.providerId,
+      encodedResponse,
+    );
+    expect(callback.status).toBe(200);
+    expect(callback.headers.get("cache-control")).toBe("no-store");
+    const sessionCookie = cookiePair(requireSetCookie(callback));
+    const callbackBody = (await callback.json()) as { csrfToken: unknown };
+    expect(csrfTokenSchema.parse(callbackBody.csrfToken)).toEqual(
+      expect.any(String),
+    );
+    expect(sessionCookie).toContain(`${AUTH_SESSION_COOKIE_NAME}=`);
+    await expect(
+      database.authSession.count({
+        where: { revokedAt: null, userId: graph.userId },
+      }),
+    ).resolves.toBe(1);
+
+    await expectProblem(
+      await samlCallbackRequest(
+        testApi.baseUrl,
+        graph.providerId,
+        encodedResponse,
+      ),
+      503,
+      "service-unavailable",
+    );
+    expect(logger.output).toContain("identity.saml.callback");
+    expect(logger.output).toMatch(/Error:.*\n\s+at /);
+    expect(logger.output).not.toContain(encodedResponse);
+  });
+
+  test("rejects a tampered signed SAML callback and retains a diagnostic stack", async () => {
+    const graph = await createSamlIdentityGraph();
+    const start = await samlStartRequest(testApi.baseUrl, graph.providerId);
+    expect(start.status).toBe(200);
+    const startBody = (await start.json()) as { location: string };
+    const encodedResponse = signedSamlResponse({
+      email: graph.email,
+      inResponseTo: samlRequestId(startBody.location),
+      providerId: graph.providerId,
+    });
+    const rejected = await samlCallbackRequest(
+      testApi.baseUrl,
+      graph.providerId,
+      tamperSamlResponse(encodedResponse, graph.email),
+    );
+    await expectProblem(rejected, 503, "service-unavailable");
+    expect(logger.output).toContain("identity.saml.callback");
+    expect(logger.output).toMatch(/Error:.*\n\s+at /);
+    expect(logger.output).not.toContain(graph.email);
+    await expect(
+      database.authSession.count({ where: { userId: graph.userId } }),
+    ).resolves.toBe(0);
   });
 
   test("completes a signed OIDC HTTP flow with state, nonce, PKCE, JWKS, and a usable session", async () => {

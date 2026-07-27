@@ -3,8 +3,8 @@ title: "奇点 L4 企业能力实施计划"
 description: "按控制面、身份、知识治理、发现嵌入和授权 AI 的依赖顺序完成 L4"
 author: "Codex"
 date: "2026-07-23"
-version: "1.3.0"
-status: "active"
+version: "2.1.0"
+status: "complete"
 tags: ["plan", "l4", "enterprise", "governance"]
 ---
 
@@ -18,6 +18,14 @@ tags: ["plan", "l4", "enterprise", "governance"]
 | 1.1.0 | 2026-07-23 | Codex | 归档整阶段验证通过和残余发布边界 |
 | 1.2.0 | 2026-07-23 | Codex | 校正 API 与用户入口完成边界，新增 L4 React 用户路径收口阶段 |
 | 1.3.0 | 2026-07-23 | Codex | 收口模板应用合同、同步治理用户入口完成状态 |
+| 1.4.0 | 2026-07-23 | Codex | 增加标准 SCIM Users/Groups 资源合同，等待整阶段 aggregate 复验 |
+| 1.5.0 | 2026-07-23 | Codex | SCIM 2.0 标准资源扩展完成唯一 aggregate 验证 |
+| 1.6.0 | 2026-07-23 | Codex | 收口跨空间搜索、授权 AI 与图表编辑协议，移除未接入生产写入链路的索引依赖 |
+| 1.7.0 | 2026-07-23 | Codex | 修正授权 AI 取证链路，改为显式四段身份的 Kernel 文档内容读取与前后复验 |
+| 1.8.0 | 2026-07-23 | Codex | 修复固定测试库并发争用与 Kernel 纯文本投影尾部零宽字符后完成最终统一复验 |
+| 1.9.0 | 2026-07-23 | Codex | 审计 L4-B 身份证据，补列 SAML 真实 HTTP callback 成功/失败集成合同，外部 IdP 灰度仍需真实环境证据 |
+| 2.0.0 | 2026-07-23 | Codex | 严格逐项审计 23 条验收标准，建立 L4-G feature gate、凭据、导出水印和保留任务收口范围 |
+| 2.1.0 | 2026-07-23 | Codex | L4-G 实现、复评和唯一 aggregate 完成；23 条验收标准证据矩阵全部回填，L4 计划收口 |
 
 ## Objective
 
@@ -55,7 +63,7 @@ tags: ["plan", "l4", "enterprise", "governance"]
 
 完成条件：SAML/MFA 成功与失败状态稳定；SCIM upsert/deactivate 幂等且不改 ACL；API Key hash/过期/最小权限/一次性显示闭合，并提供可注入的机器身份校验服务；本阶段不把现有会话业务路由整体改成 API Key 入口。密钥/断言/token 不进日志和持久化。
 
-当前实现：MFA TOTP enrollment/verify 与登录 challenge、SAML 配置和 `@node-saml/node-saml` Assertion callback、SCIM 用户/组幂等同步、SCIM Bearer Guard、API Key 创建/撤销/摘要校验服务已落地；现有业务路由仍以会话合同为准，治理管理页和身份安全入口已收口。
+当前实现：MFA TOTP enrollment/verify 与登录 challenge、SAML 配置和 `@node-saml/node-saml` Assertion callback、SCIM 用户/组幂等同步、SCIM Bearer Guard、API Key 创建/撤销/摘要校验服务已落地；标准 SCIM ServiceProviderConfig、Users、Groups、分页/filter、PATCH 和标准错误资源已完成 code-review/test-governance 复评并通过唯一 aggregate 验证。固定自签名 IdP fixture 已驱动真实 Nest HTTP start/callback，覆盖合法 Assertion 登录、重放拒绝、签名篡改拒绝、完整堆栈和敏感字段脱敏；现有业务路由仍以会话合同为准，治理管理页和身份安全入口已收口。该 fixture 不替代外部企业 IdP 灰度联调。
 
 依赖：L4-A contracts、现有 Identity/Organization/Access owner。
 
@@ -73,9 +81,9 @@ tags: ["plan", "l4", "enterprise", "governance"]
 
 范围：个人空间、授权跨空间搜索、Draw.io/Excalidraw、PDF 企业导出和导出审计。
 
-完成条件：个人空间策略可追溯；搜索结果绑定空间/文档且迟到响应不覆盖当前 scope；嵌入失效不阻断正文；导出无授权或水印不可用时明确失败。
+完成条件：个人空间策略可追溯；搜索结果绑定空间/文档且迟到响应不覆盖当前 scope；搜索直接消费 Kernel 授权发现结果，不依赖没有生产写入链路的控制面索引；嵌入支持版本化编辑消息并在来源 iframe、文档 ACL 和 kind 均匹配时保存；嵌入失效不阻断正文；导出无授权或水印不可用时明确失败。
 
-当前实现：个人空间幂等创建、服务端 ACL 搜索过滤、Draw.io/Excalidraw 元数据、导出水印边界和最小导出审计已落地；跨空间搜索、个人空间导航、受控嵌入编辑/预览、引用跳转和模板应用均由 L4-F 页面收口。
+当前实现：个人空间幂等创建、服务端 ACL 搜索过滤、Draw.io/Excalidraw 元数据、导出水印边界和最小导出审计已落地；本轮将跨空间搜索切换到 Kernel 授权发现、AI 取证切换到同一来源，并为嵌入补齐版本化编辑消息、来源窗口匹配和保存回写；跨空间搜索、个人空间导航、受控嵌入编辑/预览、引用跳转和模板应用均由 L4-F 页面收口。
 
 依赖：L4-A、L4-C policy/identity、Kernel bridge。
 
@@ -85,7 +93,7 @@ tags: ["plan", "l4", "enterprise", "governance"]
 
 完成条件：回答带可验证引用；权限、密级或引用验证失败时拒绝；provider 不可用可重试；prompt、正文和凭据不进入控制面、日志或浏览器持久化。
 
-当前实现：AI endpoint 复用文档 ACL，provider 通过 DI token 注入，回答持久化并写入四段身份引用；未配置 provider 时保留完整异常堆栈并稳定返回 503，不允许无引用 fallback。文档侧 AI Chat 和带完整身份的引用跳转均已接入。
+当前实现：AI endpoint 复用文档 ACL，先通过显式四段身份从 Kernel `document/content` 读取当前文档，再由 provider 通过 DI token 注入；provider 完成后重新读取并比较内容，回答持久化并写入四段身份引用；未配置 provider、Kernel 内容读取失败或内容变化时保留完整异常堆栈并稳定拒绝，不允许无引用 fallback。文档侧 AI Chat 和带完整身份的引用跳转均已接入。
 
 依赖：L4-D search/reference contract、L4-B identity、L4-C governance policy。
 
@@ -151,7 +159,7 @@ git status --short --branch
 
 ## Verification Result
 
-L4 控制面、迁移、API、Worker 和用户入口已由唯一 `pnpm verify:l4-governance` aggregate 统一验证；组件 185/185、浏览器 65 通过且 64 条件跳过，L3 回归同步通过。发布仍遵守单 API 副本、单空间 Kernel 和目标 supervisor 手工门禁。
+L4 控制面、迁移、API、Worker 和用户入口已由唯一 `pnpm verify:l4-governance` aggregate 统一验证；12 个阶段命令全部通过，Contracts 34/34、数据库集成 60/60、API integration 241/241、Worker integration 22/22、React 组件 187/187、浏览器 65 通过且 64 条件跳过、L3 回归同步通过。SCIM 标准资源扩展、固定自签名 IdP 驱动的 SAML 真实 HTTP start/callback 成功/拒绝以及 L4-G 23 条验收标准证据矩阵均已通过整阶段 code-review/test-governance 复评和集中验证。发布仍遵守单 API 副本、单空间 Kernel 和目标 supervisor 手工门禁。
 
 ```bash
 cd /root/projects/singularity/enterprise
@@ -159,6 +167,23 @@ pnpm verify:l4-governance
 ```
 
 L4-F 当前状态为“实现与集中验证通过”。发布仍遵守 L3 单 API 副本、单空间 Kernel 和功能开关默认关闭的边界；真实 supervisor 多进程回滚和外部 IdP/provider 灰度证据不由本地 aggregate 伪造覆盖。
+
+### L4-G 严格验收收口（已完成）
+
+严格对照 `docs/product/l4-knowledge-governance.md` 的 23 条验收标准复核后，原先发现的 feature gate、API Key、导出水印和保留任务证据缺口已完成实现，并在本轮整阶段复评和唯一 aggregate 中闭合；逐项证据见 `docs/verification/l4-enterprise-capabilities.md#32-23-项验收证据矩阵`。
+
+#### L4-G 架构决策
+
+1. `EnterpriseGovernanceService.#requireGovernanceEnabled` 是治理 mutation 的唯一 feature-gate owner；controller 只负责 transport/schema，worker 只消费已验证任务并在任务执行前读取同一空间策略。
+2. 策略读取与更新不受该 gate 拦截，否则无法完成灰度开关和安全回滚；搜索、AI、个人空间也不属于治理 mutation，不被误拦截。
+3. gate 关闭时，新的治理 mutation 返回既有 `forbidden` Problem；已入队任务事务内标记 `cancelled`、保留原因和审计 `denied`，不更新正文或治理成功状态。
+4. API Key 机器验证仍是 service 公共入口，不新增薄 adapter；测试直接驱动 service 的公开合同和数据库结果。导出水印只在 Gateway response boundary 生成，控制面只保存 `watermarkRef`。
+
+#### L4-G 任务与集中门禁（已完成）
+
+- [x] 生产代码：治理 service gate、worker cancellation、导出水印边界。
+- [x] 合同测试：API Key lifecycle、gate rejection、legal hold/retention task、export watermark/storage。
+- [x] 唯一集中命令：`cd enterprise && pnpm verify:l4-governance`；实现阶段不运行正式 aggregate，整阶段 code-review 复评通过后统一运行。
 
 ## Template Application Contract (completed)
 

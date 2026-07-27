@@ -11,6 +11,7 @@ import type {
   OidcHttpTransport,
 } from "../../src/identity/oidc.service.js";
 import type { AiProvider } from "../../src/governance/ai-provider.js";
+import type { PasswordResetMailer } from "../../src/identity/password-reset-mailer.js";
 import { OidcHttpTransportError } from "../../src/identity/oidc-http-transport.js";
 import { testAuditConfiguration } from "./audit-configuration.js";
 import {
@@ -37,6 +38,7 @@ export interface TestApiApplicationOptions {
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
   aiProvider?: AiProvider;
+  passwordResetMailer?: PasswordResetMailer;
   trustedProxyCidrs?: string;
 }
 
@@ -95,6 +97,9 @@ export async function startTestApiApplication(
       options.oidcClientSecretResolver ?? testOidcClientSecretResolver,
     oidcHttpTransport: options.oidcHttpTransport ?? testOidcHttpTransport,
     ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
+    ...(options.passwordResetMailer === undefined
+      ? {}
+      : { passwordResetMailer: options.passwordResetMailer }),
     publicOrigin: `${TEST_PUBLIC_ORIGIN}/`,
     ...(options.clock === undefined ? {} : { clock: options.clock }),
     ...(options.trustedProxyCidrs === undefined

@@ -16,10 +16,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/88250/lute/editor"
 	"github.com/gin-gonic/gin"
 	"github.com/siyuan-note/logging"
 	"github.com/siyuan-note/siyuan/kernel/model"
 	"github.com/siyuan-note/siyuan/kernel/serviceauth"
+	kernelsql "github.com/siyuan-note/siyuan/kernel/sql"
 	nethtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -49,6 +51,7 @@ type enterpriseDiscoveryBlock struct {
 	DocumentID string `json:"documentId"`
 	ID         string `json:"id"`
 	NotebookID string `json:"notebookId"`
+	Title      string `json:"title"`
 }
 
 type enterpriseDiscoverySearchResponse struct {
@@ -72,6 +75,13 @@ type enterpriseDiscoveryGraphLink struct {
 type enterpriseDiscoveryGraphResponse struct {
 	Links []enterpriseDiscoveryGraphLink `json:"links"`
 	Nodes []enterpriseDiscoveryGraphNode `json:"nodes"`
+}
+
+type enterpriseDiscoveryDocumentContentResponse struct {
+	Content    string `json:"content"`
+	DocumentID string `json:"documentId"`
+	NotebookID string `json:"notebookId"`
+	Title      string `json:"title"`
 }
 
 type enterpriseDiscoveryDocumentScope struct {
@@ -139,7 +149,8 @@ func enterpriseDiscoveryHTMLText(value string) string {
 	for _, node := range nodes {
 		walk(node)
 	}
-	return strings.TrimSpace(text.String())
+	// Lute 为可编辑段落保留的零宽空格属于编辑器内部标记，纯文本合同不能向云端消费者暴露。
+	return strings.TrimSpace(strings.ReplaceAll(text.String(), editor.Zwsp, ""))
 }
 
 // GraphNode 对文档、标题和标签使用 Label，对其他内容块使用 Title。
@@ -187,6 +198,7 @@ func enterpriseDiscoveryOutlineBlockProjections(blocks []*model.Block) []enterpr
 }
 
 func enterpriseDiscoveryBlockProjections(blocks []*model.Block) []enterpriseDiscoveryBlock {
+	titles := enterpriseDiscoveryDocumentTitles(blocks)
 	ret := make([]enterpriseDiscoveryBlock, 0, len(blocks))
 	for _, block := range blocks {
 		if block == nil || block.ID == "" || block.Box == "" || block.RootID == "" {
@@ -202,9 +214,40 @@ func enterpriseDiscoveryBlockProjections(blocks []*model.Block) []enterpriseDisc
 			DocumentID: block.RootID,
 			ID:         block.ID,
 			NotebookID: block.Box,
+			Title:      titles[block.Box+"\x00"+block.RootID],
 		})
 	}
 	return ret
+}
+
+// enterpriseDiscoveryDocumentTitles 批量读取搜索结果对应的根块标题，避免把 block 内容或路径当成文档标题推断。
+func enterpriseDiscoveryDocumentTitles(blocks []*model.Block) map[string]string {
+	idsByBox := map[string][]string{}
+	seen := map[string]map[string]struct{}{}
+	for _, block := range blocks {
+		if block == nil || block.RootID == "" || block.Box == "" {
+			continue
+		}
+		if seen[block.Box] == nil {
+			seen[block.Box] = map[string]struct{}{}
+		}
+		if _, exists := seen[block.Box][block.RootID]; exists {
+			continue
+		}
+		seen[block.Box][block.RootID] = struct{}{}
+		idsByBox[block.Box] = append(idsByBox[block.Box], block.RootID)
+	}
+	titles := make(map[string]string, len(idsByBox))
+	for box, ids := range idsByBox {
+		for _, root := range kernelsql.GetBlocksInBox(ids, enterpriseDiscoveryBoxID(box)) {
+			title := enterpriseDiscoveryHTMLText(root.Content)
+			if title == "" {
+				title = enterpriseDiscoveryHTMLText(root.FContent)
+			}
+			titles[box+"\x00"+root.ID] = truncateEnterpriseDiscoveryText(title, enterpriseDiscoveryGraphLabelMaxRunes)
+		}
+	}
+	return titles
 }
 
 func enterpriseDiscoveryBacklinkProjections(paths []*model.Path) []enterpriseDiscoveryBacklink {
@@ -415,6 +458,42 @@ func EnterpriseReadSpaceGraph(c *gin.Context) {
 		Nodes: projectionNodes,
 	})
 	logEnterpriseDiscovery(c, "graph", len(projectionNodes))
+}
+
+// EnterpriseReadDocumentContent 按已签名的四段内容身份读取当前文档的有界纯文本，供授权 AI 取证使用。
+// 身份由 FullContentIdentityRequired 中间件提供；读取失败直接返回，不从问题关键词或其他响应推断文档。
+func EnterpriseReadDocumentContent(c *gin.Context) {
+	identity, ok := serviceauth.RequestContentIdentity(c.Request)
+	if !ok {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	if err := RegisterEncryptedResponse(c, identity.NotebookID); err != nil {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
+	document, err := model.ReadEnterpriseSharedDocument(identity.NotebookID, identity.DocumentID)
+	if err != nil {
+		enterpriseModelError(c, err, model.ErrEnterpriseShareDocumentNotFound, "discovery.document-content")
+		return
+	}
+	content := truncateEnterpriseDiscoveryText(
+		enterpriseDiscoveryHTMLText(document.HTML),
+		enterpriseDiscoveryContentMaxRunes,
+	)
+	title := truncateEnterpriseDiscoveryText(
+		enterpriseDiscoveryHTMLText(document.Title),
+		enterpriseDiscoveryGraphLabelMaxRunes,
+	)
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.JSON(http.StatusOK, enterpriseDiscoveryDocumentContentResponse{
+		Content:    content,
+		DocumentID: identity.DocumentID,
+		NotebookID: identity.NotebookID,
+		Title:      title,
+	})
+	logEnterpriseDiscovery(c, "document-content", 1)
 }
 
 func bindEnterpriseDiscoveryJSON(c *gin.Context, target any) bool {

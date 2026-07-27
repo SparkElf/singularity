@@ -24,6 +24,18 @@ import type {
 } from "./spaces/space-session.ts";
 import "./styles.css";
 
+/** 在 React 根节点创建前消费原生宿主传入的主题，避免跨源 iframe 回退到自己的亮色默认值。 */
+function applyEmbeddedTheme() {
+  const theme = new URLSearchParams(window.location.search).get("theme");
+  if (theme !== "dark" && theme !== "light") {
+    return;
+  }
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.style.colorScheme = theme;
+}
+
+applyEmbeddedTheme();
+
 const createProtyleFactoryForSpace: SpaceProtyleFactoryProvider = (spaceId) => {
   const application = createProtyleApplicationPort({
     spaceId,

@@ -3,7 +3,7 @@ title: "奇点 L3 生产认证与 L4 企业能力持续交付计划"
 description: "先闭合 L3 生产发布认证，再按已选 Docmost 差距完成 L4；含恢复上下文、边界合同与验证门禁"
 author: "Codex"
 date: "2026-07-23"
-version: "1.2.0"
+version: "2.0.0"
 status: "active"
 tags: ["plan", "l3", "l4", "docmost", "enterprise"]
 ---
@@ -17,6 +17,15 @@ tags: ["plan", "l3", "l4", "docmost", "enterprise"]
 | 1.0.0 | 2026-07-23 | Codex | 建立 L3 认证与 L4 持续交付计划 |
 | 1.1.0 | 2026-07-23 | Codex | 归档 L4 集中验证通过，保留 supervisor 回滚手工门禁 |
 | 1.2.0 | 2026-07-23 | Codex | 重跑 L4 唯一 aggregate 并归档浏览器竞态修复后的 L3/L4 全量证据 |
+| 1.3.0 | 2026-07-23 | Codex | 增加标准 SCIM Users/Groups 资源合同，等待整阶段 aggregate 复验 |
+| 1.4.0 | 2026-07-23 | Codex | SCIM 2.0 标准资源扩展完成唯一 aggregate 验证并回填集中报告 |
+| 1.5.0 | 2026-07-23 | Codex | 修复 L3 aggregate 对合法目标 supervisor pending 标记的状态机误判，并完成 SCIM 变更后的 L3 重新认证 |
+| 1.6.0 | 2026-07-23 | Codex | 修复固定测试库并发争用与 Kernel 纯文本投影尾部零宽字符后完成最终统一复验 |
+| 1.7.0 | 2026-07-23 | Codex | 审计 L4 验收证据，补列 SAML 真实 HTTP callback 成功/失败集成证据任务；目标 supervisor 仍为外部 pending 门禁 |
+| 1.8.0 | 2026-07-23 | Codex | 完成固定自签名 IdP 驱动的真实 Nest HTTP SAML start/callback 成功、重放和篡改拒绝证据，并纳入最终 aggregate |
+| 1.9.0 | 2026-07-23 | Codex | 严格逐项审计 L4 23 条验收标准，发现治理开关未覆盖全部治理动作及 API Key/水印/保留链路证据缺口，新增 L4-G 收口阶段 |
+| 2.0.0 | 2026-07-23 | Codex | 完成 L4-G 实现、复评和唯一 aggregate；23 条验收标准矩阵全部回填，L3 目标 supervisor 门禁仍保持 pending |
+| 2.1.0 | 2026-07-24 | Codex | 更新当前固定测试库 P5 体验栈 smoke 证据；体验进程按用户要求保留，不改变目标 supervisor 发布门禁 |
 
 ## Objective
 
@@ -52,13 +61,18 @@ L3.0/L3.1 已完成实现、代码评审、测试治理复评、技术验证和�
 - [x] L3.0 语义原型已完成技术验证。
 - [x] L3.1 生产协作实现、代码评审、测试治理复评和唯一技术验证 aggregate 已通过。
 - [x] L3 生产认证 PRD/验收矩阵、架构方案与 ADR 已建立；技术验证与发布认证已分栏。
-- [x] L3 生产发布认证（认证范围内）已完成：automated aggregate 通过，20 用户/64 会话上限、重启、撤权、加密、开关关闭、浏览器和受控 API 回滚均有证据；真实多进程 supervisor 回滚明确列为发布前重复动作，未误报为自动化覆盖。
+- [x] L3 生产发布认证（认证范围内）已完成：最新 automated aggregate 5 个 runner 全部通过，20 用户/64 会话上限、重启、撤权、加密、开关关闭、浏览器和受控 API 回滚均有证据；真实多进程 supervisor 回滚明确列为发布前重复动作，未误报为自动化覆盖。
 - [x] L4 产品、架构、ADR 和实施计划已获确认并落盘，公共四段身份、ACL owner、控制面事实源和集中测试矩阵已冻结。
 - [x] L4 整阶段 code-review/test-governance 复评完成，已移交唯一 `verify:l4-governance` 集中验证。
 - [x] L4 完整 SAML Assertion、MFA 登录 challenge、治理 Worker、真实 PDF 导出/审计和带引用 AI provider 已实现并通过集中验证；报告见 `docs/verification/l4-enterprise-capabilities.md`。
-- [x] 2026-07-23 重跑 `pnpm verify:l4-governance`：12 个阶段命令全部通过，浏览器 65 通过、64 条件跳过，L3 regression aggregate 通过；固定数据库、临时运行资源和测试端口均已清理。
+- [x] 2026-07-23 重跑 `pnpm verify:l4-governance`：12 个阶段命令全部通过，API integration 241/241、Worker integration 22/22、浏览器 65 通过/64 条件跳过，L3 regression aggregate 通过；固定数据库、临时运行资源和测试端口均已清理。
 - [x] L3 目标 supervisor 认证已形成唯一结构化证据入口：`pnpm verify:l3-target-supervisor`；在真实部署执行前仍保持 pending，不以本地演练代替。
 - [x] L4-F 用户入口实现与集中验证已收口：治理管理面、身份安全、MFA challenge、个人空间导航、跨空间搜索结果打开和文档侧治理/嵌入/AI 均有 React 路径，组件与浏览器证据已纳入唯一 aggregate。
+- [x] L4-B SCIM 2.0 标准 Users/Groups 资源扩展已完成实现、code-review/test-governance 复评和唯一 aggregate 验证。
+- [x] SCIM 变更后的 L3 重新认证已通过：contracts 34/34、API unit 130/130、API integration 241/241、Worker integration 22/22、Web 187/187、L3 supervisor 状态合同 3/3；目标部署 supervisor 证据仍保持 pending。
+- [x] SAML 真实 HTTP start/callback 成功与失败集成证据已补齐：固定自签名 IdP fixture 驱动真实 Nest ACS，覆盖合法 Assertion 登录、同一响应重放拒绝、签名篡改拒绝、完整堆栈日志和敏感字段脱敏；外部 IdP 灰度联调仍单独保留为发布风险。
+- [x] 严格 L4 验收审计已建立 23 项证据矩阵；L4-G feature gate、API Key 生命周期、导出水印/存储、法律保留和任务取消证据已完成整阶段复评与唯一 aggregate 验证，矩阵见 `docs/verification/l4-enterprise-capabilities.md#32-23-项验收证据矩阵`。
+- [x] 2026-07-24 当前 P5 体验栈已在固定 PostgreSQL schema `singularity_p5_e2e_1784824570` 启动并通过 API/Web smoke；该栈按用户要求保留用于体验，不作为目标 supervisor 认证证据。
 
 ## Next Steps
 
@@ -82,6 +96,15 @@ L3.0/L3.1 已完成实现、代码评审、测试治理复评、技术验证和�
 2. [x] 完成整阶段 code-review/test-governance 复评，移交唯一 `pnpm verify:l4-governance` aggregate。
 3. [x] 完成 SAML Assertion adapter、MFA 登录 challenge、治理 Worker、真实 PDF 导出审计和带引用 AI provider。
 4. [x] 完成 L4-F React 用户入口、文档侧面板和作用域导航实现，并由唯一 `pnpm verify:l4-governance` 生成最终组件/浏览器证据。
+5. [x] 完成 SCIM 2.0 标准资源扩展的集中 aggregate 验证，并回填 `docs/verification/l4-enterprise-capabilities.md` 与 `enterprise/test-results/l4-governance/report.json`。
+6. [x] 用固定自签名 IdP 协议 fixture 驱动真实 Nest HTTP 的 SAML start/callback 成功与拒绝路径；已完成 code-review/test-governance 复评并纳入唯一 aggregate。
+
+### L4-G 严格验收收口（已完成）
+
+1. [x] 建立 23 条验收标准到真实入口、持久化结果、用户结果和标准 runner case 的证据矩阵。
+2. [x] 由 `governanceEnabled` 作为唯一 feature-gate owner，覆盖文档状态、密级、法律保留、模板、嵌入和治理任务；策略读取/更新仍可用以完成灰度开关，搜索/AI/个人空间不被误拦截。
+3. [x] 补齐 API Key 过期、撤销、最小 scope、单次明文和机器验证入口的真实合同；补齐导出水印头/审计/不落正文存储证据以及法律保留和任务取消收敛证据。
+4. [x] 完成整阶段 code-review/test-governance 复评后，只运行一次受影响的 L4 aggregate，并将每项结果回填到验证报告。
 
 ## Risks
 

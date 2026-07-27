@@ -64,6 +64,7 @@ export class GovernanceTaskHandler implements WorkerJobHandler<GovernanceTaskJob
   async execute(job: GovernanceTaskJob, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     const now = new Date();
+    let cancelled = false;
     try {
       await this.database.client.$transaction(async (transaction) => {
         await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "governance_tasks" WHERE "id" = ${job.taskId}::uuid FOR UPDATE`);
@@ -72,6 +73,35 @@ export class GovernanceTaskHandler implements WorkerJobHandler<GovernanceTaskJob
           throw new WorkerJobError("governance-task-not-found", null);
         }
         if (task.status === "succeeded") {
+          return;
+        }
+        if (task.status === "cancelled") {
+          cancelled = true;
+          return;
+        }
+        const policy = await transaction.governancePolicy.findUnique({
+          where: { organizationId_spaceId: { organizationId: job.organizationId, spaceId: job.spaceId } },
+          select: { governanceEnabled: true },
+        });
+        if (policy === null || !policy.governanceEnabled) {
+          // 关闭开关时取消在途任务，保留原因和拒绝审计，不伪造治理成功。
+          const disabled = new Error("Governance feature is disabled");
+          await transaction.governanceTask.update({
+            where: { id: task.id },
+            data: { lastErrorName: disabled.name, lastErrorMessage: "governance-disabled", lastErrorStack: disabled.stack ?? disabled.message, status: "cancelled" },
+          });
+          await this.audit.append(transaction, {
+            action: job.taskKind === "archive" ? "content.delete" : "content.edit",
+            actorUserId: null,
+            occurredAt: now,
+            organizationId: job.organizationId,
+            outcome: "denied",
+            requestId: job.requestId,
+            spaceId: job.spaceId,
+            targetId: job.documentId,
+            targetType: "document",
+          });
+          cancelled = true;
           return;
         }
         await transaction.governanceTask.update({ where: { id: task.id }, data: { status: "running", attempts: { increment: 1 } } });
@@ -105,6 +135,10 @@ export class GovernanceTaskHandler implements WorkerJobHandler<GovernanceTaskJob
           targetType: "document",
         });
       });
+      if (cancelled) {
+        this.logger.warn({ event: "governance.task", jobId: job.id, organizationId: job.organizationId, outcome: "cancelled", requestId: job.requestId, taskId: job.taskId, taskKind: job.taskKind });
+        return;
+      }
       this.logger.info({ event: "governance.task", jobId: job.id, organizationId: job.organizationId, outcome: "succeeded", requestId: job.requestId, taskId: job.taskId, taskKind: job.taskKind });
     } catch (error) {
       this.logger.error({ error, event: "governance.task", jobId: job.id, organizationId: job.organizationId, outcome: "failed", requestId: job.requestId, taskId: job.taskId, taskKind: job.taskKind });

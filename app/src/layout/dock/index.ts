@@ -23,8 +23,9 @@ import {clearBeforeResizeTop, recordBeforeResizeTop} from "../../protyle/util/re
 import {Constants} from "../../constants";
 import {isEncryptedBox} from "../../util/pathName";
 import {showMessage} from "../../dialog/message";
+import {EnterpriseAdmin} from "./EnterpriseAdmin";
 
-const TYPES = ["file", "outline", "inbox", "bookmark", "tag", "graph", "globalGraph", "backlink", "agentChat"];
+const TYPES = ["file", "outline", "inbox", "bookmark", "tag", "graph", "globalGraph", "backlink", "agentChat", "enterprise"];
 
 export class Dock {
     public elements: HTMLElement[];
@@ -423,6 +424,9 @@ export class Dock {
         this.layout.element.querySelector(".layout__tab--active")?.classList.remove("layout__tab--active");
     }
 
+    /**
+     * 统一处理 Dock 面板的打开、关闭和切换；企业面板在关闭或被切换前释放 iframe，保持原生布局状态为唯一事实源。
+     */
     public toggleModel(type: TDock | string, show = false, close = false, removeDock = false, isSaveLayout = true) {
         if (!type) {
             return;
@@ -458,6 +462,10 @@ export class Dock {
                 }
             }
 
+            if (type === "enterprise" && this.data[type] instanceof EnterpriseAdmin) {
+                // 关闭 Dock 时释放企业 iframe，避免隐藏面板继续持有 React 状态和网络请求。
+                this.data[type].setVisible(false);
+            }
             target.classList.remove("dock__item--active", "dock__item--activefocus");
             // dock 隐藏
             if (!this.elements[0].querySelector(".dock__item--active") &&
@@ -500,6 +508,10 @@ export class Dock {
             }
         } else {
             this.elements[index].querySelectorAll(".dock__item--active").forEach(item => {
+                const previousType = item.getAttribute("data-type");
+                if (previousType === "enterprise" && this.data[previousType] instanceof EnterpriseAdmin) {
+                    this.data[previousType].setVisible(false);
+                }
                 item.classList.remove("dock__item--active", "dock__item--activefocus");
             });
             target.classList.add("dock__item--active", "dock__item--activefocus");
@@ -608,6 +620,16 @@ export class Dock {
                             }
                         });
                         break;
+                    case "enterprise":
+                        tab = new Tab({
+                            callback: (tab: Tab) => {
+                                tab.addModel(new EnterpriseAdmin({
+                                    app: this.app,
+                                    tab,
+                                }));
+                            }
+                        });
+                        break;
                     default:
                         tab = new Tab({
                             callback: (tab: Tab) => {
@@ -639,6 +661,9 @@ export class Dock {
                         item.classList.add("fn__none");
                     }
                 });
+            }
+            if (type === "enterprise" && this.data[type] instanceof EnterpriseAdmin) {
+                this.data[type].setVisible(true);
             }
             // dock 显示
             if (this.position === "Left") {

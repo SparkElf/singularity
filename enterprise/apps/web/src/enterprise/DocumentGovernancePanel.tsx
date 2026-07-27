@@ -15,6 +15,10 @@ import type {
   GovernanceClassification,
   GovernanceLifecycleStatus,
 } from "@singularity/contracts";
+import {
+  GOVERNANCE_EMBEDDED_EDITOR_MESSAGE_VERSION,
+  governanceEmbeddedEditorMessageSchema,
+} from "@singularity/contracts";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -72,15 +76,15 @@ function documentIdentityKey(identity: DocumentIdentity): string {
   return `${identity.organizationId}:${identity.spaceId}:${identity.notebookId}:${identity.documentId}`;
 }
 
-// 只允许显式 HTTPS 预览地址进入沙箱 iframe；其余嵌入仍显示可审计的 JSON 元数据。
+// 只允许显式 HTTPS 跨源地址进入沙箱 iframe；同源地址拒绝进入，避免 allow-same-origin 与脚本组合逃逸沙箱。
 function resolveEmbedPreviewUrl(payload: Record<string, unknown>): string | null {
-  const candidate = payload.previewUrl ?? payload.url;
+  const candidate = payload.editorUrl ?? payload.previewUrl ?? payload.url;
   if (typeof candidate !== "string" || candidate.trim().length === 0) {
     return null;
   }
   try {
     const url = new URL(candidate);
-    return url.protocol === "https:" ? url.toString() : null;
+    return url.protocol === "https:" && url.origin !== window.location.origin ? url.toString() : null;
   } catch (error) {
     console.error("[governance.embed.preview-url]", error);
     return null;
@@ -123,6 +127,7 @@ export function DocumentGovernancePanel({ identity, onNavigateCitation }: Docume
   const [aiQuery, setAiQuery] = useState("");
   const [aiAnswer, setAiAnswer] = useState<Awaited<ReturnType<typeof askDocumentAi>> | null>(null);
   const [embedPreviewState, setEmbedPreviewState] = useState<Record<string, "failed">>({});
+  const embedFrames = useRef(new Map<string, HTMLIFrameElement>());
 
   const transitionMutation = useMutation({
     mutationFn: (input: TransitionInput) => transitionDocumentGovernance(input.identity, {
@@ -183,6 +188,22 @@ export function DocumentGovernancePanel({ identity, onNavigateCitation }: Docume
     activeIdentityKey.current = identityKey;
   }, [identityKey]);
 
+  useEffect(() => {
+    // 只接收当前文档 iframe 发出的版本化保存消息，第三方页面不能绕过文档 ACL 直接写控制面。
+    const onMessage = (event: MessageEvent<unknown>) => {
+      const parsed = governanceEmbeddedEditorMessageSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      const embed = embedsQuery.data?.embeds.find((item) => item.embedId === parsed.data.embedId);
+      const frame = embedFrames.current.get(parsed.data.embedId);
+      const previewUrl = embed === undefined ? null : resolveEmbedPreviewUrl(embed.payload);
+      const expectedOrigin = previewUrl === null ? null : new URL(previewUrl).origin;
+      if (embed === undefined || frame === undefined || event.source !== frame.contentWindow || expectedOrigin === null || event.origin !== expectedOrigin || embed.kind !== parsed.data.kind) return;
+      embedMutation.mutate({ embedKind: parsed.data.kind, embedPayload: JSON.stringify(parsed.data.payload), identity });
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [embedMutation, embedsQuery.data?.embeds, identity, identityKey]);
+
   if (governanceQuery.isPending) return <aside className="flex w-80 shrink-0 items-center justify-center border-l bg-muted/20"><Spinner aria-label="正在加载文档治理" /></aside>;
   if (governanceQuery.error) return <aside className="w-80 shrink-0 border-l p-3"><MutationFailure error={governanceQuery.error} /></aside>;
   const governance = governanceQuery.data;
@@ -219,7 +240,7 @@ export function DocumentGovernancePanel({ identity, onNavigateCitation }: Docume
       </section>
       <section className="border-b p-3">
         <SectionHeading title="Draw.io / Excalidraw" />
-        <div className="mt-3 space-y-2"><Select aria-label="嵌入类型" onChange={(event) => setEmbedKind(event.currentTarget.value as typeof embedKind)} value={embedKind}><option value="drawio">Draw.io</option><option value="excalidraw">Excalidraw</option></Select><Textarea aria-label="嵌入数据" onChange={(event) => setEmbedPayload(event.currentTarget.value)} value={embedPayload} /><p className="text-xs text-muted-foreground">预览地址必须使用 HTTPS；预览在隔离沙箱中加载，失败不会影响正文。</p><Button disabled={embedMutation.isPending} onClick={runEmbed} size="sm" variant="outline"><PencilIcon data-icon="inline-start" />保存嵌入</Button>{embedsQuery.data?.embeds.map((embed) => { const previewUrl = resolveEmbedPreviewUrl(embed.payload); const previewState = embedPreviewState[embed.embedId]; return <div className="space-y-2 rounded-md border bg-background p-2 text-xs" key={embed.embedId}><div className="flex items-center justify-between gap-2"><span>{embed.kind} · v{embed.version}</span><span className="text-muted-foreground">{embed.status}</span></div>{previewUrl === null ? <p className="text-muted-foreground">暂无可用预览，当前仅显示嵌入元数据。</p> : previewState === "failed" ? <Alert variant="destructive"><AlertTitle>嵌入预览不可用</AlertTitle><AlertDescription>正文仍可正常读取，可修正地址后重新保存。</AlertDescription></Alert> : <div className="overflow-hidden rounded border bg-muted/20"><iframe className="h-32 w-full border-0" loading="lazy" onError={() => setEmbedPreviewState((current) => ({ ...current, [embed.embedId]: "failed" }))} referrerPolicy="no-referrer" sandbox="allow-scripts" src={previewUrl} title={`${embed.kind} 嵌入预览`} /></div>}<details><summary className="cursor-pointer text-muted-foreground">查看嵌入版本数据</summary><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(embed.payload, null, 2)}</pre></details></div>; })}</div>
+        <div className="mt-3 space-y-2"><Select aria-label="嵌入类型" onChange={(event) => setEmbedKind(event.currentTarget.value as typeof embedKind)} value={embedKind}><option value="drawio">Draw.io</option><option value="excalidraw">Excalidraw</option></Select><Textarea aria-label="嵌入数据" onChange={(event) => setEmbedPayload(event.currentTarget.value)} value={embedPayload} /><p className="text-xs text-muted-foreground">编辑器地址必须使用 HTTPS 跨源地址；保存消息只接受当前 iframe 的版本化协议，失败不会影响正文。</p><Button disabled={embedMutation.isPending} onClick={runEmbed} size="sm" variant="outline"><PencilIcon data-icon="inline-start" />保存嵌入</Button>{embedsQuery.data?.embeds.map((embed) => { const previewUrl = resolveEmbedPreviewUrl(embed.payload); const previewState = embedPreviewState[embed.embedId]; return <div className="space-y-2 rounded-md border bg-background p-2 text-xs" key={embed.embedId}><div className="flex items-center justify-between gap-2"><span>{embed.kind} · v{embed.version}</span><span className="text-muted-foreground">{embed.status}</span></div>{previewUrl === null ? <p className="text-muted-foreground">暂无可用编辑器或预览地址，当前仅显示嵌入元数据。</p> : previewState === "failed" ? <Alert variant="destructive"><AlertTitle>嵌入预览不可用</AlertTitle><AlertDescription>正文仍可正常读取，可修正地址后重新保存。</AlertDescription></Alert> : <div className="overflow-hidden rounded border bg-muted/20"><iframe className="h-32 w-full border-0" loading="lazy" onError={() => setEmbedPreviewState((current) => ({ ...current, [embed.embedId]: "failed" }))} onLoad={(event) => event.currentTarget.contentWindow?.postMessage({ embedId: embed.embedId, kind: embed.kind, payload: embed.payload, type: "singularity.embed.init", version: GOVERNANCE_EMBEDDED_EDITOR_MESSAGE_VERSION }, new URL(previewUrl).origin)} ref={(element) => { if (element === null) embedFrames.current.delete(embed.embedId); else embedFrames.current.set(embed.embedId, element); }} referrerPolicy="no-referrer" sandbox="allow-forms allow-popups allow-scripts allow-same-origin" src={previewUrl} title={`${embed.kind} 嵌入编辑器`} /></div>}<details><summary className="cursor-pointer text-muted-foreground">查看嵌入版本数据</summary><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(embed.payload, null, 2)}</pre></details></div>; })}</div>
         <MutationFailure error={embedMutation.error} />
       </section>
       <section className="p-3">

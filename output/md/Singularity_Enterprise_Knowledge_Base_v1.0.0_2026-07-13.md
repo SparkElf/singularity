@@ -211,9 +211,9 @@ PostgreSQL保存企业事实，Redis保存短生命周期状态，对象存储�
 
 ### 5.2 前端边界
 
-React拥有应用壳、路由、导航、标签页、认证、组织、空间、权限、分享、审计和所有新增页面。Protyle拥有编辑器DOM、块事务、编辑历史、编辑器快捷键和内容插件交互。
+思源原生 `App/layout/Dock/Tab/Protyle` 拥有主工作区、顶栏、页签、文档树、编辑器、状态栏和全局快捷键；企业React模块拥有认证、组织、权限、分享、审计和其他企业页面，并仅在原生企业Dock panel内挂载。Protyle拥有编辑器DOM、块事务、编辑历史、编辑器快捷键和内容插件交互。
 
-`ProtyleEditor` React边界仅承担创建、切换、只读状态、销毁和事件释放，不把编辑器内部文档状态复制进Zustand。TanStack Query拥有服务端数据与目录分页；Zustand只保存内存CSRF和跨文档树/编辑器共享的当前`spaceId + notebookId + documentId`选择，目录数组、Session与编辑器实例不进入store。
+企业React模块的 `ProtyleEditor` 边界仅承担创建、切换、只读状态、销毁和事件释放，不把编辑器内部文档状态复制进Zustand。主工作区的原生生命周期由思源 `App/layout` 拥有。TanStack Query拥有服务端数据与目录分页；Zustand只保存内存CSRF和跨文档树/编辑器共享的当前`spaceId + notebookId + documentId`选择，目录数组、Session与编辑器实例不进入store。
 
 编辑器实现只有一套；页签、分屏与嵌入表面创建绑定各自内容上下文的运行时实例。同一文档允许存在多个实例，Core内部事件跨入Session时由实例Host facade一次附加稳定`sourceEditorId`：选区、块DOM、菜单、全屏和活动状态等实例动作只能命中来源实例，标题与图标等文档动作按显式`notebookId + documentId`同步全部匹配实例。不得从DOM、active实例、注册顺序或首个响应补推来源；`sourceEditorId`不进入Zustand，也不替代内容身份。
 
@@ -342,7 +342,7 @@ L3.0阶段已`verified`：产品、架构、ADR-030和实施计划已完成复�
 
 - Go Kernel保持最小补丁，定期merge思源上游。
 - Protyle保留明确目录和公共边界，按上游变更同步。
-- React应用壳迁移完成后不直接合并上游旧壳，由影响报告指导人工移植。
+- 思源原生工作区沿上游同步；企业React模块不替代上游旧壳，原生企业Dock入口由影响报告指导人工移植。
 - 企业模块全部位于独立目录，不写入思源核心业务目录。
 - 每次上游同步记录旧基线、新基线、变更模块、冲突和验证结果。
 - 当前已集成基线为SiYuan 3.7.2提交`c8dcdd0860ef000a14552c619fe19c0dcb5175f5`。从旧基线`41f2861c87575ff5ac4b50a0520b1a4fe55b4a70`生成的影响报告覆盖451个变更路径并发现22个冲突路径；这些冲突已在显式merge提交`ebe5e941b6dbdc9c139d76883b2746f9db7fa7fa`中解决，该提交已进入`master`与`origin/master`。在固定下一候选前，`upstreamCandidateCommit`与晋升后的基线保持一致。
@@ -513,7 +513,7 @@ NestJS边缘为每个HTTP请求和WebSocket升级生成不可由浏览器覆盖�
 本方案要求形成并维护以下ADR：
 
 1. 服务器权威，不支持本地内容事实源。
-2. React接管应用壳，Protyle保留为编辑器内核。
+2. 思源原生代码拥有主工作区，React仅在企业管理入口内挂载。
 3. NestJS管理企业域，Go Kernel管理内容域。
 4. 一个空间对应一个隔离Kernel实例。
 5. PostgreSQL与`.sy`不双写内容。

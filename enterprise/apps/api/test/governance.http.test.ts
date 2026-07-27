@@ -9,10 +9,18 @@ import {
   CSRF_HEADER_NAME,
   DOCUMENT_GOVERNANCE_PATH_TEMPLATE,
   DOCUMENT_GOVERNANCE_TRANSITION_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_CLASSIFICATION_PATH_TEMPLATE,
+  DOCUMENT_GOVERNANCE_LEGAL_HOLD_PATH_TEMPLATE,
   ORGANIZATION_PERSONAL_SPACE_PATH_TEMPLATE,
   ORGANIZATION_API_KEYS_PATH_TEMPLATE,
+  ORGANIZATION_API_KEY_PATH_TEMPLATE,
   ORGANIZATION_SAML_PROVIDERS_PATH_TEMPLATE,
   ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_USERS_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_USER_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE,
   ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE,
   ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE,
   ORGANIZATION_SPACE_GOVERNANCE_POLICY_PATH_TEMPLATE,
@@ -21,11 +29,17 @@ import {
   loginResponseSchema,
   mfaLoginChallengeResponseSchema,
   documentGovernanceSchema,
+  scimGroupResourceSchema,
+  scimErrorResponseSchema,
+  scimListResponseSchema,
+  scimServiceProviderConfigSchema,
+  scimUserResourceSchema,
 } from "@singularity/contracts";
 import { DatabaseRuntime, type DatabaseClient } from "@singularity/database";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { AccessOperationsService } from "../src/operations/access-operations.service.js";
+import { EnterpriseGovernanceService } from "../src/governance/governance.service.js";
 import { truncateTestDatabase } from "./support/database.js";
 import { startTestApiApplication, TEST_PUBLIC_ORIGIN, type TestApiApplication } from "./support/test-app.js";
 
@@ -88,8 +102,14 @@ async function expectProblem(response: Response, status: number, code: string): 
   expect(apiProblemSchema.parse(await response.json())).toMatchObject({ code, status });
 }
 
+async function expectScimProblem(response: Response, status: number): Promise<void> {
+  expect(response.status).toBe(status);
+  expect(scimErrorResponseSchema.parse(await response.json())).toMatchObject({ status: String(status) });
+}
+
 describe("L4 governance HTTP contracts", () => {
   let database: DatabaseClient;
+  let governance: EnterpriseGovernanceService;
   let operations: AccessOperationsService;
   let testApi: TestApiApplication;
 
@@ -97,6 +117,7 @@ describe("L4 governance HTTP contracts", () => {
     testApi = await startTestApiApplication();
     database = testApi.app.get(DatabaseRuntime).client;
     operations = testApi.app.get(AccessOperationsService);
+    governance = testApi.app.get(EnterpriseGovernanceService);
   });
 
   afterEach(async () => {
@@ -153,7 +174,7 @@ describe("L4 governance HTTP contracts", () => {
       body: JSON.stringify({
         archiveAfterDays: policy.archiveAfterDays,
         defaultClassification: policy.defaultClassification,
-        governanceEnabled: policy.governanceEnabled,
+        governanceEnabled: true,
         retentionDays: policy.retentionDays,
         verificationGraceDays: policy.verificationGraceDays,
         verificationIntervalDays: 7,
@@ -175,6 +196,20 @@ describe("L4 governance HTTP contracts", () => {
       method: "POST",
     });
     expect(documentGovernanceSchema.parse(await submit.json()).lifecycle).toBe("in-review");
+
+    const duplicateSubmit = await fetch(`${testApi.baseUrl}${documentPath}`, {
+      body: JSON.stringify({ action: "submit", versionToken: "v1" }),
+      headers: mutationHeaders(session),
+      method: "POST",
+    });
+    await expectProblem(duplicateSubmit, 409, "conflict");
+
+    const illegalPublish = await fetch(`${testApi.baseUrl}${documentPath}`, {
+      body: JSON.stringify({ action: "publish", versionToken: "v1" }),
+      headers: mutationHeaders(session),
+      method: "POST",
+    });
+    await expectProblem(illegalPublish, 409, "conflict");
 
     const staleApprove = await fetch(`${testApi.baseUrl}${documentPath}`, {
       body: JSON.stringify({ action: "approve", versionToken: "old-version" }),
@@ -206,6 +241,48 @@ describe("L4 governance HTTP contracts", () => {
     const nextVerificationAt = verified.nextVerificationAt === undefined ? 0 : Date.parse(verified.nextVerificationAt);
     expect(nextVerificationAt - Date.now()).toBeGreaterThan(6 * 86_400_000);
     expect(nextVerificationAt - Date.now()).toBeLessThan(8 * 86_400_000);
+  });
+
+  test("rejects governance mutations while the space feature gate is disabled", async () => {
+    const installation = await initialize();
+    const session = await login(installation.loginIdentifier);
+    const documentPath = path(DOCUMENT_GOVERNANCE_TRANSITION_PATH_TEMPLATE, {
+      ...installation,
+      notebookId,
+      documentId,
+    });
+    const response = await fetch(`${testApi.baseUrl}${documentPath}`, {
+      body: JSON.stringify({ action: "submit", versionToken: "disabled-v1" }),
+      headers: mutationHeaders(session),
+      method: "POST",
+    });
+    await expectProblem(response, 403, "forbidden");
+    expect(await database.documentGovernance.count({ where: { organizationId: installation.organizationId, spaceId: installation.spaceId, notebookId, documentId } })).toBe(0);
+  });
+
+  test("keeps classification monotonic and records a manager legal hold", async () => {
+    const installation = await initialize();
+    const session = await login(installation.loginIdentifier);
+    const policyPath = path(ORGANIZATION_SPACE_GOVERNANCE_POLICY_PATH_TEMPLATE, { ...installation });
+    const policy = governancePolicyResponseSchema.parse(await (await fetch(`${testApi.baseUrl}${policyPath}`, { headers: { Cookie: session.cookie } })).json());
+    const enabled = await fetch(`${testApi.baseUrl}${policyPath}`, {
+      body: JSON.stringify({ archiveAfterDays: policy.archiveAfterDays, defaultClassification: policy.defaultClassification, governanceEnabled: true, retentionDays: policy.retentionDays, verificationGraceDays: policy.verificationGraceDays, verificationIntervalDays: policy.verificationIntervalDays, watermarkEnabled: policy.watermarkEnabled }),
+      headers: mutationHeaders(session),
+      method: "PUT",
+    });
+    expect(enabled.status).toBe(200);
+    const scope = { ...installation, notebookId, documentId };
+    const documentPath = path(DOCUMENT_GOVERNANCE_PATH_TEMPLATE, scope);
+    expect((await fetch(`${testApi.baseUrl}${documentPath}`, { headers: { Cookie: session.cookie } })).status).toBe(200);
+    const classificationPath = path(DOCUMENT_GOVERNANCE_CLASSIFICATION_PATH_TEMPLATE, scope);
+    const raised = await fetch(`${testApi.baseUrl}${classificationPath}`, { body: JSON.stringify({ classification: "confidential" }), headers: mutationHeaders(session), method: "PUT" });
+    expect(documentGovernanceSchema.parse(await raised.json()).classification).toBe("confidential");
+    const lowered = await fetch(`${testApi.baseUrl}${classificationPath}`, { body: JSON.stringify({ classification: "internal" }), headers: mutationHeaders(session), method: "PUT" });
+    await expectProblem(lowered, 409, "conflict");
+    const legalHoldPath = path(DOCUMENT_GOVERNANCE_LEGAL_HOLD_PATH_TEMPLATE, scope);
+    const legalHold = await fetch(`${testApi.baseUrl}${legalHoldPath}`, { body: JSON.stringify({ enabled: true }), headers: mutationHeaders(session), method: "PUT" });
+    expect(documentGovernanceSchema.parse(await legalHold.json()).legalHold).toBe(true);
+    expect(await database.auditEvent.count({ where: { organizationId: installation.organizationId, targetId: documentId, action: "permission_change", outcome: "succeeded" } })).toBeGreaterThan(0);
   });
 
   test("initializes a visible document governance record on first read", async () => {
@@ -336,7 +413,7 @@ describe("L4 governance HTTP contracts", () => {
       headers: { "Content-Type": "application/json" },
       method: "POST",
     });
-    await expectProblem(missingToken, 401, "unauthenticated");
+    await expectScimProblem(missingToken, 401);
 
     const sync = await fetch(`${testApi.baseUrl}${syncPath}`, {
       body: JSON.stringify({ groups: [], users: [{ active: true, externalId: "scim-user-1", loginIdentifier: `scim-${randomUUID()}@example.test` }] }),
@@ -356,7 +433,105 @@ describe("L4 governance HTTP contracts", () => {
       headers: { Authorization: `Bearer ${token.secret}`, "Content-Type": "application/json" },
       method: "POST",
     });
-    await expectProblem(revokedSync, 401, "unauthenticated");
+    await expectScimProblem(revokedSync, 401);
+  });
+
+  test("exposes standard SCIM Users and Groups resources over the fixed organization scope", async () => {
+    const installation = await initialize();
+    const session = await login(installation.loginIdentifier);
+    const tokenResponse = await fetch(
+      `${testApi.baseUrl}${path(ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE, { ...installation })}`,
+      { body: "{}", headers: mutationHeaders(session), method: "POST" },
+    );
+    expect(tokenResponse.status).toBe(201);
+    const token = (await tokenResponse.json()) as { secret: string };
+    const scimHeaders = { Authorization: `Bearer ${token.secret}`, "Content-Type": "application/scim+json" };
+
+    const malformed = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, { ...installation })}`, {
+      body: "{",
+      headers: scimHeaders,
+      method: "POST",
+    });
+    await expectScimProblem(malformed, 400);
+
+    const config = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE, { ...installation })}`, { headers: scimHeaders });
+    expect(config.status).toBe(200);
+    expect(scimServiceProviderConfigSchema.parse(await config.json())).toMatchObject({ patch: { supported: true }, filter: { supported: true } });
+
+    const userId = `idp-user-${randomUUID()}`;
+    const createdUser = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, { ...installation })}`, {
+      body: JSON.stringify({ active: true, externalId: userId, schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `${userId}@example.test` }),
+      headers: scimHeaders,
+      method: "POST",
+    });
+    expect(createdUser.status).toBe(201);
+    const user = scimUserResourceSchema.parse(await createdUser.json());
+    expect(user).toMatchObject({ active: true, externalId: userId, id: userId });
+
+    const listedUsers = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, { ...installation })}?filter=${encodeURIComponent(`userName eq "${user.userName}"`)}&startIndex=1&count=1`, { headers: scimHeaders });
+    expect(listedUsers.status).toBe(200);
+    const userPage = scimListResponseSchema.parse(await listedUsers.json());
+    expect(userPage.totalResults).toBe(1);
+    expect(userPage.Resources[0]).toMatchObject({ id: userId });
+
+    const patchedUser = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USER_PATH_TEMPLATE, { ...installation, resourceId: userId })}`, {
+      body: JSON.stringify({ Operations: [{ op: "replace", path: "active", value: false }], schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"] }),
+      headers: scimHeaders,
+      method: "PATCH",
+    });
+    expect(patchedUser.status).toBe(200);
+    expect(scimUserResourceSchema.parse(await patchedUser.json()).active).toBe(false);
+
+    const createdGroup = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE, { ...installation })}`, {
+      body: JSON.stringify({ displayName: `Engineering-${randomUUID()}`, externalId: `idp-group-${randomUUID()}`, members: [{ type: "User", value: userId }], schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"] }),
+      headers: scimHeaders,
+      method: "POST",
+    });
+    expect(createdGroup.status).toBe(201);
+    const group = scimGroupResourceSchema.parse(await createdGroup.json());
+    expect(group.members).toEqual([{ display: user.userName, type: "User", value: userId }]);
+
+    const readGroup = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE, { ...installation, resourceId: group.id })}`, { headers: scimHeaders });
+    expect(readGroup.status).toBe(200);
+    expect(scimGroupResourceSchema.parse(await readGroup.json()).id).toBe(group.id);
+  });
+
+  test("keeps SCIM deactivation scoped to the target organization membership", async () => {
+    const installation = await initialize();
+    const otherOrganizationId = randomUUID();
+    await database.organization.create({ data: { id: otherOrganizationId, name: `Other-${randomUUID()}`, status: "active" } });
+    await database.organizationMembership.create({ data: { organizationId: otherOrganizationId, role: "member", status: "active", userId: installation.userId } });
+    const session = await login(installation.loginIdentifier);
+    const tokenResponse = await fetch(
+      `${testApi.baseUrl}${path(ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE, { ...installation })}`,
+      { body: "{}", headers: mutationHeaders(session), method: "POST" },
+    );
+    expect(tokenResponse.status).toBe(201);
+    const token = (await tokenResponse.json()) as { secret: string };
+    const scimHeaders = { Authorization: `Bearer ${token.secret}`, "Content-Type": "application/scim+json" };
+    const externalId = `scoped-user-${randomUUID()}`;
+    const created = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, { ...installation })}`, {
+      body: JSON.stringify({ externalId, userName: installation.loginIdentifier }),
+      headers: scimHeaders,
+      method: "POST",
+    });
+    expect(created.status).toBe(201);
+    const deactivated = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_SCIM_USER_PATH_TEMPLATE, { ...installation, resourceId: externalId })}`, {
+      body: JSON.stringify({ Operations: [{ op: "replace", path: "active", value: false }] }),
+      headers: scimHeaders,
+      method: "PATCH",
+    });
+    expect(deactivated.status).toBe(200);
+    expect(scimUserResourceSchema.parse(await deactivated.json()).active).toBe(false);
+    const memberships = await database.organizationMembership.findMany({
+      where: { userId: installation.userId, organizationId: { in: [installation.organizationId, otherOrganizationId] } },
+      select: { organizationId: true, status: true },
+      orderBy: { organizationId: "asc" },
+    });
+    expect(memberships).toHaveLength(2);
+    expect(memberships.find((membership) => membership.organizationId === installation.organizationId)?.status).toBe("inactive");
+    expect(memberships.find((membership) => membership.organizationId === otherOrganizationId)?.status).toBe("active");
+    expect((await database.user.findUnique({ where: { id: installation.userId }, select: { status: true } }))?.status).toBe("active");
   });
 
   test("lists identity credentials as redacted summaries after creation", async () => {
@@ -391,5 +566,34 @@ describe("L4 governance HTTP contracts", () => {
     const factors = await fetch(`${testApi.baseUrl}${AUTH_MFA_FACTORS_PATH}`, { headers: { Cookie: session.cookie } });
     expect(factors.status).toBe(200);
     expect(await factors.json()).toEqual({ factors: [] });
+  });
+
+  test("enforces API Key scope, expiry, revocation, and machine verification", async () => {
+    const installation = await initialize();
+    const session = await login(installation.loginIdentifier);
+    const apiKeysPath = path(ORGANIZATION_API_KEYS_PATH_TEMPLATE, { ...installation });
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const createdKey = await fetch(`${testApi.baseUrl}${apiKeysPath}`, {
+      body: JSON.stringify({ expiresAt, name: "machine", scopes: ["governance.read"] }),
+      headers: mutationHeaders(session),
+      method: "POST",
+    });
+    expect(createdKey.status).toBe(201);
+    const body = (await createdKey.json()) as { apiKeyId: string; secret: string };
+    await expect(governance.authenticateApiKey(body.secret, "governance.read")).resolves.toMatchObject({ organizationId: installation.organizationId, userId: installation.userId });
+    await expect(governance.authenticateApiKey(body.secret, "governance.write")).rejects.toMatchObject({ code: "forbidden" });
+
+    const revoke = await fetch(`${testApi.baseUrl}${path(ORGANIZATION_API_KEY_PATH_TEMPLATE, { ...installation, apiKeyId: body.apiKeyId })}`, { headers: mutationHeaders(session), method: "DELETE" });
+    expect(revoke.status).toBe(204);
+    await expect(governance.authenticateApiKey(body.secret, "governance.read")).rejects.toMatchObject({ code: "unauthenticated" });
+
+    const expired = await fetch(`${testApi.baseUrl}${apiKeysPath}`, {
+      body: JSON.stringify({ expiresAt: new Date(Date.now() - 1_000).toISOString(), name: "expired", scopes: ["governance.read"] }),
+      headers: mutationHeaders(session),
+      method: "POST",
+    });
+    expect(expired.status).toBe(201);
+    const expiredBody = (await expired.json()) as { secret: string };
+    await expect(governance.authenticateApiKey(expiredBody.secret, "governance.read")).rejects.toMatchObject({ code: "unauthenticated" });
   });
 });

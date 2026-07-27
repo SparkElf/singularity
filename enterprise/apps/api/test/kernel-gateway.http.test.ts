@@ -819,6 +819,23 @@ describe("Kernel Gateway business responses and runtime access loss", () => {
     ]);
   });
 
+  test("adds an identity-bound export watermark only at the response boundary", async () => {
+    const graph = await createAuthenticatedGraph();
+    await database.governancePolicy.create({ data: { archiveAfterDays: 365, createdByUserId: graph.userId, defaultClassification: "internal", governanceEnabled: true, organizationId: graph.organizationId, retentionDays: 2555, spaceId: graph.spaceId, verificationGraceDays: 30, verificationIntervalDays: 180, watermarkEnabled: true } });
+
+    const response = await requestExport(graph, ["true"]);
+
+    expect(response.status).toBe(200);
+    const watermark = response.headers.get("x-singularity-export-watermark");
+    expect(watermark).toContain(`organization=${graph.organizationId}`);
+    expect(watermark).toContain(`space=${graph.spaceId}`);
+    expect(watermark).toContain(`document=${DOCUMENT_ID}`);
+    expect(watermark).toContain(`user=${graph.userId}`);
+    expect(await response.text()).toBe("exported content");
+    const audit = await database.exportAudit.findFirstOrThrow({ where: { organizationId: graph.organizationId, documentId: DOCUMENT_ID } });
+    expect(audit.watermarkRef).toMatch(/^[a-f0-9]{16}$/);
+  });
+
   test("keeps inert image assets inline while preserving the safety header", async () => {
     const graph = await createAuthenticatedGraph();
 

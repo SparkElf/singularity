@@ -129,6 +129,9 @@ func (configuration *Configuration) Middleware() gin.HandlerFunc {
 			identity, identityOK := parseContentIdentity(ginContext.Request)
 			if identityRequirement == FullContentIdentityRequired {
 				identity, identityOK = parseFullContentIdentity(ginContext.Request)
+				if identityOK && identity.SpaceID != configuration.spaceID {
+					identityOK = false
+				}
 			}
 			if !identityOK {
 				logging.LogWarnf("kernel.route content identity failed [requestId=%s]", requestID)

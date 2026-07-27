@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from "react-router";
 
 import { LoginPage } from "@/auth/LoginPage.tsx";
+import { ForgotPasswordPage } from "@/auth/ForgotPasswordPage.tsx";
+import { ProvisioningPage } from "@/auth/ProvisioningPage.tsx";
+import { ResetPasswordPage } from "@/auth/ResetPasswordPage.tsx";
 import { SPACES_PATH } from "@/auth/return-to.ts";
 import { AuditPage } from "@/enterprise/AuditPage.tsx";
 import { BackupsPage } from "@/enterprise/BackupsPage.tsx";
@@ -34,6 +37,10 @@ export function App({
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/setup" element={<ProvisioningPage mode="setup" />} />
+      <Route path="/register" element={<ProvisioningPage mode="register" />} />
       <Route path="/invitations/accept" element={<InvitationAcceptPage />} />
       <Route path="/shares/:shareToken" element={<PublicSharePage />} />
       <Route path="/spaces" element={<SpacesPage />} />

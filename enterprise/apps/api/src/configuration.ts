@@ -23,6 +23,8 @@ export interface ApiConfiguration {
   contentAuditIndeterminateAfterMilliseconds: number;
   oidcClientSecretBindings: readonly OidcClientSecretBinding[];
   publicOrigin: string;
+  passwordResetFrom: string | undefined;
+  passwordResetSmtpUrl: string | undefined;
   trustedProxyCidrs: readonly string[];
 }
 
@@ -148,6 +150,46 @@ export function parsePublicOrigin(value: string | undefined): string {
   }
 
   return url.origin;
+}
+
+/** 解析密码找回 SMTP 地址；缺少配置时保留未配置状态，由业务入口统一返回 503。 */
+export function parsePasswordResetSmtpUrl(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new ApiConfigurationError({ cause: error });
+  }
+  if (
+    (url.protocol !== "smtp:" && url.protocol !== "smtps:") ||
+    url.hostname.length === 0 ||
+    url.hash.length > 0
+  ) {
+    throw new ApiConfigurationError();
+  }
+  if (url.pathname.length === 0) {
+    url.pathname = "/";
+  }
+  return url.toString();
+}
+
+/** 解析发件人地址并归一化为 SMTP provider 使用的单一配置字段。 */
+export function parsePasswordResetFrom(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+  const normalized = value.trim().normalize("NFKC").toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new ApiConfigurationError();
+  }
+  return normalized;
 }
 
 function isTrustedProxyAddress(value: string): boolean {

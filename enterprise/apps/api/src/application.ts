@@ -25,6 +25,8 @@ import {
   parseContentAuditIndeterminateAfterMilliseconds,
   parseBooleanFlag,
   parseOidcClientSecretBindings,
+  parsePasswordResetFrom,
+  parsePasswordResetSmtpUrl,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
@@ -38,12 +40,13 @@ import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
   installKernelGatewayHttpBoundary,
+  KERNEL_JSON_MAXIMUM_BODY_BYTES,
   KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
 } from "./kernel/install-http-boundary.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
 import { KernelWebSocketGateway } from "./kernel/kernel-websocket.gateway.js";
 import { RealtimeCollaborationWebSocketGateway } from "./collaboration/realtime-websocket.gateway.js";
-import { ApiProblemFilter } from "./problem.js";
+import { ApiProblemFilter, scimError } from "./problem.js";
 
 export interface CreateApiApplicationOptions {
   auditConfiguration: AuditConfiguration;
@@ -58,6 +61,7 @@ export interface CreateApiApplicationOptions {
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
   aiProvider?: AiProvider;
+  passwordResetMailer?: import("./identity/password-reset-mailer.js").PasswordResetMailer;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
 }
@@ -74,6 +78,12 @@ export async function createApiApplication(
     oidcClientSecretBindings: parseOidcClientSecretBindings(
       options.oidcClientSecretBindings,
     ),
+    passwordResetFrom: parsePasswordResetFrom(
+      process.env.SINGULARITY_PASSWORD_RESET_FROM,
+    ),
+    passwordResetSmtpUrl: parsePasswordResetSmtpUrl(
+      process.env.SINGULARITY_PASSWORD_RESET_SMTP_URL,
+    ),
     publicOrigin: parsePublicOrigin(options.publicOrigin),
     trustedProxyCidrs: parseTrustedProxyCidrs(options.trustedProxyCidrs),
   };
@@ -88,6 +98,27 @@ export async function createApiApplication(
       ? {}
       : { trustProxy: [...configuration.trustedProxyCidrs] }),
   });
+
+  // Fastify 默认只解析 application/json；SCIM 客户端使用独立媒体类型，必须在 HTTP 边界一次解析为 JSON。
+  adapter.getInstance().addContentTypeParser(
+    "application/scim+json",
+    { bodyLimit: KERNEL_JSON_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
+    (_request, body, done) => {
+      if (body.length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(typeof body === "string" ? body : body.toString("utf8")) as unknown);
+      } catch (error) {
+        done(
+          scimError(400, "The SCIM request body is not valid JSON", "invalidSyntax", {
+            cause: error,
+          }),
+        );
+      }
+    },
+  );
 
   adapter.getInstance().addHook("onRequest", async (request, reply) => {
     reply.header("X-Request-Id", request.id);
@@ -110,6 +141,9 @@ export async function createApiApplication(
         ? {}
         : { oidcHttpTransport: options.oidcHttpTransport }),
       ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
+      ...(options.passwordResetMailer === undefined
+        ? {}
+        : { passwordResetMailer: options.passwordResetMailer }),
     }),
     adapter,
     {
@@ -139,6 +173,10 @@ export async function createApiApplication(
           name: AUTH_SESSION_COOKIE_NAME,
         },
         AUTH_SESSION_COOKIE_NAME,
+      )
+      .addBearerAuth(
+        { bearerFormat: "SCIM", scheme: "bearer", type: "http" },
+        "ScimBearer",
       )
       .build(),
   );

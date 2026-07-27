@@ -3,6 +3,10 @@ import {
   AUTH_INVITATION_ACCEPT_LOCAL_PATH,
   AUTH_INVITATION_ACCEPT_PATH,
   AUTH_LOGIN_PATH,
+  AUTH_PASSWORD_RESET_PATH,
+  AUTH_PASSWORD_RESET_REQUEST_PATH,
+  AUTH_REGISTER_PATH,
+  AUTH_SETUP_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_MFA_CHALLENGE_VERIFY_PATH,
   AUTH_OIDC_PROVIDERS_PATH,
@@ -11,6 +15,10 @@ import {
   csrfResponseSchema,
   loginAttemptResponseSchema,
   loginResponseSchema,
+  passwordResetRequestedResponseSchema,
+  type PasswordResetConfirmRequest,
+  type PasswordResetRequest,
+  type PasswordResetRequestedResponse,
   oidcProvidersResponseSchema,
   oidcStartResponseSchema,
   type AcceptLocalOrganizationInvitationRequest,
@@ -19,9 +27,12 @@ import {
   type LoginResponse,
   type LoginAttemptResponse,
   type MfaLoginChallengeVerifyRequest,
+  type RegisterRequest,
+  type SetupStatusResponse,
   type OidcProvidersResponse,
   type OidcStartRequest,
   type OidcStartResponse,
+  setupStatusResponseSchema,
 } from "@singularity/contracts";
 
 import {
@@ -130,6 +141,55 @@ export function login(
   signal?: AbortSignal,
 ): Promise<LoginAttemptResponse> {
   return requestJson(loginAttemptResponseSchema, AUTH_LOGIN_PATH, {
+    body: JSON.stringify(request),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal: signal ?? null,
+  });
+}
+
+export function getSetupStatus(
+  signal?: AbortSignal,
+): Promise<SetupStatusResponse> {
+  return requestJson(setupStatusResponseSchema, AUTH_SETUP_PATH, {
+    signal: signal ?? null,
+  });
+}
+
+/** 创建不带组织归属的本地账号；注册入口始终开放，组织归属由邀请或管理员分配建立。 */
+export function register(
+  request: RegisterRequest,
+  signal?: AbortSignal,
+): Promise<LoginResponse> {
+  return requestJson(loginResponseSchema, AUTH_REGISTER_PATH, {
+    body: JSON.stringify(request),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+    signal: signal ?? null,
+  });
+}
+
+export function requestPasswordReset(
+  request: PasswordResetRequest,
+  signal?: AbortSignal,
+): Promise<PasswordResetRequestedResponse> {
+  return requestJson(
+    passwordResetRequestedResponseSchema,
+    AUTH_PASSWORD_RESET_REQUEST_PATH,
+    {
+      body: JSON.stringify(request),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal: signal ?? null,
+    },
+  );
+}
+
+export function confirmPasswordReset(
+  request: PasswordResetConfirmRequest,
+  signal?: AbortSignal,
+): Promise<void> {
+  return requestNoContent(AUTH_PASSWORD_RESET_PATH, {
     body: JSON.stringify(request),
     headers: { "Content-Type": "application/json" },
     method: "POST",

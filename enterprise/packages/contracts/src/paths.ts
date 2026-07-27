@@ -15,6 +15,11 @@ export const DATABASE_READINESS_PATH = "/api/v1/health/database";
 export const OPENAPI_DOCUMENT_PATH = "/api/openapi.json";
 
 export const AUTH_LOGIN_PATH = "/api/v1/auth/login";
+export const AUTH_SETUP_PATH = "/api/v1/auth/setup";
+export const AUTH_REGISTER_PATH = "/api/v1/auth/register";
+export const AUTH_PASSWORD_RESET_REQUEST_PATH =
+  "/api/v1/auth/password-reset/request";
+export const AUTH_PASSWORD_RESET_PATH = "/api/v1/auth/password-reset";
 export const AUTH_CSRF_PATH = "/api/v1/auth/csrf";
 export const AUTH_LOGOUT_PATH = "/api/v1/auth/logout";
 export const AUTH_INVITATION_ACCEPT_PATH = "/api/v1/auth/invitations/accept";
@@ -179,6 +184,18 @@ export const ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE =
   `${ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE}/{tokenId}`;
 export const ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE =
   "/api/v1/organizations/{organizationId}/scim/sync";
+export const ORGANIZATION_SCIM_V2_PATH_TEMPLATE =
+  "/api/v1/organizations/{organizationId}/scim/v2";
+export const ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE =
+  `${ORGANIZATION_SCIM_V2_PATH_TEMPLATE}/ServiceProviderConfig`;
+export const ORGANIZATION_SCIM_USERS_PATH_TEMPLATE =
+  `${ORGANIZATION_SCIM_V2_PATH_TEMPLATE}/Users`;
+export const ORGANIZATION_SCIM_USER_PATH_TEMPLATE =
+  `${ORGANIZATION_SCIM_USERS_PATH_TEMPLATE}/{resourceId}`;
+export const ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE =
+  `${ORGANIZATION_SCIM_V2_PATH_TEMPLATE}/Groups`;
+export const ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE =
+  `${ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE}/{resourceId}`;
 export const ORGANIZATION_API_KEY_PATH_TEMPLATE =
   `${ORGANIZATION_API_KEYS_PATH_TEMPLATE}/{apiKeyId}`;
 export const DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE =
@@ -293,6 +310,21 @@ export const ORGANIZATION_SCIM_TOKEN_CONTROLLER_PATH = toControllerPath(
 );
 export const ORGANIZATION_SCIM_SYNC_CONTROLLER_PATH = toControllerPath(
   ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE,
+);
+export const ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE,
+);
+export const ORGANIZATION_SCIM_USERS_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SCIM_USERS_PATH_TEMPLATE,
+);
+export const ORGANIZATION_SCIM_USER_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SCIM_USER_PATH_TEMPLATE,
+);
+export const ORGANIZATION_SCIM_GROUPS_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE,
+);
+export const ORGANIZATION_SCIM_GROUP_CONTROLLER_PATH = toControllerPath(
+  ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE,
 );
 export const ORGANIZATION_API_KEY_CONTROLLER_PATH = toControllerPath(
   ORGANIZATION_API_KEY_PATH_TEMPLATE,

@@ -1,6 +1,6 @@
 ---
 title: "ADR-009: Protyle浏览器运行时边界"
-description: "确定Protyle通过单空间Session、Kernel传输和类型化宿主事件接入React/Vite"
+description: "确定企业React模块中的Protyle通过单空间Session、Kernel传输和类型化宿主事件运行"
 author: "Codex"
 date: "2026-07-13"
 version: "1.7.0"
@@ -32,7 +32,7 @@ Accepted
 
 ## Context
 
-ADR-002确定React拥有应用壳、Protyle拥有编辑器DOM。源码审计发现，直接导入`app/src/protyle/index.ts`仍会把旧布局、移动端、菜单、插件、Electron和大量`window.siyuan`状态带入Vite；当前React控制器中的`openDocument`也不是Protyle真实公共方法。
+ADR-035确定思源原生代码拥有主工作区；本ADR只约束企业React模块内的Protyle宿主。源码审计发现，直接导入`app/src/protyle/index.ts`仍会把旧布局、移动端、菜单、插件、Electron和大量`window.siyuan`状态带入Vite；当前React控制器中的`openDocument`也不是Protyle真实公共方法。
 
 实现审计进一步确认当前企业Web只有固定路由，旧App没有组织或空间身份，仓库内不存在真实`spaceId`生产者。若先迁移旧Core，只能伪造空间身份或增加local Session，二者都违反服务器权威合同。
 
@@ -52,7 +52,7 @@ B4接线审计进一步确认，空间路由启动时只有`SpaceRuntimeBootstra
 8. Protyle通过类型化HostEvent请求React执行文档导航、搜索、图谱、资源和通知；编辑器插件只依赖`ProtylePluginPort`，不直接依赖React路由或旧布局。
 9. 浏览器入口闭包不得包含ifdef指令、Electron、Node内置模块或原生移动端import；Vite是唯一Web构建路径。
 10. B4由`enterprise`中的唯一`pnpm verify:b4`聚合静态边界、类型、公共包Vitest、React Vitest、`enterprise/scripts`与`app`的`node:test`以及Vite构建；CI分别冻结安装enterprise与app两个lockfile。
-11. 生产Session只能由认证、组织成员和空间成员验证后的`SpaceRuntimeBootstrap.spaceId`创建；React空间路由是唯一组合根，旧App、工作区路径、设备ID和随机App ID均不得创建Session。
+11. 生产Session只能由认证、组织成员和空间成员验证后的`SpaceRuntimeBootstrap.spaceId`创建；企业React空间模块是唯一组合根，原生思源工作区不得从路由、工作区路径、设备ID或随机App ID创建企业Session。
 12. S0数据库与合同、S1身份与空间启动、S2 Kernel Gateway先于生产Core迁移；S3创建生产HostPort、正式零插件PluginPort、Registry、Transport、ResourcePort、Menu、Overlay、无Core完整Runtime和Session。B4作为唯一Core接线批次把React Host、公共Factory和Core接到该Session，不重建Runtime能力；P3/P4只补真实浏览器行为、非空插件和复杂内容证据。
 13. Gateway到Kernel的HTTPS、WSS握手和readiness统一使用mTLS与短期Ed25519服务JWT；浏览器Cookie和用户token不进入私网跳转。浏览器连接先pending登记再复验并原子激活，按认证会话、用户、组织和空间索引；会话到期、组织/空间状态及两级成员变化都关闭连接。认证或权限失效时等待Session销毁、清除编辑器DOM后才失效查询并允许当前代次的新Session。
 14. `verify:s0-s3`按S0-S3原子增加非空suite，最终聚合数据库、production build、真实Nest HTTPS/WSS、`kernel/serviceauth` Go unit和React组合根证据；`verify:b4`聚合Core源码合同。P3/P4提供真实浏览器能力证据，P5收口真实E2E并物理删除旧Web文件、Adapter和重复runner。

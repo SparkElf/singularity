@@ -25,6 +25,7 @@ import {
   OrbitIcon,
   SearchIcon,
   SearchXIcon,
+  Settings2Icon,
   WifiOffIcon,
 } from "lucide-react";
 import { Link, Navigate, useLocation, useParams } from "react-router";
@@ -128,9 +129,9 @@ import {
   type DiscoveryNavigationTarget,
 } from "@/spaces/DiscoveryPanel.tsx";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
-import { CollaborationPanel } from "@/collaboration/CollaborationPanel.tsx";
 import { RealtimeCollaborationHost } from "@/collaboration/RealtimeCollaborationHost.tsx";
-import { DocumentGovernancePanel } from "@/enterprise/DocumentGovernancePanel.tsx";
+import { organizationSettingsPath } from "@/enterprise/routes.ts";
+import { ThemeToggle } from "@/theme/ThemeToggle.tsx";
 
 const MAX_STARTING_POLLS = 30;
 const STARTING_POLL_INTERVAL_MS = 2_000;
@@ -625,16 +626,6 @@ function ReadyWorkspace({
     }
   };
 
-  const navigateToDocument = useCallback((target: {
-    readonly documentId: string;
-    readonly notebookId: string;
-  }) => {
-    const resolved = resolveContentSelectionTarget(queryClient, identity, target);
-    if (resolved !== null) {
-      composition.selectDocument(resolved);
-    }
-  }, [composition, identity, queryClient]);
-
   useEffect(() => {
     if (initialDocument === null || initialDocumentKey === null || initialNotebooksQuery.data === undefined || appliedInitialDocumentRef.current === initialDocumentKey) {
       return;
@@ -720,47 +711,6 @@ function ReadyWorkspace({
           />
         )}
       </main>
-      <CollaborationPanel
-        key={
-          selection === null
-            ? "empty"
-            : `${identity.organizationId}:${identity.spaceId}:${selection.notebookId}:${selection.documentId}`
-        }
-        identity={
-          selection === null
-            ? null
-            : {
-                documentId: selection.documentId,
-                notebookId: selection.notebookId,
-                organizationId: identity.organizationId,
-                spaceId: identity.spaceId,
-              }
-        }
-        onNavigate={navigateToDocument}
-      />
-      {selection ? (
-        <DocumentGovernancePanel
-          key={`${identity.organizationId}:${identity.spaceId}:${selection.notebookId}:${selection.documentId}`}
-          identity={{
-            documentId: selection.documentId,
-            notebookId: selection.notebookId,
-            organizationId: identity.organizationId,
-            spaceId: identity.spaceId,
-          }}
-          onNavigateCitation={(target) => {
-            if (target.organizationId !== identity.organizationId || target.spaceId !== identity.spaceId) {
-              console.warn("[governance.ai-citation]", {
-                documentId: target.documentId,
-                organizationId: target.organizationId,
-                result: "cross-space-navigation-rejected",
-                spaceId: target.spaceId,
-              });
-              return;
-            }
-            navigateToDocument(target);
-          }}
-        />
-      ) : null}
       {session ? (
         <DiscoveryPanel
           onNavigate={onDiscoveryNavigate}
@@ -846,6 +796,19 @@ function WorkspaceFrame({
 
           <SidebarFooter className="border-t border-sidebar-border p-2">
             <SidebarMenu>
+              {currentSpace ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="企业管理"
+                  >
+                    <Link to={organizationSettingsPath(currentSpace.organizationId)}>
+                      <Settings2Icon aria-hidden="true" />
+                      <span>企业管理</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : null}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   disabled={logoutPending}
@@ -902,6 +865,7 @@ function WorkspaceFrame({
               </TooltipTrigger>
               <TooltipContent>搜索当前空间</TooltipContent>
             </Tooltip>
+            <ThemeToggle />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
