@@ -8,6 +8,7 @@ import { CONTENT_ID_PATTERN, contentIdSchema } from "./shares.js";
 
 export const SPACE_DISCOVERY_QUERY_MAX_LENGTH = 512;
 export const SPACE_DISCOVERY_BLOCK_CONTENT_MAX_LENGTH = 4096;
+export const SPACE_DISCOVERY_DOCUMENT_CONTENT_MAX_LENGTH = 4096;
 export const SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH = 512;
 export const DOCUMENT_DISCOVERY_GRAPH_NODE_ID_MAX_LENGTH =
   SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH + "tag:".length;
@@ -75,6 +76,20 @@ export type SpaceDiscoveryGraphRequest = z.infer<
   typeof spaceDiscoveryGraphRequestSchema
 >;
 
+export const spaceDiscoveryDocumentContentResponseSchema = z
+  .object({
+    content: unicodeCodePointStringSchema(
+      SPACE_DISCOVERY_DOCUMENT_CONTENT_MAX_LENGTH,
+    ),
+    documentId: contentIdSchema,
+    notebookId: contentIdSchema,
+    title: unicodeCodePointStringSchema(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH),
+  })
+  .strict();
+export type SpaceDiscoveryDocumentContentResponse = z.infer<
+  typeof spaceDiscoveryDocumentContentResponseSchema
+>;
+
 export const spaceDiscoveryBlockSchema = z
   .object({
     content: unicodeCodePointStringSchema(
@@ -83,6 +98,7 @@ export const spaceDiscoveryBlockSchema = z
     documentId: contentIdSchema,
     id: contentIdSchema,
     notebookId: contentIdSchema,
+    title: unicodeCodePointStringSchema(SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH),
   })
   .strict();
 export type SpaceDiscoveryBlock = z.infer<typeof spaceDiscoveryBlockSchema>;
@@ -272,6 +288,20 @@ export const SPACE_DISCOVERY_SEARCH_REQUEST_OPENAPI_SCHEMA =
 export const SPACE_DISCOVERY_GRAPH_REQUEST_OPENAPI_SCHEMA =
   strictObjectOpenApiSchema({ query: SPACE_DISCOVERY_QUERY_OPENAPI_SCHEMA });
 
+export const SPACE_DISCOVERY_DOCUMENT_CONTENT_RESPONSE_OPENAPI_SCHEMA =
+  strictObjectOpenApiSchema({
+    content: {
+      type: "string",
+      maxLength: SPACE_DISCOVERY_DOCUMENT_CONTENT_MAX_LENGTH,
+    },
+    documentId: CONTENT_ID_OPENAPI_SCHEMA,
+    notebookId: CONTENT_ID_OPENAPI_SCHEMA,
+    title: {
+      type: "string",
+      maxLength: SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+    },
+  });
+
 export const SPACE_DISCOVERY_BLOCK_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   content: {
     type: "string",
@@ -280,6 +310,10 @@ export const SPACE_DISCOVERY_BLOCK_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
   documentId: CONTENT_ID_OPENAPI_SCHEMA,
   id: CONTENT_ID_OPENAPI_SCHEMA,
   notebookId: CONTENT_ID_OPENAPI_SCHEMA,
+  title: {
+    type: "string",
+    maxLength: SPACE_DISCOVERY_GRAPH_LABEL_MAX_LENGTH,
+  },
 });
 
 export const SPACE_DISCOVERY_SEARCH_RESPONSE_OPENAPI_SCHEMA =

@@ -10,6 +10,8 @@ import {
   API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS,
   AUTHORIZED_SPACES_PATH,
   AUTH_LOGIN_PATH,
+  AUTH_PASSWORD_RESET_PATH,
+  AUTH_PASSWORD_RESET_REQUEST_PATH,
   ENTERPRISE_MANAGEMENT_ACCESS_PATH,
   INVITATION_TOKEN_OPENAPI_SCHEMA,
   ORGANIZATION_MEMBER_SUMMARY_OPENAPI_SCHEMA,
@@ -49,6 +51,9 @@ import {
   invitationTokenSchema,
   kernelInstanceStates,
   loginRequestSchema,
+  passwordResetConfirmRequestSchema,
+  passwordResetRequestSchema,
+  passwordResetRequestedResponseSchema,
   managedDocumentSharesResponseSchema,
   organizationMemberSummarySchema,
   organizationManagementCapabilities,
@@ -110,6 +115,30 @@ describe("HTTP contracts", () => {
       }).success,
       false,
     );
+  });
+
+  test("normalizes password reset email and keeps the token contract opaque", () => {
+    assert.deepEqual(
+      passwordResetRequestSchema.parse({ email: "  Member@Example.COM " }),
+      { email: "member@example.com" },
+    );
+    const token = `${"A".repeat(42)}E`;
+    assert.deepEqual(
+      passwordResetConfirmRequestSchema.parse({ password, token }),
+      { password, token },
+    );
+    assert.equal(
+      passwordResetConfirmRequestSchema.safeParse({
+        password,
+        token: "invalid",
+      }).success,
+      false,
+    );
+    assert.deepEqual(passwordResetRequestedResponseSchema.parse({ accepted: true }), {
+      accepted: true,
+    });
+    assert.equal(AUTH_PASSWORD_RESET_REQUEST_PATH, "/api/v1/auth/password-reset/request");
+    assert.equal(AUTH_PASSWORD_RESET_PATH, "/api/v1/auth/password-reset");
   });
 
   test("aligns organization invitation normalization and expiry limits with OpenAPI", () => {

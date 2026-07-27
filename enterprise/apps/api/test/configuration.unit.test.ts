@@ -9,6 +9,8 @@ import {
   DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
   parseContentAuditIndeterminateAfterMilliseconds,
   parseOidcClientSecretBindings,
+  parsePasswordResetFrom,
+  parsePasswordResetSmtpUrl,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "../src/configuration.js";
@@ -158,4 +160,30 @@ describe("API deployment configuration", () => {
   ])("rejects an unsafe trusted proxy list: %s", (value) => {
     expect(() => parseTrustedProxyCidrs(value)).toThrow(ApiConfigurationError);
   });
+
+  test("accepts the explicit password reset SMTP contract", () => {
+    expect(parsePasswordResetSmtpUrl("smtps://mailer.example.com")).toBe(
+      "smtps://mailer.example.com/",
+    );
+    expect(parsePasswordResetFrom(" Support@Example.com ")).toBe(
+      "support@example.com",
+    );
+    expect(parsePasswordResetSmtpUrl(undefined)).toBeUndefined();
+    expect(parsePasswordResetFrom(undefined)).toBeUndefined();
+  });
+
+  test.each([
+    "http://mailer.example.com",
+    "smtp:///missing-host",
+    "smtps://mailer.example.com#fragment",
+  ])("rejects an unsafe password reset SMTP URL: %s", (value) => {
+    expect(() => parsePasswordResetSmtpUrl(value)).toThrow(ApiConfigurationError);
+  });
+
+  test.each(["support", "support@", "@example.com", "support@example"]) (
+    "rejects an unsafe password reset sender: %s",
+    (value) => {
+      expect(() => parsePasswordResetFrom(value)).toThrow(ApiConfigurationError);
+    },
+  );
 });

@@ -126,11 +126,47 @@ describe("DocumentGovernancePanel", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByTitle("drawio 嵌入预览")).toHaveAttribute("sandbox", "allow-scripts");
+    expect(await screen.findByTitle("drawio 嵌入编辑器")).toHaveAttribute("sandbox", "allow-forms allow-popups allow-scripts allow-same-origin");
     fireEvent.change(screen.getByLabelText("AI 问题"), { target: { value: "查找" } });
     fireEvent.click(screen.getByRole("button", { name: "提问" }));
     await screen.findByText("已找到");
     fireEvent.click(screen.getByRole("button", { name: `打开引用 ${DOCUMENT_A}` }));
     expect(navigate).toHaveBeenCalledWith(identity(DOCUMENT_A));
+  });
+
+  test("accepts saves only from the matching embed iframe and kind", async () => {
+    const requests: Array<{ method: string; url: URL; body: string }> = [];
+    const embedId = "55555555-5555-4555-8555-555555555555";
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
+      const request = input instanceof Request ? input : undefined;
+      const url = new URL(request?.url ?? String(input), window.location.origin);
+      const method = request?.method ?? init?.method ?? "GET";
+      const body = request?.body === null || request?.body === undefined ? String(init?.body ?? "") : "[request-body]";
+      requests.push({ body, method, url });
+      if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
+      if (url.pathname.endsWith("/governance/approvals")) return Promise.resolve(jsonResponse({ approvals: [] }));
+      if (url.pathname.endsWith("/governance/embeds") && method === "GET") return Promise.resolve(jsonResponse({ embeds: [{ embedId, kind: "drawio", payload: { editorUrl: "https://app.diagrams.net/" }, status: "active", version: 2 }] }));
+      if (url.pathname.endsWith("/governance/embeds") && method === "PUT") return Promise.resolve(jsonResponse({ embedId, kind: "drawio", payload: { saved: true }, status: "active", version: 3 }));
+      return Promise.resolve(jsonResponse(governance(DOCUMENT_A)));
+    }));
+
+    render(
+      <QueryClientProvider client={queryClient()}>
+        <MemoryRouter>
+          <DocumentGovernancePanel identity={identity(DOCUMENT_A)} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const iframe = await screen.findByTitle("drawio 嵌入编辑器") as HTMLIFrameElement;
+    expect(iframe).toHaveAttribute("sandbox", "allow-forms allow-popups allow-scripts allow-same-origin");
+    const saveMessage = { embedId, kind: "drawio", payload: { saved: true }, type: "singularity.embed.save", version: 1 } as const;
+    window.dispatchEvent(new MessageEvent("message", { data: saveMessage, origin: "https://app.diagrams.net", source: window }));
+    window.dispatchEvent(new MessageEvent("message", { data: { ...saveMessage, kind: "excalidraw" }, origin: "https://app.diagrams.net", source: iframe.contentWindow }));
+    window.dispatchEvent(new MessageEvent("message", { data: saveMessage, origin: "https://attacker.example", source: iframe.contentWindow }));
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(0);
+
+    window.dispatchEvent(new MessageEvent("message", { data: saveMessage, origin: "https://app.diagrams.net", source: iframe.contentWindow }));
+    await waitFor(() => expect(requests.filter((request) => request.method === "PUT")).toHaveLength(1));
   });
 });

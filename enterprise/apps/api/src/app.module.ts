@@ -14,6 +14,7 @@ import type {
   OidcHttpTransport,
 } from "./identity/oidc.service.js";
 import type { AiProvider } from "./governance/ai-provider.js";
+import type { PasswordResetMailer } from "./identity/password-reset-mailer.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
 import { KernelGatewayModule } from "./kernel/kernel.module.js";
@@ -28,6 +29,7 @@ export interface AppModuleOptions {
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
   aiProvider?: AiProvider;
+  passwordResetMailer?: PasswordResetMailer;
 }
 
 @Module({})

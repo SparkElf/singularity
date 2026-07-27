@@ -5,6 +5,8 @@ import {
   AUTH_INVITATION_ACCEPT_LOCAL_PATH,
   AUTH_INVITATION_ACCEPT_PATH,
   AUTH_LOGIN_PATH,
+  AUTH_PASSWORD_RESET_PATH,
+  AUTH_PASSWORD_RESET_REQUEST_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_MFA_CHALLENGE_VERIFY_PATH,
   AUTH_MFA_FACTORS_PATH,
@@ -12,8 +14,10 @@ import {
   AUTH_OIDC_CALLBACK_PATH,
   AUTH_OIDC_PROVIDERS_PATH,
   AUTH_OIDC_START_PATH,
+  AUTH_REGISTER_PATH,
   AUTH_SAML_CALLBACK_PATH,
   AUTH_SAML_START_PATH,
+  AUTH_SETUP_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
   CSRF_TOKEN_OPENAPI_SCHEMA,
@@ -92,6 +96,11 @@ import {
   ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE,
   ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE,
   ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_USERS_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_USER_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE,
+  ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE,
   DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE,
   DOCUMENT_AI_CHAT_PATH_TEMPLATE,
   PUBLIC_SHARE_ASSET_PATH_TEMPLATE,
@@ -118,6 +127,10 @@ const DOCUMENTED_ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { methods: ["post"], path: AUTH_INVITATION_ACCEPT_LOCAL_PATH },
   { methods: ["post"], path: AUTH_INVITATION_ACCEPT_PATH },
   { methods: ["post"], path: AUTH_LOGIN_PATH },
+  { methods: ["post"], path: AUTH_PASSWORD_RESET_REQUEST_PATH },
+  { methods: ["post"], path: AUTH_PASSWORD_RESET_PATH },
+  { methods: ["get"], path: AUTH_SETUP_PATH },
+  { methods: ["post"], path: AUTH_REGISTER_PATH },
   { methods: ["get"], path: AUTH_CSRF_PATH },
   { methods: ["post"], path: AUTH_LOGOUT_PATH },
   { methods: ["get"], path: AUTH_OIDC_PROVIDERS_PATH },
@@ -219,6 +232,11 @@ const DOCUMENTED_ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { methods: ["get", "post"], path: ORGANIZATION_SCIM_TOKENS_PATH_TEMPLATE },
   { methods: ["delete"], path: ORGANIZATION_SCIM_TOKEN_PATH_TEMPLATE },
   { methods: ["post"], path: ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE },
+  { methods: ["get"], path: ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE },
+  { methods: ["get", "post"], path: ORGANIZATION_SCIM_USERS_PATH_TEMPLATE },
+  { methods: ["delete", "get", "patch"], path: ORGANIZATION_SCIM_USER_PATH_TEMPLATE },
+  { methods: ["get", "post"], path: ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE },
+  { methods: ["delete", "get", "patch"], path: ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE },
   { methods: ["get", "put"], path: DOCUMENT_EMBEDDED_OBJECTS_PATH_TEMPLATE },
   { methods: ["post"], path: DOCUMENT_AI_CHAT_PATH_TEMPLATE },
 ];
@@ -328,6 +346,9 @@ const MUTATION_OPERATIONS: readonly OperationReference[] = [
 const ORIGIN_ONLY_OPERATIONS: readonly OperationReference[] = [
   [AUTH_INVITATION_ACCEPT_LOCAL_PATH, "post"],
   [AUTH_LOGIN_PATH, "post"],
+  [AUTH_PASSWORD_RESET_REQUEST_PATH, "post"],
+  [AUTH_PASSWORD_RESET_PATH, "post"],
+  [AUTH_REGISTER_PATH, "post"],
   [AUTH_OIDC_START_PATH, "post"],
   [AUTH_MFA_CHALLENGE_VERIFY_PATH, "post"],
   [AUTH_SAML_START_PATH, "get"],
@@ -444,6 +465,27 @@ describe("generated OpenAPI HTTP contract", () => {
       ]);
     }
     expect(operation(document, AUTH_LOGIN_PATH, "post").security).toBeUndefined();
+    expect(document.components?.securitySchemes?.ScimBearer).toEqual({
+      bearerFormat: "SCIM",
+      scheme: "bearer",
+      type: "http",
+    });
+    for (const [path, method] of [
+      [ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_PATH_TEMPLATE, "get"],
+      [ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, "get"],
+      [ORGANIZATION_SCIM_USERS_PATH_TEMPLATE, "post"],
+      [ORGANIZATION_SCIM_USER_PATH_TEMPLATE, "get"],
+      [ORGANIZATION_SCIM_USER_PATH_TEMPLATE, "patch"],
+      [ORGANIZATION_SCIM_USER_PATH_TEMPLATE, "delete"],
+      [ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE, "get"],
+      [ORGANIZATION_SCIM_GROUPS_PATH_TEMPLATE, "post"],
+      [ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE, "get"],
+      [ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE, "patch"],
+      [ORGANIZATION_SCIM_GROUP_PATH_TEMPLATE, "delete"],
+      [ORGANIZATION_SCIM_SYNC_PATH_TEMPLATE, "post"],
+    ] as const) {
+      expect(operation(document, path, method).security).toEqual([{ ScimBearer: [] }]);
+    }
   });
 
   test("declares Origin and CSRF headers for every browser mutation", () => {
@@ -567,6 +609,26 @@ describe("generated OpenAPI HTTP contract", () => {
       method: "post",
       path: AUTH_LOGIN_PATH,
       statuses: [200, 202, 400, 401, 403, 429, 503],
+    },
+    {
+      method: "post",
+      path: AUTH_PASSWORD_RESET_REQUEST_PATH,
+      statuses: [202, 400, 429, 503],
+    },
+    {
+      method: "post",
+      path: AUTH_PASSWORD_RESET_PATH,
+      statuses: [204, 400, 429, 503],
+    },
+    {
+      method: "get",
+      path: AUTH_SETUP_PATH,
+      statuses: [200, 503],
+    },
+    {
+      method: "post",
+      path: AUTH_REGISTER_PATH,
+      statuses: [200, 400, 409, 503],
     },
     {
       method: "get",

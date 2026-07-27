@@ -111,6 +111,8 @@ export async function runAccessOperationsApplication(
           contentAuditIndeterminateAfterMilliseconds:
             DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS,
           oidcClientSecretBindings: [],
+          passwordResetFrom: undefined,
+          passwordResetSmtpUrl: undefined,
           publicOrigin: "https://operations.invalid",
           trustedProxyCidrs: [],
         },

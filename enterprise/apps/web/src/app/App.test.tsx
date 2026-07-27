@@ -193,12 +193,14 @@ describe("S1 identity and space routes", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderApp(`/login?returnTo=${encodeURIComponent(deepLink)}`);
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("账号"), {
       target: { value: " Owner@Example.COM " },
     });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByRole("heading", { name: "选择文档" })).toBeVisible();
@@ -246,9 +248,44 @@ describe("S1 identity and space routes", () => {
     );
 
     expect(
-      await screen.findByText("Provider 未接受登录请求，请重试。"),
+      await screen.findByText("企业单点登录服务未接受请求，请重试。"),
     ).toBeVisible();
     expect(startRequests).toBe(1);
+  });
+
+  it("hides the enterprise SSO section when no provider is configured", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderApp("/login");
+    await waitFor(() => {
+      expect(screen.queryByText("企业单点登录")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Provider/)).not.toBeInTheDocument();
+  });
+
+  it("exposes a native-surface password reset entry from the login form", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((input) => {
+        if (requestPath(input) === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
+        throw new Error(`Unexpected request: ${requestPath(input)}`);
+      }),
+    );
+
+    renderApp("/login");
+    const link = await screen.findByRole("link", { name: "忘记密码" });
+    expect(link).toHaveAttribute("href", "/forgot-password");
   });
 
   it("cancels an OIDC start when local login takes ownership", async () => {
@@ -289,6 +326,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(
@@ -355,6 +393,9 @@ describe("S1 identity and space routes", () => {
         if (path === "/api/v1/spaces") {
           return jsonResponse({ spaces: [] });
         }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -366,6 +407,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(
@@ -385,6 +427,9 @@ describe("S1 identity and space routes", () => {
         if (path === "/api/v1/spaces") {
           return newIdentitySpaces.promise;
         }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -401,6 +446,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     expect(await screen.findByLabelText("正在加载空间")).toBeVisible();
@@ -444,6 +490,9 @@ describe("S1 identity and space routes", () => {
         if (path === "/api/v1/spaces") {
           return jsonResponse({ spaces: [] });
         }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -455,10 +504,11 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     const submit = screen.getByRole("button", { name: "登录" });
     fireEvent.click(submit);
     await waitFor(() => expect(firstSignal).toBeDefined());
-    expect(submit).toBeEnabled();
+    expect(submit).toBeDisabled();
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "replacement password value" },
     });
@@ -515,6 +565,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(password, {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     const submit = screen.getByRole("button", { name: "登录" });
     fireEvent.click(submit);
     await waitFor(() => expect(firstSignal).toBeDefined());
@@ -556,6 +607,9 @@ describe("S1 identity and space routes", () => {
           loginSignal = init?.signal;
           return loginResponse.promise;
         }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -567,6 +621,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "correct horse battery staple" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     await waitFor(() => expect(loginSignal).toBeDefined());
     queryClient.setQueryData(["current-page"], { active: true });
@@ -587,7 +642,13 @@ describe("S1 identity and space routes", () => {
   it("keeps invalid credential failures generic", async () => {
     vi.stubGlobal(
       "fetch",
-      mockFetch(() => jsonResponse(problem("unauthenticated", 401), 401)),
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
+        return jsonResponse(problem("unauthenticated", 401), 401);
+      }),
     );
 
     renderApp("/login");
@@ -597,6 +658,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(password, {
       target: { value: "wrong password value" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
     expect(await screen.findByText("账号或密码错误。")).toBeVisible();
   });
@@ -619,6 +681,9 @@ describe("S1 identity and space routes", () => {
         if (path === "/api/v1/spaces") {
           return jsonResponse({ spaces: [] });
         }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -631,6 +696,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(password, {
       target: { value: "wrong password value" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     const submit = screen.getByRole("button", { name: "登录" });
     fireEvent.click(submit);
 
@@ -673,13 +739,17 @@ describe("S1 identity and space routes", () => {
   ])("treats a %s Retry-After as a response contract error", async (_label, retryAfter) => {
     vi.stubGlobal(
       "fetch",
-      mockFetch(() =>
-        jsonResponse(
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
+        return jsonResponse(
           problem("rate-limited", 429),
           429,
           retryAfter ? { "Retry-After": retryAfter } : undefined,
-        ),
-      ),
+        );
+      }),
     );
 
     renderApp("/login");
@@ -689,6 +759,7 @@ describe("S1 identity and space routes", () => {
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "wrong password value" },
     });
+    fireEvent.click(screen.getByLabelText("我已阅读并同意奇点服务条款"));
     const submit = screen.getByRole("button", { name: "登录" });
     fireEvent.click(submit);
 
@@ -1013,9 +1084,13 @@ describe("S1 identity and space routes", () => {
   it("clears all client session state after a protected query returns 401", async () => {
     vi.stubGlobal(
       "fetch",
-      mockFetch(() =>
-        jsonResponse(problem("unauthenticated", 401), 401),
-      ),
+      mockFetch((input) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
+        }
+        return jsonResponse(problem("unauthenticated", 401), 401);
+      }),
     );
     useCsrfStore.setState({ csrfToken: CSRF_TOKEN });
     const { queryClient } = renderApp("/spaces");
@@ -1036,6 +1111,9 @@ describe("S1 identity and space routes", () => {
         const path = requestPath(input);
         if (path === "/api/v1/spaces") {
           return jsonResponse({ spaces: [SPACE_A_SUMMARY] });
+        }
+        if (path === "/api/v1/auth/oidc/providers") {
+          return jsonResponse({ providers: [] });
         }
         if (path === runtimePath(ORGANIZATION_A, SPACE_A)) {
           return runtimeUnauthenticated

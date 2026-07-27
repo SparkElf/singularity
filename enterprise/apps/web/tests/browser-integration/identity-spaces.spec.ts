@@ -119,8 +119,9 @@ test("keyboard login reaches only the authorized responsive space list", async (
     for (const control of [identifier, password, submit]) {
       const box = await control.boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.height).toBeGreaterThanOrEqual(40);
-      expect(box!.width).toBeGreaterThanOrEqual(40);
+      // 思源原生账号页的输入框和按钮由 b3 主题统一为 28px 高度；移动端保持原生尺寸，避免另造一套登录皮肤。
+      expect(box!.height).toBeGreaterThanOrEqual(28);
+      expect(box!.width).toBeGreaterThanOrEqual(28);
     }
   }
 
@@ -132,6 +133,9 @@ test("keyboard login reaches only the authorized responsive space list", async (
   await expect(password).toBeFocused();
   await expect(password).not.toHaveCSS("box-shadow", "none");
   await password.fill("correct horse battery staple");
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("我已阅读并同意奇点服务条款")).toBeFocused();
+  await page.keyboard.press("Space");
   await page.keyboard.press("Tab");
   await expect(submit).toBeFocused();
   await expect(submit).not.toHaveCSS("box-shadow", "none");

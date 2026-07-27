@@ -1,7 +1,7 @@
 import { Injectable, type CanActivate, type ExecutionContext } from "@nestjs/common";
 
 import { singleHeader, type HttpRequestBoundary } from "../http-boundary.js";
-import { unauthenticated } from "../problem.js";
+import { ApiProblemError, scimError } from "../problem.js";
 import { EnterpriseGovernanceService } from "./governance.service.js";
 
 interface ScimRequest extends HttpRequestBoundary {
@@ -20,11 +20,19 @@ export class ScimTokenGuard implements CanActivate {
       ? authorization.slice("Bearer ".length)
       : undefined;
     if (token === undefined || token.length === 0) {
-      throw unauthenticated();
+      throw scimError(401, "A valid Bearer token is required", "invalidProvided");
     }
-    const identity = await this.governance.authenticateScimToken(token);
+    let identity: { organizationId: string };
+    try {
+      identity = await this.governance.authenticateScimToken(token);
+    } catch (error) {
+      if (error instanceof ApiProblemError && error.code === "unauthenticated") {
+        throw scimError(401, "The SCIM token is not valid", "invalidProvided", { cause: error });
+      }
+      throw error;
+    }
     if (identity.organizationId !== request.params.organizationId) {
-      throw unauthenticated();
+      throw scimError(401, "The SCIM token is not valid for this organization", "invalidProvided");
     }
     return true;
   }

@@ -63,6 +63,42 @@ const commands = [
   },
 ];
 
+// 校验目标部署 supervisor 报告的三态合同：合法 pending 不替代真实认证，完整 passed 才能放行手工门禁。
+function validateTargetSupervisorReport(report) {
+  if (report === null || typeof report !== "object" || Array.isArray(report)) {
+    throw new Error("目标 supervisor 证据报告必须是对象");
+  }
+  if (report.status === "passed") {
+    if (
+      report.evidence === null ||
+      typeof report.evidence !== "object" ||
+      Array.isArray(report.evidence) ||
+      report.evidence.resourceCleanup !== "passed"
+    ) {
+      throw new Error("目标 supervisor 证据报告未达到 passed/resourceCleanup=passed");
+    }
+    return "passed";
+  }
+  if (report.status === "pending") {
+    const requiredFields = {
+      releaseDecision: "blocked-until-target-supervisor-evidence",
+      scope: "target-deployment-supervisor",
+    };
+    for (const [field, expected] of Object.entries(requiredFields)) {
+      if (report[field] !== expected) {
+        throw new Error(`目标 supervisor pending 报告的 ${field} 不符合合同`);
+      }
+    }
+    for (const field of ["reason", "requiredCommand", "requiredInput"]) {
+      if (typeof report[field] !== "string" || report[field].trim().length === 0) {
+        throw new Error(`目标 supervisor pending 报告缺少 ${field}`);
+      }
+    }
+    return "pending";
+  }
+  throw new Error("目标 supervisor 证据报告 status 必须是 passed 或合法 pending");
+}
+
 // 运行已注册的标准 runner；本函数只负责生命周期和退出码，不读取或解释业务结果。
 function runCommand(spec) {
   return new Promise((resolveCommand, rejectCommand) => {
@@ -87,6 +123,7 @@ function runCommand(spec) {
   });
 }
 
+// 编排 L3 标准 runner 并汇总目标部署手工证据；自动化通过不替代真实 supervisor 观察结果。
 async function main() {
   if (process.versions.node.split(".")[0] !== "24") {
     throw new Error("L3 release certification requires Node.js 24");
@@ -115,12 +152,9 @@ async function main() {
   }
   let targetSupervisorCertification = "pending";
   try {
-    const targetReport = JSON.parse(await readFile(targetSupervisorReportPath, "utf8"));
-    if (targetReport.status === "passed" && targetReport.evidence?.resourceCleanup === "passed") {
-      targetSupervisorCertification = "passed";
-    } else {
-      throw new Error("目标 supervisor 证据报告未达到 passed/resourceCleanup=passed");
-    }
+    targetSupervisorCertification = validateTargetSupervisorReport(
+      JSON.parse(await readFile(targetSupervisorReportPath, "utf8")),
+    );
   } catch (error) {
     const failure = error instanceof Error ? error : new Error("读取目标 supervisor 证据失败", { cause: error });
     if (error?.code !== "ENOENT") {
@@ -157,4 +191,9 @@ async function main() {
   }
 }
 
-await main();
+const isDirectExecution = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectExecution) {
+  await main();
+}
+
+export { validateTargetSupervisorReport };

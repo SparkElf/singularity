@@ -3,7 +3,7 @@ title: "奇点 L4 知识治理产品需求"
 description: "定义企业知识库页面审批、验证、模板、密级、归档、水印与保留策略"
 author: "Codex"
 date: "2026-07-23"
-version: "1.2.0"
+version: "1.3.0"
 status: "approved-for-implementation"
 tags: ["product", "l4", "knowledge-governance", "compliance"]
 ---
@@ -19,6 +19,7 @@ tags: ["product", "l4", "knowledge-governance", "compliance"]
 | 1.0.0 | 2026-07-23 | Codex | 建立 L4 知识治理产品边界、用户流程和验收标准 |
 | 1.1.0 | 2026-07-23 | Codex | 合并已确认的 Docmost 企业差距，冻结 L4 功能分层、交互状态和验收矩阵 |
 | 1.2.0 | 2026-07-23 | Codex | 用户确认建设范围，进入架构与实现门禁 |
+| 1.3.0 | 2026-07-23 | Codex | 澄清 L4 授权引用式 AI Chat 与 L6 通用 AI 能力的范围边界 |
 
 ## Table of Contents
 
@@ -62,7 +63,7 @@ tags: ["product", "l4", "knowledge-governance", "compliance"]
 
 - 多副本 Gateway、跨区域实时协作、调度和灾备；这些属于 L5。
 - 移动端生产体验、离线无限编辑和零知识端到端协作；它们需另立方案。
-- AI 对话、权限感知问答、摘要和知识关联；这些属于 L6。
+- 通用开放式 AI 对话、无引用摘要和跨权限知识关联；L4 只提供当前授权范围内、带可验证引用的 AI Chat。
 - 计费、商业订阅、云托管 entitlement 和 Docmost 专属授权系统。
 - 全量 DLP、OCR、外部 SIEM 编排和法律法规自动判定；本期只提供可配置治理事实和稳定审计事件。
 - 直接修改正文内容模型、把治理状态写入 `.sy` 正文或在 PostgreSQL 保存正文快照。
@@ -89,7 +90,7 @@ tags: ["product", "l4", "knowledge-governance", "compliance"]
 | EE `template` | Kernel 有内容模板语义，但没有企业模板目录、管理员发布和治理默认值 | 纳入 L4 |
 | EE `mfa`、`scim`、`api-key` | 当前 OIDC/本地会话、组织成员和服务认证存在，但没有对应完整产品合同 | L4 只记录差距，另立身份安全计划 |
 | EE `personal-space` | 当前模型以组织/空间为主，没有个人空间产品边界 | 后续产品评审，不混入 L4 治理 |
-| EE `ai-chat` | 当前没有 AI 知识库产品合同 | 归入 L6 |
+| EE `ai-chat` | 当前没有 AI 知识库产品合同 | 纳入 L4 授权、带可验证引用的 AI Chat；通用开放式能力仍归入 L6 |
 | EE `pdf-export` | Kernel 已有导出能力，但治理水印和导出审计尚未闭合 | L4 增加治理水印与审计，不重写导出内核 |
 | EE `saml` / `scim` / `api-key` | 当前有 OIDC、本地会话和服务认证，但缺少企业身份生命周期产品合同 | L4 增加身份安全产品合同，协议实现另立架构边界 |
 | EE `personal-space` / 跨空间发现 | 当前模型以组织/空间为主，没有个人空间和授权聚合查询 | L4 增加个人空间和授权范围内跨空间搜索 |

@@ -311,6 +311,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
         AND table_name IN (
           'users',
           'auth_sessions',
+          'password_reset_tokens',
           'organizations',
           'organization_memberships',
           'spaces',
@@ -320,7 +321,7 @@ describe("S0-S1 PostgreSQL contracts", () => {
       ORDER BY table_name
     `;
 
-    expect(defaults).toHaveLength(7);
+    expect(defaults).toHaveLength(8);
     expect(defaults.every(({ columnDefault }) => columnDefault === "gen_random_uuid()"))
       .toBe(true);
   });

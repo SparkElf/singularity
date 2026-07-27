@@ -1,75 +1,75 @@
 {
-  "generatedAt": "2026-07-23T08:01:32.121Z",
+  "generatedAt": "2026-07-23T16:31:41.793Z",
   "results": [
     {
       "code": 0,
-      "durationMilliseconds": 3395,
+      "durationMilliseconds": 2133,
       "label": "Architecture and contract boundary",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 3926,
+      "durationMilliseconds": 3895,
       "label": "Contracts contract runner",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 3047,
+      "durationMilliseconds": 5158,
       "label": "Prisma schema and database typecheck",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 8025,
+      "durationMilliseconds": 8675,
       "label": "Nest API typecheck",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 4198,
+      "durationMilliseconds": 4205,
       "label": "Worker typecheck",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 10213,
+      "durationMilliseconds": 11343,
       "label": "React web typecheck",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 37827,
+      "durationMilliseconds": 38802,
       "label": "Prisma governance integration",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 126197,
+      "durationMilliseconds": 134180,
       "label": "Nest governance HTTP and unit",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 8309,
+      "durationMilliseconds": 10870,
       "label": "Governance worker task integration",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 41835,
+      "durationMilliseconds": 49065,
       "label": "React governance components",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 252281,
+      "durationMilliseconds": 247245,
       "label": "Browser governance paths",
       "signal": null
     },
     {
       "code": 0,
-      "durationMilliseconds": 273445,
+      "durationMilliseconds": 194627,
       "label": "L3 production regression aggregate",
       "signal": null
     }

@@ -3,8 +3,10 @@ import { performance } from "node:perf_hooks";
 
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  spaceDiscoveryDocumentContentResponseSchema,
   spaceDiscoveryGraphResponseSchema,
   spaceDiscoverySearchResponseSchema,
+  type SpaceDiscoveryDocumentContentResponse,
   type SpaceDiscoveryGraphRequest,
   type SpaceDiscoveryGraphResponse,
   type SpaceDiscoverySearchRequest,
@@ -24,6 +26,8 @@ import {
 const SPACE_DISCOVERY_SEARCH_PATH =
   "/internal/enterprise/discovery/search";
 const SPACE_DISCOVERY_GRAPH_PATH = "/internal/enterprise/discovery/graph";
+const SPACE_DISCOVERY_DOCUMENT_CONTENT_PATH =
+  "/internal/enterprise/discovery/document-content";
 const MAX_SPACE_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 interface SpaceDiscoveryRequestContext {
@@ -90,6 +94,7 @@ export class SpaceDiscoveryService {
       const value = await this.#requestJson(
         input,
         SPACE_DISCOVERY_SEARCH_PATH,
+        {},
         input.body,
       );
       const parsed = spaceDiscoverySearchResponseSchema.safeParse(value);
@@ -112,6 +117,7 @@ export class SpaceDiscoveryService {
       const value = await this.#requestJson(
         input,
         SPACE_DISCOVERY_GRAPH_PATH,
+        {},
         input.body,
       );
       const parsed = spaceDiscoveryGraphResponseSchema.safeParse(value);
@@ -124,11 +130,47 @@ export class SpaceDiscoveryService {
     });
   }
 
-  /** 复验空间授权并通过私有 Gateway 请求空间级搜索/图谱数据。 */
+  /** 按显式四段内容身份读取 Kernel 当前文档的有界纯文本，供 AI 取证而不依赖问题关键词。 */
+  readDocumentContent(
+    input: SpaceDiscoveryRequestContext & {
+      readonly documentId: string;
+      readonly notebookId: string;
+    },
+  ): Promise<SpaceDiscoveryDocumentContentResponse> {
+    return this.#observe(input, "document-content", async () => {
+      const value = await this.#requestJson(
+        input,
+        SPACE_DISCOVERY_DOCUMENT_CONTENT_PATH,
+        { method: "GET", notFoundOn404: true },
+      );
+      const parsed = spaceDiscoveryDocumentContentResponseSchema.safeParse(value);
+      if (!parsed.success) {
+        throw discoveryUnavailable(parsed.error);
+      }
+      if (
+        parsed.data.documentId !== input.documentId ||
+        parsed.data.notebookId !== input.notebookId
+      ) {
+        throw discoveryUnavailable(
+          new Error("Kernel document content identity does not match the request"),
+        );
+      }
+      return parsed.data;
+    });
+  }
+
+  /** 复验空间授权并通过私有 Gateway 请求已声明的 discovery 数据。 */
   async #requestJson(
-    input: SpaceDiscoveryRequestContext,
+    input: SpaceDiscoveryRequestContext & {
+      readonly documentId?: string;
+      readonly notebookId?: string;
+    },
     path: string,
-    body: SpaceDiscoverySearchRequest | SpaceDiscoveryGraphRequest,
+    options: {
+      readonly method?: "GET" | "POST";
+      readonly notFoundOn404?: boolean;
+    } = {},
+    body?: SpaceDiscoverySearchRequest | SpaceDiscoveryGraphRequest,
   ): Promise<unknown> {
     let authorized: AuthorizedKernelTarget;
     try {
@@ -141,23 +183,38 @@ export class SpaceDiscoveryService {
       });
     } catch (error) {
       if (error instanceof ApiProblemError && error.code === "forbidden") {
-        throw notFound();
+        throw notFound({ cause: error });
       }
       throw error;
     }
 
-    const serializedBody = JSON.stringify(body);
+    const serializedBody = body === undefined ? undefined : JSON.stringify(body);
+    const method = options.method ?? "POST";
     let response: KernelPrivateResponse;
     try {
       response = await this.kernel.request({
-        body: serializedBody,
+        ...(serializedBody === undefined ? {} : { body: serializedBody }),
+        ...(input.documentId === undefined || input.notebookId === undefined
+          ? {}
+          : {
+              contentIdentity: {
+                documentId: input.documentId,
+                notebookId: input.notebookId,
+                organizationId: input.organizationId,
+                spaceId: input.spaceId,
+              },
+            }),
         deployment: authorized.deployment,
         headers: {
           accept: "application/json",
-          "content-length": String(Buffer.byteLength(serializedBody)),
-          "content-type": "application/json",
+          ...(serializedBody === undefined
+            ? {}
+            : {
+                "content-length": String(Buffer.byteLength(serializedBody)),
+                "content-type": "application/json",
+              }),
         },
-        method: "POST",
+        method,
         path,
         requestId: input.requestId,
         signal: input.signal,
@@ -166,6 +223,10 @@ export class SpaceDiscoveryService {
       throw discoveryUnavailable(error);
     }
 
+    if (response.status === 404 && options.notFoundOn404 === true) {
+      response.message.destroy();
+      throw notFound();
+    }
     if (response.status !== 200) {
       response.message.destroy();
       throw discoveryUnavailable(
@@ -181,13 +242,18 @@ export class SpaceDiscoveryService {
     return readDiscoveryJson(response.message);
   }
 
+  /** 统一记录 discovery 延迟和完整异常对象；调用方只消费已解析的 Kernel 合同。 */
   async #observe<Result>(
-    input: SpaceDiscoveryRequestContext & { readonly body: { query: string } },
-    operation: "graph" | "search",
+    input: SpaceDiscoveryRequestContext & {
+      readonly body?: { readonly query?: string };
+    },
+    operation: "document-content" | "graph" | "search",
     work: () => Promise<Result>,
   ): Promise<Result> {
     const startedAt = performance.now();
-    const queryLength = Array.from(input.body.query).length;
+    const queryLength = input.body?.query === undefined
+      ? 0
+      : Array.from(input.body.query).length;
     try {
       const result = await work();
       this.#logger.log({

@@ -1,15 +1,20 @@
 import { loginRequestSchema, oidcStartRequestSchema } from "@singularity/contracts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2Icon, OrbitIcon, RefreshCwIcon } from "lucide-react";
-import { useLocation, useNavigate } from "react-router";
+import { Building2Icon, RefreshCwIcon } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router";
 
 import {
   ApiProblemError,
   NetworkFailureError,
   isApiProblem,
 } from "@/api/http.ts";
-import { getOidcProviders, login, startOidc, verifyMfaChallenge } from "@/auth/api.ts";
+import {
+  getOidcProviders,
+  login,
+  startOidc,
+  verifyMfaChallenge,
+} from "@/auth/api.ts";
 import { useCsrfStore } from "@/auth/csrf-store.ts";
 import { SPACES_PATH, parseReturnTo } from "@/auth/return-to.ts";
 import { clearClientSession } from "@/auth/session-state.ts";
@@ -19,13 +24,6 @@ import {
   AlertTitle,
 } from "@/components/ui/alert.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field.tsx";
-import { Input } from "@/components/ui/input.tsx";
-import { Separator } from "@/components/ui/separator.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 
@@ -94,6 +92,7 @@ export function LoginPage() {
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaState, setMfaState] = useState<MfaVerificationState>(IDLE_MFA_STATE);
+  const [agreeLogin, setAgreeLogin] = useState(false);
   const [cooldown, setCooldown] = useState<LoginCooldown | null>(null);
   const activeController = useRef<AbortController | null>(null);
   const attemptGeneration = useRef(0);
@@ -143,6 +142,7 @@ export function LoginPage() {
     return () => window.clearTimeout(timeout);
   }, [cooldown]);
 
+  // 登录只提交本地身份字段；注册始终开放，不能让安装状态或云端区域参与这条请求合同。
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     activeController.current?.abort();
@@ -292,27 +292,31 @@ export function LoginPage() {
     window.location.assign(authorizationUrl);
   };
 
-  const hasError = validationError || loginState.error !== null;
   const oidcProviders = oidcProvidersQuery.data?.providers ?? [];
+  const showOidcSection =
+    oidcProvidersQuery.isPending ||
+    oidcProvidersQuery.isError ||
+    oidcProviders.length > 0 ||
+    oidcState.error !== null;
 
   return (
-    <main
-      data-singularity-ui
-      className="flex min-h-dvh items-center justify-center bg-muted/40 p-6 max-sm:bg-background max-sm:p-4"
-    >
-      <section className="w-full max-w-[400px] rounded-md border bg-card p-6 max-sm:border-0 max-sm:p-2">
-        <div className="mb-6 flex min-w-0 items-center gap-2">
-          <OrbitIcon aria-hidden="true" className="size-5 shrink-0" />
-          <span className="truncate text-sm font-semibold">奇点</span>
-        </div>
-
-        <div className="mb-6 flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">登录奇点</h1>
-          <p className="text-sm text-muted-foreground">进入你的企业知识空间</p>
-        </div>
-
+    <main data-singularity-ui className="flex min-h-dvh items-center justify-center p-4">
+      <section className="config-account--auth">
+        <h1
+          style={{
+            clip: "rect(0 0 0 0)",
+            clipPath: "inset(50%)",
+            height: 1,
+            overflow: "hidden",
+            position: "absolute",
+            whiteSpace: "nowrap",
+            width: 1,
+          }}
+        >
+          登录奇点
+        </h1>
         {mfaChallenge === null ? <form
-          className="flex flex-col gap-5"
+          className="b3-form__space--small"
           onInput={() => {
             setValidationError(false);
             if (cooldownSeconds === 0) {
@@ -323,74 +327,88 @@ export function LoginPage() {
           }}
           onSubmit={(event) => void handleSubmit(event)}
         >
-          <FieldGroup>
-            <Field data-invalid={hasError || undefined}>
-              <FieldLabel htmlFor="login-identifier">账号</FieldLabel>
-              <Input
-                autoComplete="username"
-                className="h-9 max-sm:h-10"
-                id="login-identifier"
-                name="loginIdentifier"
-                required
-                aria-invalid={hasError || undefined}
-              />
-            </Field>
-            <Field data-invalid={hasError || undefined}>
-              <FieldLabel htmlFor="login-password">密码</FieldLabel>
-              <Input
-                autoComplete="current-password"
-                className="h-9 max-sm:h-10"
-                id="login-password"
-                name="password"
-                required
-                type="password"
-                aria-invalid={hasError || undefined}
-              />
-            </Field>
-          </FieldGroup>
-
-          <div className="min-h-16">
-            {validationError || loginState.error !== null ? (
-              <Alert variant="destructive">
-                <AlertTitle>无法登录</AlertTitle>
-                <AlertDescription>
-                  {validationError
-                    ? "请输入有效的账号和密码。"
-                    : loginErrorMessage(loginState.error, cooldownSeconds)}
-                </AlertDescription>
-              </Alert>
-            ) : null}
+          <div className="b3-form__icon">
+            <svg className="b3-form__icon-icon" aria-hidden="true"><use href="#iconAccount" /></svg>
+            <input
+              autoComplete="username"
+              className="b3-text-field fn__block b3-form__icon-input"
+              id="userName"
+              name="loginIdentifier"
+              placeholder="用户名/邮箱"
+              required
+              aria-label="账号"
+            />
           </div>
-
-          <Button
-            className="w-full"
-            disabled={cooldownSeconds > 0}
+          <div className="fn__hr--b" />
+          <div className="b3-form__icon">
+            <svg className="b3-form__icon-icon" aria-hidden="true"><use href="#iconLock" /></svg>
+            <input
+              autoComplete="current-password"
+              className="b3-text-field b3-form__icon-input fn__block"
+              id="userPassword"
+              name="password"
+              placeholder="密码"
+              required
+              type="password"
+              aria-label="密码"
+            />
+          </div>
+          <div className="fn__hr--b" />
+          <label className="ft__smaller ft__on-surface fn__flex">
+            <input
+              checked={agreeLogin}
+              id="agreeLogin"
+              onChange={(event) => setAgreeLogin(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span className="fn__space" />
+            <span>我已阅读并同意奇点服务条款</span>
+          </label>
+          <div className="fn__hr--b" />
+          {validationError || loginState.error !== null ? (
+            <p className="ft__error" role="alert">
+              {validationError
+                ? "请输入有效的账号和密码。"
+                : loginErrorMessage(loginState.error, cooldownSeconds)}
+            </p>
+          ) : null}
+          <button
+            className="b3-button fn__block"
+            disabled={!agreeLogin || cooldownSeconds > 0 || loginState.pending}
             type="submit"
+            aria-busy={loginState.pending}
           >
-            {loginState.pending ? (
-              <Spinner data-icon="inline-start" aria-label="正在登录" />
-            ) : null}
-            登录
-          </Button>
+            {loginState.pending ? "登录中…" : "登录"}
+          </button>
+          <div className="fn__hr--b" />
+          <div className="ft__center">
+            <Link className="b3-button b3-button--cancel" to="/forgot-password">忘记密码</Link>
+            <span className="fn__space">·</span>
+            <Link className="b3-button b3-button--cancel" to="/register">注册新账号</Link>
+          </div>
         </form> : <form className="flex flex-col gap-5" onSubmit={(event) => void handleMfaSubmit(event)}>
           <Alert>
             <AlertTitle>需要二次验证</AlertTitle>
             <AlertDescription>请输入验证器生成的 6 位验证码。挑战有效期至 <time dateTime={mfaChallenge.expiresAt}>{new Date(mfaChallenge.expiresAt).toLocaleTimeString()}</time>。</AlertDescription>
           </Alert>
-          <Field data-invalid={mfaState.error !== null || undefined}>
-            <FieldLabel htmlFor="mfa-login-code">验证码</FieldLabel>
-            <Input
+          <label className="b3-form__icon">
+            <svg className="b3-form__icon-icon" aria-hidden="true"><use href="#iconLock" /></svg>
+            <input
+              className="b3-text-field b3-form__icon-input fn__block"
               autoComplete="one-time-code"
               id="mfa-login-code"
               inputMode="numeric"
               maxLength={6}
+              name="code"
+              placeholder="二次验证码"
               onChange={(event) => {
                 setMfaCode(event.currentTarget.value.replace(/\D/g, "").slice(0, 6));
                 setMfaState((current) => current.error === null ? current : IDLE_MFA_STATE);
               }}
+              type="text"
               value={mfaCode}
             />
-          </Field>
+          </label>
           {mfaState.error !== null ? <Alert variant="destructive"><AlertTitle>验证失败</AlertTitle><AlertDescription>验证码无效或已过期，请重新登录。</AlertDescription></Alert> : null}
           <div className="flex gap-2">
             <Button className="flex-1" disabled={mfaState.pending || mfaCode.length !== 6} type="submit">
@@ -401,84 +419,80 @@ export function LoginPage() {
           </div>
         </form>}
 
-        <div className="my-5 flex items-center gap-3">
-          <Separator className="flex-1" />
-          <span className="text-xs text-muted-foreground">单点登录</span>
-          <Separator className="flex-1" />
-        </div>
+        {showOidcSection ? (
+          <>
+            <div className="fn__hr--b" />
+            <div className="ft__center ft__smaller ft__on-surface">企业单点登录</div>
 
-        <div className="flex min-h-10 flex-col gap-2">
-          {oidcProvidersQuery.isPending ? (
-            <>
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </>
-          ) : null}
+            <div className="flex min-h-10 flex-col gap-2" aria-live="polite">
+              {oidcProvidersQuery.isPending ? (
+                <>
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </>
+              ) : null}
 
-          {oidcProvidersQuery.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>无法加载单点登录</AlertTitle>
-              <AlertDescription className="flex items-center justify-between gap-2">
-                <span>请检查网络连接后重试。</span>
-                <Button
-                  aria-label="重新加载单点登录"
-                  onClick={() => void refetchOidcProviders()}
-                  size="icon-sm"
-                  variant="ghost"
-                >
-                  <RefreshCwIcon aria-hidden="true" />
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
+              {oidcProvidersQuery.isError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>企业单点登录暂不可用</AlertTitle>
+                  <AlertDescription className="flex items-center justify-between gap-2">
+                    <span>账号密码登录仍可使用，请稍后重试。</span>
+                    <Button
+                      aria-label="重试企业单点登录"
+                      onClick={() => void refetchOidcProviders()}
+                      size="icon-sm"
+                      variant="ghost"
+                    >
+                      <RefreshCwIcon aria-hidden="true" />
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-          {oidcProvidersQuery.isSuccess && oidcProviders.length === 0 ? (
-            <p className="py-2 text-center text-sm text-muted-foreground">
-              当前没有可用的单点登录 Provider
-            </p>
-          ) : null}
+              {oidcProviders.map((provider) => {
+                const pending = oidcState.pendingProviderId === provider.providerId;
+                return (
+                  <Button
+                    disabled={oidcState.pendingProviderId !== null}
+                    key={provider.providerId}
+                    onClick={() => {
+                      const returnTo =
+                        parseReturnTo(location.search, window.location.origin) ??
+                        SPACES_PATH;
+                      const request = oidcStartRequestSchema.safeParse({
+                        providerId: provider.providerId,
+                        returnTo,
+                      });
+                      if (request.success) {
+                        void handleOidcStart(request.data);
+                      }
+                    }}
+                    variant="outline"
+                  >
+                    {pending ? (
+                      <Spinner data-icon="inline-start" aria-label="正在前往企业单点登录" />
+                    ) : (
+                      <Building2Icon data-icon="inline-start" />
+                    )}
+                    {provider.name}
+                  </Button>
+                );
+              })}
 
-          {oidcProviders.map((provider) => {
-            const pending = oidcState.pendingProviderId === provider.providerId;
-            return (
-              <Button
-                disabled={oidcState.pendingProviderId !== null}
-                key={provider.providerId}
-                onClick={() => {
-                  const returnTo =
-                    parseReturnTo(location.search, window.location.origin) ??
-                    SPACES_PATH;
-                  const request = oidcStartRequestSchema.safeParse({
-                    providerId: provider.providerId,
-                    returnTo,
-                  });
-                  if (request.success) {
-                    void handleOidcStart(request.data);
-                  }
-                }}
-                variant="outline"
-              >
-                {pending ? (
-                  <Spinner data-icon="inline-start" aria-label="正在前往单点登录" />
-                ) : (
-                  <Building2Icon data-icon="inline-start" />
-                )}
-                {provider.name}
-              </Button>
-            );
-          })}
+              {oidcState.error !== null ? (
+                <Alert variant="destructive">
+                  <AlertTitle>无法开始企业单点登录</AlertTitle>
+                  <AlertDescription>
+                    {oidcState.error instanceof NetworkFailureError
+                      ? "无法连接到服务，请稍后重试。"
+                      : "企业单点登录服务未接受请求，请重试。"}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+            </div>
+          </>
+        ) : null}
 
-          {oidcState.error !== null ? (
-            <Alert variant="destructive">
-              <AlertTitle>无法开始单点登录</AlertTitle>
-              <AlertDescription>
-                {oidcState.error instanceof NetworkFailureError
-                  ? "无法连接到服务，请稍后重试。"
-                  : "Provider 未接受登录请求，请重试。"}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-        </div>
       </section>
     </main>
   );

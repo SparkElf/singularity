@@ -37,6 +37,7 @@ interface Installation {
   readonly loginIdentifier: string;
   readonly organizationId: string;
   readonly spaceId: string;
+  readonly userId: string;
 }
 
 function path(template: string, parameters: Readonly<Record<string, string>>): string {
@@ -102,6 +103,7 @@ describe("governance template document HTTP contract", () => {
       await transaction.organizationMembership.create({ data: { organizationId, role: "owner", status: "active", userId } });
       await transaction.space.create({ data: { id: spaceId, name: "Template Space", organizationId, status: "active" } });
       await transaction.spaceMembership.create({ data: { organizationId, role: "admin", spaceId, status: "active", userId } });
+      await transaction.governancePolicy.create({ data: { archiveAfterDays: 365, createdByUserId: userId, defaultClassification: "internal", governanceEnabled: true, organizationId, retentionDays: 2555, spaceId, verificationGraceDays: 30, verificationIntervalDays: 180, watermarkEnabled: true } });
       await transaction.kernelInstance.create({ data: { deploymentHandle: kernel.deployment.handle, id: kernel.deployment.kernelInstanceId, spaceId, status: "ready", version: "test" } });
     });
     const response = await fetch(`${testApi.baseUrl}${AUTH_LOGIN_PATH}`, {
@@ -115,7 +117,7 @@ describe("governance template document HTTP contract", () => {
     if (cookie === undefined || !cookie.startsWith(`${AUTH_SESSION_COOKIE_NAME}=`)) {
       throw new Error("Template test login did not issue a session cookie");
     }
-    return { cookie, csrfToken: login.csrfToken, loginIdentifier, organizationId, spaceId };
+    return { cookie, csrfToken: login.csrfToken, loginIdentifier, organizationId, spaceId, userId };
   }
 
   function mutationHeaders(installation: Installation): Record<string, string> {

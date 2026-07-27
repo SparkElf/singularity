@@ -3,7 +3,7 @@ title: "ADR-0033：L4 企业能力事实源与模块边界"
 description: "确定 L4 身份、知识治理、发现嵌入和授权 AI 的控制面、权限与扩展边界"
 author: "Codex"
 date: "2026-07-23"
-version: "1.1.0"
+version: "1.3.0"
 status: "accepted"
 tags: ["adr", "l4", "enterprise", "governance"]
 ---
@@ -12,7 +12,7 @@ tags: ["adr", "l4", "enterprise", "governance"]
 
 ## Status
 
-Accepted。L4 PRD 已获用户确认，架构方案和本 ADR 已冻结；实现、整阶段 code-review/test-governance 复评和 `verify:l4-governance` 已完成。真实外部 IdP/provider 联调与部署 supervisor 回滚仍按验证报告列出的边界单独取证。
+Accepted。L4 PRD 已获用户确认，架构方案和本 ADR 已冻结；本轮对 L4-D/E 的搜索、AI 和嵌入编辑数据流做收口，完成后需重新复评和集中验证。真实外部 IdP/provider 联调与部署 supervisor 回滚仍按验证报告列出的边界单独取证。
 
 ## Context
 
@@ -29,7 +29,9 @@ Accepted。L4 PRD 已获用户确认，架构方案和本 ADR 已冻结；实现
 6. 治理、搜索、导出和 AI 都消费 ACL capability；AI 只返回带可验证引用的回答，无法授权或验证引用时拒绝。
 7. React 使用共享 shadcn + Tailwind 4 token/variants，跨组件服务端状态使用 Zustand；业务组件不得建立局部视觉或事实源。
 8. SAML Assertion 由 `@node-saml/node-saml` 在 callback 边界完成签名、issuer、audience 和时间校验；MFA 登录使用数据库摘要 challenge 后复用现有会话签发器。
-9. 治理任务使用现有 Worker Discovery 的 `governance-task` job kind；PDF/导出成功前写入最小 `export_audits` 记录，AI provider 通过 token 注入并要求至少一条重新授权验证的引用。
+9. 治理任务使用现有 Worker Discovery 的 `governance-task` job kind；PDF/导出成功前写入最小 `export_audits` 记录，AI provider 通过 token 注入并要求至少一条重新授权验证的引用。跨空间搜索直接消费 Kernel `discovery/search` 的授权结果；AI 当前文档取证使用独立的 Kernel `document/content` 读取接口，不使用问题关键词推断当前文档，也不使用未接入生产写入链路的控制面搜索索引作为事实源。
+10. Draw.io/Excalidraw 以版本化 `postMessage` 编辑协议接入：协议版本固定为 `1`，父页面以 iframe 来源、来源 origin、`version`、`embedId`、`kind` 和公共 payload schema 作为唯一消息边界；仅允许跨源 HTTPS 编辑器地址，编辑器不携带四段内容身份，也不能越过文档 ACL 直接写入。
+11. Kernel `document/content` 是授权 AI 的唯一正文读取 owner：请求通过 `FullContentIdentityRequired` 注入并绑定四段内容身份，响应只投影 `documentId`、`notebookId`、`title` 和有界纯文本。API 在 provider 前后各读取一次并比较身份与内容版本；读取失败或内容变化时拒绝回答，不添加关键词 fallback。
 
 ## Alternatives
 
@@ -52,7 +54,7 @@ Accepted。L4 PRD 已获用户确认，架构方案和本 ADR 已冻结；实现
 ### Negative
 
 - SAML/SCIM/AI provider 的外部差异必须在真实入口适配，前期 fixture 和合同工作量较高。
-- 跨空间搜索和 AI 必须先建立授权索引/引用合同，不能用快速的全局全文表替代。
+- 跨空间搜索和 AI 必须先建立授权 discovery/引用合同，不能用快速的全局全文表替代；遗留搜索索引不参与事实读取。
 - L4 仍依赖单 API/单 Kernel 的 L3 边界，多副本和灾备另立 ADR。
 
 ## Verification Gate

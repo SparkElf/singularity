@@ -47,6 +47,7 @@ const TEST_TABLES = `
   "organization_invitations",
   "spaces",
   "organization_memberships",
+  "password_reset_tokens",
   "auth_sessions",
   "organizations",
   "users",

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { SCIM_CORE_GROUP_SCHEMA, SCIM_CORE_USER_SCHEMA, SCIM_LIST_RESPONSE_SCHEMA } from "@singularity/contracts";
 import type {
   DocumentGovernance,
   GovernanceClassification,
@@ -16,20 +17,27 @@ import type {
   GovernanceTemplateDocumentRequest,
   GovernanceTemplateDocumentResponse,
   ScimSyncRequest,
+  ScimGroupRequest,
+  ScimGroupResource,
+  ScimListQuery,
+  ScimPatchRequest,
+  ScimUserRequest,
+  ScimUserResource,
   MfaFactorRequest,
   MfaVerifyRequest,
   AiChatRequest,
   AiChatResponse,
 } from "@singularity/contracts";
-import { $Enums, AuditWriter, DatabaseRuntime, Prisma } from "@singularity/database";
+import { $Enums, AuditWriter, DatabaseRuntime, Prisma, type DatabaseClient } from "@singularity/database";
 
 import { DocumentAccessPolicyService } from "../document-access/document-access.service.js";
 import { ContentDirectoryService } from "../kernel/content-directory.service.js";
+import { SpaceDiscoveryService } from "../kernel/space-discovery.service.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
 import { SpaceManagementService } from "../spaces/space-management.service.js";
 import { SpaceAccessService } from "../spaces/space-access.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
-import { conflict, forbidden, notFound, unauthenticated } from "../problem.js";
+import { conflict, forbidden, notFound, scimError, unauthenticated } from "../problem.js";
 import { MfaService } from "../identity/mfa.service.js";
 import { AI_PROVIDER } from "../tokens.js";
 import type { AiProvider } from "./ai-provider.js";
@@ -40,6 +48,8 @@ interface DocumentScope {
   readonly notebookId: string;
   readonly documentId: string;
 }
+
+type ScimReadClient = DatabaseClient | Prisma.TransactionClient;
 
 const classificationWeight: Record<GovernanceClassification, number> = {
   public: 0,
@@ -84,6 +94,46 @@ function newContentId(now: Date): string {
   return `${timestamp}-${suffix}`;
 }
 
+type ScimUserState = {
+  readonly externalId: string;
+  readonly lastSyncedAt: Date;
+  readonly user: { readonly id: string; readonly loginIdentifier: string; readonly status: $Enums.UserStatus };
+  readonly membership: { readonly status: $Enums.MembershipStatus };
+};
+
+type ScimGroupState = {
+  readonly externalId: string;
+  readonly lastSyncedAt: Date;
+  readonly group: { readonly id: string; readonly name: string; readonly status: $Enums.UserGroupStatus };
+};
+
+/** 把组织成员状态投影为 SCIM User 资源；active 同时受全局账号和当前组织成员状态约束。 */
+function scimUserResource(state: ScimUserState): ScimUserResource {
+  return {
+    active: state.user.status === "active" && state.membership.status === "active",
+    externalId: state.externalId,
+    id: state.externalId,
+    meta: { lastModified: state.lastSyncedAt.toISOString(), resourceType: "User" },
+    schemas: [SCIM_CORE_USER_SCHEMA],
+    userName: state.user.loginIdentifier,
+  };
+}
+
+/** 把活动组和已解析成员投影为 SCIM Group 资源，成员 ID 只使用外部身份映射。 */
+function scimGroupResource(
+  state: ScimGroupState,
+  members: ScimGroupResource["members"],
+): ScimGroupResource {
+  return {
+    displayName: state.group.name,
+    externalId: state.externalId,
+    id: state.externalId,
+    members,
+    meta: { lastModified: state.lastSyncedAt.toISOString(), resourceType: "Group" },
+    schemas: [SCIM_CORE_GROUP_SCHEMA],
+  };
+}
+
 @Injectable()
 export class EnterpriseGovernanceService {
   readonly #logger = new Logger("EnterpriseGovernanceService");
@@ -96,6 +146,7 @@ export class EnterpriseGovernanceService {
     private readonly spaceAccess: SpaceAccessService,
     private readonly accessChanges: AccessChangedPublisher,
     private readonly directory: ContentDirectoryService,
+    private readonly discovery: SpaceDiscoveryService,
     private readonly audit: AuditWriter,
     private readonly mfa: MfaService,
     @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
@@ -181,6 +232,7 @@ export class EnterpriseGovernanceService {
     const now = new Date();
     return this.database.client.$transaction(async (transaction) => {
       await this.access.requireRole(transaction, { ...scope, actorUserId }, "editor");
+      await this.#requireGovernanceEnabled(transaction, scope.organizationId, scope.spaceId);
       let existing = await transaction.documentGovernance.findUnique({
         where: { organizationId_spaceId_notebookId_documentId: scope },
       });
@@ -296,6 +348,7 @@ export class EnterpriseGovernanceService {
   async createTemplate(actorUserId: string, organizationId: string, spaceId: string, input: GovernanceTemplateRequest, requestId: string) {
     return this.database.client.$transaction(async (transaction) => {
       await this.spaces.requireSpaceManagerInTransaction(transaction, actorUserId, organizationId, spaceId);
+      await this.#requireGovernanceEnabled(transaction, organizationId, spaceId);
       const template = await transaction.governanceTemplate.create({
         data: {
           defaultClassification: input.defaultClassification,
@@ -340,6 +393,7 @@ export class EnterpriseGovernanceService {
   async publishTemplate(actorUserId: string, organizationId: string, spaceId: string, templateId: string, requestId: string) {
     const result = await this.database.client.$transaction(async (transaction) => {
       await this.spaces.requireSpaceManagerInTransaction(transaction, actorUserId, organizationId, spaceId);
+      await this.#requireGovernanceEnabled(transaction, organizationId, spaceId);
       const updated = await transaction.governanceTemplate.updateMany({ where: { id: templateId, organizationId, spaceId, status: "draft" }, data: { status: "published" } });
       if (updated.count === 0) {
         throw notFound();
@@ -367,6 +421,7 @@ export class EnterpriseGovernanceService {
   ): Promise<GovernanceTemplateDocumentResponse> {
     const template = await this.database.client.$transaction(async (transaction) => {
       await this.spaces.requireSpaceManagerInTransaction(transaction, actorUserId, organizationId, spaceId);
+      await this.#requireGovernanceEnabled(transaction, organizationId, spaceId);
       return transaction.governanceTemplate.findFirst({ where: { id: templateId, organizationId, spaceId, status: "published" } });
     });
     if (template === null) {
@@ -423,6 +478,7 @@ export class EnterpriseGovernanceService {
   async setClassification(actorUserId: string, scope: DocumentScope, input: GovernanceClassificationRequest, requestId: string): Promise<DocumentGovernance> {
     return this.database.client.$transaction(async (transaction) => {
       await this.access.requireRole(transaction, { ...scope, actorUserId }, "editor");
+      await this.#requireGovernanceEnabled(transaction, scope.organizationId, scope.spaceId);
       const current = await transaction.documentGovernance.findUnique({ where: { organizationId_spaceId_notebookId_documentId: scope } });
       const document = current ?? await this.createDocumentGovernance(transaction, actorUserId, scope, new Date());
       if (classificationWeight[input.classification] < classificationWeight[document.classification]) {
@@ -438,6 +494,7 @@ export class EnterpriseGovernanceService {
   async setLegalHold(actorUserId: string, scope: DocumentScope, input: GovernanceLegalHoldRequest, requestId: string): Promise<DocumentGovernance> {
     const updated = await this.database.client.$transaction(async (transaction) => {
       await this.organizations.requireManagerInTransaction(transaction, actorUserId, scope.organizationId);
+      await this.#requireGovernanceEnabled(transaction, scope.organizationId, scope.spaceId);
       const current = await transaction.documentGovernance.findUnique({ where: { organizationId_spaceId_notebookId_documentId: scope } });
       const document = current ?? await this.createDocumentGovernance(transaction, actorUserId, scope, new Date());
       const result = await transaction.documentGovernance.update({ where: { id: document.id }, data: { legalHold: input.enabled } });
@@ -462,32 +519,60 @@ export class EnterpriseGovernanceService {
     return { approvalsPending: pending, documentsExpired: expired, documentsNeedingReview: needsReview, legalHolds: holds, tasksFailed: failed };
   }
 
-  /** 在同一授权事务内读取索引并按四段身份过滤，避免跨空间串库和文档侧信道。 */
-  async search(actorUserId: string, organizationId: string, input: GovernanceSearchRequest) {
+  /** 从每个已授权空间的 Kernel discovery 读取结果，再用文档 ACL 过滤，避免依赖没有生产写入链路的控制面索引。 */
+  async search(
+    actorUserId: string,
+    organizationId: string,
+    input: GovernanceSearchRequest,
+    context: { readonly requestId: string; readonly signal: AbortSignal },
+  ) {
     const requestedSpaceIds = [...new Set(input.spaceIds)];
     if (requestedSpaceIds.length === 0) {
       return { results: [] };
     }
-    const results = await this.database.client.$transaction(async (transaction) => {
-      const rows = await transaction.searchDocumentIndex.findMany({
-        where: {
-          organizationId,
-          spaceId: { in: requestedSpaceIds },
-          OR: [{ title: { contains: input.query, mode: "insensitive" } }, { excerpt: { contains: input.query, mode: "insensitive" } }],
-        },
-        orderBy: { updatedAt: "desc" },
-        take: 100,
-      });
-      const visibleKeys = new Set<string>();
-      for (const spaceId of requestedSpaceIds) {
-        const documents = rows.filter((row) => row.spaceId === spaceId).map((row) => ({ documentId: row.documentId, notebookId: row.notebookId }));
-        const visible = await this.access.filterVisibleDocumentsInTransaction(transaction, { actorUserId, documents, organizationId, spaceId });
-        for (const document of visible) {
-          visibleKeys.add(`${spaceId}:${document.notebookId}:${document.documentId}`);
-        }
+    const authorizedSpaces = (await this.spaceAccess.listAuthorizedSpaces(actorUserId))
+      .filter((space) => space.organizationId === organizationId && requestedSpaceIds.includes(space.spaceId));
+    const discovered = await Promise.all(authorizedSpaces.map(async (space) => ({
+      response: await this.discovery.search({
+        actorUserId,
+        body: { method: "keyword", query: input.query },
+        organizationId,
+        requestId: context.requestId,
+        signal: context.signal,
+        spaceId: space.spaceId,
+      }),
+      spaceId: space.spaceId,
+    })));
+    const candidates = discovered.flatMap(({ response, spaceId }) => response.blocks.map((block) => ({
+      block,
+      spaceId,
+    })));
+    if (candidates.length === 0) {
+      return { results: [] };
+    }
+    const visibleKeys = await this.database.client.$transaction(async (transaction) => {
+      const keys = new Set<string>();
+      for (const space of authorizedSpaces) {
+        const documents = candidates.filter((candidate) => candidate.spaceId === space.spaceId).map(({ block }) => ({ documentId: block.documentId, notebookId: block.notebookId }));
+        const visible = await this.access.filterVisibleDocumentsInTransaction(transaction, { actorUserId, documents, organizationId, spaceId: space.spaceId });
+        for (const document of visible) keys.add(`${space.spaceId}:${document.notebookId}:${document.documentId}`);
       }
-      return rows.filter((row) => visibleKeys.has(`${row.spaceId}:${row.notebookId}:${row.documentId}`)).map((row) => ({ classification: row.classification, document: { organizationId, spaceId: row.spaceId, notebookId: row.notebookId, documentId: row.documentId }, excerpt: row.excerpt, title: row.title, updatedAt: row.updatedAt.toISOString() }));
+      return keys;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    const scopeRows = await this.database.client.$transaction(async (transaction) => {
+      const rows = await transaction.documentGovernance.findMany({ where: { organizationId, OR: candidates.map(({ block, spaceId }) => ({ documentId: block.documentId, notebookId: block.notebookId, spaceId })) } });
+      const policies = await transaction.governancePolicy.findMany({ where: { organizationId, spaceId: { in: authorizedSpaces.map((space) => space.spaceId) } }, select: { defaultClassification: true, spaceId: true } });
+      return { policies, rows };
+    });
+    const governanceByKey = new Map(scopeRows.rows.map((row) => [`${row.spaceId}:${row.notebookId}:${row.documentId}`, row.classification]));
+    const policyBySpace = new Map(scopeRows.policies.map((policy) => [policy.spaceId, policy.defaultClassification]));
+    const seenDocuments = new Set<string>();
+    const results = candidates.flatMap(({ block, spaceId }) => {
+      const key = `${spaceId}:${block.notebookId}:${block.documentId}`;
+      if (!visibleKeys.has(key) || seenDocuments.has(key)) return [];
+      seenDocuments.add(key);
+      return [{ classification: governanceByKey.get(key) ?? policyBySpace.get(spaceId) ?? "internal", document: { organizationId, spaceId, notebookId: block.notebookId, documentId: block.documentId }, excerpt: block.content, title: block.title }];
+    });
     return { results };
   }
 
@@ -676,47 +761,364 @@ export class EnterpriseGovernanceService {
     return { organizationId: record.organizationId };
   }
 
-  /** SCIM 同步按 externalId 幂等 upsert，停用成员只收敛账号/会话状态，不推导或写入文档权限。 */
-  async syncScim(organizationId: string, input: ScimSyncRequest, requestId: string): Promise<{ groups: number; users: number }> {
+  /** 返回 SCIM 服务能力声明；该响应不依赖组织内容，也不泄露令牌或成员数据。 */
+  getScimServiceProviderConfig() {
+    return {
+      authenticationSchemes: [{
+        description: "Organization-scoped bearer token",
+        name: "Bearer Token",
+        specUri: "https://www.rfc-editor.org/rfc/rfc6750",
+        type: "oauthbearertoken",
+      }],
+      bulk: { maxOperations: 0, maxPayloadSize: 0, supported: false },
+      changePassword: { supported: false },
+      documentationUri: "https://www.rfc-editor.org/rfc/rfc7644",
+      filter: { maxResults: 200, supported: true },
+      patch: { supported: true },
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig" as const],
+      sort: { supported: false },
+    };
+  }
+
+  /** 查询一页 SCIM 用户；资源身份只来自组织内 external identity 映射。 */
+  async listScimUsers(organizationId: string, query: ScimListQuery) {
+    if (query.filter?.attribute === "displayName") throw scimError(400, "Only userName filtering is supported for Users", "invalidFilter");
+    const identities = await this.database.client.scimExternalIdentity.findMany({
+      orderBy: [{ externalId: "asc" }, { id: "asc" }],
+      select: { externalId: true, id: true, lastSyncedAt: true, userId: true },
+      where: { organizationId, kind: "user", userId: { not: null } },
+    });
+    const userIds = identities.flatMap((identity) => identity.userId === null ? [] : [identity.userId]);
+    const userWhere: Prisma.UserWhereInput = { id: { in: userIds } };
+    if (query.filter !== undefined) {
+      userWhere.loginIdentifier = query.filter.attribute === "userName" ? query.filter.value : { in: [] };
+    }
+    const users = await this.database.client.user.findMany({
+      select: {
+        id: true,
+        loginIdentifier: true,
+        organizationMemberships: { where: { organizationId }, select: { status: true } },
+        status: true,
+      },
+      where: userWhere,
+    });
+    const userById = new Map(users.map((user) => [user.id, user]));
+    const resources = identities.flatMap((identity) => {
+      if (identity.userId === null) return [];
+      const user = userById.get(identity.userId);
+      const membership = user?.organizationMemberships[0];
+      if (user === undefined || membership === undefined) return [];
+      return [scimUserResource({ externalId: identity.externalId, lastSyncedAt: identity.lastSyncedAt, user, membership })];
+    });
+    return this.#scimListResponse(resources, query);
+  }
+
+  /** 读取单个 SCIM 用户；不存在或类型冲突均使用标准 SCIM 404。 */
+  async getScimUser(organizationId: string, resourceId: string): Promise<ScimUserResource> {
+    const state = await this.#loadScimUserState(this.database.client, organizationId, resourceId);
+    return scimUserResource(state);
+  }
+
+  /** 创建或幂等更新 SCIM 用户，并将停用收敛到既有会话/API Key 撤权链路。 */
+  async createScimUser(organizationId: string, input: ScimUserRequest, requestId: string): Promise<ScimUserResource> {
     return this.database.client.$transaction(async (transaction) => {
-      for (const incoming of input.users) {
-        const existing = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: incoming.externalId } } });
-        if (existing !== null && existing.kind !== "user") {
-          throw conflict();
+      await this.#upsertScimUser(transaction, organizationId, input, requestId);
+      const state = await this.#loadScimUserState(transaction, organizationId, input.externalId ?? input.userName);
+      await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: state.user.id, targetType: "user" });
+      return scimUserResource(state);
+    });
+  }
+
+  /** 按声明顺序应用 SCIM 用户 replace 操作，所有状态变化在一个事务中完成。 */
+  async patchScimUser(organizationId: string, resourceId: string, input: ScimPatchRequest, requestId: string): Promise<ScimUserResource> {
+    return this.database.client.$transaction(async (transaction) => {
+      let currentId = resourceId;
+      for (const operation of input.Operations) {
+        if (operation.op !== "replace" || operation.path === undefined || !["active", "userName", "externalId"].includes(operation.path)) {
+          throw scimError(400, "The SCIM user PATCH path or operation is not supported", "invalidPath");
         }
-        const user = existing?.userId === undefined || existing?.userId === null
-          ? await transaction.user.upsert({ where: { loginIdentifier: incoming.loginIdentifier }, create: { loginIdentifier: incoming.loginIdentifier, passwordDigest: null, status: incoming.active ? "active" : "disabled" }, update: { status: incoming.active ? "active" : "disabled", loginIdentifier: incoming.loginIdentifier } })
-          : await transaction.user.update({ where: { id: existing.userId }, data: { status: incoming.active ? "active" : "disabled", loginIdentifier: incoming.loginIdentifier } });
-        await transaction.organizationMembership.upsert({ where: { organizationId_userId: { organizationId, userId: user.id } }, create: { organizationId, userId: user.id, role: "member", status: incoming.active ? "active" : "inactive" }, update: { status: incoming.active ? "active" : "inactive" } });
-        await transaction.scimExternalIdentity.upsert({ where: { organizationId_externalId: { organizationId, externalId: incoming.externalId } }, create: { organizationId, externalId: incoming.externalId, kind: "user", userId: user.id, groupId: null, lastSyncedAt: new Date() }, update: { kind: "user", userId: user.id, groupId: null, lastSyncedAt: new Date() } });
-        if (!incoming.active) {
-          const revokedSessions = await transaction.authSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
-          await transaction.enterpriseApiKey.updateMany({ where: { organizationId, userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
-          if (revokedSessions.count > 0) {
-            await this.accessChanges.publish(transaction, { kind: "close", reason: "forbidden", requestId, selectors: [{ kind: "user", value: user.id }] });
-          }
+        const state = await this.#loadScimUserState(transaction, organizationId, currentId);
+        if (operation.path === "active") {
+          if (typeof operation.value !== "boolean") throw scimError(400, "The active value must be boolean", "invalidValue");
+          await this.#setScimUserActive(transaction, organizationId, state.user.id, operation.value, requestId);
+        } else if (operation.path === "userName") {
+          if (typeof operation.value !== "string" || operation.value.trim().length === 0) throw scimError(400, "The userName value is invalid", "invalidValue");
+          const collision = await transaction.user.findUnique({ where: { loginIdentifier: operation.value.trim() }, select: { id: true } });
+          if (collision !== null && collision.id !== state.user.id) throw scimError(409, "The userName is already assigned", "uniqueness");
+          await transaction.user.update({ where: { id: state.user.id }, data: { loginIdentifier: operation.value.trim() } });
+        } else {
+          if (typeof operation.value !== "string" || operation.value.trim().length === 0) throw scimError(400, "The externalId value is invalid", "invalidValue");
+          const nextId = operation.value.trim();
+          const collision = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: nextId } } });
+          if (collision !== null && collision.externalId !== currentId) throw scimError(409, "The externalId is already assigned", "uniqueness");
+          await transaction.scimExternalIdentity.update({ where: { organizationId_externalId: { organizationId, externalId: currentId } }, data: { externalId: nextId, lastSyncedAt: new Date() } });
+          currentId = nextId;
         }
       }
-      for (const incoming of input.groups) {
-        const existing = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: incoming.externalId } } });
-        if (existing !== null && existing.kind !== "group") {
-          throw conflict();
+      await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: currentId, targetType: "user" });
+      return scimUserResource(await this.#loadScimUserState(transaction, organizationId, currentId));
+    });
+  }
+
+  /** SCIM DELETE 语义等价于 active=false，保留映射和审计历史。 */
+  async deleteScimUser(organizationId: string, resourceId: string, requestId: string): Promise<void> {
+    await this.database.client.$transaction(async (transaction) => {
+      const state = await this.#loadScimUserState(transaction, organizationId, resourceId);
+      await this.#setScimUserActive(transaction, organizationId, state.user.id, false, requestId);
+    });
+  }
+
+  /** 查询一页 SCIM 组，并将成员投影为对应的 SCIM 用户资源 ID。 */
+  async listScimGroups(organizationId: string, query: ScimListQuery) {
+    if (query.filter?.attribute === "userName") throw scimError(400, "Only displayName filtering is supported for Groups", "invalidFilter");
+    const identities = await this.database.client.scimExternalIdentity.findMany({
+      orderBy: [{ externalId: "asc" }, { id: "asc" }],
+      select: { externalId: true, groupId: true, id: true, lastSyncedAt: true },
+      where: {
+        organizationId,
+        groupId: { not: null },
+        kind: "group",
+      },
+    });
+    const groupIds = identities.flatMap((identity) => identity.groupId === null ? [] : [identity.groupId]);
+    const groupWhere: Prisma.UserGroupWhereInput = { id: { in: groupIds }, organizationId, status: "active" };
+    if (query.filter !== undefined) {
+      groupWhere.name = query.filter.attribute === "displayName" ? query.filter.value : { in: [] };
+    }
+    const groups = await this.database.client.userGroup.findMany({
+      select: { id: true, name: true, status: true },
+      where: groupWhere,
+    });
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    const resources: ScimGroupResource[] = [];
+    for (const identity of identities) {
+      if (identity.groupId === null) continue;
+      const group = groupById.get(identity.groupId);
+      if (group === undefined) continue;
+      resources.push(scimGroupResource({ externalId: identity.externalId, group, lastSyncedAt: identity.lastSyncedAt }, await this.#scimGroupMembers(this.database.client, organizationId, group.id)));
+    }
+    return this.#scimListResponse(resources, query);
+  }
+
+  /** 读取单个 SCIM 组及当前成员关系。 */
+  async getScimGroup(organizationId: string, resourceId: string): Promise<ScimGroupResource> {
+    const state = await this.#loadScimGroupState(this.database.client, organizationId, resourceId);
+    return scimGroupResource(state, await this.#scimGroupMembers(this.database.client, organizationId, state.group.id));
+  }
+
+  /** 创建或幂等更新 SCIM 组，并按请求提供的成员集合收敛关系。 */
+  async createScimGroup(organizationId: string, input: ScimGroupRequest, requestId: string): Promise<ScimGroupResource> {
+    return this.database.client.$transaction(async (transaction) => {
+      const state = await this.#upsertScimGroup(transaction, organizationId, input);
+      if (input.members !== undefined) await this.#replaceScimGroupMembers(transaction, organizationId, state.group.id, input.members.map((member) => member.value), requestId);
+      const updated = await this.#loadScimGroupState(transaction, organizationId, state.externalId);
+      await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: updated.group.id, targetType: "group" });
+      return scimGroupResource(updated, await this.#scimGroupMembers(transaction, organizationId, updated.group.id));
+    });
+  }
+
+  /** 应用 SCIM 组名称、资源 ID 和成员 add/remove/replace 操作。 */
+  async patchScimGroup(organizationId: string, resourceId: string, input: ScimPatchRequest, requestId: string): Promise<ScimGroupResource> {
+    return this.database.client.$transaction(async (transaction) => {
+      let currentId = resourceId;
+      for (const operation of input.Operations) {
+        const path = operation.path;
+        if (path === "displayName") {
+          if (operation.op !== "replace" || typeof operation.value !== "string" || operation.value.trim().length === 0) throw scimError(400, "The displayName PATCH operation is invalid", "invalidValue");
+          const state = await this.#loadScimGroupState(transaction, organizationId, currentId);
+          const collision = await transaction.userGroup.findFirst({ where: { organizationId, name: operation.value.trim(), id: { not: state.group.id } }, select: { id: true } });
+          if (collision !== null) throw scimError(409, "The displayName is already assigned", "uniqueness");
+          await transaction.userGroup.update({ where: { id: state.group.id }, data: { name: operation.value.trim() } });
+        } else if (path === "externalId") {
+          if (operation.op !== "replace" || typeof operation.value !== "string" || operation.value.trim().length === 0) throw scimError(400, "The externalId PATCH operation is invalid", "invalidValue");
+          const nextId = operation.value.trim();
+          const collision = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: nextId } } });
+          if (collision !== null && collision.externalId !== currentId) throw scimError(409, "The externalId is already assigned", "uniqueness");
+          await transaction.scimExternalIdentity.update({ where: { organizationId_externalId: { organizationId, externalId: currentId } }, data: { externalId: nextId, lastSyncedAt: new Date() } });
+          currentId = nextId;
+        } else if (path === "members" || path?.startsWith("members[value eq ")) {
+          const memberIds = this.#scimPatchMemberIds(operation, path);
+          const state = await this.#loadScimGroupState(transaction, organizationId, currentId);
+          if (operation.op === "replace") await this.#replaceScimGroupMembers(transaction, organizationId, state.group.id, memberIds, requestId);
+          else if (operation.op === "add") await this.#addScimGroupMembers(transaction, organizationId, state.group.id, memberIds, requestId);
+          else await this.#removeScimGroupMembers(transaction, organizationId, state.group.id, memberIds, requestId);
+        } else {
+          throw scimError(400, "The SCIM group PATCH path is not supported", "invalidPath");
         }
-        // 外部 ID 已建立映射时沿用原组更新名称，避免改名产生孤儿组或迁移权限。
-        const group = existing?.groupId === undefined || existing.groupId === null
-          ? await transaction.userGroup.upsert({ where: { organizationId_name: { organizationId, name: incoming.name } }, create: { organizationId, name: incoming.name, status: "active" }, update: { status: "active" } })
-          : await transaction.userGroup.update({ where: { id: existing.groupId }, data: { name: incoming.name, status: "active" } });
-        await transaction.scimExternalIdentity.upsert({ where: { organizationId_externalId: { organizationId, externalId: incoming.externalId } }, create: { organizationId, externalId: incoming.externalId, kind: "group", userId: null, groupId: group.id, lastSyncedAt: new Date() }, update: { kind: "group", userId: null, groupId: group.id, lastSyncedAt: new Date() } });
+      }
+      const state = await this.#loadScimGroupState(transaction, organizationId, currentId);
+      await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: state.group.id, targetType: "group" });
+      return scimGroupResource(state, await this.#scimGroupMembers(transaction, organizationId, state.group.id));
+    });
+  }
+
+  /** SCIM DELETE 禁用组并清理其成员关系，不删除文档 ACL 事实。 */
+  async deleteScimGroup(organizationId: string, resourceId: string, requestId: string): Promise<void> {
+    await this.database.client.$transaction(async (transaction) => {
+      const state = await this.#loadScimGroupState(transaction, organizationId, resourceId);
+      const members = await transaction.userGroupMembership.findMany({ where: { organizationId, groupId: state.group.id }, select: { userId: true } });
+      await transaction.userGroup.update({ where: { id: state.group.id }, data: { status: "disabled" } });
+      await transaction.userGroupMembership.deleteMany({ where: { organizationId, groupId: state.group.id } });
+      await this.#publishScimGroupAccessChanges(transaction, organizationId, state.group.id, members.map((member) => member.userId), requestId);
+      await transaction.scimExternalIdentity.update({ where: { organizationId_externalId: { organizationId, externalId: resourceId } }, data: { lastSyncedAt: new Date() } });
+      await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: state.group.id, targetType: "group" });
+    });
+  }
+
+  /** 内部批量入口复用标准 SCIM 用户/组 use case，避免形成第二套状态机。 */
+  async syncScim(organizationId: string, input: ScimSyncRequest, requestId: string): Promise<{ groups: number; users: number }> {
+    return this.database.client.$transaction(async (transaction) => {
+      for (const user of input.users) {
+        await this.#upsertScimUser(transaction, organizationId, { active: user.active, externalId: user.externalId, userName: user.loginIdentifier }, requestId);
+      }
+      for (const group of input.groups) {
+        await this.#upsertScimGroup(transaction, organizationId, { displayName: group.name, externalId: group.externalId });
       }
       await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: organizationId, targetType: "organization" });
       return { groups: input.groups.length, users: input.users.length };
     });
   }
 
+
+  /** 按协议的 1-based startIndex/count 截取已排序资源，并返回稳定分页元数据。 */
+  #scimListResponse<T extends ScimUserResource | ScimGroupResource>(resources: readonly T[], query: ScimListQuery) {
+    const start = query.startIndex - 1;
+    const page = resources.slice(start, start + query.count);
+    return {
+      Resources: page,
+      itemsPerPage: page.length,
+      schemas: [SCIM_LIST_RESPONSE_SCHEMA],
+      startIndex: query.startIndex,
+      totalResults: resources.length,
+    };
+  }
+
+  /** 读取 SCIM 用户的组织映射、账号状态和成员状态，确保资源身份不跨组织。 */
+  async #loadScimUserState(client: ScimReadClient, organizationId: string, resourceId: string): Promise<ScimUserState> {
+    const identity = await client.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: resourceId } } });
+    if (identity === null || identity.kind !== "user" || identity.userId === null) throw scimError(404, "The SCIM user does not exist", "noTarget");
+    const user = await client.user.findUnique({ where: { id: identity.userId }, select: { id: true, loginIdentifier: true, status: true } });
+    const membership = await client.organizationMembership.findUnique({ where: { organizationId_userId: { organizationId, userId: identity.userId } }, select: { status: true } });
+    if (user === null || membership === null) throw scimError(404, "The SCIM user does not exist", "noTarget");
+    return { externalId: identity.externalId, lastSyncedAt: identity.lastSyncedAt, user, membership };
+  }
+
+  /** 读取 SCIM 组映射和组状态，资源不存在时不泄露其他组织的组信息。 */
+  async #loadScimGroupState(client: ScimReadClient, organizationId: string, resourceId: string): Promise<ScimGroupState> {
+    const identity = await client.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId: resourceId } } });
+    if (identity === null || identity.kind !== "group" || identity.groupId === null) throw scimError(404, "The SCIM group does not exist", "noTarget");
+    const group = await client.userGroup.findFirst({ where: { id: identity.groupId, organizationId }, select: { id: true, name: true, status: true } });
+    if (group === null || group.status !== "active") throw scimError(404, "The SCIM group does not exist", "noTarget");
+    return { externalId: identity.externalId, group, lastSyncedAt: identity.lastSyncedAt };
+  }
+
+  /** 将组成员关系投影为 SCIM 用户资源 ID，未被 SCIM 映射的内部成员不会伪造外部 ID。 */
+  async #scimGroupMembers(client: ScimReadClient, organizationId: string, groupId: string): Promise<ScimGroupResource["members"]> {
+    const memberships = await client.userGroupMembership.findMany({ where: { organizationId, groupId }, select: { userId: true, user: { select: { loginIdentifier: true } } }, orderBy: { userId: "asc" } });
+    if (memberships.length === 0) return [];
+    const identities = await client.scimExternalIdentity.findMany({ where: { organizationId, kind: "user", userId: { in: memberships.map((membership) => membership.userId) } }, select: { externalId: true, userId: true } });
+    const identityByUserId = new Map(identities.flatMap((identity) => identity.userId === null ? [] : [[identity.userId, identity.externalId] as const]));
+    return memberships.flatMap((membership) => {
+      const externalId = identityByUserId.get(membership.userId);
+      return externalId === undefined ? [] : [{ display: membership.user.loginIdentifier, type: "User" as const, value: externalId }];
+    });
+  }
+
+  /** 标准 SCIM 用户 upsert 的唯一状态入口；调用者必须已处于组织令牌事务内。 */
+  async #upsertScimUser(transaction: Prisma.TransactionClient, organizationId: string, input: ScimUserRequest, requestId: string): Promise<void> {
+    const now = new Date();
+    const externalId = input.externalId ?? input.userName;
+    const active = input.active ?? true;
+    const existing = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId } } });
+    if (existing !== null && existing.kind !== "user") throw scimError(409, "The externalId is already assigned to a group", "uniqueness");
+    const user = existing?.userId === null || existing?.userId === undefined
+      ? await transaction.user.upsert({ where: { loginIdentifier: input.userName }, create: { loginIdentifier: input.userName, passwordDigest: null, status: "active" }, update: { loginIdentifier: input.userName } })
+      : await transaction.user.update({ where: { id: existing.userId }, data: { loginIdentifier: input.userName } });
+    await transaction.organizationMembership.upsert({ where: { organizationId_userId: { organizationId, userId: user.id } }, create: { organizationId, userId: user.id, role: "member", status: active ? "active" : "inactive" }, update: { status: active ? "active" : "inactive" } });
+    await transaction.scimExternalIdentity.upsert({ where: { organizationId_externalId: { organizationId, externalId } }, create: { organizationId, externalId, kind: "user", userId: user.id, groupId: null, lastSyncedAt: now }, update: { kind: "user", userId: user.id, groupId: null, lastSyncedAt: now } });
+    if (!active) await this.#setScimUserActive(transaction, organizationId, user.id, false, requestId);
+  }
+
+  /** 停用用户时统一撤销会话与机器凭据，并发布现有连接关闭事件。 */
+  async #setScimUserActive(transaction: Prisma.TransactionClient, organizationId: string, userId: string, active: boolean, requestId: string): Promise<void> {
+    const now = new Date();
+    await transaction.organizationMembership.updateMany({ where: { organizationId, userId }, data: { status: active ? "active" : "inactive" } });
+    await transaction.scimExternalIdentity.updateMany({ where: { organizationId, kind: "user", userId }, data: { lastSyncedAt: now } });
+    await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: now, organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: userId, targetType: "membership" });
+    if (active) return;
+    const revokedSessions = await transaction.authSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: now } });
+    await transaction.enterpriseApiKey.updateMany({ where: { organizationId, userId, revokedAt: null }, data: { revokedAt: now } });
+    if (revokedSessions.count > 0) await this.accessChanges.publish(transaction, { kind: "close", reason: "forbidden", requestId, selectors: [{ kind: "user", value: userId }] });
+  }
+
+  /** 标准 SCIM 组 upsert 的唯一状态入口，externalId 未提供时使用 displayName 作为稳定资源键。 */
+  async #upsertScimGroup(transaction: Prisma.TransactionClient, organizationId: string, input: ScimGroupRequest): Promise<ScimGroupState> {
+    const now = new Date();
+    const externalId = input.externalId ?? input.displayName;
+    const existing = await transaction.scimExternalIdentity.findUnique({ where: { organizationId_externalId: { organizationId, externalId } } });
+    if (existing !== null && existing.kind !== "group") throw scimError(409, "The externalId is already assigned to a user", "uniqueness");
+    const group = existing?.groupId === null || existing?.groupId === undefined
+      ? await transaction.userGroup.upsert({ where: { organizationId_name: { organizationId, name: input.displayName } }, create: { organizationId, name: input.displayName, status: "active" }, update: { name: input.displayName, status: "active" }, select: { id: true, name: true, status: true } })
+      : await transaction.userGroup.update({ where: { id: existing.groupId }, data: { name: input.displayName, status: "active" }, select: { id: true, name: true, status: true } });
+    await transaction.scimExternalIdentity.upsert({ where: { organizationId_externalId: { organizationId, externalId } }, create: { organizationId, externalId, kind: "group", userId: null, groupId: group.id, lastSyncedAt: now }, update: { kind: "group", userId: null, groupId: group.id, lastSyncedAt: now } });
+    return { externalId, group, lastSyncedAt: now };
+  }
+
+  /** 验证并解析成员资源 ID；成员资源必须来自同一组织的 SCIM Users。 */
+  #scimPatchMemberIds(operation: ScimPatchRequest["Operations"][number], path: string): string[] {
+    if (path !== "members") {
+      const match = /^members\[value eq "([^"]+)"\]$/.exec(path);
+      if (match === null) throw scimError(400, "The members filter is invalid", "invalidPath");
+      return [match[1]!];
+    }
+    if (!Array.isArray(operation.value) || !operation.value.every((value) => typeof value === "object" && value !== null && "value" in value && typeof (value as { readonly value?: unknown }).value === "string")) throw scimError(400, "The members value must be a SCIM user list", "invalidValue");
+    return operation.value.map((value) => (value as { value: string }).value);
+  }
+
+  /** 用目标成员集合替换组成员，并复用数据库唯一约束保证幂等。 */
+  async #replaceScimGroupMembers(transaction: Prisma.TransactionClient, organizationId: string, groupId: string, memberIds: readonly string[], requestId: string): Promise<void> {
+    await this.#removeScimGroupMembers(transaction, organizationId, groupId, [], requestId, true);
+    await this.#addScimGroupMembers(transaction, organizationId, groupId, memberIds, requestId);
+  }
+
+  /** 增加组成员；外部资源 ID 解析只在本事务中完成一次。 */
+  async #addScimGroupMembers(transaction: Prisma.TransactionClient, organizationId: string, groupId: string, memberIds: readonly string[], requestId: string): Promise<void> {
+    const identities = await transaction.scimExternalIdentity.findMany({ where: { organizationId, kind: "user", externalId: { in: [...memberIds] }, userId: { not: null } }, select: { externalId: true, userId: true } });
+    if (identities.length !== new Set(memberIds).size) throw scimError(404, "A SCIM group member does not exist", "noTarget");
+    const userIds = identities.flatMap((identity) => identity.userId === null ? [] : [identity.userId]);
+    await transaction.userGroupMembership.createMany({ data: userIds.map((userId) => ({ organizationId, groupId, userId })), skipDuplicates: true });
+    await this.#publishScimGroupAccessChanges(transaction, organizationId, groupId, userIds, requestId);
+    if (userIds.length > 0) await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: groupId, targetType: "group" });
+  }
+
+  /** 移除组成员；空列表仅用于替换操作清空全部关系。 */
+  async #removeScimGroupMembers(transaction: Prisma.TransactionClient, organizationId: string, groupId: string, memberIds: readonly string[], requestId: string, clearAll = false): Promise<void> {
+    const userIds = clearAll
+      ? (await transaction.userGroupMembership.findMany({ where: { organizationId, groupId }, select: { userId: true } })).map((membership) => membership.userId)
+      : (await transaction.scimExternalIdentity.findMany({ where: { organizationId, kind: "user", externalId: { in: [...memberIds] }, userId: { not: null } }, select: { userId: true } })).flatMap((identity) => identity.userId === null ? [] : [identity.userId]);
+    if (!clearAll && userIds.length !== new Set(memberIds).size) throw scimError(404, "A SCIM group member does not exist", "noTarget");
+    const where = clearAll ? { organizationId, groupId } : { organizationId, groupId, userId: { in: userIds } };
+    const removed = await transaction.userGroupMembership.deleteMany({ where });
+    await this.#publishScimGroupAccessChanges(transaction, organizationId, groupId, userIds, requestId);
+    if (removed.count > 0) await this.audit.append(transaction, { action: "permission.change", actorUserId: null, occurredAt: new Date(), organizationId, outcome: "succeeded", requestId, spaceId: null, targetId: groupId, targetType: "group" });
+  }
+
+  /** 让组成员变化立即失效受影响空间连接；正文和文档 ACL 仍由既有权限 owner 计算。 */
+  async #publishScimGroupAccessChanges(transaction: Prisma.TransactionClient, organizationId: string, groupId: string, userIds: readonly string[], requestId: string): Promise<void> {
+    if (userIds.length === 0) return;
+    const grants = await transaction.spaceGroupGrant.findMany({ where: { organizationId, groupId, space: { status: "active" } }, select: { spaceId: true }, distinct: ["spaceId"] });
+    for (const space of grants) {
+      for (const userId of userIds) {
+        await this.accessChanges.publish(transaction, { kind: "close", reason: "forbidden", requestId, selectors: [{ kind: "space", value: space.spaceId }, { kind: "user", value: userId }] });
+      }
+    }
+  }
+
   /** 保存 Draw.io/Excalidraw 元数据并保持正文可读；嵌入失败只改变嵌入状态，不写入正文。 */
   async upsertEmbed(actorUserId: string, scope: DocumentScope, input: GovernanceEmbeddedObjectRequest, requestId: string) {
     const embed = await this.database.client.$transaction(async (transaction) => {
       await this.access.requireRole(transaction, { ...scope, actorUserId }, "editor");
+      await this.#requireGovernanceEnabled(transaction, scope.organizationId, scope.spaceId);
       const existing = await transaction.embeddedObject.findFirst({ where: { ...scope, kind: input.kind, status: { not: "deleted" } }, orderBy: { version: "desc" } });
       const updated = existing === null
         ? await transaction.embeddedObject.create({ data: { ...scope, kind: input.kind, payload: input.payload as Prisma.InputJsonObject, status: "active", createdByUserId: actorUserId } })
@@ -737,26 +1139,37 @@ export class EnterpriseGovernanceService {
     return { embeds };
   }
 
-  /** AI provider 未配置时明确失败；禁止返回无引用的猜测答案或通过本地 fallback 绕过授权检索。 */
-  async askAi(actorUserId: string, scope: DocumentScope, input: AiChatRequest, requestId: string): Promise<AiChatResponse> {
-    const { conversation, source } = await this.database.client.$transaction(async (transaction) => {
-      await this.access.requireRole(transaction, { ...scope, actorUserId }, "viewer");
-      const indexed = await transaction.searchDocumentIndex.findUnique({ where: { organizationId_spaceId_notebookId_documentId: scope } });
-      if (indexed === null) {
-        throw notFound();
-      }
+  /** AI 先按四段身份读取当前文档内容，provider 返回后再次复验内容，禁止用问题关键词推断文档。 */
+  async askAi(
+    actorUserId: string,
+    scope: DocumentScope,
+    input: AiChatRequest,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<AiChatResponse> {
+    await this.access.requireDocumentRole({ ...scope, actorUserId }, "viewer");
+    const source = await this.discovery.readDocumentContent({
+      actorUserId,
+      documentId: scope.documentId,
+      notebookId: scope.notebookId,
+      organizationId: scope.organizationId,
+      requestId,
+      signal,
+      spaceId: scope.spaceId,
+    });
+    const conversation = await this.database.client.$transaction(async (transaction) => {
       const currentConversation = input.conversationId === undefined
         ? await transaction.aiConversation.create({ data: { organizationId: scope.organizationId, userId: actorUserId } })
         : await transaction.aiConversation.findFirst({ where: { id: input.conversationId, organizationId: scope.organizationId, userId: actorUserId } });
       if (currentConversation === null) {
         throw notFound();
       }
-      return { conversation: currentConversation, source: indexed };
+      return currentConversation;
     });
     let answer: string;
     try {
       const completion = await this.aiProvider.complete({
-        context: [{ excerpt: source.excerpt, title: source.title }],
+        context: [{ excerpt: source.content, title: source.title }],
         query: input.query,
       });
       answer = completion.answer;
@@ -765,20 +1178,39 @@ export class EnterpriseGovernanceService {
       throw error;
     }
     await this.access.requireDocumentRole({ ...scope, actorUserId }, "viewer");
+    const verified = await this.discovery.readDocumentContent({
+      actorUserId,
+      documentId: scope.documentId,
+      notebookId: scope.notebookId,
+      organizationId: scope.organizationId,
+      requestId,
+      signal,
+      spaceId: scope.spaceId,
+    });
+    if (
+      verified.documentId !== scope.documentId ||
+      verified.notebookId !== scope.notebookId ||
+      verified.content !== source.content
+    ) {
+      throw conflict();
+    }
     const promptDigest = createHash("sha256").update(input.query).digest("hex");
     const persisted = await this.database.client.$transaction(async (transaction) => {
       await transaction.aiMessage.create({ data: { content: `[query-digest:${promptDigest}]`, conversationId: conversation.id, role: "user" } });
       const message = await transaction.aiMessage.create({ data: { content: answer, conversationId: conversation.id, role: "assistant" } });
-      await transaction.aiCitation.create({ data: { documentId: scope.documentId, excerpt: source.excerpt, messageId: message.id, notebookId: scope.notebookId, organizationId: scope.organizationId, spaceId: scope.spaceId, verifiedAt: new Date() } });
+      await transaction.aiCitation.create({ data: { documentId: scope.documentId, excerpt: verified.content, messageId: message.id, notebookId: scope.notebookId, organizationId: scope.organizationId, spaceId: scope.spaceId, verifiedAt: new Date() } });
       await transaction.aiConversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
       return message;
     });
-    return { answer, citations: [{ document: { documentId: scope.documentId, notebookId: scope.notebookId, organizationId: scope.organizationId, spaceId: scope.spaceId }, excerpt: source.excerpt }], conversationId: conversation.id, messageId: persisted.id };
+    return { answer, citations: [{ document: { documentId: scope.documentId, notebookId: scope.notebookId, organizationId: scope.organizationId, spaceId: scope.spaceId }, excerpt: verified.content }], conversationId: conversation.id, messageId: persisted.id };
   }
 
   /** 以显式幂等键登记治理任务，重复调度只返回同一控制面事实。 */
   async enqueueTask(scope: DocumentScope, kind: "verify" | "archive" | "retain" | "export_watermark", versionToken: string) {
-    return this.database.client.$transaction((transaction) => this.#queueTask(transaction, scope, kind, versionToken));
+    return this.database.client.$transaction(async (transaction) => {
+      await this.#requireGovernanceEnabled(transaction, scope.organizationId, scope.spaceId);
+      return this.#queueTask(transaction, scope, kind, versionToken);
+    });
   }
 
   /** 记录任务原始异常链，供运维重试和审计查询；不得只保留 message 摘要。 */
@@ -862,5 +1294,16 @@ export class EnterpriseGovernanceService {
       });
     }
     return task;
+  }
+
+  /** 治理 mutation 的唯一开关 owner；策略读写保留开放以支持灰度与安全回滚。 */
+  async #requireGovernanceEnabled(transaction: Prisma.TransactionClient, organizationId: string, spaceId: string): Promise<void> {
+    const policy = await transaction.governancePolicy.findUnique({
+      where: { organizationId_spaceId: { organizationId, spaceId } },
+      select: { governanceEnabled: true },
+    });
+    if (policy === null || !policy.governanceEnabled) {
+      throw forbidden();
+    }
   }
 }

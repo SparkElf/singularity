@@ -19,6 +19,7 @@ import {
 
 import type { Clock } from "../identity/clock.js";
 import { IdentityService } from "../identity/identity.service.js";
+import { IdentityProvisioningService } from "../identity/identity-provisioning.service.js";
 import { AccessChangedPublisher } from "../kernel/access-changed.js";
 import { SpaceAccessService } from "../spaces/space-access.service.js";
 import { CLOCK } from "../tokens.js";
@@ -65,6 +66,7 @@ export class AccessOperationsService implements OnModuleInit {
   constructor(
     private readonly database: DatabaseRuntime,
     private readonly identity: IdentityService,
+    private readonly provisioning: IdentityProvisioningService,
     private readonly spaces: SpaceAccessService,
     @Inject(CLOCK)
     private readonly clock: Clock,
@@ -106,77 +108,25 @@ export class AccessOperationsService implements OnModuleInit {
     command: InitializeAccessOperation,
   ): Promise<AccessOperationResult> {
     const passwordDigest = await this.identity.hashPassword(command.password);
-    const now = this.clock.now();
     try {
       return await this.database.client.$transaction(async (transaction) => {
-        await transaction.systemInstallation.create({
-          data: { id: 1, initializedAt: now },
-        });
-        const user = await transaction.user.create({
-          data: {
-            loginIdentifier: command.loginIdentifier,
-            passwordDigest,
-            status: "active",
-          },
-          select: { id: true },
-        });
-        const organization = await transaction.organization.create({
-          data: { name: command.organizationName, status: "active" },
-          select: { id: true },
-        });
-        await transaction.organizationMembership.create({
-          data: {
-            organizationId: organization.id,
-            role: "owner",
-            status: "active",
-            userId: user.id,
-          },
-        });
-        const space = await transaction.space.create({
-          data: {
-            name: command.spaceName,
-            organizationId: organization.id,
-            status: "active",
-          },
-          select: { id: true },
-        });
-        await transaction.spaceMembership.create({
-          data: {
-            organizationId: organization.id,
-            role: "admin",
-            spaceId: space.id,
-            status: "active",
-            userId: user.id,
-          },
-        });
-        await transaction.kernelInstance.create({
-          data: {
-            deploymentHandle: null,
-            spaceId: space.id,
-            status: "starting",
-            version: null,
-          },
-        });
-        await this.#appendPermissionChange(transaction, operationId, {
-          occurredAt: now,
-          organizationId: organization.id,
-          spaceId: null,
-          targetId: user.id,
-          targetType: "membership",
-        });
-        await this.#appendPermissionChange(transaction, operationId, {
-          occurredAt: now,
-          organizationId: organization.id,
-          spaceId: space.id,
-          targetId: user.id,
-          targetType: "membership",
-        });
+        const installation =
+          await this.provisioning.createInitialInstallationInTransaction(
+            transaction,
+            {
+              loginIdentifier: command.loginIdentifier,
+              organizationName: command.organizationName,
+              passwordDigest,
+              requestId: operationId,
+              spaceName: command.spaceName,
+            },
+          );
         return {
           operationId,
-          organizationId: organization.id,
+          organizationId: installation.organizationId,
           outcome: "created",
-          spaceId: space.id,
-          userId: user.id,
+          spaceId: installation.spaceId,
+          userId: installation.userId,
         };
       });
     } catch (error) {

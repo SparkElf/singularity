@@ -93,6 +93,155 @@ export const scimSyncRequestSchema = z.object({
 }).strict();
 export type ScimSyncRequest = z.infer<typeof scimSyncRequestSchema>;
 
+export const SCIM_CORE_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User" as const;
+export const SCIM_CORE_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group" as const;
+export const SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse" as const;
+export const SCIM_PATCH_OP_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp" as const;
+export const SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error" as const;
+
+export const scimErrorResponseSchema = z.object({
+  detail: z.string(),
+  schemas: z.array(z.literal(SCIM_ERROR_SCHEMA)),
+  scimType: z.string().optional(),
+  status: z.string().regex(/^[1-5][0-9]{2}$/),
+}).strict();
+export type ScimErrorResponse = z.infer<typeof scimErrorResponseSchema>;
+
+const scimResourceMetaSchema = z.object({
+  created: z.string().datetime({ offset: true }).optional(),
+  lastModified: z.string().datetime({ offset: true }).optional(),
+  location: z.string().url().optional(),
+  resourceType: z.string().optional(),
+  version: z.string().optional(),
+}).strict();
+
+const scimNameSchema = z.object({
+  familyName: z.string().optional(),
+  formatted: z.string().optional(),
+  givenName: z.string().optional(),
+}).passthrough();
+
+const scimEmailSchema = z.object({
+  primary: z.boolean().optional(),
+  type: z.string().optional(),
+  value: z.string().optional(),
+}).passthrough();
+
+export const scimUserRequestSchema = z.object({
+  active: z.boolean().optional(),
+  displayName: z.string().trim().min(1).max(512).optional(),
+  emails: z.array(scimEmailSchema).max(16).optional(),
+  externalId: z.string().trim().min(1).max(512).optional(),
+  name: scimNameSchema.optional(),
+  schemas: z.array(z.string()).min(1).optional(),
+  userName: z.string().trim().min(1).max(254),
+}).passthrough();
+export type ScimUserRequest = z.infer<typeof scimUserRequestSchema>;
+
+export const scimGroupMemberSchema = z.object({
+  display: z.string().optional(),
+  type: z.literal("User").optional(),
+  value: z.string().min(1).max(512),
+}).passthrough();
+export type ScimGroupMember = z.infer<typeof scimGroupMemberSchema>;
+
+export const scimGroupRequestSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+  externalId: z.string().trim().min(1).max(512).optional(),
+  members: z.array(scimGroupMemberSchema).max(1000).optional(),
+  schemas: z.array(z.string()).min(1).optional(),
+}).passthrough();
+export type ScimGroupRequest = z.infer<typeof scimGroupRequestSchema>;
+
+export const scimPatchOperationSchema = z.object({
+  op: z.enum(["add", "remove", "replace"]),
+  path: z.string().trim().min(1).max(256).optional(),
+  value: z.unknown().optional(),
+}).passthrough();
+export type ScimPatchOperation = z.infer<typeof scimPatchOperationSchema>;
+
+export const scimPatchRequestSchema = z.object({
+  Operations: z.array(scimPatchOperationSchema).min(1).max(32),
+  schemas: z.array(z.string()).min(1).optional(),
+}).passthrough();
+export type ScimPatchRequest = z.infer<typeof scimPatchRequestSchema>;
+
+const scimPageParameterSchema = z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).refine((value) => Number.isSafeInteger(value));
+export const scimFilterSchema = z.string().trim().max(512).regex(/^(userName|displayName) eq "[^"]*"$/).transform((value) => {
+  const match = /^(userName|displayName) eq "([^"]*)"$/.exec(value)!;
+  return { attribute: match[1] as "userName" | "displayName", value: match[2]! };
+});
+export type ScimFilter = z.infer<typeof scimFilterSchema>;
+export const scimListQuerySchema = z.object({
+  count: scimPageParameterSchema.optional().transform((value) => Math.min(value ?? 100, 200)),
+  filter: scimFilterSchema.optional(),
+  startIndex: scimPageParameterSchema.refine((value) => value > 0).optional().transform((value) => value ?? 1),
+}).strict();
+export type ScimListQuery = z.infer<typeof scimListQuerySchema>;
+
+export const scimServiceProviderConfigSchema = z.object({
+  authenticationSchemes: z.array(z.object({
+    description: z.string(),
+    name: z.string(),
+    specUri: z.string().url(),
+    type: z.string(),
+  }).strict()),
+  documentationUri: z.string().url().optional(),
+  meta: scimResourceMetaSchema.optional(),
+  patch: z.object({ supported: z.boolean() }).strict(),
+  schemas: z.array(z.literal("urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig")),
+  bulk: z.object({ maxOperations: z.number().int().nonnegative(), maxPayloadSize: z.number().int().nonnegative(), supported: z.boolean() }).strict(),
+  filter: z.object({ maxResults: z.number().int().positive(), supported: z.boolean() }).strict(),
+  changePassword: z.object({ supported: z.boolean() }).strict(),
+  sort: z.object({ supported: z.boolean() }).strict(),
+}).strict();
+export type ScimServiceProviderConfig = z.infer<typeof scimServiceProviderConfigSchema>;
+
+export const scimUserResourceSchema = scimUserRequestSchema.extend({
+  active: z.boolean(),
+  id: z.string().min(1),
+  meta: scimResourceMetaSchema.optional(),
+}).strict();
+export type ScimUserResource = z.infer<typeof scimUserResourceSchema>;
+
+export const scimGroupResourceSchema = scimGroupRequestSchema.extend({
+  id: z.string().min(1),
+  members: z.array(scimGroupMemberSchema),
+  meta: scimResourceMetaSchema.optional(),
+}).strict();
+export type ScimGroupResource = z.infer<typeof scimGroupResourceSchema>;
+
+export const scimListResponseSchema = z.object({
+  Resources: z.array(z.union([scimUserResourceSchema, scimGroupResourceSchema])),
+  itemsPerPage: z.number().int().nonnegative(),
+  schemas: z.array(z.literal(SCIM_LIST_RESPONSE_SCHEMA)),
+  startIndex: z.number().int().positive(),
+  totalResults: z.number().int().nonnegative(),
+}).strict();
+export type ScimListResponse = z.infer<typeof scimListResponseSchema>;
+
+export const SCIM_USER_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  active: { type: "boolean" },
+  externalId: { type: "string" },
+  id: { type: "string" },
+  schemas: { type: "array", items: { type: "string" } },
+  userName: { type: "string" },
+});
+export const SCIM_GROUP_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  displayName: { type: "string" },
+  externalId: { type: "string" },
+  id: { type: "string" },
+  members: { type: "array", items: { type: "object" } },
+  schemas: { type: "array", items: { type: "string" } },
+});
+export const SCIM_LIST_RESPONSE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  Resources: { type: "array", items: { oneOf: [SCIM_USER_OPENAPI_SCHEMA, SCIM_GROUP_OPENAPI_SCHEMA] } },
+  itemsPerPage: { type: "integer", minimum: 0 },
+  schemas: { type: "array", items: { type: "string" } },
+  startIndex: { type: "integer", minimum: 1 },
+  totalResults: { type: "integer", minimum: 0 },
+});
+
 export const mfaFactorRequestSchema = z.object({
   label: z.string().trim().min(1).max(120),
   secret: z.string().trim().min(16).max(256).regex(/^[A-Za-z2-7 =-]+$/i),
@@ -165,7 +314,7 @@ export const governanceSearchResultSchema = z.object({
   document: documentIdentitySchema,
   excerpt: z.string(),
   title: z.string(),
-  updatedAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }).optional(),
 }).strict();
 export const governanceSearchResponseSchema = z.object({ results: z.array(governanceSearchResultSchema) }).strict();
 
@@ -242,6 +391,17 @@ export const governanceEmbeddedObjectSchema = governanceEmbeddedObjectRequestSch
   version: z.number().int().positive(),
 }).strict();
 export const governanceEmbeddedObjectsResponseSchema = z.object({ embeds: z.array(governanceEmbeddedObjectSchema) }).strict();
+
+/** 第三方编辑器只能通过父页面接收的版本化消息提交最小 payload。 */
+export const GOVERNANCE_EMBEDDED_EDITOR_MESSAGE_VERSION = 1 as const;
+export const governanceEmbeddedEditorMessageSchema = z.object({
+  embedId: uuidSchema,
+  kind: z.enum(["drawio", "excalidraw"]),
+  payload: z.record(z.string(), z.unknown()),
+  type: z.literal("singularity.embed.save"),
+  version: z.literal(GOVERNANCE_EMBEDDED_EDITOR_MESSAGE_VERSION),
+}).strict();
+export type GovernanceEmbeddedEditorMessage = z.infer<typeof governanceEmbeddedEditorMessageSchema>;
 
 export const aiChatRequestSchema = z.object({
   conversationId: uuidSchema.optional(),

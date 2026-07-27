@@ -80,7 +80,8 @@ func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) 
 	if len(searchResponse.Blocks) != 1 ||
 		searchResponse.Blocks[0].ID != blockID ||
 		searchResponse.Blocks[0].DocumentID != documentID ||
-		searchResponse.Blocks[0].NotebookID != notebookID {
+		searchResponse.Blocks[0].NotebookID != notebookID ||
+		searchResponse.Blocks[0].Title != "Discovery" {
 		t.Fatalf("search projection = %#v, want explicit source identities", searchResponse)
 	}
 	_, localNodes, _ := model.BuildTreeGraphInBox(documentID, "", notebookID)
@@ -128,6 +129,40 @@ func TestEnterpriseDiscoveryReturnsMinimalExplicitSpaceIdentities(t *testing.T) 
 				t.Fatalf("graph projection exposes %q: %#v", forbidden, node)
 			}
 		}
+	}
+}
+
+func TestEnterpriseDocumentContentUsesExplicitContentIdentity(t *testing.T) {
+	setupEncryptedResponseTest(t, 0)
+	util.SetBooted()
+	const (
+		notebookID = "20990719170000-dscdoc1"
+		documentID = "20990719170001-dscdoc1"
+		blockID    = "20990719170002-dscdoc1"
+	)
+	createEnterpriseDirectoryNotebook(t, notebookID, "Document content", false)
+	createEnterpriseDiscoveryTree(t, notebookID, documentID, blockID, "Alpha knowledge", "")
+	configuration, signingKey := newImageOCRServiceAuthConfiguration(t)
+	router := enterpriseDiscoveryServiceAuthRouter(t, configuration)
+	response := serveAuthenticatedEnterpriseRequest(
+		t,
+		router,
+		signingKey,
+		http.MethodGet,
+		"/internal/enterprise/discovery/document-content",
+		notebookID,
+		documentID,
+		nil,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("document content status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var result enterpriseDiscoveryDocumentContentResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode document content: %v", err)
+	}
+	if result.DocumentID != documentID || result.NotebookID != notebookID || result.Content != "Alpha knowledge" || result.Title != "Discovery" {
+		t.Fatalf("document content = %#v, want explicit identity and text", result)
 	}
 }
 
@@ -498,6 +533,7 @@ func enterpriseDiscoveryServiceAuthRouter(t *testing.T, configuration *serviceau
 	router := gin.New()
 	router.Use(configuration.Middleware(), ContentResponseLifecycle)
 	router.POST("/api/graph/getLocalGraph", getLocalGraph)
+	router.GET("/internal/enterprise/discovery/document-content", EnterpriseReadDocumentContent)
 	return router
 }
 
@@ -509,10 +545,36 @@ func serveAuthenticatedEnterpriseDiscoveryRequest(
 	documentID string,
 	payload any,
 ) *httptest.ResponseRecorder {
+	return serveAuthenticatedEnterpriseRequest(
+		t,
+		router,
+		signingKey,
+		http.MethodPost,
+		"/api/graph/getLocalGraph",
+		notebookID,
+		documentID,
+		payload,
+	)
+}
+
+func serveAuthenticatedEnterpriseRequest(
+	t *testing.T,
+	router *gin.Engine,
+	signingKey ed25519.PrivateKey,
+	method string,
+	path string,
+	notebookID,
+	documentID string,
+	payload any,
+) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("encode authenticated discovery request: %v", err)
+	var body []byte
+	var err error
+	if payload != nil {
+		body, err = json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("encode authenticated enterprise request: %v", err)
+		}
 	}
 	now := time.Now()
 	claims := serviceauth.Claims{
@@ -531,10 +593,14 @@ func serveAuthenticatedEnterpriseDiscoveryRequest(
 	if err != nil {
 		t.Fatalf("sign authenticated discovery request: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/graph/getLocalGraph", bytes.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	request.Header.Set(serviceauth.DocumentIDHeader, documentID)
 	request.Header.Set(serviceauth.NotebookIDHeader, notebookID)
+	request.Header.Set(serviceauth.OrganizationIDHeader, imageOCRServiceInstanceID)
+	request.Header.Set(serviceauth.SpaceIDHeader, imageOCRServiceSpaceID)
 	request.Header.Set(serviceauth.RequestIDHeader, imageOCRServiceRequestID)
 	request.Header.Set(serviceauth.ServiceTokenHeader, signedToken)
 	response := httptest.NewRecorder()

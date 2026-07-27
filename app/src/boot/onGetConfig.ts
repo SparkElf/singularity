@@ -30,6 +30,30 @@ import {recordBeforeResizeTop} from "../protyle/util/resize";
 import {processSiYuanUri} from "../util/uri";
 import {getAllEditor} from "../layout/getAll";
 
+const ensureEnterpriseDock = () => {
+    const enterpriseDock = window.siyuan.config.uiLayout.left.data
+        .flat()
+        .find((item) => item.type === "enterprise");
+    if (enterpriseDock) {
+        enterpriseDock.icon = "iconSettings";
+        enterpriseDock.title = window.siyuan.languages.enterpriseManagement || "企业管理";
+        return;
+    }
+
+    // 企业入口是原生 Dock 的固定扩展点；不改变用户已有 Dock 排序和显示状态。
+    const firstGroup = window.siyuan.config.uiLayout.left.data[0] || [];
+    if (!window.siyuan.config.uiLayout.left.data[0]) {
+        window.siyuan.config.uiLayout.left.data[0] = firstGroup;
+    }
+    firstGroup.push({
+        type: "enterprise",
+        size: {width: 320, height: 0},
+        show: false,
+        icon: "iconSettings",
+        title: window.siyuan.languages.enterpriseManagement || "企业管理",
+    });
+};
+
 export const onGetConfig = (isStart: boolean, app: App) => {
     correctHotkey(app);
     /// #if !BROWSER
@@ -56,6 +80,7 @@ export const onGetConfig = (isStart: boolean, app: App) => {
     fetchPost("/api/system/getEmojiConf", {}, response => {
         window.siyuan.emojis = response.data as IEmoji[];
         try {
+            ensureEnterpriseDock();
             JSONToLayout(app, isStart);
             setTimeout(() => {
                 adjustLayout();

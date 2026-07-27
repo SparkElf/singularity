@@ -21,6 +21,7 @@ import { GroupManagementService } from "./groups/group-management.service.js";
 import { GroupsController } from "./groups/groups.controller.js";
 import type { Clock } from "./identity/clock.js";
 import { IdentityController } from "./identity/identity.controller.js";
+import { IdentityProvisioningService } from "./identity/identity-provisioning.service.js";
 import { HttpAccessGuard } from "./identity/http-access.js";
 import { IdentityService } from "./identity/identity.service.js";
 import { LoginRateLimiter } from "./identity/login-rate-limiter.js";
@@ -28,6 +29,11 @@ import { MfaService } from "./identity/mfa.service.js";
 import { SamlService } from "./identity/saml.service.js";
 import { OidcStartAdmission } from "./identity/oidc-start-admission.js";
 import { PasswordHasher } from "./identity/password-hasher.js";
+import {
+  SmtpPasswordResetMailer,
+  type PasswordResetMailer,
+} from "./identity/password-reset-mailer.js";
+import { PasswordResetService } from "./identity/password-reset.service.js";
 import { AccessChangedPublisher } from "./kernel/access-changed.js";
 import {
   FetchOidcProviderClient,
@@ -57,6 +63,7 @@ import {
   OIDC_CLIENT_SECRET_RESOLVER,
   OIDC_PROVIDER_CLIENT,
   AI_PROVIDER,
+  PASSWORD_RESET_MAILER,
 } from "./tokens.js";
 
 export interface CoreModuleOptions {
@@ -69,6 +76,7 @@ export interface CoreModuleOptions {
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
   aiProvider?: AiProvider;
+  passwordResetMailer?: PasswordResetMailer;
 }
 
 @Module({})
@@ -143,6 +151,20 @@ export class CoreModule {
           useFactory: () => new OidcStartAdmission(),
         },
         IdentityService,
+        IdentityProvisioningService,
+        PasswordResetService,
+        {
+          provide: PASSWORD_RESET_MAILER,
+          inject: [API_CONFIGURATION],
+          useFactory: (
+            configuration: ApiConfiguration,
+          ): PasswordResetMailer =>
+            options.passwordResetMailer ??
+            new SmtpPasswordResetMailer({
+              from: configuration.passwordResetFrom,
+              smtpUrl: configuration.passwordResetSmtpUrl,
+            }),
+        },
         MfaService,
         SamlService,
         SpaceAccessService,
@@ -184,6 +206,7 @@ export class CoreModule {
         OidcService,
         OrganizationManagementService,
         PasswordHasher,
+        PasswordResetService,
         SpaceAccessService,
         SpaceManagementService,
         AuditService,

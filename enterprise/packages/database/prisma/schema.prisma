@@ -331,6 +331,7 @@ model User {
   receivedNotifications    Notification[]            @relation("NotificationRecipientUser")
   actedNotifications       Notification[]            @relation("NotificationActorUser")
   collaborationSessions    CollaborationSession[]
+  passwordResetTokens      PasswordResetToken[]
 
   @@map("users")
 }
@@ -355,6 +356,19 @@ model AuthSession {
 
   @@index([userId], map: "auth_sessions_user_id_idx")
   @@map("auth_sessions")
+}
+
+model PasswordResetToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenDigest String    @unique(map: "password_reset_tokens_token_digest_key") @map("token_digest")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "password_reset_tokens_user_id_fkey")
+
+  @@index([userId, expiresAt], map: "password_reset_tokens_user_expires_idx")
+  @@map("password_reset_tokens")
 }
 
 model Organization {

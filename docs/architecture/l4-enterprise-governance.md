@@ -3,7 +3,7 @@ title: "奇点 L4 企业能力架构方案"
 description: "在 L3 单副本实时协作之上建设知识治理、企业身份、发现嵌入与授权 AI"
 author: "Codex"
 date: "2026-07-23"
-version: "1.2.0"
+version: "1.3.0"
 status: "accepted"
 tags: ["architecture", "l4", "enterprise", "governance"]
 ---
@@ -12,7 +12,7 @@ tags: ["architecture", "l4", "enterprise", "governance"]
 
 ## Decision
 
-L4 继续把 Go Kernel 作为正文、块、AV、历史和导出内容的唯一事实源；NestJS + Prisma + PostgreSQL 只保存企业控制面：组织身份、成员同步、API Key 摘要、治理策略、生命周期状态、审批/验证/保留任务、搜索索引元数据、嵌入元数据、AI 引用审计和通知。所有内容请求显式传递 `organizationId + spaceId + notebookId + documentId`，不从前端路由、DOM、全局状态或首个响应推断身份。
+ L4 继续把 Go Kernel 作为正文、块、AV、历史和导出内容的唯一事实源；NestJS + Prisma + PostgreSQL 只保存企业控制面：组织身份、成员同步、API Key 摘要、治理策略、生命周期状态、审批/验证/保留任务、嵌入元数据、AI 引用审计和通知。遗留 `search_document_index` 只允许保存内容 ID/摘要等派生索引元数据，不能作为搜索或 AI 的事实源；当前搜索直接读取 Kernel discovery。所有内容请求显式传递 `organizationId + spaceId + notebookId + documentId`，不从前端路由、DOM、全局状态或首个响应推断身份。
 
 身份安全、知识治理、发现/嵌入和 AI 是四个粗粒度模块；它们共享一个控制面基础合同和既有 ACL/审计 owner，不各自建立权限、正文、搜索或任务事实源。
 
@@ -26,7 +26,7 @@ L4 继续把 Go Kernel 作为正文、块、AV、历史和导出内容的唯一�
 | `enterprise/apps/api` 的 `DiscoveryModule`/metadata handler | Nest `@Module`、DI、Guard、Pipe、Interceptor、Discovery metadata 声明式装配 | 不用中央 switch、文件名扫描或双 registry |
 | L4 PRD 对标的 Docmost、Confluence、Outline、GitLab Wiki | 空间内治理、文档状态侧栏、集合搜索、审阅时间线 | 不复制其私有实现或隐式权限继承 |
 
-本地证据已覆盖模块边界、任务、审计和内容 owner；SAML/SCIM 协议按公开标准合同实现，L4 不依赖某个 IdP 的私有扩展。当前实现已闭合 `@node-saml/node-saml` Assertion 校验、MFA 登录 challenge、治理 Worker、导出审计和可注入 AI provider；整阶段 code-review/test-governance 复评和 `verify:l4-governance` 已通过，结论见 [L4 集中验证报告](../verification/l4-enterprise-capabilities.md)。
+本地证据已覆盖模块边界、任务、审计和内容 owner；SAML/SCIM 协议按公开标准合同实现，L4 不依赖某个 IdP 的私有扩展。当前实现已闭合 `@node-saml/node-saml` Assertion 校验、MFA 登录 challenge、治理 Worker、导出审计和可注入 AI provider；本轮进一步把跨空间搜索收敛到 Kernel 授权发现链路，并把 AI 当前文档取证收敛到显式四段身份的 Kernel 内容读取链路，同时保留嵌入编辑消息协议。现有 SAML 服务实现和配置/OpenAPI 证据不等于真实 ACS 用户路径证据；本轮补充固定自签名 IdP fixture 驱动的 Nest HTTP start/callback 成功与拒绝合同。整阶段 code-review/test-governance 复评和 `verify:l4-governance` 需在本轮实现完成后重新执行，结论见 [L4 集中验证报告](../verification/l4-enterprise-capabilities.md)。
 
 上一轮 aggregate 证明的是控制面和既有页面合同，不等于所有已实现 API 都有可达用户入口。本轮新增 L4-F 用户路径收口，完成前不把 L4 标记为完整交付。
 
@@ -46,11 +46,11 @@ MFA、SAML、SCIM、API Key 共用组织身份边界。SAML 只负责登录断�
 
 ### L4-D Discovery and content extensions
 
-实现个人空间、授权范围内跨空间搜索、Draw.io/Excalidraw 嵌入和企业 PDF 导出。搜索结果和嵌入元数据只保存最小索引/引用，正文读取由 Kernel bridge 完成。
+实现个人空间、授权范围内跨空间搜索、Draw.io/Excalidraw 嵌入和企业 PDF 导出。搜索直接读取 Kernel 授权发现结果；控制面不再把没有生产写入链路的 `SearchDocumentIndex` 当作搜索事实源。嵌入只保存最小元数据和当前版本，编辑器通过版本化 `postMessage` 向父页面提交 payload，正文读取与保存均由 Kernel/ACL 边界完成。
 
 ### L4-E Authorized AI
 
-在 L4-D 稳定后实现 AI Chat。检索服务必须先按四段身份和 ACL 过滤，再生成带引用的回答；AI 不可用或引用校验失败时不返回无依据答案。
+在 L4-D 稳定后实现 AI Chat。读取服务必须先按四段身份和 ACL 从 Kernel `document/content` 取得当前文档有界纯文本，再生成带引用的回答；provider 完成后再次读取并比较内容身份和内容，provider 不可用、读取失败或引用校验失败时不返回无依据答案。
 
 ## Module Boundaries
 
@@ -60,7 +60,7 @@ MFA、SAML、SCIM、API Key 共用组织身份边界。SAML 只负责登录断�
 | `l4-identity` | Identity/SAML/MFA/SCIM/API-Key services | 外部断言、SCIM 资源、机器请求 | 本地身份、成员/组同步、凭据状态 | 文档 ACL、正文、AI 权限 |
 | `l4-governance` | Lifecycle/Approval/Verification/Retention services | 当前版本摘要、策略、ACL capability | 生命周期、决策、验证/归档任务、水印策略 | Kernel 内容、外部身份 |
 | `l4-discovery` | PersonalSpace/Search/Embed/Export services | 授权空间集合、内容引用、嵌入声明 | 最小索引结果、嵌入状态、导出请求 | 未授权内容、正文快照 |
-| `l4-ai` | Retrieval/Chat services | 授权查询、引用 ID、AI provider result | 带引用回答、会话审计、失败状态 | 全局向量库、绕过 ACL 的上下文 |
+| `l4-ai` | Retrieval/Chat services | 四段文档身份、Kernel 内容投影、AI provider result | 带引用回答、会话审计、失败状态 | 问题关键词推断身份、全局向量库、绕过 ACL 的上下文 |
 
 ## Source-to-Consumer Data Flow
 
@@ -85,7 +85,7 @@ Each boundary has one owner:
 | API Key header → machine identity | API Key verifier service（供后续机器入口通过 DI/Guard 注入） | controller 不读取原始 token，不重复 hash/解析；L4 本期不替换现有会话业务路由 |
 | content request → capability | `DocumentAccessPolicyService` | governance/search/AI 只消费 capability 和四段身份 |
 | lifecycle command → state | Lifecycle state service | controller 不自行改变状态，worker 不推断状态 |
-| Kernel content → export/index/AI | Kernel bridge | 控制面不保存正文快照；消费点就近生成派生结果 |
+| Kernel content → export/index/AI | Kernel bridge；AI 使用 `document/content` | 控制面不保存正文快照；消费点就近生成派生结果 |
 | result → React view | typed query + Zustand store | UI 不提升权限、不以旧响应覆盖当前 identity |
 
 非法值只在真实入口处理：外部 HTTP/SCIM/SAML、数据库历史任务、第三方嵌入响应和 AI provider 响应。上游 schema 已排除的理论值不在 service/controller/worker 重复拦截。
@@ -106,10 +106,14 @@ Prisma 控制面新增实体按模块命名且只保留一个权威语义字段�
 
 - Identity：`mfa_factors`、`mfa_login_challenges`、`saml_providers`、`scim_external_identities`、`scim_tokens`、`enterprise_api_keys`（仅摘要、prefix、用途、过期和状态）。
 - Governance：`governance_policies`、`document_governance`、`governance_approval_requests`、`governance_templates`、`governance_tasks`。
-- Discovery：`personal_spaces`、`search_document_index`（只存内容 ID/摘要/授权索引元数据）、`embedded_objects`、`export_audits`。
-- AI：`ai_conversations`、`ai_messages`、`ai_citations`（用户查询只存摘要，回答和引用绑定四段身份，不存原始 prompt 或正文快照）。
+- Discovery：`personal_spaces`、`search_document_index`（遗留派生元数据，非搜索事实源）、`embedded_objects`、`export_audits`。
+- AI：`ai_conversations`、`ai_messages`、`ai_citations`（用户查询只存摘要，回答和引用绑定四段身份，不存原始 prompt 或正文快照）。检索证据来自 Kernel discovery response，不从控制面索引推断正文。
 
 所有实体包含组织/空间作用域；文档级实体必须同时保存 notebook/document identity，不允许用路径或名称替代。正文、operation payload、SAML assertion、SCIM bearer token、API Key 明文和 AI provider credential 不进入数据库。
+
+### Embedded editor protocol
+
+嵌入编辑器使用以下单一消息合同：协议版本固定为 `1`，父页面加载 iframe 后发送 `singularity.embed.init`（含 `version: 1`、`embedId` 和 `kind`）；编辑器保存时向父页面发送 `{ type: "singularity.embed.save", version: 1, embedId, kind, payload }`。父页面只接受 `event.source` 等于当前 iframe、`event.origin` 等于当前 HTTPS 编辑器地址 origin、`version/embedId/kind` 与当前记录一致且 payload 通过公共 schema 的消息，然后调用文档级 `PUT`。预览只允许跨源 HTTPS 地址，并使用 `allow-same-origin` 让定向消息可达；同源地址拒绝进入该沙箱，避免脚本与同源权限组合逃逸。不把四段内容身份注入第三方页面，也不接受 iframe 直接写控制面。
 
 ## React and Design System
 
@@ -134,7 +138,7 @@ L4 前端沿用当前思源风格，先更新共享 shadcn + Tailwind 4 设计�
 
 ## Observability and Security
 
-- 稳定标签：`identity.saml`、`identity.scim`、`identity.mfa`、`identity.api-key`、`governance.lifecycle`、`governance.task`、`discovery.search`、`embed.lifecycle`、`ai.retrieval`。
+- 稳定标签：`identity.saml`、`identity.scim`、`identity.mfa`、`identity.api-key`、`governance.lifecycle`、`governance.task`、`discovery.search`、`discovery.document-content`、`embed.lifecycle`、`ai.retrieval`。
 - 每条日志保留 request/trace、组织/空间/文档摘要、状态转移、耗时和错误 `name/message/stack`；不记录正文、断言、token、API Key、prompt、provider credential 或完整 payload。
 - AI、搜索和导出建立授权失败、引用验证失败、迟到响应和任务重试诊断点；日志只记录原因码和计数，正文/向量不进日志。
 - SAML XML、SCIM JSON、嵌入 URL 和 AI provider 回包视为不可信输入；SSRF、XML entity、重放、密钥轮换和请求限流由各自真实入口 owner 处理。
@@ -144,11 +148,11 @@ L4 前端沿用当前思源风格，先更新共享 shadcn + Tailwind 4 设计�
 | 合同 | 最低充分层级 | 真实边界 | 统一入口 |
 | --- | --- | --- | --- |
 | 生命周期/审批/验证/保留状态 | contract + API integration | Prisma transaction、任务租约、审计 | `verify:l4-governance` |
-| SAML/MFA/SCIM/API Key | contract + identity integration + browser | 真实 HTTP、签名断言 fixture、固定 DB；IdP/邮件仅替身 | 同上 |
+| SAML/MFA/SCIM/API Key | contract + identity integration + browser | 真实 Nest HTTP、签名断言 fixture、固定 DB；IdP/邮件仅替身；SAML start/callback 成功与拒绝必须由 HTTP 驱动 | 同上 |
 | 模板/密级/水印/导出 | API/integration + browser | Kernel bridge、真实导出响应、存储/日志检查 | 同上 |
 | 个人空间/跨空间搜索 | API + browser race | 固定多空间数据集、真实 ACL、迟到响应 | 同上 |
-| Draw.io/Excalidraw | browser + export integration | 不可信嵌入响应、正文可读性和导出审计 | 同上 |
-| AI Chat 授权引用 | retrieval integration + browser | 授权检索真实控制面，AI provider 使用最小替身 | 同上 |
+| Draw.io/Excalidraw | browser + export integration | 不可信嵌入响应、编辑消息来源匹配、正文可读性和导出审计 | 同上 |
+| AI Chat 授权引用 | retrieval integration + browser | 四段身份 Kernel 内容读取前后复验，AI provider 使用最小替身 | 同上 |
 | 安全/敏感数据/回滚 | static + integration | logger、数据库、任务和 feature gate | 同上 |
 
 L4 每个大阶段只运行一次集中 aggregate。implementation 期间允许编写永久测试但不运行正式门禁；code-review/test-governance 复评完成后统一执行 `pnpm verify:l4-governance`。现有 L1-L3 测试保留，重复的治理边界测试合并到 L4 aggregate，不新增孤儿脚本或伪 E2E。

@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/sidebar.tsx";
 import { Spinner } from "@/components/ui/spinner.tsx";
 import { PageFailure } from "@/enterprise/components.tsx";
+import { ThemeToggle } from "@/theme/ThemeToggle.tsx";
 import {
   enterpriseManagementAccessQueryKey,
   getEnterpriseManagementAccess,
@@ -221,8 +222,8 @@ export function EnterpriseAdminLayout() {
   );
 
   return (
-    <div data-singularity-ui className="min-h-dvh bg-background">
-      <SidebarProvider>
+    <div data-singularity-ui data-enterprise-admin className="min-h-dvh bg-background">
+      <SidebarProvider defaultOpen={false}>
         <Sidebar collapsible="icon">
           <SidebarHeader className="h-10 justify-center border-b border-sidebar-border px-2 py-0">
             <div className="flex min-w-0 items-center gap-2 px-1.5 text-sm font-semibold">
@@ -342,6 +343,7 @@ export function EnterpriseAdminLayout() {
                 </>
               ) : null}
             </div>
+            <ThemeToggle />
           </header>
 
           {logoutMutation.isError &&

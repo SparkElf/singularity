@@ -26,6 +26,12 @@ const normalizedLoginIdentifierSchema = z
 
 export const loginIdentifierSchema = normalizedLoginIdentifierSchema;
 
+export const emailSchema = z
+  .string()
+  .max(4_096)
+  .transform((value) => value.trim().normalize("NFKC").toLowerCase())
+  .pipe(z.string().email().max(LOGIN_IDENTIFIER_MAX_LENGTH));
+
 export const passwordSchema = z
   .string()
   .max(PASSWORD_MAX_LENGTH * 2)
@@ -62,6 +68,45 @@ export const csrfTokenResponseSchema = z
 
 export const loginResponseSchema = csrfTokenResponseSchema;
 export const csrfResponseSchema = csrfTokenResponseSchema;
+
+export const setupStatusResponseSchema = z
+  .object({
+    initialized: z.boolean(),
+  })
+  .strict();
+export type SetupStatusResponse = z.infer<typeof setupStatusResponseSchema>;
+
+export const registerRequestSchema = z
+  .object({
+    loginIdentifier: loginIdentifierSchema,
+    password: passwordSchema,
+  })
+  .strict();
+export type RegisterRequest = z.infer<typeof registerRequestSchema>;
+
+export const passwordResetRequestSchema = z
+  .object({ email: emailSchema })
+  .strict();
+export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
+
+const passwordResetTokenSchema = z.string().regex(token32ByteBase64UrlPattern);
+
+export const passwordResetConfirmRequestSchema = z
+  .object({
+    password: passwordSchema,
+    token: passwordResetTokenSchema,
+  })
+  .strict();
+export type PasswordResetConfirmRequest = z.infer<
+  typeof passwordResetConfirmRequestSchema
+>;
+
+export const passwordResetRequestedResponseSchema = z
+  .object({ accepted: z.literal(true) })
+  .strict();
+export type PasswordResetRequestedResponse = z.infer<
+  typeof passwordResetRequestedResponseSchema
+>;
 
 export const mfaLoginChallengeResponseSchema = z.object({
   challengeToken: z.string().min(32).max(512),
@@ -236,6 +281,32 @@ export const LOGIN_REQUEST_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
     maxLength: PASSWORD_MAX_LENGTH,
   },
 });
+
+export const SETUP_STATUS_RESPONSE_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  initialized: { type: "boolean" },
+});
+
+export const REGISTER_REQUEST_OPENAPI_SCHEMA = LOGIN_REQUEST_OPENAPI_SCHEMA;
+
+export const PASSWORD_RESET_REQUEST_OPENAPI_SCHEMA = strictObjectOpenApiSchema({
+  email: {
+    type: "string",
+    format: "email",
+    minLength: LOGIN_IDENTIFIER_MIN_LENGTH,
+    maxLength: LOGIN_IDENTIFIER_MAX_LENGTH,
+  },
+});
+export const PASSWORD_RESET_CONFIRM_REQUEST_OPENAPI_SCHEMA =
+  strictObjectOpenApiSchema({
+    password: {
+      type: "string",
+      minLength: PASSWORD_MIN_LENGTH,
+      maxLength: PASSWORD_MAX_LENGTH,
+    },
+    token: { type: "string", pattern: token32ByteBase64UrlPattern.source },
+  });
+export const PASSWORD_RESET_REQUESTED_RESPONSE_OPENAPI_SCHEMA =
+  strictObjectOpenApiSchema({ accepted: { type: "boolean" } });
 
 export const CSRF_TOKEN_OPENAPI_SCHEMA = {
   type: "string" as const,

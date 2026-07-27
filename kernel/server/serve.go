@@ -214,6 +214,7 @@ func Serve(fastMode bool, cookieKey string) {
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/directory/documents", serviceauth.ServiceIdentityRequired, api.EnterpriseListDirectoryDocuments)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/discovery/search", serviceauth.ServiceIdentityRequired, api.EnterpriseSearchSpace)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/discovery/graph", serviceauth.ServiceIdentityRequired, api.EnterpriseReadSpaceGraph)
+		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/discovery/document-content", serviceauth.FullContentIdentityRequired, api.EnterpriseReadDocumentContent)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/share/verify", serviceauth.ContentIdentityRequired, api.EnterpriseVerifySharedDocument)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodPost, "/internal/enterprise/share/document", serviceauth.ContentIdentityRequired, api.EnterpriseReadSharedDocument)
 		enterpriseServiceAuth.RegisterRoute(ginServer, http.MethodGet, "/internal/enterprise/share/asset", serviceauth.ContentIdentityRequired, api.EnterpriseReadSharedAsset)

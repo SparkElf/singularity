@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-07-23T05:19:58.966Z",
+  "generatedAt": "2026-07-23T16:19:17.004Z",
   "results": [
     {
       "caseIds": [
         "L3-REL-01"
       ],
       "code": 0,
-      "durationMilliseconds": 178894,
+      "durationMilliseconds": 193081,
       "label": "L3 technical verification",
       "signal": null
     },
@@ -16,7 +16,7 @@
         "L3-REL-08"
       ],
       "code": 0,
-      "durationMilliseconds": 328,
+      "durationMilliseconds": 359,
       "label": "Kernel release certification",
       "signal": null
     },
@@ -33,7 +33,7 @@
         "L3-REL-12"
       ],
       "code": 0,
-      "durationMilliseconds": 15759,
+      "durationMilliseconds": 18232,
       "label": "API and WSS release certification",
       "signal": null
     },
@@ -42,7 +42,7 @@
         "L3-REL-10"
       ],
       "code": 0,
-      "durationMilliseconds": 115784,
+      "durationMilliseconds": 121555,
       "label": "Controlled release rollback drill",
       "signal": null
     },
@@ -55,7 +55,7 @@
         "L3-REL-12"
       ],
       "code": 0,
-      "durationMilliseconds": 66919,
+      "durationMilliseconds": 71955,
       "label": "Browser release certification",
       "signal": null
     }

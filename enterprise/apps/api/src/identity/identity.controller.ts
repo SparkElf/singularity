@@ -23,19 +23,34 @@ import {
   AUTH_INVITATION_ACCEPT_LOCAL_PATH,
   AUTH_INVITATION_ACCEPT_PATH,
   AUTH_LOGIN_PATH,
+  AUTH_PASSWORD_RESET_PATH,
+  AUTH_PASSWORD_RESET_REQUEST_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_MFA_CHALLENGE_VERIFY_PATH,
   AUTH_SAML_CALLBACK_PATH,
   AUTH_SAML_START_PATH,
+  AUTH_REGISTER_PATH,
+  AUTH_SETUP_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_RESPONSE_OPENAPI_SCHEMA,
   type AcceptLocalOrganizationInvitationRequest,
   type AcceptOrganizationInvitationRequest,
   type CsrfResponse,
   type LoginRequest,
+  type PasswordResetConfirmRequest,
+  type PasswordResetRequest,
+  type PasswordResetRequestedResponse,
   LOGIN_REQUEST_OPENAPI_SCHEMA,
   LOGIN_RESPONSE_OPENAPI_SCHEMA,
+  PASSWORD_RESET_CONFIRM_REQUEST_OPENAPI_SCHEMA,
+  PASSWORD_RESET_REQUEST_OPENAPI_SCHEMA,
+  PASSWORD_RESET_REQUESTED_RESPONSE_OPENAPI_SCHEMA,
   type LoginResponse,
+  type RegisterRequest,
+  type SetupStatusResponse,
+  REGISTER_REQUEST_OPENAPI_SCHEMA,
+  SETUP_STATUS_RESPONSE_OPENAPI_SCHEMA,
+  registerRequestSchema,
   type MfaLoginChallengeResponse,
   type MfaLoginChallengeVerifyRequest,
   ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
@@ -43,8 +58,11 @@ import {
   acceptLocalOrganizationInvitationRequestSchema,
   acceptOrganizationInvitationRequestSchema,
   loginRequestSchema,
+  passwordResetConfirmRequestSchema,
+  passwordResetRequestSchema,
   mfaLoginChallengeVerifyRequestSchema,
 } from "@singularity/contracts";
+import { Prisma } from "@singularity/database";
 
 import type {
   HttpReplyBoundary,
@@ -58,12 +76,14 @@ import {
   SessionMutation,
 } from "./http-access.js";
 import { IdentityService, type AuthenticatedSession } from "./identity.service.js";
+import { IdentityProvisioningService } from "./identity-provisioning.service.js";
+import { PasswordResetService } from "./password-reset.service.js";
 import { SESSION_COOKIE_OPTIONS } from "./session-crypto.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
 import { ZodValidationPipe } from "./zod-validation.pipe.js";
 import { SamlService } from "./saml.service.js";
 import { z } from "zod";
-import { notFound } from "../problem.js";
+import { conflict, notFound } from "../problem.js";
 
 const RETRY_AFTER_RESPONSE_HEADER_OPENAPI = {
   description: "Seconds until the login may be retried",
@@ -109,9 +129,117 @@ function samlProviderId(request: HttpRequestBoundary): string {
 export class IdentityController {
   constructor(
     private readonly identity: IdentityService,
+    private readonly provisioning: IdentityProvisioningService,
     private readonly organizations: OrganizationManagementService,
     private readonly saml: SamlService,
+    private readonly passwordReset: PasswordResetService,
   ) {}
+
+  @Get(AUTH_SETUP_PATH)
+  @Header("Cache-Control", "no-store")
+  @ApiProblemResponses(503)
+  @ApiOperation({ summary: "Read installation status" })
+  @ApiOkResponse({ schema: SETUP_STATUS_RESPONSE_OPENAPI_SCHEMA })
+  /** 读取首次安装状态；注册入口不依赖该状态，始终保持可用。 */
+  async getSetupStatus(): Promise<SetupStatusResponse> {
+    return this.provisioning.getSetupStatus();
+  }
+
+  @Post(AUTH_REGISTER_PATH)
+  @HttpCode(200)
+  @Header("Cache-Control", "no-store")
+  @SameOrigin()
+  @ApiProblemResponses(400, 409, 503)
+  @ApiOperation({ summary: "Create a local account" })
+  @ApiBody({ schema: REGISTER_REQUEST_OPENAPI_SCHEMA })
+  @ApiOkResponse({ schema: LOGIN_RESPONSE_OPENAPI_SCHEMA })
+  /** 在已初始化系统中只创建本地账号；组织归属由邀请、管理员分配或身份同步建立。 */
+  async register(
+    @Body(new ZodValidationPipe(registerRequestSchema)) body: RegisterRequest,
+    @Req() request: HttpRequestBoundary,
+    @Res({ passthrough: true }) reply: HttpReplyBoundary,
+  ): Promise<LoginResponse> {
+    const passwordDigest = await this.identity.hashPassword(body.password);
+    try {
+      const session = await this.identity.issueSessionForCreatedUser({
+        currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
+        requestId: request.id,
+        createUser: (transaction) =>
+          this.provisioning
+            .createRegisteredUserInTransaction(transaction, {
+              loginIdentifier: body.loginIdentifier,
+              passwordDigest,
+            }),
+      });
+      reply.setCookie(
+        AUTH_SESSION_COOKIE_NAME,
+        session.tokenValue,
+        SESSION_COOKIE_OPTIONS,
+      );
+      return { csrfToken: session.csrfToken };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw conflict({ cause: error });
+      }
+      throw error;
+    }
+  }
+
+  @Post(AUTH_PASSWORD_RESET_REQUEST_PATH)
+  @HttpCode(202)
+  @Header("Cache-Control", "no-store")
+  @SameOrigin()
+  @ApiProblemResponses(400, 503)
+  @ApiOperation({ summary: "Request a local account password reset" })
+  @ApiBody({ schema: PASSWORD_RESET_REQUEST_OPENAPI_SCHEMA })
+  @ApiResponse({
+    status: 202,
+    schema: PASSWORD_RESET_REQUESTED_RESPONSE_OPENAPI_SCHEMA,
+  })
+  @ApiResponse({
+    status: 429,
+    headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
+  })
+  /** 接收邮箱找回请求并统一返回 accepted，避免从公开接口枚举账号是否存在。 */
+  async requestPasswordReset(
+    @Body(new ZodValidationPipe(passwordResetRequestSchema))
+    body: PasswordResetRequest,
+    @Req() request: HttpRequestBoundary,
+  ): Promise<PasswordResetRequestedResponse> {
+    await this.passwordReset.request({
+      email: body.email,
+      requestId: request.id,
+      sourceAddress: request.ip,
+    });
+    return { accepted: true };
+  }
+
+  @Post(AUTH_PASSWORD_RESET_PATH)
+  @HttpCode(204)
+  @Header("Cache-Control", "no-store")
+  @SameOrigin()
+  @ApiProblemResponses(400, 503)
+  @ApiOperation({ summary: "Complete a local account password reset" })
+  @ApiBody({ schema: PASSWORD_RESET_CONFIRM_REQUEST_OPENAPI_SCHEMA })
+  @ApiNoContentResponse()
+  @ApiResponse({
+    status: 429,
+    headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
+    schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
+  })
+  /** 消费单次令牌并原子更新密码；令牌无效时不透露用户或会话内部信息。 */
+  async confirmPasswordReset(
+    @Body(new ZodValidationPipe(passwordResetConfirmRequestSchema))
+    body: PasswordResetConfirmRequest,
+    @Req() request: HttpRequestBoundary,
+  ): Promise<void> {
+    await this.passwordReset.confirm({
+      ...body,
+      requestId: request.id,
+      sourceAddress: request.ip,
+    });
+  }
 
   @Post(AUTH_INVITATION_ACCEPT_LOCAL_PATH)
   @HttpCode(200)

@@ -7,6 +7,7 @@ import {
   documentDiscoveryHistoryDataSchema,
   documentDiscoveryOutlineDataSchema,
   spaceDiscoveryQuerySchema,
+  spaceDiscoveryDocumentContentResponseSchema,
   spaceDiscoverySearchResponseSchema,
 } from "../dist/index.js";
 
@@ -50,6 +51,16 @@ describe("document discovery payload contracts", () => {
       }).success,
       false,
     );
+  });
+
+  test("accepts an explicit document content projection", () => {
+    const payload = {
+      content: "Alpha knowledge",
+      documentId: "20260719150001-docum01",
+      notebookId: "20260719150000-noteb01",
+      title: "Alpha document",
+    };
+    assert.deepEqual(spaceDiscoveryDocumentContentResponseSchema.parse(payload), payload);
   });
 
   test("keeps graph topology identity distinct when a tag label equals a block ID", () => {
@@ -157,6 +168,7 @@ describe("document discovery payload contracts", () => {
         documentId,
         id: blockId,
         notebookId,
+        title: "文档标题",
       }],
       matchedBlockCount: 1,
       pageCount: 1,

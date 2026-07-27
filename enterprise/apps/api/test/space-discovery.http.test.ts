@@ -4,7 +4,10 @@ import {
   AUTH_LOGIN_PATH,
   AUTH_SESSION_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  DOCUMENT_AI_CHAT_PATH_TEMPLATE,
+  ORGANIZATION_GOVERNANCE_SEARCH_PATH_TEMPLATE,
   apiProblemSchema,
+  aiChatResponseSchema,
   buildSpaceDiscoveryGraphPath,
   buildSpaceDiscoverySearchPath,
   loginResponseSchema,
@@ -38,6 +41,7 @@ const SECOND_DOCUMENT_ID = "20260719160001-docum02";
 const SECOND_BLOCK_ID = "20260719160002-block02";
 const SEARCH_PATH = "/internal/enterprise/discovery/search";
 const GRAPH_PATH = "/internal/enterprise/discovery/graph";
+const DOCUMENT_CONTENT_PATH = "/internal/enterprise/discovery/document-content";
 const DOCUMENT_SEARCH_PATH = "/api/search/fullTextSearchBlock";
 const DOCUMENT_OUTLINE_PATH = "/api/outline/getDocOutline";
 const DOCUMENT_BACKLINKS_PATH = "/api/ref/getBacklink2";
@@ -49,6 +53,13 @@ const OVERSIZED_RESPONSE_QUERY = "oversized-kernel-response";
 const FAILED_STATUS_QUERY = "failed-kernel-status";
 const MAX_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024;
 
+function path(template: string, parameters: Readonly<Record<string, string>>): string {
+  return Object.entries(parameters).reduce(
+    (result, [name, value]) => result.replace(`{${name}}`, encodeURIComponent(value)),
+    template,
+  );
+}
+
 const SEARCH_RESPONSE = {
   blocks: [
     {
@@ -56,6 +67,7 @@ const SEARCH_RESPONSE = {
       documentId: DOCUMENT_ID,
       id: BLOCK_ID,
       notebookId: NOTEBOOK_ID,
+      title: "Alpha document",
     },
   ],
   matchedBlockCount: 1,
@@ -69,6 +81,7 @@ const SECOND_SEARCH_RESPONSE = {
       documentId: SECOND_DOCUMENT_ID,
       id: SECOND_BLOCK_ID,
       notebookId: SECOND_NOTEBOOK_ID,
+      title: "Beta document",
     },
   ],
   matchedBlockCount: 1,
@@ -206,6 +219,18 @@ function kernelResponse(request: TestKernelRequest): TestKernelResponse {
       status: 200,
     };
   }
+  if (request.path === DOCUMENT_CONTENT_PATH) {
+    return {
+      body: JSON.stringify({
+        content: SEARCH_RESPONSE.blocks[0]?.content,
+        documentId: DOCUMENT_ID,
+        notebookId: NOTEBOOK_ID,
+        title: SEARCH_RESPONSE.blocks[0]?.title,
+      }),
+      headers: { "content-type": "application/json" },
+      status: 200,
+    };
+  }
   const documentResponse = DOCUMENT_RESPONSES.get(request.path);
   if (documentResponse !== undefined) {
     return {
@@ -255,6 +280,9 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
       });
       try {
         testApi = await startTestApiApplication({
+          aiProvider: {
+            complete: async ({ context }) => ({ answer: context[0]?.excerpt ?? "缺少授权证据" }),
+          },
           kernelGateway: (() => {
             const configuration = testKernelGatewayConfiguration();
             configuration.deployments.register(
@@ -406,6 +434,27 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     expect(request.headers["x-singularity-document-id"]).toBe(DOCUMENT_ID);
   }
 
+  function expectDocumentContentRequest(
+    request: TestKernelRequest,
+    authenticated: AuthenticatedSpace,
+  ): void {
+    expect(request).toMatchObject({
+      authorized: true,
+      body: Buffer.alloc(0),
+      method: "GET",
+      path: DOCUMENT_CONTENT_PATH,
+    });
+    expect(request.headers["x-singularity-service-token"]).toEqual(
+      expect.any(String),
+    );
+    expect(request.headers["x-singularity-notebook-id"]).toBe(NOTEBOOK_ID);
+    expect(request.headers["x-singularity-document-id"]).toBe(DOCUMENT_ID);
+    expect(request.headers["x-singularity-organization-id"]).toBe(
+      authenticated.organizationId,
+    );
+    expect(request.headers["x-singularity-space-id"]).toBe(authenticated.spaceId);
+  }
+
   function requestDocumentDiscovery(
     authenticated: AuthenticatedSpace,
     path: string,
@@ -446,6 +495,50 @@ describe("space discovery HTTP and trusted Kernel contracts", () => {
     expect(requests).toHaveLength(1);
     expectServiceIdentityRequest(requests[0]!, SEARCH_PATH);
     expect(JSON.parse(requests[0]!.body.toString("utf8"))).toEqual(body);
+  });
+
+  test("searches governance content from Kernel evidence instead of the control-plane index", async () => {
+    const authenticated = await createAuthenticatedSpace();
+    const response = await fetch(
+      `${testApi.baseUrl}${path(ORGANIZATION_GOVERNANCE_SEARCH_PATH_TEMPLATE, { organizationId: authenticated.organizationId })}`,
+      {
+        body: JSON.stringify({ query: "Alpha", spaceIds: [authenticated.spaceId] }),
+        headers: discoveryHeaders(authenticated),
+        method: "POST",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      results: [{
+        classification: "internal",
+        document: { documentId: DOCUMENT_ID, notebookId: NOTEBOOK_ID, organizationId: authenticated.organizationId, spaceId: authenticated.spaceId },
+        excerpt: "Alpha knowledge",
+        title: "Alpha document",
+      }],
+    });
+  });
+
+  test("answers AI only with a re-authorized Kernel citation", async () => {
+    const authenticated = await createAuthenticatedSpace();
+    const requestOffset = kernel.requests.length;
+    const response = await fetch(
+      `${testApi.baseUrl}${path(DOCUMENT_AI_CHAT_PATH_TEMPLATE, { organizationId: authenticated.organizationId, spaceId: authenticated.spaceId, notebookId: NOTEBOOK_ID, documentId: DOCUMENT_ID })}`,
+      {
+        body: JSON.stringify({ query: "这篇文档的落地步骤是什么？" }),
+        headers: discoveryHeaders(authenticated),
+        method: "POST",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(aiChatResponseSchema.parse(await response.json())).toMatchObject({
+      answer: "Alpha knowledge",
+      citations: [{ document: { documentId: DOCUMENT_ID, notebookId: NOTEBOOK_ID, organizationId: authenticated.organizationId, spaceId: authenticated.spaceId }, excerpt: "Alpha knowledge" }],
+    });
+    const requests = kernel.requests.slice(requestOffset);
+    expect(requests).toHaveLength(2);
+    requests.forEach((request) => expectDocumentContentRequest(request, authenticated));
   });
 
   test("rejects content identity in a public space query before Kernel", async () => {

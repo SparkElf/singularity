@@ -8,13 +8,16 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Put,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import {
   ApiBody,
+  ApiBearerAuth,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -39,6 +42,14 @@ import {
   ORGANIZATION_SCIM_TOKENS_CONTROLLER_PATH,
   ORGANIZATION_SCIM_TOKEN_CONTROLLER_PATH,
   ORGANIZATION_SCIM_SYNC_CONTROLLER_PATH,
+  ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_CONTROLLER_PATH,
+  ORGANIZATION_SCIM_USERS_CONTROLLER_PATH,
+  ORGANIZATION_SCIM_USER_CONTROLLER_PATH,
+  ORGANIZATION_SCIM_GROUPS_CONTROLLER_PATH,
+  ORGANIZATION_SCIM_GROUP_CONTROLLER_PATH,
+  SCIM_GROUP_OPENAPI_SCHEMA,
+  SCIM_LIST_RESPONSE_OPENAPI_SCHEMA,
+  SCIM_USER_OPENAPI_SCHEMA,
   ORGANIZATION_SPACE_GOVERNANCE_POLICY_CONTROLLER_PATH,
   ORGANIZATION_SPACE_GOVERNANCE_TEMPLATES_CONTROLLER_PATH,
   ORGANIZATION_SPACE_GOVERNANCE_TEMPLATE_PUBLISH_CONTROLLER_PATH,
@@ -55,6 +66,10 @@ import {
   governanceTemplateRequestSchema,
   governanceTemplateDocumentRequestSchema,
   scimSyncRequestSchema,
+  scimGroupRequestSchema,
+  scimListQuerySchema,
+  scimPatchRequestSchema,
+  scimUserRequestSchema,
   mfaFactorRequestSchema,
   mfaVerifyRequestSchema,
   aiChatRequestSchema,
@@ -69,6 +84,10 @@ import {
   type GovernanceTemplateDocumentRequest,
   type GovernanceTransitionRequest,
   type ScimSyncRequest,
+  type ScimGroupRequest,
+  type ScimListQuery,
+  type ScimPatchRequest,
+  type ScimUserRequest,
   type MfaFactorRequest,
   type MfaVerifyRequest,
 } from "@singularity/contracts";
@@ -88,9 +107,11 @@ import type { AuthenticatedSession } from "../identity/identity.service.js";
 import { ZodValidationPipe } from "../identity/zod-validation.pipe.js";
 import { EnterpriseGovernanceService } from "./governance.service.js";
 import { ScimTokenGuard } from "./scim-token.guard.js";
+import { ScimValidationPipe } from "./scim-validation.pipe.js";
 
 const organizationSpacePathSchema = z.object({ organizationId: z.string().uuid(), spaceId: z.string().uuid() }).strict();
 const organizationPathSchema = z.object({ organizationId: z.string().uuid() }).strict();
+const scimResourcePathSchema = organizationPathSchema.extend({ resourceId: z.string().min(1).max(512) }).strict();
 const samlProviderRequestSchema = z.object({
   certificatePem: z.string().min(1).max(32_000),
   entityId: z.string().trim().min(1).max(2_048),
@@ -102,6 +123,7 @@ const scimTokenRequestSchema = z.object({ expiresAt: z.string().datetime({ offse
 
 type OrganizationSpacePath = z.infer<typeof organizationSpacePathSchema>;
 type OrganizationPath = z.infer<typeof organizationPathSchema>;
+type ScimResourcePath = z.infer<typeof scimResourcePathSchema>;
 type DocumentPath = z.infer<typeof documentPathParametersSchema>;
 
 interface GovernanceHttpRequest extends HttpRequestBoundary {
@@ -321,6 +343,7 @@ export class GovernanceController {
   }
 
   @Post(ORGANIZATION_GOVERNANCE_SEARCH_CONTROLLER_PATH)
+  @HttpCode(200)
   @Header("Cache-Control", "no-store")
   @Authenticated()
   @ApiProblemResponses(400, 401, 403, 404, 503)
@@ -328,9 +351,15 @@ export class GovernanceController {
   async search(
     @Param(new ZodValidationPipe(organizationPathSchema)) parameters: OrganizationPath,
     @Body(new ZodValidationPipe(governanceSearchRequestSchema)) body: GovernanceSearchRequest,
+    @Req() request: GovernanceHttpRequest,
     @CurrentSession() session: AuthenticatedSession,
   ) {
-    return this.governance.search(session.userId, parameters.organizationId, body);
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    try {
+      return await this.governance.search(session.userId, parameters.organizationId, body, { requestId: request.id, signal: abortScope.signal });
+    } finally {
+      abortScope.dispose();
+    }
   }
 
   @Post(ORGANIZATION_PERSONAL_SPACE_CONTROLLER_PATH)
@@ -469,9 +498,175 @@ export class GovernanceController {
     await this.governance.revokeScimToken(session.userId, parameters.organizationId, parameters.tokenId, request.id);
   }
 
+  @Get(ORGANIZATION_SCIM_SERVICE_PROVIDER_CONFIG_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(401, 503)
+  @ApiOperation({ summary: "Read SCIM service provider capabilities" })
+  scimServiceProviderConfig() {
+    return this.governance.getScimServiceProviderConfig();
+  }
+
+  @Get(ORGANIZATION_SCIM_USERS_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 503)
+  @ApiOperation({ summary: "List SCIM users" })
+  @ApiOkResponse({ schema: SCIM_LIST_RESPONSE_OPENAPI_SCHEMA })
+  async listScimUsers(
+    @Param(new ScimValidationPipe(organizationPathSchema)) parameters: OrganizationPath,
+    @Query(new ScimValidationPipe(scimListQuerySchema)) query: ScimListQuery,
+  ) {
+    return this.governance.listScimUsers(parameters.organizationId, query);
+  }
+
+  @Post(ORGANIZATION_SCIM_USERS_CONTROLLER_PATH)
+  @HttpCode(201)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 409, 503)
+  @ApiOperation({ summary: "Create or idempotently provision a SCIM user" })
+  @ApiCreatedResponse({ schema: SCIM_USER_OPENAPI_SCHEMA })
+  async createScimUser(
+    @Param(new ScimValidationPipe(organizationPathSchema)) parameters: OrganizationPath,
+    @Body(new ScimValidationPipe(scimUserRequestSchema)) body: ScimUserRequest,
+    @Req() request: HttpRequestBoundary,
+  ) {
+    return this.governance.createScimUser(parameters.organizationId, body, request.id);
+  }
+
+  @Get(ORGANIZATION_SCIM_USER_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(401, 404, 503)
+  @ApiOperation({ summary: "Read one SCIM user" })
+  @ApiOkResponse({ schema: SCIM_USER_OPENAPI_SCHEMA })
+  async getScimUser(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+  ) {
+    return this.governance.getScimUser(parameters.organizationId, parameters.resourceId);
+  }
+
+  @Patch(ORGANIZATION_SCIM_USER_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 404, 409, 503)
+  @ApiOperation({ summary: "Patch one SCIM user" })
+  @ApiOkResponse({ schema: SCIM_USER_OPENAPI_SCHEMA })
+  async patchScimUser(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+    @Body(new ScimValidationPipe(scimPatchRequestSchema)) body: ScimPatchRequest,
+    @Req() request: HttpRequestBoundary,
+  ) {
+    return this.governance.patchScimUser(parameters.organizationId, parameters.resourceId, body, request.id);
+  }
+
+  @Delete(ORGANIZATION_SCIM_USER_CONTROLLER_PATH)
+  @HttpCode(204)
+  @Header("Cache-Control", "no-store")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(401, 404, 503)
+  @ApiNoContentResponse()
+  @ApiOperation({ summary: "Deactivate one SCIM user" })
+  async deleteScimUser(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+    @Req() request: HttpRequestBoundary,
+  ): Promise<void> {
+    await this.governance.deleteScimUser(parameters.organizationId, parameters.resourceId, request.id);
+  }
+
+  @Get(ORGANIZATION_SCIM_GROUPS_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 503)
+  @ApiOperation({ summary: "List SCIM groups" })
+  @ApiOkResponse({ schema: SCIM_LIST_RESPONSE_OPENAPI_SCHEMA })
+  async listScimGroups(
+    @Param(new ScimValidationPipe(organizationPathSchema)) parameters: OrganizationPath,
+    @Query(new ScimValidationPipe(scimListQuerySchema)) query: ScimListQuery,
+  ) {
+    return this.governance.listScimGroups(parameters.organizationId, query);
+  }
+
+  @Post(ORGANIZATION_SCIM_GROUPS_CONTROLLER_PATH)
+  @HttpCode(201)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 404, 409, 503)
+  @ApiOperation({ summary: "Create or idempotently provision a SCIM group" })
+  @ApiCreatedResponse({ schema: SCIM_GROUP_OPENAPI_SCHEMA })
+  async createScimGroup(
+    @Param(new ScimValidationPipe(organizationPathSchema)) parameters: OrganizationPath,
+    @Body(new ScimValidationPipe(scimGroupRequestSchema)) body: ScimGroupRequest,
+    @Req() request: HttpRequestBoundary,
+  ) {
+    return this.governance.createScimGroup(parameters.organizationId, body, request.id);
+  }
+
+  @Get(ORGANIZATION_SCIM_GROUP_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(401, 404, 503)
+  @ApiOperation({ summary: "Read one SCIM group" })
+  @ApiOkResponse({ schema: SCIM_GROUP_OPENAPI_SCHEMA })
+  async getScimGroup(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+  ) {
+    return this.governance.getScimGroup(parameters.organizationId, parameters.resourceId);
+  }
+
+  @Patch(ORGANIZATION_SCIM_GROUP_CONTROLLER_PATH)
+  @Header("Cache-Control", "no-store")
+  @Header("Content-Type", "application/scim+json; charset=utf-8")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(400, 401, 404, 409, 503)
+  @ApiOperation({ summary: "Patch one SCIM group" })
+  @ApiOkResponse({ schema: SCIM_GROUP_OPENAPI_SCHEMA })
+  async patchScimGroup(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+    @Body(new ScimValidationPipe(scimPatchRequestSchema)) body: ScimPatchRequest,
+    @Req() request: HttpRequestBoundary,
+  ) {
+    return this.governance.patchScimGroup(parameters.organizationId, parameters.resourceId, body, request.id);
+  }
+
+  @Delete(ORGANIZATION_SCIM_GROUP_CONTROLLER_PATH)
+  @HttpCode(204)
+  @Header("Cache-Control", "no-store")
+  @ApiBearerAuth("ScimBearer")
+  @UseGuards(ScimTokenGuard)
+  @ApiProblemResponses(401, 404, 503)
+  @ApiNoContentResponse()
+  @ApiOperation({ summary: "Disable one SCIM group" })
+  async deleteScimGroup(
+    @Param(new ScimValidationPipe(scimResourcePathSchema)) parameters: ScimResourcePath,
+    @Req() request: HttpRequestBoundary,
+  ): Promise<void> {
+    await this.governance.deleteScimGroup(parameters.organizationId, parameters.resourceId, request.id);
+  }
+
   @Post(ORGANIZATION_SCIM_SYNC_CONTROLLER_PATH)
   @HttpCode(200)
   @Header("Cache-Control", "no-store")
+  @ApiBearerAuth("ScimBearer")
   @UseGuards(ScimTokenGuard)
   @ApiProblemResponses(400, 401, 403, 404, 503)
   @ApiOperation({ summary: "Apply an idempotent SCIM membership sync" })
@@ -510,6 +705,7 @@ export class GovernanceController {
   }
 
   @Post(DOCUMENT_AI_CHAT_CONTROLLER_PATH)
+  @HttpCode(200)
   @Header("Cache-Control", "no-store")
   @SessionMutation()
   @ApiProblemResponses(400, 401, 403, 404, 503)
@@ -517,9 +713,14 @@ export class GovernanceController {
   async aiChat(
     @Param(new ZodValidationPipe(documentPathParametersSchema)) parameters: DocumentPath,
     @Body(new ZodValidationPipe(aiChatRequestSchema)) body: AiChatRequest,
-    @Req() request: HttpRequestBoundary,
+    @Req() request: GovernanceHttpRequest,
     @CurrentSession() session: AuthenticatedSession,
   ) {
-    return this.governance.askAi(session.userId, parameters, body, request.id);
+    const abortScope = bindHttpRequestAbortSignal(request.raw);
+    try {
+      return await this.governance.askAi(session.userId, parameters, body, request.id, abortScope.signal);
+    } finally {
+      abortScope.dispose();
+    }
   }
 }
