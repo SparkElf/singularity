@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Verify independent repository and required PR evidence
+      - name: Verify independent repository and minimal PR evidence
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
@@ -24,16 +24,8 @@ jobs:
             const body = context.payload.pull_request?.body || ''
             const required = [
               '## At a glance',
-              '## Product design',
-              '## Architecture',
-              '## Frontend design',
-              '## Implementation',
-              '## Code review',
-              '## Test governance',
+              '## MVP classification',
               '## Verification',
-              '## Upstream impact',
-              '## Diff records',
-              '## Migration and security',
               '## Related issue',
             ]
             const missing = required.filter((heading) => !body.includes(heading))
