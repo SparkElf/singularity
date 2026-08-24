@@ -11,7 +11,6 @@ import { FileObjectStore } from "@singularity/object-store";
 import type { WorkerConfiguration } from "./configuration.js";
 import { WorkerDeclarationDiscovery } from "./declaration-discovery.js";
 import { ContentAuditHandler } from "./content-audit-reconciliation.js";
-import { GovernanceTaskHandler } from "./governance-task-handler.js";
 import { KernelWorkerClient } from "./kernel-worker-client.js";
 import {
   ArchiveAuditHandler,
@@ -124,7 +123,6 @@ export class WorkerModule {
         ArchiveAuditJobProducer,
         BackupSpaceHandler,
         ContentAuditHandler,
-        GovernanceTaskHandler,
         ContentAuditJobProducer,
         KernelWorkerClient,
         PostgresWorkerJobRepository,

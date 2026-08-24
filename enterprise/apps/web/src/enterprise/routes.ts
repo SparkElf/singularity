@@ -5,22 +5,14 @@ import type {
   SpaceManagementCapability,
 } from "@singularity/contracts";
 
-type OrganizationSettingsSection =
-  | "audit"
-  | "groups"
-  | "governance"
-  | "members"
-  | "oidc"
-  | "spaces";
+type OrganizationSettingsSection = "audit" | "groups" | "members" | "spaces";
 type SpaceSettingsSection = SpaceManagementCapability;
 
 const organizationManagementRoutePriority = [
   { capability: "members", section: "members" },
   { capability: "ownership", section: "members" },
   { capability: "groups", section: "groups" },
-  { capability: "governance", section: "governance" },
   { capability: "spaces", section: "spaces" },
-  { capability: "oidc", section: "oidc" },
   { capability: "audit", section: "audit" },
 ] as const satisfies readonly {
   capability: OrganizationManagementCapability;

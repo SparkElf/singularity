@@ -2,28 +2,43 @@
 
 Singularity is an independent enterprise knowledge-base product built on the SiYuan codebase. The canonical repository is `SparkElf/singularity`, it is a **non-fork GitHub repository**, and its canonical branch is `main`. SiYuan remains the explicit upstream at `siyuan-note/siyuan:master`, tracked through `upstream/baseline.yaml`, `diffs/`, and controlled promotion pull requests.
 
+## 0. MVP authority
+
+During the current MVP phase, read `docs/product/mvp-boundary.md` first. It is the product-scope authority and supersedes conflicting scope assumptions in older L1-L4 plans, handoffs, ADR interpretations, verification records, or enterprise-roadmap documents.
+
+The core product rule is:
+
+> Keep SiYuan as the single code and content foundation. Use Docmost as a product/interaction reference and manually add only the smallest Docmost-style capabilities needed for the current MVP.
+
+Before adding code, classify the change as `MVP-core`, `MVP-simplification`, `deferred`, or `rejected`. If a feature is not required by a current MVP user path, do not implement infrastructure for it merely because a mature enterprise product may need it later.
+
+Prefer deletion of speculative machinery over preservation for hypothetical future compatibility. Prefer existing SiYuan capabilities over parallel product-owned implementations. Handle invalid input at the real external boundary instead of adding repeated internal guards for values that typed/schema-validated callers cannot produce.
+
 Before non-mechanical work, read:
 
-1. `.agents/README.md` — required AI engineering sequence and authority.
-2. `DIFFS.md` — upstream/product divergence protocol.
-3. `upstream/baseline.yaml` — canonical branch plus exact promoted SiYuan baseline.
-4. `docs/ui-governance.md` — required UI ownership rules for visible changes.
-5. The owning ADR under `docs/adr/` when the change reaches an established architecture/lifecycle/security rule.
-6. The relevant skill under `.agents/skills/`.
+1. `docs/product/mvp-boundary.md` — current product scope and simplification authority.
+2. `.agents/README.md` — AI engineering sequence and authority.
+3. `DIFFS.md` — upstream/product divergence protocol when the change actually touches maintained divergence.
+4. `upstream/baseline.yaml` — exact promoted SiYuan baseline when upstream-derived code matters.
+5. `docs/ui-governance.md` — UI ownership rules for visible changes.
+6. The owning ADR only when the change reaches an established durable architecture/lifecycle/security rule.
+7. The relevant skill under `.agents/skills/` when it materially helps the change.
 
-## 1. Required engineering sequence
+## 1. MVP-first engineering sequence
 
-For non-mechanical product changes use, in order:
+Do not run a seven-stage design ceremony for every non-mechanical change. Use the smallest process that proves the user result.
 
-1. `singularity-product-design`
-2. `singularity-architecture-planning`
-3. `singularity-frontend-design` when visible UI changes
-4. `singularity-implementation`
-5. `singularity-code-review`
-6. `singularity-test-governance`
-7. `singularity-verification`
+Default sequence:
 
-Use `singularity-maintain-diffs` whenever SiYuan-derived code, product-owned enterprise behavior, or the upstream baseline changes. Use `singularity-upstream-promotion` for any SiYuan version/commit promotion, `singularity-pre-push-checks` before publishing a candidate branch, and `singularity-simplification-review` when evidence suggests duplicated/dead/speculative machinery can be removed.
+1. Apply the MVP filter from `docs/product/mvp-boundary.md` and state the current user result.
+2. Use `singularity-simplification-review` first when the work is cleanup, consolidation, removal of speculative machinery, or ownership reduction.
+3. Use `singularity-product-design` only when product behavior or user-visible scope is genuinely undecided.
+4. Use `singularity-architecture-planning` only when a durable boundary, persistence model, security model, or cross-module ownership decision is actually being introduced or changed.
+5. Use `singularity-frontend-design` for visible UI changes that need design-system decisions; ordinary reuse of existing components does not require a new design exercise.
+6. Implement the minimum accepted scope.
+7. Review and run focused evidence for the changed surface. Use `singularity-test-governance` / `singularity-verification` when they add value; do not reflexively run unrelated exhaustive suites.
+
+Use `singularity-maintain-diffs` when SiYuan-derived code or the upstream baseline actually changes. Use `singularity-upstream-promotion` for a SiYuan version/commit promotion and `singularity-pre-push-checks` for outgoing branch evidence.
 
 A passing CI run does not authorize merge, upstream promotion, release, or deployment. Those require an explicit maintainer decision.
 
@@ -34,10 +49,12 @@ Singularity has three important code ownership planes:
 | Plane | Paths | Owner |
 | --- | --- | --- |
 | SiYuan native runtime | `kernel/**`, `app/**` | Upstream-derived. Keep local changes narrow and promotable. |
-| Singularity enterprise platform | `enterprise/**`, `config/**` | Product-owned organization, identity, space, sharing, permission, collaboration, web/API/worker, governance, export, discovery, and enterprise integrations. |
-| Repository/product governance | `.agents/**`, `.github/**`, `diffs/**`, `upstream/**`, `scripts/singularity/**`, product docs/release assets | Singularity-owned. |
+| Singularity enterprise platform | `enterprise/**`, `config/**` | Product-owned additions needed around the SiYuan core. Keep this layer as small as the accepted product path allows. |
+| Repository/product governance | `.agents/**`, `.github/**`, `diffs/**`, `upstream/**`, `scripts/singularity/**`, product docs/release assets | Singularity-owned. Governance must not become a product in itself. |
 
 The Go kernel remains the native content/data engine. The SiYuan TypeScript frontend remains the native workspace/editor owner. Enterprise React UI is mounted as a Singularity-owned product surface; do not create a second owner for native document/editor state.
+
+Docmost is a product and interaction reference. Do not introduce Docmost as a runtime dependency or build a parallel Docmost control plane. Reimplement only the desired capability in the smallest form that fits SiYuan.
 
 ### Core SiYuan layout
 
@@ -47,10 +64,10 @@ The Go kernel remains the native content/data engine. The SiYuan TypeScript fron
 
 ### Enterprise layout
 
-- `enterprise/apps/web/`: React/Vite enterprise UI and Playwright browser evidence.
-- `enterprise/apps/api/`: enterprise API/control-plane service.
-- `enterprise/apps/worker/`: background work.
-- `enterprise/packages/`: shared enterprise packages and contracts.
+- `enterprise/apps/web/`: React/Vite enterprise UI and focused browser evidence.
+- `enterprise/apps/api/`: minimum enterprise API/control-plane behavior required by current paths.
+- `enterprise/apps/worker/`: background work only where a current product path requires asynchronous execution.
+- `enterprise/packages/`: shared packages that have real production consumers; do not keep prototype or single-consumer abstractions by default.
 
 ## 3. Upstream policy
 
@@ -67,13 +84,13 @@ The Go kernel remains the native content/data engine. The SiYuan TypeScript fron
 
 `diffs/upstream/registry.yaml` records maintained SiYuan-derived divergences. `diffs/product/registry.yaml` records Singularity-owned product capabilities whose lifecycle matters across releases/upstream promotions.
 
-A record uses a stable ID and one of `planned`, `active`, or `retired`. New work should be capability-specific. Do not expand the broad bootstrap record merely to avoid creating a real record.
+Do not create or expand registry records merely to justify speculative product machinery. A record uses a stable ID and one of `planned`, `active`, or `retired`. Retire records when the associated product capability is removed during MVP simplification.
 
 Any PR changing `app/**` or `kernel/**` must update `diffs/upstream/registry.yaml` in the same PR. Baseline changes also update upstream diff metadata.
 
 ## 5. UI engineering rules
 
-Visible UI work must use `singularity-frontend-design` and `docs/ui-governance.md`.
+Visible UI work should reuse the existing design system and current user path before adding new states or primitives.
 
 ### Enterprise React UI
 
@@ -81,8 +98,8 @@ Visible UI work must use `singularity-frontend-design` and `docs/ui-governance.m
 - `enterprise/apps/web/src/components/ui/` owns reusable React interaction primitives.
 - Feature packages consume those owners; they do not create another global theme, icon system, spacing scale, or component library.
 - Light and dark themes share geometry, hierarchy, and interaction; theme branches change semantic values, not component structure.
-- Implement loading, empty, failure/recovery, permission, disabled, focus/keyboard, success, long-content, and overflow states that belong to the accepted user path.
-- Screenshots are visual evidence only. Playwright or the applicable browser flow must operate the real user path.
+- Implement loading, empty, failure/recovery, permission, disabled, focus/keyboard, success, long-content, and overflow states when they belong to an accepted user path. Do not manufacture exhaustive theoretical state matrices for unreachable or deferred flows.
+- Screenshots are visual evidence only. Playwright or the applicable browser flow should operate the real user path when browser evidence is needed.
 
 ### SiYuan native UI
 
@@ -101,19 +118,17 @@ Read versions from source-of-truth files:
 | pnpm (enterprise) | `enterprise/package.json` |
 | pnpm (SiYuan app) | `app/package.json` |
 
-Common checks:
+Default MVP evidence is intentionally small:
 
 ```sh
-cd app && pnpm run lint
-cd enterprise && pnpm install --frozen-lockfile
-cd enterprise && pnpm run test:l0-governance
-cd enterprise && pnpm verify:b4
-cd enterprise && pnpm verify:s0-s3
-cd enterprise && pnpm test:e2e
-node scripts/singularity/verify-independent-governance.mjs
+# run only the applicable changed-surface lint/typecheck/tests
+# run the primary real E2E path when the change can affect it
+# run build/container smoke when deployment wiring changes
 ```
 
-Use `singularity-pre-push-checks` and `singularity-test-governance` to select evidence from the changed surface; do not run unrelated exhaustive suites merely for ceremony. Baseline promotions and release candidates are exceptions and require broader evidence.
+`pnpm verify:b4`, `pnpm verify:s0-s3`, historical L3/L4 certification aggregates, or similarly broad suites are not automatic MVP requirements. Use only evidence justified by the changed surface or an explicit release decision.
+
+Use `singularity-pre-push-checks` and `singularity-test-governance` to select evidence from the changed surface; do not run unrelated exhaustive suites merely for ceremony.
 
 ## 7. Do not hand-edit
 
@@ -138,8 +153,9 @@ Use source repositories/generators for generated artifacts.
 
 ## 9. Decisions, coding, and documentation
 
-- `docs/adr/` is the durable architecture-decision system; `plans/` owns scoped execution plans. Do not create a second Agent Note decision tree.
-- A non-mechanical change that establishes or reverses a durable architecture, lifecycle, security, data, UI-system, release, or upstream-maintenance rule updates the owning ADR or adds a new ADR. Supersede historical ADRs explicitly rather than silently rewriting their original context.
+- `docs/product/mvp-boundary.md` owns current MVP scope.
+- `docs/adr/` records durable architecture decisions; `plans/` owns scoped execution plans. Historical acceptance does not force preservation of code that the current MVP explicitly defers or removes.
+- Add or supersede an ADR only when a durable architecture/lifecycle/security/data/upstream rule actually needs a decision. Do not create ADRs for ordinary implementation detail or cleanup.
 - Keep TypeScript/JavaScript consistent with the owning package conventions; current SiYuan source uses semicolons and double quotes.
 - Comments describe contracts, ownership, lifecycle, failure, or non-obvious constraints; do not preserve implementation diary/history in code comments.
 - Markdown paragraphs are not hand-wrapped unless the owning document requires it.
@@ -150,7 +166,7 @@ Use source repositories/generators for generated artifacts.
 
 - Work on a candidate/feature branch; `main` is integration/release history.
 - Use Conventional Commits for Singularity-owned changes.
-- Pull requests must preserve the evidence headings in `.github/PULL_REQUEST_TEMPLATE.md`.
+- Pull requests should explain the user result, MVP classification, what was deleted/deferred, and focused verification. Do not require large evidence sections that do not improve the decision.
 - History rewrites use the exact observed remote OID with `--force-with-lease`; raw `--force` is not normal development procedure.
 - Do not merge, tag, publish a release, promote upstream, or deploy because checks pass. Stop for explicit maintainer approval.
 - When an issue/PR exists, use the canonical full GitHub reference in long-lived documentation where appropriate; do not fabricate issue links.

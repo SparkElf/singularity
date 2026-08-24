@@ -1,24 +1,47 @@
 # Singularity Agent Workflow
 
-Singularity is an independent product built on SiYuan. AI-assisted changes follow an explicit product-to-verification path so repository growth does not create hidden product, architecture, UI, or upstream drift.
+Singularity is an independent product built on SiYuan. During the MVP phase, `docs/product/mvp-boundary.md` is the product-scope authority.
 
-## Required sequence
+Docmost is a product and interaction reference, not a second runtime or a codebase to compose with SiYuan. Keep SiYuan as the single code/content foundation and manually add only the smallest Docmost-style capabilities needed by current user paths.
 
-For non-mechanical changes, use the repository skills in this order:
+## MVP gate comes first
 
-1. `singularity-product-design` — define the user result and release claim.
-2. `singularity-architecture-planning` — define ownership, boundaries, upstream impact, persistence, permissions, and evidence.
-3. `singularity-frontend-design` — required for visible UI changes; reuse the current token and primitive system instead of inventing a parallel style language.
-4. `singularity-implementation` — implement only the accepted scope and update governance metadata in the same change.
-5. `singularity-code-review` — review regressions, ownership, upstream drift, UI consistency, and release claims.
-6. `singularity-test-governance` — select evidence that proves the real user path.
-7. `singularity-verification` — re-run the selected evidence after review fixes and verify the built result.
+Before using any design or architecture skill, classify the requested work as:
 
-Use `singularity-maintain-diffs` whenever a change touches SiYuan-derived code, product-owned enterprise code, upstream baseline metadata, or an upstream promotion. Use `singularity-upstream-promotion` for a SiYuan baseline promotion, `singularity-pre-push-checks` to select the outgoing branch evidence without reflexively running every suite, and `singularity-simplification-review` when a change or audit may be carrying duplicated, dead, speculative, or unnecessarily custom machinery.
+- `MVP-core` — required by the primary product path;
+- `MVP-simplification` — deletes/consolidates unnecessary machinery;
+- `deferred` — useful later but not needed now;
+- `rejected` — duplicates SiYuan or introduces speculative complexity without evidence.
+
+If the work is `deferred` or `rejected`, do not implement infrastructure for it.
+
+## Default sequence
+
+Use the smallest process that proves the user result:
+
+1. Apply `docs/product/mvp-boundary.md` and state the current user-visible result.
+2. For cleanup or consolidation, use `singularity-simplification-review` before proposing new abstractions.
+3. Use `singularity-product-design` only when product behavior is genuinely undecided.
+4. Use `singularity-architecture-planning` only for a real durable boundary, persistence, security, or ownership decision.
+5. Use `singularity-frontend-design` when a visible change needs design-system decisions; ordinary reuse of existing primitives does not require a separate design phase.
+6. Use `singularity-implementation` for the minimum accepted scope.
+7. Use `singularity-code-review`, focused `singularity-test-governance`, and `singularity-verification` only to the extent needed to prove the changed surface.
+
+Do not reflexively run every historical L1-L4 test/certification suite. Do not preserve prototype packages, phase-specific certification runners, defensive state machines, compatibility shims or generalized infrastructure solely because an older plan once accepted them.
+
+Use `singularity-maintain-diffs` when SiYuan-derived code or upstream baseline metadata actually changes. Use `singularity-upstream-promotion` for a SiYuan baseline promotion and `singularity-pre-push-checks` for outgoing branch evidence.
+
+## Simplification bias
+
+Prefer deletion when a public surface, fallback, queue, lock, cache, retry path, state copy, registry, adapter or compatibility shim has no current MVP production requirement. Handle invalid input once at the real external boundary and avoid repeated downstream guards for impossible typed/schema-validated states.
+
+If SiYuan already owns the capability, adapt or reuse it instead of creating a product-owned duplicate. A new abstraction normally needs at least two real production consumers or a concrete immediate need.
 
 ## Durable decisions
 
-Singularity already owns durable architecture decisions in `docs/adr/` and scoped execution plans in `plans/`. Do not copy DeepSeek Harness Plus's Agent Note tree as a second decision system. A non-mechanical change that establishes or reverses a durable architecture, lifecycle, security, data, UI-system, release, or upstream-maintenance rule must update the owning ADR or add a new ADR when no current decision owns it. Historical ADRs remain history; supersede them explicitly rather than silently rewriting their original context.
+`docs/product/mvp-boundary.md` owns current MVP scope. `docs/adr/` records durable architecture decisions and `plans/` owns scoped execution plans. Older ADRs and plans remain historical evidence, but their former scope assumptions do not override the current MVP boundary.
+
+A new or superseding ADR is required only when a durable architecture, lifecycle, security, data, UI-system, release, or upstream-maintenance rule genuinely changes. Ordinary deletion and local simplification do not need additional architectural ceremony.
 
 ## Authority
 

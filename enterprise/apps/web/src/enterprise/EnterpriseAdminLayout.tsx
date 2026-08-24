@@ -7,7 +7,6 @@ import {
   BoxesIcon,
   DatabaseBackupIcon,
   FileClockIcon,
-  KeyRoundIcon,
   LinkIcon,
   LogOutIcon,
   OrbitIcon,
@@ -84,7 +83,7 @@ interface OrganizationNavigationItem {
   capability: OrganizationManagementCapability;
   icon: ComponentType<{ "aria-hidden"?: boolean }>;
   label: string;
-  section: "audit" | "governance" | "groups" | "members" | "oidc" | "spaces";
+  section: "audit" | "groups" | "members" | "spaces";
 }
 
 interface SpaceNavigationItem {
@@ -96,9 +95,7 @@ interface SpaceNavigationItem {
 const organizationNavigationItems = [
   { capability: "members", icon: UsersIcon, label: "成员与邀请", section: "members" },
   { capability: "groups", icon: BoxesIcon, label: "用户组", section: "groups" },
-  { capability: "governance", icon: ShieldCheckIcon, label: "知识治理", section: "governance" },
   { capability: "spaces", icon: BookOpenIcon, label: "空间", section: "spaces" },
-  { capability: "oidc", icon: KeyRoundIcon, label: "单点登录", section: "oidc" },
   { capability: "audit", icon: FileClockIcon, label: "组织审计", section: "audit" },
 ] as const satisfies readonly OrganizationNavigationItem[];
 

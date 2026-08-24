@@ -12,16 +12,8 @@ const { parseDocument } = enterpriseRequire("yaml");
 const ALLOWED_STATUS = new Set(["planned", "active", "retired"]);
 const REQUIRED_PR_HEADINGS = [
   "## At a glance",
-  "## Product design",
-  "## Architecture",
-  "## Frontend design",
-  "## Implementation",
-  "## Code review",
-  "## Test governance",
+  "## MVP classification",
   "## Verification",
-  "## Upstream impact",
-  "## Diff records",
-  "## Migration and security",
   "## Related issue",
 ];
 const COMPATIBILITY_UPSTREAM_IDENTITY_FIELDS = [
@@ -156,8 +148,6 @@ function upstreamIdentityChangedFromEnvironment(changedFiles) {
       if (identitiesDiffer(before, after)) return true;
     }
   } catch {
-    // When identity metadata cannot be read at either side of the range, fail closed
-    // and require the explicit upstream registry update instead of silently accepting it.
     return true;
   }
 

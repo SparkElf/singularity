@@ -24,29 +24,22 @@ import { AppModule } from "./app.module.js";
 import {
   parseContentAuditIndeterminateAfterMilliseconds,
   parseBooleanFlag,
-  parseOidcClientSecretBindings,
   parsePasswordResetFrom,
   parsePasswordResetSmtpUrl,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
 import { SystemClock, type Clock } from "./identity/clock.js";
-import type {
-  OidcClientSecretResolver,
-  OidcHttpTransport,
-} from "./identity/oidc.service.js";
-import type { AiProvider } from "./governance/ai-provider.js";
 import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
   installKernelGatewayHttpBoundary,
-  KERNEL_JSON_MAXIMUM_BODY_BYTES,
   KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
 } from "./kernel/install-http-boundary.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
 import { KernelWebSocketGateway } from "./kernel/kernel-websocket.gateway.js";
 import { RealtimeCollaborationWebSocketGateway } from "./collaboration/realtime-websocket.gateway.js";
-import { ApiProblemFilter, scimError } from "./problem.js";
+import { ApiProblemFilter } from "./problem.js";
 
 export interface CreateApiApplicationOptions {
   auditConfiguration: AuditConfiguration;
@@ -57,10 +50,6 @@ export interface CreateApiApplicationOptions {
   kernelGateway: KernelGatewayRuntimeConfiguration;
   loginRateLimiter?: LoginRateLimiter;
   logger?: LoggerService;
-  oidcClientSecretBindings?: string | undefined;
-  oidcClientSecretResolver?: OidcClientSecretResolver;
-  oidcHttpTransport?: OidcHttpTransport;
-  aiProvider?: AiProvider;
   passwordResetMailer?: import("./identity/password-reset-mailer.js").PasswordResetMailer;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
@@ -73,10 +62,9 @@ export async function createApiApplication(
     contentAuditIndeterminateAfterMilliseconds:
       parseContentAuditIndeterminateAfterMilliseconds(
         options.contentAuditIndeterminateAfterMilliseconds,
-    ),
-    collaborationEnabled: parseBooleanFlag(process.env.SINGULARITY_COLLABORATION_ENABLED),
-    oidcClientSecretBindings: parseOidcClientSecretBindings(
-      options.oidcClientSecretBindings,
+      ),
+    collaborationEnabled: parseBooleanFlag(
+      process.env.SINGULARITY_COLLABORATION_ENABLED,
     ),
     passwordResetFrom: parsePasswordResetFrom(
       process.env.SINGULARITY_PASSWORD_RESET_FROM,
@@ -90,7 +78,6 @@ export async function createApiApplication(
   const adapter = new FastifyAdapter({
     bodyLimit: KERNEL_GATEWAY_MAXIMUM_BODY_BYTES,
     genReqId: () => randomUUID(),
-    // 历史版本 ID 是受合同约束的 opaque 路径参数，必须覆盖 Fastify 默认的 100 字节上限。
     routerOptions: { maxParamLength: 256 },
     requestIdHeader: false,
     ...(options.https === undefined ? {} : { https: options.https }),
@@ -98,27 +85,6 @@ export async function createApiApplication(
       ? {}
       : { trustProxy: [...configuration.trustedProxyCidrs] }),
   });
-
-  // Fastify 默认只解析 application/json；SCIM 客户端使用独立媒体类型，必须在 HTTP 边界一次解析为 JSON。
-  adapter.getInstance().addContentTypeParser(
-    "application/scim+json",
-    { bodyLimit: KERNEL_JSON_MAXIMUM_BODY_BYTES, parseAs: "buffer" },
-    (_request, body, done) => {
-      if (body.length === 0) {
-        done(null, undefined);
-        return;
-      }
-      try {
-        done(null, JSON.parse(typeof body === "string" ? body : body.toString("utf8")) as unknown);
-      } catch (error) {
-        done(
-          scimError(400, "The SCIM request body is not valid JSON", "invalidSyntax", {
-            cause: error,
-          }),
-        );
-      }
-    },
-  );
 
   adapter.getInstance().addHook("onRequest", async (request, reply) => {
     reply.header("X-Request-Id", request.id);
@@ -134,13 +100,6 @@ export async function createApiApplication(
       ...(options.loginRateLimiter === undefined
         ? {}
         : { loginRateLimiter: options.loginRateLimiter }),
-      ...(options.oidcClientSecretResolver === undefined
-        ? {}
-        : { oidcClientSecretResolver: options.oidcClientSecretResolver }),
-      ...(options.oidcHttpTransport === undefined
-        ? {}
-        : { oidcHttpTransport: options.oidcHttpTransport }),
-      ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
       ...(options.passwordResetMailer === undefined
         ? {}
         : { passwordResetMailer: options.passwordResetMailer }),
@@ -173,10 +132,6 @@ export async function createApiApplication(
           name: AUTH_SESSION_COOKIE_NAME,
         },
         AUTH_SESSION_COOKIE_NAME,
-      )
-      .addBearerAuth(
-        { bearerFormat: "SCIM", scheme: "bearer", type: "http" },
-        "ScimBearer",
       )
       .build(),
   );
