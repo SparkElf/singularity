@@ -158,7 +158,7 @@ describe("DocumentGovernancePanel", () => {
       </QueryClientProvider>,
     );
 
-    const iframe = await screen.findByTitle("drawio 嵌入编辑器");
+    const iframe = await screen.findByTitle<HTMLIFrameElement>("drawio 嵌入编辑器");
     expect(iframe).toHaveAttribute("sandbox", "allow-forms allow-popups allow-scripts allow-same-origin");
     const saveMessage = { embedId, kind: "drawio", payload: { saved: true }, type: "singularity.embed.save", version: 1 } as const;
     window.dispatchEvent(new MessageEvent("message", { data: saveMessage, origin: "https://app.diagrams.net", source: window }));
