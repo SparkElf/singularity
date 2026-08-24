@@ -18,6 +18,7 @@
     "singularity-ci-impact.yml",
     "singularity-governance.yml",
     "singularity-l0.yml",
+    "singularity-release.yml",
     "singularity-upstream-impact.yml"
   ],
   "architectureDocument": "output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md"
