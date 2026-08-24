@@ -1,0 +1,240 @@
+name: Singularity Release
+
+on:
+  push:
+    tags:
+      - "singularity-v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Canonical ref to verify without publishing
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: singularity-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      publish: ${{ steps.source.outputs.publish }}
+      release_version: ${{ steps.source.outputs.release_version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      upstream_commit: ${{ steps.baseline.outputs.upstream_commit }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.ref }}
+
+      - name: Verify canonical release source
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          source_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
+          if [ "$source_sha" != "$main_sha" ]; then
+            printf 'Release source %s is not canonical main HEAD %s\n' "$source_sha" "$main_sha" >&2
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "push" ]; then
+            if ! [[ "$REF_NAME" =~ ^singularity-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+              printf 'Release tag %s is not a supported Singularity version tag\n' "$REF_NAME" >&2
+              exit 1
+            fi
+            release_version="${REF_NAME#singularity-v}"
+            publish=true
+          else
+            release_version="dry-run-${source_sha:0:12}"
+            publish=false
+          fi
+
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Register read-only SiYuan upstream
+        run: |
+          git remote add upstream https://github.com/siyuan-note/siyuan.git
+          git remote set-url --push upstream DISABLED
+          git fetch --no-tags upstream master
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install governance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Verify repository and upstream governance
+        run: |
+          node scripts/singularity/verify-upstream-baseline.mjs
+          node scripts/singularity/verify-independent-governance.mjs
+          pnpm run test:l0-governance
+        working-directory: .
+
+      - name: Read promoted upstream baseline
+        id: baseline
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from "node:fs";
+          const baseline = JSON.parse(readFileSync("config/upstream-baseline.json", "utf8"));
+          if (!/^[0-9a-f]{40}$/.test(baseline.upstreamCommit)) {
+            throw new Error("Invalid promoted upstream commit");
+          }
+          process.stdout.write(`upstream_commit=${baseline.upstreamCommit}\n`);
+          NODE
+
+      - name: Build release images locally
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          UPSTREAM_COMMIT: ${{ steps.baseline.outputs.upstream_commit }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --file enterprise/apps/api/Dockerfile \
+            --build-arg VCS_REF="$SOURCE_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag singularity-api:release-candidate \
+            .
+          docker build \
+            --file enterprise/apps/web/Dockerfile \
+            --build-arg VCS_REF="$SOURCE_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag singularity-web:release-candidate \
+            .
+          docker build \
+            --file enterprise/apps/worker/Dockerfile \
+            --build-arg VCS_REF="$SOURCE_SHA" \
+            --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
+            --tag singularity-worker:release-candidate \
+            .
+
+      - name: Verify release image metadata
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          node scripts/singularity/verify-container-metadata.mjs \
+            --revision "$SOURCE_SHA" \
+            -- singularity-api:release-candidate singularity-web:release-candidate singularity-worker:release-candidate
+
+  images:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.verify.outputs.publish == 'true' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            dockerfile: enterprise/apps/api/Dockerfile
+          - service: web
+            dockerfile: enterprise/apps/web/Dockerfile
+          - service: worker
+            dockerfile: enterprise/apps/worker/Dockerfile
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          build-args: |
+            VCS_REF=${{ needs.verify.outputs.source_sha }}
+            UPSTREAM_COMMIT=${{ needs.verify.outputs.upstream_commit }}
+          tags: |
+            ghcr.io/sparkelf/singularity-${{ matrix.service }}:${{ needs.verify.outputs.release_version }}
+            ghcr.io/sparkelf/singularity-${{ matrix.service }}:sha-${{ needs.verify.outputs.source_sha }}
+          cache-from: type=gha,scope=release-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.service }}
+
+  github-release:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.verify.outputs.publish == 'true' }}
+    needs:
+      - verify
+      - images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: SparkElf/singularity
+      RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+      SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+      UPSTREAM_COMMIT: ${{ needs.verify.outputs.upstream_commit }}
+    steps:
+      - name: Create immutable GitHub Release
+        run: |
+          set -euo pipefail
+          tag="singularity-v${RELEASE_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            printf 'GitHub Release %s already exists; refusing to mutate it\n' "$tag" >&2
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          ## Release identity
+
+          - Singularity commit: \`${SOURCE_SHA}\`
+          - Promoted SiYuan baseline: \`${UPSTREAM_COMMIT}\`
+
+          ## Container images
+
+          - \`ghcr.io/sparkelf/singularity-api:${RELEASE_VERSION}\`
+          - \`ghcr.io/sparkelf/singularity-web:${RELEASE_VERSION}\`
+          - \`ghcr.io/sparkelf/singularity-worker:${RELEASE_VERSION}\`
+
+          Each image is also published with immutable source tag \`sha-${SOURCE_SHA}\` and BuildKit provenance/SBOM attestations.
+          EOF
+          gh release create "$tag" \
+            --verify-tag \
+            --title "Singularity ${RELEASE_VERSION}" \
+            --generate-notes \
+            --notes-file release-notes.md
