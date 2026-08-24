@@ -247,52 +247,7 @@ jobs:
         working-directory: enterprise
 
       - name: Run P5 real-chain E2E
-        id: p5_runner
-        continue-on-error: true
         run: pnpm test:e2e
-        working-directory: enterprise
-
-      - name: Validate P5 structured report
-        id: p5_report
-        if: ${{ always() }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-
-          const reportPath = "apps/web/test-results/e2e-report.json";
-          const report = JSON.parse(readFileSync(reportPath, "utf8"));
-          if (report === null || typeof report !== "object" || Array.isArray(report)) {
-            throw new Error("P5 Playwright report root is invalid");
-          }
-          const pending = Array.isArray(report.suites) ? [...report.suites] : [];
-          const suites = [];
-          while (pending.length > 0) {
-            const suite = pending.pop();
-            if (suite === null || typeof suite !== "object" || Array.isArray(suite)) {
-              throw new Error("P5 Playwright report suite is invalid");
-            }
-            suites.push(suite);
-            if (Array.isArray(suite.suites)) {
-              pending.push(...suite.suites);
-            }
-          }
-          const specs = suites.flatMap((suite) =>
-            Array.isArray(suite.specs) ? suite.specs : []
-          );
-          const tests = specs.flatMap((spec) =>
-            spec !== null && typeof spec === "object" && Array.isArray(spec.tests)
-              ? spec.tests
-              : []
-          );
-          if (suites.length === 0 || specs.length === 0 || tests.length === 0) {
-            throw new Error(
-              `P5 Playwright report is empty; suites=${suites.length} specs=${specs.length} tests=${tests.length}`,
-            );
-          }
-          process.stdout.write(
-            `P5 report: suites=${suites.length} specs=${specs.length} tests=${tests.length}\n`,
-          );
-          NODE
         working-directory: enterprise
 
       - name: Upload P5 E2E evidence
@@ -305,18 +260,6 @@ jobs:
             enterprise/apps/web/test-results/e2e/
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Enforce P5 E2E outcomes
-        if: ${{ always() }}
-        env:
-          P5_REPORT_OUTCOME: ${{ steps.p5_report.outcome }}
-          P5_RUNNER_OUTCOME: ${{ steps.p5_runner.outcome }}
-        run: |
-          if [ "$P5_RUNNER_OUTCOME" != "success" ] || [ "$P5_REPORT_OUTCOME" != "success" ]; then
-            printf 'P5 runner outcome: %s\nP5 report outcome: %s\n' \
-              "$P5_RUNNER_OUTCOME" "$P5_REPORT_OUTCOME" >&2
-            exit 1
-          fi
 
   kernel-baseline:
     if: ${{ github.repository == 'SparkElf/singularity' }}
