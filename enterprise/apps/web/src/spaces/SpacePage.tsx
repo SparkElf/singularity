@@ -130,6 +130,7 @@ import {
 } from "@/spaces/DiscoveryPanel.tsx";
 import { useDiscoveryStore } from "@/spaces/discovery-state.ts";
 import { RealtimeCollaborationHost } from "@/collaboration/RealtimeCollaborationHost.tsx";
+import { CollaborationPanel } from "@/collaboration/CollaborationPanel.tsx";
 import { organizationSettingsPath } from "@/enterprise/routes.ts";
 import { ThemeToggle } from "@/theme/ThemeToggle.tsx";
 
@@ -711,6 +712,16 @@ function ReadyWorkspace({
           />
         )}
       </main>
+      {session && selection ? (
+        <CollaborationPanel
+          identity={{
+            documentId: selection.documentId,
+            notebookId: selection.notebookId,
+            organizationId: identity.organizationId,
+            spaceId: identity.spaceId,
+          }}
+        />
+      ) : null}
       {session ? (
         <DiscoveryPanel
           onNavigate={onDiscoveryNavigate}

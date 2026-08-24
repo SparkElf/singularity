@@ -22,3 +22,54 @@ records:
     notes:
       - The initial baseline-to-Singularity comparison is 131 commits ahead of SiYuan 3.7.2 and contains a broad native-app refactor surface.
       - Decompose this bootstrap record as touched areas are next modified or promoted upstream.
+
+  - id: protyle-browser-runtime-integration-seam
+    status: active
+    title: Protyle browser runtime and overlay lifecycle integration seam
+    capability:
+      - Expose the real SiYuan Protyle runtime to Singularity enterprise browser surfaces while keeping document identity, drag state, overlays, dialogs, and image-preview cleanup owned by the native editor runtime.
+      - Preserve explicit ambient SiYuan type assembly at the browser runtime entry instead of inventing a parallel browser type model.
+    source:
+      repository: siyuan-note/siyuan
+      baseline_version: 3.7.2
+      baseline_commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
+    paths:
+      - app/eslint.config.mjs
+      - app/src/protyle/browser-entry.ts
+      - app/src/protyle/preview/image.ts
+      - app/src/protyle/ui/dragState.ts
+      - app/src/protyle/ui/touchDragState.ts
+      - app/src/protyle/wysiwyg/dialogOwner.ts
+    owner: upstream-integration
+    compatibility: >-
+      These files are SiYuan-derived editor/runtime surfaces. Callback-owned handles intentionally use delayed single assignment where lifecycle callbacks must capture the same handle before registration completes; the browser entry intentionally references SiYuan ambient declarations. Re-evaluate both assumptions during every SiYuan promotion touching these files.
+    verification:
+      - cd app && pnpm run lint
+      - cd app && pnpm test
+      - cd enterprise && pnpm verify:b4
+    notes:
+      - This record decomposes the touched Protyle browser/overlay area from the native-app bootstrap record without changing the promoted SiYuan baseline.
+
+  - id: kernel-go-security-dependency-alignment
+    status: active
+    title: Kernel Go dependency security alignment ahead of upstream baseline
+    capability:
+      - Carry patched Go module versions required by Singularity's supply-chain vulnerability policy before the same versions are adopted by the promoted SiYuan baseline.
+      - Build the Worker-bundled kernel with the patched Go 1.26.6 toolchain so the embedded standard library satisfies the release vulnerability gate.
+    source:
+      repository: siyuan-note/siyuan
+      baseline_version: 3.7.2
+      baseline_commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
+    paths:
+      - kernel/go.mod
+      - kernel/go.sum
+      - enterprise/apps/worker/Dockerfile
+    owner: upstream-integration
+    compatibility: >-
+      The local module floor advances golang.org/x/mod to 0.40.0 and Go MVS correspondingly advances x/net to 0.58.0 and x/text to 0.41.0. The Worker kernel builder is pinned to the official Go 1.26.6 multi-architecture image digest. Re-evaluate and retire this record when a promoted SiYuan baseline carries equivalent or newer patched versions.
+    verification:
+      - go -C kernel test -vet=off -tags="fts5 sqlcipher" ./...
+      - GitHub Actions Singularity L0 supply-chain job
+      - GitHub Actions Singularity CI Impact package job
+    notes:
+      - The versions were generated with Go 1.26.6 using go get golang.org/x/mod@v0.40.0 followed by go mod tidy; generated go.mod/go.sum metadata was committed from a trusted same-repository one-shot maintenance run.

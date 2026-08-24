@@ -92,6 +92,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["apps/web/tests/e2e/support/start-stack.mjs"],
+    rules: {
+      "no-unused-vars": ["error", { varsIgnorePattern: "^webRoot$" }],
+    },
+  },
+  {
     files: ["apps/web/src/assets/pdf-runtime-bridge.mjs"],
     languageOptions: {
       globals: {

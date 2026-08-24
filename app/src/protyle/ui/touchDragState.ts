@@ -35,6 +35,7 @@ class TouchDragOwner {
         const gesture = this.gesture!;
         this.releaseGhost(gesture.ghost);
 
+        // eslint-disable-next-line prefer-const -- 中止回调需要在注册对象赋值前捕获该句柄，避免同步中止路径触发 TDZ。
         let registration: TouchDragGhostRegistration;
         const onAbort = () => {
             if (this.gesture !== gesture || gesture.ghost !== registration) {

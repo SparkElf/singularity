@@ -12,6 +12,7 @@ const stateFile =
 const schema =
   process.env.SINGULARITY_E2E_SCHEMA ?? `singularity_p5_e2e_${String(process.pid)}`;
 
+process.env.SINGULARITY_COLLABORATION_ENABLED = "1";
 process.env.SINGULARITY_E2E_API_PORT = apiPort;
 process.env.SINGULARITY_E2E_RUNTIME_ROOT = runtimeRoot;
 process.env.SINGULARITY_E2E_SCHEMA = schema;

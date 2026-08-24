@@ -8,7 +8,7 @@ Canonical product work targets `SparkElf/singularity:main`. SiYuan tracking targ
 
 1. **Evidence follows the changed surface.** Documentation does not need PostgreSQL and Playwright; a kernel or upstream-baseline change does.
 2. **Unknown means full.** The impact planner never skips checks because it failed to understand a new path.
-3. **Reuse existing verification commands.** `verify:b4`, `verify:s0-s3`, browser integration, E2E, Go tests, and repository governance remain sources of truth.
+3. **Reuse existing verification commands.** `verify:b4`, `verify:s0-s3`, browser integration, E2E, Go tests, container verification, and repository governance remain sources of truth.
 4. **PR CI has read-only repository permissions.** Product tests do not receive production credentials or release secrets.
 5. **Release and deployment are separate maintainer decisions.** A passing PR does not create tags, releases, images, or deployments.
 6. **Upstream promotion is full-risk.** Changing the promoted SiYuan baseline selects the complete validation set.
@@ -41,17 +41,26 @@ The current routing starts conservative:
 
 The planner is allowed to become more precise only when repository evidence demonstrates that a narrower route is safe.
 
-## Migration from `singularity-l0.yml`
+## Canary execution and L0 migration
 
-The repository-identity cutover is complete, but CI responsibility migration is intentionally separate. The existing L0 workflow remains authoritative until replacement lanes demonstrate parity on the independent repository.
+The repository-identity cutover is complete, but CI responsibility migration is intentionally separate. `singularity-ci-impact.yml` now executes conservative canary lanes while `singularity-l0.yml` remains authoritative.
+
+Current canary ownership:
+
+- `native_app` → install the SiYuan app workspace, run native lint/tests, and fail if lint mutates tracked source;
+- `enterprise_static` → run the existing `verify:b4` contract;
+- `package` → build API/Web/Worker container candidates and verify image metadata;
+- `upstream` → verify the read-only upstream relationship and generate divergence-aware impact evidence.
+
+L0 still owns authoritative integration, PostgreSQL, Playwright/browser, real E2E, kernel-wide, supply-chain smoke, and any remaining release-grade gates. A canary pass is not evidence that an L0-required lane can be removed.
 
 Migration sequence:
 
-1. run independent governance and impact planning alongside L0;
+1. run independent governance and impact canaries alongside L0;
 2. compare planner selections with actual L0 failures and runtime cost;
-3. split stable responsibilities into governance/static/integration/e2e/package jobs or workflows only when no evidence is lost;
-4. configure required checks on canonical `main`;
-5. keep scheduled or release-candidate full validation as a backstop;
+3. migrate integration/browser/E2E ownership only when the canary route demonstrates parity;
+4. configure stable required checks on canonical `main`;
+5. keep release-candidate full validation as a backstop;
 6. retire `singularity-l0.yml` only after no unique gate remains in it.
 
 Do not optimize runner minutes before behavioral parity is demonstrated.
@@ -69,39 +78,40 @@ The scheduled upstream workflow fetches `siyuan-note/siyuan:master` read-only an
 
 A report is not a promotion. Promotion uses `singularity-upstream-promotion`, a candidate branch, full CI, and maintainer approval.
 
-## Release pipeline
+## Canonical release workflow
 
-The first CD target is reproducible release publication, not unattended production deployment.
+`.github/workflows/singularity-release.yml` is the only repository workflow allowed to publish Singularity artifacts. Its two modes are deliberately different:
 
-```text
-approved release commit on main
-        │
-        ├── full CI
-        ├── clean-checkout build
-        ├── API container
-        ├── Web container
-        ├── Worker container
-        ├── SBOM / license / vulnerability evidence
-        ├── checksums / provenance metadata
-        ▼
-   release approval
-        │
-        ├── tag singularity-vX.Y.Z
-        ├── publish immutable GHCR images
-        └── create GitHub Release with artifact/evidence links
-```
+- `workflow_dispatch` verifies a selected canonical ref and builds all three production images locally, but **never publishes**;
+- pushing `singularity-vX.Y.Z` publishes only when that tag points at the current canonical `main` HEAD.
 
-The repository contains enterprise Web/API/Worker production surfaces. Release implementation must build and attest the complete deployed service set before claiming a complete distribution.
+Before any release build or registry write, the verify job requires a previously completed **successful `Singularity L0` push run on `main` for the exact same source SHA**. A PR L0 run, an older main run, or an in-progress/failing L0 run does not satisfy the release gate. This binds release publication to the existing authoritative full-CI evidence without duplicating the complete PostgreSQL/Playwright/E2E/supply-chain suite inside the release workflow.
+
+After that evidence check, the release verify job re-checks repository/upstream governance, runs L0 governance tests, builds API/Web/Worker images from the tagged source, and validates OCI metadata before any registry write is possible.
+
+On an approved version tag the publish jobs create:
+
+- `ghcr.io/sparkelf/singularity-api:<version>` and `sha-<commit>`;
+- `ghcr.io/sparkelf/singularity-web:<version>` and `sha-<commit>`;
+- `ghcr.io/sparkelf/singularity-worker:<version>` and `sha-<commit>`.
+
+GHCR publication uses BuildKit SBOM and provenance attestations. After all images publish successfully, the workflow creates an immutable GitHub Release containing the Singularity commit, promoted SiYuan baseline, image inventory, and generated repository release notes. An existing GitHub Release with the same tag is never mutated by the workflow.
 
 ## Release permissions
 
-The canonical repository is now independent (`fork: false`), so release automation may be introduced as a dedicated workflow after its package/tag contract is implemented and verified. It receives only the permissions it actually needs: repository contents for release creation, package write for GHCR, and OIDC only when provenance/signing uses it.
+The release workflow keeps top-level permissions at `contents: read`. Elevated capability is job-scoped and machine-verified:
 
-Those permissions belong only to the release workflow. PR workflows remain read-only and never receive release credentials. The current L0-era workflow verifier intentionally remains read-only until the dedicated release policy replaces that assumption; do not weaken all workflows merely to enable publication.
+- release verification job: `actions: read`, `contents: read`, only so it can prove the exact source SHA already has successful canonical L0 evidence;
+- image publication job: `contents: read`, `packages: write`;
+- GitHub Release job: `contents: write` only.
+
+`actions: read` is not a publication authority. No job receives both package-write and contents-write authority, and the workflow has no `pull_request` trigger. The repository verifier constrains these permissions to the named jobs and requires the L0-evidence step by source SHA; all other workflows remain read-only and may not add job-level write permissions.
+
+OIDC is not granted merely for future signing plans. Add `id-token: write` only when a concrete provenance/signing mechanism requires it and its verifier is updated in the same change.
 
 ## Deployment pipeline
 
-Production deployment is a later layer on top of immutable released artifacts:
+Production deployment remains a later layer on top of immutable released artifacts:
 
 ```text
 GitHub Release / immutable image digest
@@ -124,10 +134,13 @@ Do not deploy canonical `main`, a mutable image tag, or an unreviewed upstream-p
 A public Singularity release is ready only when:
 
 - the canonical repository is independent (`fork: false`);
-- all required CI and governance checks pass;
+- the release tag identifies current canonical `main` HEAD;
+- the exact release SHA has a successful canonical `main` `Singularity L0` push run;
+- all required governance checks pass before publication;
+- the release dry-run can build and verify API/Web/Worker image metadata from a clean checkout;
 - the exact SiYuan baseline and active divergences are recorded;
 - migrations and rollback boundaries are documented and verified when applicable;
-- built artifacts/images are produced from the release commit and identified immutably;
+- published images use version and immutable source-SHA identities;
 - license/NOTICE/SBOM/security evidence is present at the level promised by the release;
 - release notes distinguish shipped, experimental, deferred, and operator-required work;
-- a maintainer explicitly approves tag and publication.
+- a maintainer explicitly approves tag creation and publication.

@@ -24,16 +24,27 @@ const REQUIRED_PR_HEADINGS = [
   "## Migration and security",
   "## Related issue",
 ];
+const COMPATIBILITY_UPSTREAM_IDENTITY_FIELDS = [
+  "upstreamRepository",
+  "upstreamBranch",
+  "upstreamCommit",
+  "upstreamCandidateCommit",
+  "upstreamVersion",
+];
 
 const readText = (path) => readFileSync(resolve(repositoryRoot, path), "utf8");
 const readJson = (path) => JSON.parse(readText(path));
 
-function readYaml(path) {
-  const document = parseDocument(readText(path), { prettyErrors: true, uniqueKeys: true });
+function parseYaml(contents, label) {
+  const document = parseDocument(contents, { prettyErrors: true, uniqueKeys: true });
   if (document.errors.length > 0) {
-    throw new Error(`${path}: ${document.errors.map((error) => error.message).join("; ")}`);
+    throw new Error(`${label}: ${document.errors.map((error) => error.message).join("; ")}`);
   }
   return document.toJS();
+}
+
+function readYaml(path) {
+  return parseYaml(readText(path), path);
 }
 
 function runGit(...args) {
@@ -90,11 +101,67 @@ function validateRegistry(path, kind, baselineCommit, failures) {
   }
 }
 
-function changedFilesFromEnvironment() {
+function governanceRangeFromEnvironment() {
   const base = process.env.SINGULARITY_GOVERNANCE_BASE_SHA?.trim();
   const head = process.env.SINGULARITY_GOVERNANCE_HEAD_SHA?.trim();
-  if (!base || !head) return [];
-  return runGit("diff", "--name-only", `${base}...${head}`).split(/\r?\n/).filter(Boolean);
+  return base && head ? { base, head } : null;
+}
+
+function changedFilesFromEnvironment() {
+  const range = governanceRangeFromEnvironment();
+  if (range === null) return [];
+  return runGit("diff", "--name-only", `${range.base}...${range.head}`).split(/\r?\n/).filter(Boolean);
+}
+
+function readJsonAtRef(ref, path) {
+  return JSON.parse(runGit("show", `${ref}:${path}`));
+}
+
+function readYamlAtRef(ref, path) {
+  return parseYaml(runGit("show", `${ref}:${path}`), `${ref}:${path}`);
+}
+
+export function compatibilityUpstreamIdentity(value) {
+  return Object.fromEntries(COMPATIBILITY_UPSTREAM_IDENTITY_FIELDS.map((field) => [field, value?.[field] ?? null]));
+}
+
+export function canonicalUpstreamIdentity(value) {
+  return {
+    repository: value?.upstream?.repository ?? null,
+    branch: value?.upstream?.branch ?? null,
+    version: value?.baseline?.version ?? null,
+    tag: value?.baseline?.tag ?? null,
+    commit: value?.baseline?.commit ?? null,
+  };
+}
+
+function identitiesDiffer(left, right) {
+  return JSON.stringify(left) !== JSON.stringify(right);
+}
+
+function upstreamIdentityChangedFromEnvironment(changedFiles) {
+  const range = governanceRangeFromEnvironment();
+  if (range === null) return false;
+
+  try {
+    if (changedFiles.includes("upstream/baseline.yaml")) {
+      const before = canonicalUpstreamIdentity(readYamlAtRef(range.base, "upstream/baseline.yaml"));
+      const after = canonicalUpstreamIdentity(readYamlAtRef(range.head, "upstream/baseline.yaml"));
+      if (identitiesDiffer(before, after)) return true;
+    }
+
+    if (changedFiles.includes("config/upstream-baseline.json")) {
+      const before = compatibilityUpstreamIdentity(readJsonAtRef(range.base, "config/upstream-baseline.json"));
+      const after = compatibilityUpstreamIdentity(readJsonAtRef(range.head, "config/upstream-baseline.json"));
+      if (identitiesDiffer(before, after)) return true;
+    }
+  } catch {
+    // When identity metadata cannot be read at either side of the range, fail closed
+    // and require the explicit upstream registry update instead of silently accepting it.
+    return true;
+  }
+
+  return false;
 }
 
 export function verifyIndependentGovernance() {
@@ -182,11 +249,8 @@ export function verifyIndependentGovernance() {
       failures.push("changes to app/** or kernel/** must update diffs/upstream/registry.yaml in the same pull request");
     }
   }
-  if (
-    (changedFiles.includes("upstream/baseline.yaml") || changedFiles.includes("config/upstream-baseline.json")) &&
-    !changedFiles.includes("diffs/upstream/registry.yaml")
-  ) {
-    failures.push("an upstream baseline change must update diffs/upstream/registry.yaml");
+  if (upstreamIdentityChangedFromEnvironment(changedFiles) && !changedFiles.includes("diffs/upstream/registry.yaml")) {
+    failures.push("an upstream identity or promoted baseline change must update diffs/upstream/registry.yaml");
   }
 
   return failures;

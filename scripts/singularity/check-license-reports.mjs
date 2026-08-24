@@ -1,8 +1,22 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const reviewedGoStdlibLicenses = new Map([
+  [
+    "v1.26.6",
+    {
+      license: "BSD-3-Clause",
+      sha256: "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+    },
+  ],
+]);
+const npmEvidenceCache = new Map();
+const lockfileIntegrityCache = new Map();
+let goStdlibEvidenceCache;
 
 function readArgumentValue(args, index, option) {
   const value = args[index + 1];
@@ -154,6 +168,286 @@ function addToIndex(index, key, value) {
   } else {
     values.push(value);
   }
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stripYamlScalar(value) {
+  const trimmed = value.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+      (trimmed.startsWith('"') && trimmed.endsWith('"')))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function resolveNpmPackageSource(target) {
+  if (target === null || isAbsolute(target) || basename(target) !== "pnpm-lock.yaml") {
+    return null;
+  }
+  const lockfilePath = resolve(repositoryRoot, target);
+  const repositoryRelative = relative(repositoryRoot, lockfilePath);
+  if (
+    repositoryRelative === "" ||
+    repositoryRelative === ".." ||
+    repositoryRelative.startsWith(`..${requirePathSeparator()}`)
+  ) {
+    return null;
+  }
+  if (!existsSync(lockfilePath)) {
+    return null;
+  }
+  return {
+    lockfilePath,
+    nodeModulesRoot: resolve(dirname(lockfilePath), "node_modules"),
+    target: repositoryRelative.replaceAll("\\", "/"),
+  };
+}
+
+function requirePathSeparator() {
+  return process.platform === "win32" ? "\\" : "/";
+}
+
+function readLockfileIntegrity(source, packageName, version) {
+  const cacheKey = findingKey(source.target, packageName, version);
+  if (lockfileIntegrityCache.has(cacheKey)) {
+    return lockfileIntegrityCache.get(cacheKey);
+  }
+
+  const coordinate = `${packageName}@${version}`;
+  const lines = readFileSync(source.lockfilePath, "utf8").split(/\r?\n/u);
+  const integrities = new Set();
+  let inPackages = false;
+  let matchedPackage = false;
+  let inResolution = false;
+
+  for (const line of lines) {
+    if (!inPackages) {
+      if (line === "packages:") {
+        inPackages = true;
+      }
+      continue;
+    }
+    if (line.length > 0 && !line.startsWith(" ")) {
+      break;
+    }
+
+    const packageMatch = /^  (.+):\s*$/u.exec(line);
+    if (packageMatch !== null) {
+      const key = stripYamlScalar(packageMatch[1]);
+      matchedPackage = key === coordinate || key.startsWith(`${coordinate}(`);
+      inResolution = false;
+      continue;
+    }
+    if (!matchedPackage) {
+      continue;
+    }
+
+    const inlineResolution = /^    resolution:\s*\{(.*)\}\s*$/u.exec(line);
+    if (inlineResolution !== null) {
+      const integrityMatch = /(?:^|,)\s*integrity:\s*([^,}]+)(?:,|$)/u.exec(inlineResolution[1]);
+      if (integrityMatch !== null) {
+        integrities.add(stripYamlScalar(integrityMatch[1]));
+      }
+      inResolution = false;
+      continue;
+    }
+    if (/^    resolution:\s*$/u.test(line)) {
+      inResolution = true;
+      continue;
+    }
+    if (inResolution) {
+      const integrityMatch = /^      integrity:\s*(.+?)\s*$/u.exec(line);
+      if (integrityMatch !== null) {
+        integrities.add(stripYamlScalar(integrityMatch[1]));
+      } else if (/^    \S/u.test(line)) {
+        inResolution = false;
+      }
+    }
+  }
+
+  if (integrities.size > 1) {
+    throw new Error(`Conflicting lockfile integrity for ${coordinate} in ${source.target}`);
+  }
+  const integrity = integrities.size === 1 ? [...integrities][0] : null;
+  lockfileIntegrityCache.set(cacheKey, integrity);
+  return integrity;
+}
+
+function parseNpmPurl(purl) {
+  if (!purl.startsWith("pkg:npm/")) {
+    return null;
+  }
+  const coordinate = purl.slice("pkg:npm/".length).split(/[?#]/u, 1)[0];
+  const separator = coordinate.lastIndexOf("@");
+  if (separator <= 0 || separator === coordinate.length - 1) {
+    return null;
+  }
+  try {
+    const name = decodeURIComponent(coordinate.slice(0, separator));
+    const version = decodeURIComponent(coordinate.slice(separator + 1));
+    return name.length > 0 && version.length > 0 ? { name, version } : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPackageManifestCandidates(nodeModulesRoot, packageName, version) {
+  const root = nodeModulesRoot;
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  const paths = new Set();
+  const directPath = resolve(root, packageName, "package.json");
+  if (existsSync(directPath)) {
+    paths.add(directPath);
+  }
+
+  const virtualStore = resolve(root, ".pnpm");
+  if (existsSync(virtualStore)) {
+    const encodedName = packageName.startsWith("@") ? packageName.replace("/", "+") : packageName;
+    const entryPrefix = `${encodedName}@${version}`;
+    for (const entry of readdirSync(virtualStore, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(entryPrefix)) {
+        continue;
+      }
+      const manifestPath = resolve(virtualStore, entry.name, "node_modules", packageName, "package.json");
+      if (existsSync(manifestPath)) {
+        paths.add(manifestPath);
+      }
+    }
+  }
+
+  const candidates = [];
+  for (const path of paths) {
+    const content = readFileSync(path);
+    let manifest;
+    try {
+      manifest = JSON.parse(content.toString("utf8"));
+    } catch {
+      continue;
+    }
+    const license = readTrimmedString(manifest?.license);
+    if (manifest?.name !== packageName || manifest?.version !== version || license === null) {
+      continue;
+    }
+    candidates.push({
+      filePath: relative(repositoryRoot, path).replaceAll("\\", "/"),
+      license,
+      manifestSha256: sha256(content),
+    });
+  }
+  return candidates;
+}
+
+function resolveNpmPackageLicenseEvidence(purl, matchedPackages) {
+  const coordinate = parseNpmPurl(purl);
+  if (coordinate === null) {
+    return null;
+  }
+  const cacheKey = purl;
+  if (npmEvidenceCache.has(cacheKey)) {
+    return npmEvidenceCache.get(cacheKey);
+  }
+
+  const candidates = [];
+  for (const packageEntry of matchedPackages) {
+    if (packageEntry.packageName !== coordinate.name || packageEntry.version !== coordinate.version) {
+      throw new Error(`Trivy package identity does not match ${purl}`);
+    }
+    const source = resolveNpmPackageSource(packageEntry.target);
+    if (source === null) {
+      continue;
+    }
+    const integrity = readLockfileIntegrity(source, coordinate.name, coordinate.version);
+    if (integrity === null) {
+      continue;
+    }
+    for (const manifest of readPackageManifestCandidates(
+      source.nodeModulesRoot,
+      coordinate.name,
+      coordinate.version,
+    )) {
+      candidates.push({ ...manifest, integrity, target: source.target });
+    }
+  }
+
+  if (candidates.length === 0) {
+    npmEvidenceCache.set(cacheKey, null);
+    return null;
+  }
+  const licenses = new Set(candidates.map((candidate) => candidate.license));
+  const integrities = new Set(candidates.map((candidate) => candidate.integrity));
+  const manifestSha256s = new Set(candidates.map((candidate) => candidate.manifestSha256));
+  if (licenses.size !== 1 || integrities.size !== 1 || manifestSha256s.size !== 1) {
+    throw new Error(`Conflicting installed package license evidence for ${purl}`);
+  }
+
+  const evidence = {
+    filePath: candidates.map((candidate) => candidate.filePath).sort()[0],
+    license: [...licenses][0],
+  };
+  npmEvidenceCache.set(cacheKey, evidence);
+  return evidence;
+}
+
+function readGoStdlibEvidence() {
+  if (goStdlibEvidenceCache !== undefined) {
+    return goStdlibEvidenceCache;
+  }
+  const result = spawnSync("go", ["env", "GOVERSION", "GOROOT"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: { ...process.env, GOTOOLCHAIN: "local" },
+  });
+  if (result.status !== 0) {
+    goStdlibEvidenceCache = null;
+    return null;
+  }
+  const [goVersion, goRoot] = result.stdout.trim().split(/\r?\n/u);
+  if (!/^go\d+\.\d+\.\d+$/u.test(goVersion ?? "") || readTrimmedString(goRoot) === null) {
+    goStdlibEvidenceCache = null;
+    return null;
+  }
+  const version = `v${goVersion.slice(2)}`;
+  const reviewed = reviewedGoStdlibLicenses.get(version);
+  if (reviewed === undefined) {
+    goStdlibEvidenceCache = null;
+    return null;
+  }
+  const licensePath = resolve(goRoot, "LICENSE");
+  if (!existsSync(licensePath)) {
+    goStdlibEvidenceCache = null;
+    return null;
+  }
+  const license = readFileSync(licensePath);
+  if (sha256(license) !== reviewed.sha256) {
+    throw new Error(`Reviewed Go stdlib license hash does not match ${version}`);
+  }
+  goStdlibEvidenceCache = {
+    filePath: `${goRoot.replaceAll("\\", "/")}/LICENSE`,
+    license: reviewed.license,
+    purl: `pkg:golang/stdlib@${version}`,
+    version,
+  };
+  return goStdlibEvidenceCache;
+}
+
+function resolveGoStdlibLicenseEvidence(component, purl) {
+  if (component?.name !== "stdlib" || !purl.startsWith("pkg:golang/stdlib@")) {
+    return null;
+  }
+  const evidence = readGoStdlibEvidence();
+  if (evidence === null || evidence.purl !== purl || component?.version !== evidence.version) {
+    return null;
+  }
+  return evidence;
 }
 
 function createCoverageFinding({ packageName, policyRule, purl, reportPath, sbomPath, target, version }) {
@@ -314,7 +608,7 @@ function inspectInput(input, policy) {
           version,
         }),
       );
-    } else if (matchedPackages.length === 0) {
+    } else if (matchedPackages.length === 0 && !purl.startsWith("pkg:golang/stdlib@")) {
       findings.push(
         createCoverageFinding({
           packageName,
@@ -328,7 +622,16 @@ function inspectInput(input, policy) {
       );
     }
 
-    const componentLicenses = readComponentLicenseNames(component);
+    let componentLicenses = readComponentLicenseNames(component);
+    let resolvedEvidence = null;
+    if (componentLicenses.evidenceCount === 0 && purl !== null) {
+      resolvedEvidence =
+        resolveNpmPackageLicenseEvidence(purl, matchedPackages) ?? resolveGoStdlibLicenseEvidence(component, purl);
+      if (resolvedEvidence !== null) {
+        componentLicenses = { evidenceCount: 1, invalidCount: 0, names: [resolvedEvidence.license] };
+      }
+    }
+
     if (componentLicenses.evidenceCount === 0) {
       findings.push(
         createCoverageFinding({
@@ -373,7 +676,8 @@ function inspectInput(input, policy) {
         evaluateLicense(
           {
             category,
-            filePath: uniqueValue(specificContexts.map((context) => context.filePath)),
+            filePath:
+              resolvedEvidence?.filePath ?? uniqueValue(specificContexts.map((context) => context.filePath)),
             license,
             packageName,
             purl,

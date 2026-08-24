@@ -26,6 +26,14 @@ function retryAfterFromReason(reason: unknown): number | undefined {
   return Math.max(1, Math.ceil((reason as RateLimiterRes).msBeforeNext / 1_000));
 }
 
+function accountKey(normalizedLoginIdentifier: string): string {
+  return createHash("sha256")
+    .update(ACCOUNT_KEY_DOMAIN, "utf8")
+    .update(Buffer.from([0]))
+    .update(normalizedLoginIdentifier, "utf8")
+    .digest("hex");
+}
+
 export class LoginRateLimiter {
   readonly #logger = new Logger("LoginRateLimiter");
   readonly #source: RateLimiterMemory;
@@ -52,14 +60,9 @@ export class LoginRateLimiter {
     normalizedLoginIdentifier: string,
     requestId: string,
   ): Promise<void> {
-    const accountKey = createHash("sha256")
-      .update(ACCOUNT_KEY_DOMAIN, "utf8")
-      .update(Buffer.from([0]))
-      .update(normalizedLoginIdentifier, "utf8")
-      .digest("hex");
     const results = await Promise.allSettled([
       this.#source.consume(sourceAddress),
-      this.#account.consume(accountKey),
+      this.#account.consume(accountKey(normalizedLoginIdentifier)),
     ]);
     let retryAfter = 0;
     for (const result of results) {
@@ -88,5 +91,9 @@ export class LoginRateLimiter {
       });
       throw new LoginRateLimitError(retryAfter);
     }
+  }
+
+  async rewardAccount(normalizedLoginIdentifier: string): Promise<void> {
+    await this.#account.reward(accountKey(normalizedLoginIdentifier));
   }
 }

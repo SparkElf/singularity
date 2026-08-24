@@ -53,6 +53,7 @@ export const beginProtyleDrag = (options: {
     if (options.opacity) {
         options.element.style.opacity = options.opacity;
     }
+    // eslint-disable-next-line prefer-const -- 中止回调先捕获同一个状态句柄，再在状态对象完成构造后绑定，避免引入 TDZ。
     let state: OwnedProtyleDragState;
     const onAbort = () => clearState(runtime, state);
     state = {

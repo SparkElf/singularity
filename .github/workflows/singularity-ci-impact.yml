@@ -8,11 +8,26 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: singularity-ci-impact-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   plan:
     if: ${{ github.repository == 'SparkElf/singularity' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.impact.outputs.mode }}
+      reason: ${{ steps.impact.outputs.reason }}
+      governance: ${{ steps.impact.outputs.governance }}
+      native_app: ${{ steps.impact.outputs.native_app }}
+      enterprise_static: ${{ steps.impact.outputs.enterprise_static }}
+      integration: ${{ steps.impact.outputs.integration }}
+      browser: ${{ steps.impact.outputs.browser }}
+      e2e: ${{ steps.impact.outputs.e2e }}
+      package: ${{ steps.impact.outputs.package }}
+      upstream: ${{ steps.impact.outputs.upstream }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -61,6 +76,8 @@ jobs:
             echo
             echo "- Mode: \`$MODE\`"
             echo "- Reason: $REASON"
+            echo "- Canary execution: native app, enterprise static, package, and upstream lanes only"
+            echo "- L0 remains authoritative for integration, browser, E2E, and full release evidence during migration"
             echo
             echo "| Lane | Selected |"
             echo "| --- | --- |"
@@ -73,3 +90,161 @@ jobs:
             echo "| package | $PACKAGE |"
             echo "| upstream | $UPSTREAM |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  native-app:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.plan.outputs.native_app == 'true' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.12.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install SiYuan app dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: app
+
+      - name: Verify native app source
+        run: |
+          pnpm run lint
+          git diff --exit-code -- .
+          pnpm test
+        working-directory: app
+
+  enterprise-static:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.plan.outputs.enterprise_static == 'true' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            enterprise/pnpm-lock.yaml
+            app/pnpm-lock.yaml
+
+      - name: Install enterprise dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Install SiYuan app dependencies
+        run: corepack pnpm@11.12.0 install --frozen-lockfile
+        working-directory: app
+
+      - name: Verify enterprise static contracts
+        run: pnpm verify:b4
+        working-directory: enterprise
+
+  package:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.plan.outputs.package == 'true' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+
+      - name: Read promoted upstream baseline
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_ENV"
+          import { readFileSync } from "node:fs";
+          const baseline = JSON.parse(readFileSync("config/upstream-baseline.json", "utf8"));
+          if (!/^[0-9a-f]{40}$/.test(baseline.upstreamCommit)) throw new Error("Invalid upstream baseline commit");
+          process.stdout.write(`UPSTREAM_COMMIT=${baseline.upstreamCommit}\n`);
+          NODE
+
+      - name: Build package candidates
+        run: |
+          set -euo pipefail
+          docker build --file enterprise/apps/api/Dockerfile --build-arg VCS_REF="$GITHUB_SHA" --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" --tag singularity-api:impact .
+          docker build --file enterprise/apps/web/Dockerfile --build-arg VCS_REF="$GITHUB_SHA" --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" --tag singularity-web:impact .
+          docker build --file enterprise/apps/worker/Dockerfile --build-arg VCS_REF="$GITHUB_SHA" --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" --tag singularity-worker:impact .
+
+      - name: Verify package metadata
+        run: |
+          node scripts/singularity/verify-container-metadata.mjs \
+            --revision "$GITHUB_SHA" \
+            -- singularity-api:impact singularity-web:impact singularity-worker:impact
+
+  upstream:
+    if: ${{ github.repository == 'SparkElf/singularity' && needs.plan.outputs.upstream == 'true' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Register read-only SiYuan upstream
+        run: |
+          git remote add upstream https://github.com/siyuan-note/siyuan.git
+          git remote set-url --push upstream DISABLED
+          git fetch --no-tags upstream master
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install governance dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Verify upstream relationship and impact
+        run: |
+          node scripts/singularity/verify-upstream-baseline.mjs
+          node scripts/singularity/report-upstream-impact.mjs \
+            --json artifacts/upstream-impact/upstream-impact.json \
+            --markdown artifacts/upstream-impact/upstream-impact.md
+
+      - name: Upload upstream impact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: impact-upstream-${{ github.sha }}
+          path: artifacts/upstream-impact/
+          if-no-files-found: error
+          retention-days: 30

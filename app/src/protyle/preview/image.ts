@@ -19,6 +19,7 @@ export const previewImages = (srcList: string[], currentSrc?: string, onHidden?:
             }
         });
         imagesElement.innerHTML = html;
+        // eslint-disable-next-line prefer-const -- 销毁回调在 Viewer 构造前声明并延后绑定实例，避免构造期间同步回调触发 TDZ。
         let viewer: Viewer;
         const destroyViewer = () => {
             signal?.removeEventListener("abort", destroyViewer);

@@ -186,10 +186,10 @@ describe("production collaboration session binding", () => {
   it("does not let an old connection close or submit through a replacement session", async () => {
     const { coordinator, handler } = createCoordinator();
     await join(coordinator);
-    coordinator.close(clientId, "55555555-5555-4555-8555-555555555555");
+    await coordinator.close(clientId, "55555555-5555-4555-8555-555555555555");
     await join(coordinator, "user-1", "66666666-6666-4666-8666-666666666666");
 
-    coordinator.close(clientId, "55555555-5555-4555-8555-555555555555");
+    await coordinator.close(clientId, "55555555-5555-4555-8555-555555555555");
     const submitted = await coordinator.submit({
       actorUserId: "user-1",
       clientId,

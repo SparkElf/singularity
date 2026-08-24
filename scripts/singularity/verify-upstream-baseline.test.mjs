@@ -53,8 +53,8 @@ function createRepositoryFixture() {
   const candidateCommit = commitAll(root, "upstream candidate");
   runGit(root, "update-ref", "refs/remotes/upstream/master", candidateCommit);
 
-  write(root, "app/package.json", `${JSON.stringify({ packageManager: "fork-only", version: "9.9.9" })}\n`);
-  const forkCommit = commitAll(root, "fork-only change");
+  write(root, "app/package.json", `${JSON.stringify({ packageManager: "canonical-only", version: "9.9.9" })}\n`);
+  const canonicalCommit = commitAll(root, "canonical-only change");
 
   runGit(root, "remote", "add", "origin", "https://github.com/SparkElf/singularity.git");
   runGit(root, "remote", "add", "upstream", "https://github.com/siyuan-note/siyuan.git");
@@ -75,7 +75,7 @@ function createRepositoryFixture() {
   const baseline = {
     allowedWorkflows: ["governance.yml"],
     architectureDocument: "docs/architecture.md",
-    forkRepository: "SparkElf/singularity",
+    canonicalRepository: "SparkElf/singularity",
     goVersion: "1.25.4",
     license: "AGPL-3.0-or-later",
     licenseFile: "LICENSE",
@@ -89,7 +89,7 @@ function createRepositoryFixture() {
     upstreamRepository: "https://github.com/siyuan-note/siyuan.git",
     upstreamVersion: "1.0.0",
   };
-  return { baseline, forkCommit, root };
+  return { baseline, canonicalCommit, root };
 }
 
 test("upstream facts come from the remote branch and baseline commit", () => {
@@ -100,22 +100,22 @@ test("upstream facts come from the remote branch and baseline commit", () => {
   assert.equal(checks.find(([name]) => name === "upstream version")?.[2], "1.0.0");
 });
 
-test("a fork-only commit cannot be used as the upstream baseline", () => {
-  const { baseline, forkCommit, root } = createRepositoryFixture();
+test("a canonical-only commit cannot be used as the upstream baseline", () => {
+  const { baseline, canonicalCommit, root } = createRepositoryFixture();
   const checks = verifyUpstreamBaseline(root, {
     ...baseline,
-    upstreamCommit: forkCommit,
+    upstreamCommit: canonicalCommit,
   });
   const provenance = checks.find(([name]) => name === "upstream baseline provenance");
 
   assert.equal(provenance?.[1], false);
 });
 
-test("a fork-only commit cannot be used as the upstream candidate", () => {
-  const { baseline, forkCommit, root } = createRepositoryFixture();
+test("a canonical-only commit cannot be used as the upstream candidate", () => {
+  const { baseline, canonicalCommit, root } = createRepositoryFixture();
   const checks = verifyUpstreamBaseline(root, {
     ...baseline,
-    upstreamCandidateCommit: forkCommit,
+    upstreamCandidateCommit: canonicalCommit,
   });
   const provenance = checks.find(([name]) => name === "upstream candidate provenance");
 
@@ -204,4 +204,103 @@ test("L0 workflow triggers include Docker build context changes", () => {
   );
 
   assert.deepEqual(failures, ["push paths must include .dockerignore"]);
+});
+
+test("release workflow permits isolated CI evidence, package, and release authorities", () => {
+  const failures = validateWorkflowDocument(
+    {
+      jobs: {
+        verify: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { actions: "read", contents: "read" },
+          steps: [{
+            name: "Require successful canonical L0 evidence",
+            run: "gh api repos/SparkElf/singularity/actions/workflows/singularity-l0.yml/runs | jq '.workflow_runs[] | .head_sha'",
+          }],
+        },
+        images: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "read", packages: "write" },
+          steps: [{ run: "echo images" }],
+        },
+        "github-release": {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "write" },
+          steps: [{ run: "echo release" }],
+        },
+      },
+      on: {
+        push: { tags: ["singularity-v*"] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: "read" },
+    },
+    "singularity-release.yml",
+    "${{ github.repository == 'SparkElf/singularity' }}",
+  );
+
+  assert.deepEqual(failures, []);
+});
+
+test("release workflow rejects missing L0 evidence and over-broad verify permissions", () => {
+  const failures = validateWorkflowDocument(
+    {
+      jobs: {
+        verify: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { actions: "write", contents: "read" },
+          steps: [{ run: "echo verified" }],
+        },
+        images: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "read", packages: "write" },
+          steps: [{ run: "echo images" }],
+        },
+        "github-release": {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "write" },
+          steps: [{ run: "echo release" }],
+        },
+      },
+      on: {
+        push: { tags: ["singularity-v*"] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: "read" },
+    },
+    "singularity-release.yml",
+    "${{ github.repository == 'SparkElf/singularity' }}",
+  );
+
+  assert.ok(failures.includes("release verify job must require successful canonical Singularity L0 evidence by source SHA"));
+  assert.ok(failures.includes("release job verify may use actions permission only as actions: read on verify"));
+  assert.ok(failures.includes("release verify job permissions must be exactly actions: read and contents: read"));
+});
+
+test("release workflow rejects pull requests and combined release/package writers", () => {
+  const failures = validateWorkflowDocument(
+    {
+      jobs: {
+        publish: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "write", packages: "write", "id-token": "write" },
+          steps: [{ run: "echo publish" }],
+        },
+      },
+      on: {
+        pull_request: {},
+        push: { tags: ["singularity-v*"] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: "read" },
+    },
+    "singularity-release.yml",
+    "${{ github.repository == 'SparkElf/singularity' }}",
+  );
+
+  assert.ok(failures.includes("release workflow must not run on pull_request"));
+  assert.ok(failures.includes("release job publish may only declare actions/contents/packages permissions"));
+  assert.ok(failures.includes("release job publish may use packages: write only on images"));
+  assert.ok(failures.includes("release job publish may use contents: write only on github-release"));
+  assert.ok(failures.includes("release job publish must not combine contents: write with packages: write"));
 });
