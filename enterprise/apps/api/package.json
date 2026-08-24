@@ -14,7 +14,6 @@
     "start": "node dist/main.js",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:release-certification": "vitest run --config vitest.release.config.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
