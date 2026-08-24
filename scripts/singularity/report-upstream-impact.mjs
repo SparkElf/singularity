@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const enterpriseRequire = createRequire(resolve(repositoryRoot, "enterprise/package.json"));
+const { parseDocument } = enterpriseRequire("yaml");
 
 function runGit(root, args, acceptedStatuses = [0]) {
   const result = spawnSync("git", args, {
@@ -16,9 +19,9 @@ function runGit(root, args, acceptedStatuses = [0]) {
   return { status: result.status, stdout: result.stdout };
 }
 
-function parseArguments(args, candidate) {
+function parseArguments(args) {
   const options = {
-    candidate,
+    candidate: undefined,
     json: undefined,
     markdown: undefined,
   };
@@ -44,22 +47,83 @@ function moduleForPath(path) {
   return "repository";
 }
 
+function reviewSignalForPath(path) {
+  if (/\/(ai|agent)(\/|\.|$)/i.test(path) || path.startsWith("app/src/ai/")) return "ai-agent";
+  if (/\/mcp(\/|\.|$)/i.test(path)) return "mcp";
+  if (/\/(search|fts)(\/|\.|$)/i.test(path)) return "search-discovery";
+  if (/\/(auth|identity|oauth|oidc)(\/|\.|$)/i.test(path)) return "identity-auth";
+  if (/\/(sync|collab|share|permission)(\/|\.|$)/i.test(path)) return "sharing-collaboration";
+  if (path.startsWith("app/src/protyle/") || path.startsWith("kernel/model/")) return "editor-content";
+  if (path.startsWith("scripts/") || path.startsWith(".github/") || path.startsWith("Dockerfile")) return "packaging-release";
+  return null;
+}
+
+function pathMatchesPattern(path, pattern) {
+  if (pattern.endsWith("/**")) return path.startsWith(pattern.slice(0, -3));
+  return path === pattern;
+}
+
+function activeRecords(registry) {
+  return Array.isArray(registry?.records)
+    ? registry.records.filter((record) => record?.status === "active")
+    : [];
+}
+
+function divergenceImpact(changedPaths, registry) {
+  return activeRecords(registry)
+    .map((record) => {
+      const patterns = Array.isArray(record.paths) ? record.paths : [];
+      const matchedPaths = changedPaths.filter((path) => patterns.some((pattern) => pathMatchesPattern(path, pattern)));
+      return matchedPaths.length > 0
+        ? { id: record.id, title: record.title, owner: record.owner, matchedPaths }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+function productReview(changedPaths, registry) {
+  const signals = [...new Set(changedPaths.map(reviewSignalForPath).filter(Boolean))].sort();
+  if (signals.length === 0) return { signals, records: [] };
+  return {
+    signals,
+    records: activeRecords(registry).map((record) => ({
+      id: record.id,
+      title: record.title,
+      owner: record.owner,
+      action: "review-for-upstream-overlap",
+    })),
+  };
+}
+
 function writeOutput(root, path, contents) {
   const absolutePath = resolve(root, path);
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, contents, "utf8");
 }
 
-export function createUpstreamImpact(root, baseline, candidate = baseline.upstreamCandidateCommit) {
+function normalizeBaseline(baseline) {
+  if (baseline?.baseline?.commit) {
+    return {
+      upstreamBranch: baseline.upstream?.branch,
+      upstreamCommit: baseline.baseline.commit,
+      upstreamRepository: baseline.upstream?.url ?? baseline.upstream?.repository,
+    };
+  }
+  return baseline;
+}
+
+export function createUpstreamImpact(root, rawBaseline, candidate, governance = {}) {
+  const baseline = normalizeBaseline(rawBaseline);
   const commitPattern = /^[0-9a-f]{40}$/;
-  if (!commitPattern.test(baseline.upstreamCommit) || !commitPattern.test(candidate)) {
-    throw new Error("Upstream baseline and candidate must be full commit SHAs");
+  if (!commitPattern.test(baseline.upstreamCommit ?? "")) {
+    throw new Error("Upstream baseline must be a full commit SHA");
   }
 
-  const baselineCommit = runGit(root, ["rev-parse", `${baseline.upstreamCommit}^{commit}`]).stdout.trim();
-  const candidateCommit = runGit(root, ["rev-parse", `${candidate}^{commit}`]).stdout.trim();
-  const headCommit = runGit(root, ["rev-parse", "HEAD^{commit}"]).stdout.trim();
   const upstreamRef = `refs/remotes/upstream/${baseline.upstreamBranch}`;
+  const requestedCandidate = candidate ?? rawBaseline?.upstreamCandidateCommit ?? upstreamRef;
+  const baselineCommit = runGit(root, ["rev-parse", `${baseline.upstreamCommit}^{commit}`]).stdout.trim();
+  const candidateCommit = runGit(root, ["rev-parse", `${requestedCandidate}^{commit}`]).stdout.trim();
+  const headCommit = runGit(root, ["rev-parse", "HEAD^{commit}"]).stdout.trim();
   runGit(root, ["show-ref", "--verify", upstreamRef]);
   runGit(root, ["merge-base", "--is-ancestor", baselineCommit, upstreamRef]);
   runGit(root, ["merge-base", "--is-ancestor", candidateCommit, upstreamRef]);
@@ -83,6 +147,8 @@ export function createUpstreamImpact(root, baseline, candidate = baseline.upstre
   const mergeFields = mergeResult.stdout.split("\u0000").filter(Boolean);
   const mergeTree = mergeFields.shift() ?? null;
   const conflictPaths = mergeFields.sort();
+  const impactedDivergences = divergenceImpact(changedPaths, governance.upstreamRegistry);
+  const productCapabilityReview = productReview(changedPaths, governance.productRegistry);
   const report = {
     baselineCommit,
     candidateCommit,
@@ -96,6 +162,9 @@ export function createUpstreamImpact(root, baseline, candidate = baseline.upstre
       tree: mergeTree,
     },
     moduleCounts,
+    impactedDivergences,
+    productCapabilityReview,
+    promotionRequired: candidateCommit !== baselineCommit,
     upstreamBranch: baseline.upstreamBranch,
     upstreamRepository: baseline.upstreamRepository,
   };
@@ -107,19 +176,37 @@ export function createUpstreamImpact(root, baseline, candidate = baseline.upstre
   const conflictRows = conflictPaths.length === 0
     ? "- None"
     : conflictPaths.map((path) => `- \`${path}\``).join("\n");
+  const divergenceRows = impactedDivergences.length === 0
+    ? "- None"
+    : impactedDivergences.map((record) => `- \`${record.id}\` (${record.owner}): ${String(record.matchedPaths.length)} overlapping path(s)`).join("\n");
+  const capabilityRows = productCapabilityReview.signals.length === 0
+    ? "- No product-overlap signals detected from paths."
+    : [
+        `- Signals: ${productCapabilityReview.signals.map((signal) => `\`${signal}\``).join(", ")}`,
+        ...productCapabilityReview.records.map((record) => `- Review \`${record.id}\` (${record.owner}) for possible upstream replacement or overlap.`),
+      ].join("\n");
   const markdown = `# Singularity Upstream Impact Report
 
 - Baseline: \`${baselineCommit}\`
 - Candidate: \`${candidateCommit}\`
-- Fork HEAD: \`${headCommit}\`
+- Singularity HEAD: \`${headCommit}\`
 - Changed files: ${String(changedPaths.length)}
 - Merge result: ${report.merge.clean ? "clean" : `${String(conflictPaths.length)} conflict(s)`}
+- Promotion review required: ${report.promotionRequired ? "yes" : "no"}
 
 ## Module Impact
 
 | Module | Changed files |
 | --- | ---: |
 ${moduleRows}
+
+## Active Divergence Overlap
+
+${divergenceRows}
+
+## Product Capability Review
+
+${capabilityRows}
 
 ## Conflict Paths
 
@@ -129,12 +216,24 @@ ${conflictRows}
   return { markdown, report };
 }
 
+function readYaml(path) {
+  const document = parseDocument(readFileSync(path, "utf8"), { prettyErrors: true, uniqueKeys: true });
+  if (document.errors.length > 0) throw new Error(document.errors.map((error) => error.message).join("; "));
+  return document.toJS();
+}
+
 function main() {
-  const baseline = JSON.parse(
-    readFileSync(resolve(repositoryRoot, "config/upstream-baseline.json"), "utf8"),
-  );
-  const options = parseArguments(process.argv.slice(2), baseline.upstreamCandidateCommit);
-  const { markdown, report } = createUpstreamImpact(repositoryRoot, baseline, options.candidate);
+  const baseline = readYaml(resolve(repositoryRoot, "upstream/baseline.yaml"));
+  const options = parseArguments(process.argv.slice(2));
+  const governance = {
+    upstreamRegistry: existsSync(resolve(repositoryRoot, "diffs/upstream/registry.yaml"))
+      ? readYaml(resolve(repositoryRoot, "diffs/upstream/registry.yaml"))
+      : undefined,
+    productRegistry: existsSync(resolve(repositoryRoot, "diffs/product/registry.yaml"))
+      ? readYaml(resolve(repositoryRoot, "diffs/product/registry.yaml"))
+      : undefined,
+  };
+  const { markdown, report } = createUpstreamImpact(repositoryRoot, baseline, options.candidate, governance);
 
   if (options.json !== undefined) {
     writeOutput(repositoryRoot, options.json, `${JSON.stringify(report, null, 2)}\n`);
