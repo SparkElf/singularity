@@ -206,20 +206,24 @@ test("L0 workflow triggers include Docker build context changes", () => {
   assert.deepEqual(failures, ["push paths must include .dockerignore"]);
 });
 
-test("release workflow permits isolated package and release writers", () => {
+test("release workflow permits isolated CI evidence, package, and release authorities", () => {
   const failures = validateWorkflowDocument(
     {
       jobs: {
         verify: {
           if: "${{ github.repository == 'SparkElf/singularity' }}",
-          steps: [{ run: "echo verified" }],
+          permissions: { actions: "read", contents: "read" },
+          steps: [{
+            name: "Require successful canonical L0 evidence",
+            run: "gh api repos/SparkElf/singularity/actions/workflows/singularity-l0.yml/runs | jq '.workflow_runs[] | .head_sha'",
+          }],
         },
         images: {
           if: "${{ github.repository == 'SparkElf/singularity' }}",
           permissions: { contents: "read", packages: "write" },
           steps: [{ run: "echo images" }],
         },
-        release: {
+        "github-release": {
           if: "${{ github.repository == 'SparkElf/singularity' }}",
           permissions: { contents: "write" },
           steps: [{ run: "echo release" }],
@@ -236,6 +240,41 @@ test("release workflow permits isolated package and release writers", () => {
   );
 
   assert.deepEqual(failures, []);
+});
+
+test("release workflow rejects missing L0 evidence and over-broad verify permissions", () => {
+  const failures = validateWorkflowDocument(
+    {
+      jobs: {
+        verify: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { actions: "write", contents: "read" },
+          steps: [{ run: "echo verified" }],
+        },
+        images: {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "read", packages: "write" },
+          steps: [{ run: "echo images" }],
+        },
+        "github-release": {
+          if: "${{ github.repository == 'SparkElf/singularity' }}",
+          permissions: { contents: "write" },
+          steps: [{ run: "echo release" }],
+        },
+      },
+      on: {
+        push: { tags: ["singularity-v*"] },
+        workflow_dispatch: {},
+      },
+      permissions: { contents: "read" },
+    },
+    "singularity-release.yml",
+    "${{ github.repository == 'SparkElf/singularity' }}",
+  );
+
+  assert.ok(failures.includes("release verify job must require successful canonical Singularity L0 evidence by source SHA"));
+  assert.ok(failures.includes("release job verify may use actions permission only as actions: read on verify"));
+  assert.ok(failures.includes("release verify job permissions must be exactly actions: read and contents: read"));
 });
 
 test("release workflow rejects pull requests and combined release/package writers", () => {
@@ -260,6 +299,8 @@ test("release workflow rejects pull requests and combined release/package writer
   );
 
   assert.ok(failures.includes("release workflow must not run on pull_request"));
-  assert.ok(failures.includes("release job publish may only declare contents/packages permissions"));
+  assert.ok(failures.includes("release job publish may only declare actions/contents/packages permissions"));
+  assert.ok(failures.includes("release job publish may use packages: write only on images"));
+  assert.ok(failures.includes("release job publish may use contents: write only on github-release"));
   assert.ok(failures.includes("release job publish must not combine contents: write with packages: write"));
 });
