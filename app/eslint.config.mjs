@@ -54,4 +54,9 @@ export default [{
         "@typescript-eslint/no-explicit-any": "off",
         "@typescript-eslint/no-require-imports": "off",
     },
+}, {
+    files: ["src/protyle/browser-entry.ts"],
+    rules: {
+        "@typescript-eslint/triple-slash-reference": "off",
+    },
 }];
