@@ -1,14 +1,15 @@
 # AGENTS.md
 
-Singularity is an independent enterprise knowledge-base product built on the SiYuan codebase. The canonical repository is intended to be a **non-fork GitHub repository**; SiYuan is tracked explicitly through `upstream/baseline.yaml`, `diffs/`, and controlled promotion pull requests.
+Singularity is an independent enterprise knowledge-base product built on the SiYuan codebase. The canonical repository is `SparkElf/singularity`, it is a **non-fork GitHub repository**, and its canonical branch is `main`. SiYuan remains the explicit upstream at `siyuan-note/siyuan:master`, tracked through `upstream/baseline.yaml`, `diffs/`, and controlled promotion pull requests.
 
 Before non-mechanical work, read:
 
 1. `.agents/README.md` — required AI engineering sequence and authority.
 2. `DIFFS.md` — upstream/product divergence protocol.
-3. `upstream/baseline.yaml` — exact promoted SiYuan baseline.
+3. `upstream/baseline.yaml` — canonical branch plus exact promoted SiYuan baseline.
 4. `docs/ui-governance.md` — required UI ownership rules for visible changes.
-5. The relevant skill under `.agents/skills/`.
+5. The owning ADR under `docs/adr/` when the change reaches an established architecture/lifecycle/security rule.
+6. The relevant skill under `.agents/skills/`.
 
 ## 1. Required engineering sequence
 
@@ -22,7 +23,7 @@ For non-mechanical product changes use, in order:
 6. `singularity-test-governance`
 7. `singularity-verification`
 
-Use `singularity-maintain-diffs` whenever SiYuan-derived code, product-owned enterprise behavior, or the upstream baseline changes. Use `singularity-upstream-promotion` for any SiYuan version/commit promotion.
+Use `singularity-maintain-diffs` whenever SiYuan-derived code, product-owned enterprise behavior, or the upstream baseline changes. Use `singularity-upstream-promotion` for any SiYuan version/commit promotion, `singularity-pre-push-checks` before publishing a candidate branch, and `singularity-simplification-review` when evidence suggests duplicated/dead/speculative machinery can be removed.
 
 A passing CI run does not authorize merge, upstream promotion, release, or deployment. Those require an explicit maintainer decision.
 
@@ -53,10 +54,11 @@ The Go kernel remains the native content/data engine. The SiYuan TypeScript fron
 
 ## 3. Upstream policy
 
-- Upstream repository: `siyuan-note/siyuan`.
-- The exact promoted version/commit lives only in `upstream/baseline.yaml` plus compatibility metadata required by existing build tooling.
+- Canonical repository/branch: `SparkElf/singularity:main`.
+- Upstream repository/branch: `siyuan-note/siyuan:master`.
+- The exact promoted version/commit lives in `upstream/baseline.yaml` plus compatibility metadata required by existing build tooling.
 - Never treat GitHub fork metadata as the upstream tracking mechanism.
-- Never automatically merge SiYuan `master` into the canonical branch.
+- Never automatically merge SiYuan `master` into canonical `main`.
 - Upstream automation may discover, compare, report, and prepare a candidate branch/PR; it must not silently move the canonical baseline.
 - A promotion candidate is named `upstream/siyuan-<version>` and must classify every impacted active divergence as adopt-upstream, rebase-local, keep-local, or defer.
 - If upstream now satisfies a local capability, prefer retiring the local divergence over maintaining two implementations.
@@ -111,7 +113,7 @@ cd enterprise && pnpm test:e2e
 node scripts/singularity/verify-independent-governance.mjs
 ```
 
-Select checks through `singularity-test-governance`; do not run unrelated exhaustive suites merely for ceremony. Baseline promotions and release candidates are exceptions and require broader evidence.
+Use `singularity-pre-push-checks` and `singularity-test-governance` to select evidence from the changed surface; do not run unrelated exhaustive suites merely for ceremony. Baseline promotions and release candidates are exceptions and require broader evidence.
 
 ## 7. Do not hand-edit
 
@@ -134,8 +136,10 @@ Use source repositories/generators for generated artifacts.
 - Reuse existing icons rather than hand-writing new SVG artwork for routine controls.
 - Go changes are formatted with `gofmt`.
 
-## 9. Coding and documentation
+## 9. Decisions, coding, and documentation
 
+- `docs/adr/` is the durable architecture-decision system; `plans/` owns scoped execution plans. Do not create a second Agent Note decision tree.
+- A non-mechanical change that establishes or reverses a durable architecture, lifecycle, security, data, UI-system, release, or upstream-maintenance rule updates the owning ADR or adds a new ADR. Supersede historical ADRs explicitly rather than silently rewriting their original context.
 - Keep TypeScript/JavaScript consistent with the owning package conventions; current SiYuan source uses semicolons and double quotes.
 - Comments describe contracts, ownership, lifecycle, failure, or non-obvious constraints; do not preserve implementation diary/history in code comments.
 - Markdown paragraphs are not hand-wrapped unless the owning document requires it.
@@ -144,9 +148,10 @@ Use source repositories/generators for generated artifacts.
 
 ## 10. Git and GitHub
 
-- Work on a candidate/feature branch; the canonical branch is integration/release history.
+- Work on a candidate/feature branch; `main` is integration/release history.
 - Use Conventional Commits for Singularity-owned changes.
 - Pull requests must preserve the evidence headings in `.github/PULL_REQUEST_TEMPLATE.md`.
+- History rewrites use the exact observed remote OID with `--force-with-lease`; raw `--force` is not normal development procedure.
 - Do not merge, tag, publish a release, promote upstream, or deploy because checks pass. Stop for explicit maintainer approval.
 - When an issue/PR exists, use the canonical full GitHub reference in long-lived documentation where appropriate; do not fabricate issue links.
 
