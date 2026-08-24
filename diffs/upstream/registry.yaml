@@ -49,3 +49,27 @@ records:
       - cd enterprise && pnpm verify:b4
     notes:
       - This record decomposes the touched Protyle browser/overlay area from the native-app bootstrap record without changing the promoted SiYuan baseline.
+
+  - id: kernel-go-security-dependency-alignment
+    status: active
+    title: Kernel Go dependency security alignment ahead of upstream baseline
+    capability:
+      - Carry patched Go module versions required by Singularity's supply-chain vulnerability policy before the same versions are adopted by the promoted SiYuan baseline.
+      - Build the Worker-bundled kernel with the patched Go 1.26.6 toolchain so the embedded standard library satisfies the release vulnerability gate.
+    source:
+      repository: siyuan-note/siyuan
+      baseline_version: 3.7.2
+      baseline_commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
+    paths:
+      - kernel/go.mod
+      - kernel/go.sum
+      - enterprise/apps/worker/Dockerfile
+    owner: upstream-integration
+    compatibility: >-
+      The local module floor advances golang.org/x/mod to 0.40.0 and Go MVS correspondingly advances x/net to 0.58.0 and x/text to 0.41.0. The Worker kernel builder is pinned to the official Go 1.26.6 multi-architecture image digest. Re-evaluate and retire this record when a promoted SiYuan baseline carries equivalent or newer patched versions.
+    verification:
+      - go -C kernel test -vet=off -tags="fts5 sqlcipher" ./...
+      - GitHub Actions Singularity L0 supply-chain job
+      - GitHub Actions Singularity CI Impact package job
+    notes:
+      - The versions were generated with Go 1.26.6 using go get golang.org/x/mod@v0.40.0 followed by go mod tidy; generated go.mod/go.sum metadata was committed from a trusted same-repository one-shot maintenance run.
