@@ -95,7 +95,7 @@ test("@l3-release exposes real collaboration state and closes revoked sessions",
     const accessLossWarnings = viewerDiagnostics.consoleMessages.filter((message) =>
       message.type() === "warning" &&
       message.text().startsWith("[protyle.lifecycle]") &&
-      /category:\s*['\"]?forbidden\b/.test(message.text()),
+      /category:\s*['"]?forbidden\b/.test(message.text()),
     );
     expect(accessLossWarnings.length).toBeGreaterThan(0);
     expectBrowserHealthy(viewerDiagnostics, maximumRequestDurationMilliseconds, {
