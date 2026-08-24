@@ -2,6 +2,8 @@
 
 Singularity uses change-impact planning to select credible evidence while failing open to full validation whenever a change cannot be classified safely. CI proves a candidate; CD publishes only an explicitly approved release from the independent canonical repository.
 
+Canonical product work targets `SparkElf/singularity:main`. SiYuan tracking targets the separate read-only `siyuan-note/siyuan:master`. CI/CD documentation and scripts must keep those branch roles explicit.
+
 ## Principles
 
 1. **Evidence follows the changed surface.** Documentation does not need PostgreSQL and Playwright; a kernel or upstream-baseline change does.
@@ -10,6 +12,7 @@ Singularity uses change-impact planning to select credible evidence while failin
 4. **PR CI has read-only repository permissions.** Product tests do not receive production credentials or release secrets.
 5. **Release and deployment are separate maintainer decisions.** A passing PR does not create tags, releases, images, or deployments.
 6. **Upstream promotion is full-risk.** Changing the promoted SiYuan baseline selects the complete validation set.
+7. **Canonical and upstream branch names are different by design.** `main` means Singularity; `upstream/master` means SiYuan.
 
 ## Impact planner
 
@@ -33,29 +36,29 @@ The current routing starts conservative:
 - `enterprise/apps/api/**`, worker, shared enterprise packages → enterprise static + integration + E2E;
 - `app/**` → native app + enterprise bridge/static + browser + E2E;
 - `kernel/**` → integration + E2E + package;
-- `upstream/baseline.yaml` or legacy baseline metadata → full;
+- `upstream/baseline.yaml` or compatibility baseline metadata → full;
 - unknown path → full.
 
 The planner is allowed to become more precise only when repository evidence demonstrates that a narrower route is safe.
 
 ## Migration from `singularity-l0.yml`
 
-The existing L0 workflow remains authoritative during the repository-identity transition. It is not deleted until the replacement CI has demonstrated parity on the independent repository.
+The repository-identity cutover is complete, but CI responsibility migration is intentionally separate. The existing L0 workflow remains authoritative until replacement lanes demonstrate parity on the independent repository.
 
 Migration sequence:
 
-1. land governance and impact planning;
-2. run the new planner alongside L0 and compare selected lanes with actual L0 failures;
-3. split stable responsibilities into governance/static/integration/e2e/package workflows or jobs;
-4. configure required checks on the independent repository;
-5. keep scheduled full validation as a backstop;
+1. run independent governance and impact planning alongside L0;
+2. compare planner selections with actual L0 failures and runtime cost;
+3. split stable responsibilities into governance/static/integration/e2e/package jobs or workflows only when no evidence is lost;
+4. configure required checks on canonical `main`;
+5. keep scheduled or release-candidate full validation as a backstop;
 6. retire `singularity-l0.yml` only after no unique gate remains in it.
 
 Do not optimize runner minutes before behavioral parity is demonstrated.
 
 ## Upstream watch and promotion
 
-The scheduled upstream workflow fetches `siyuan-note/siyuan` read-only and generates a report against `upstream/baseline.yaml`. The report contains:
+The scheduled upstream workflow fetches `siyuan-note/siyuan:master` read-only and generates a report against `upstream/baseline.yaml`. The report contains:
 
 - exact baseline and candidate commit;
 - changed-path/module counts;
@@ -66,12 +69,12 @@ The scheduled upstream workflow fetches `siyuan-note/siyuan` read-only and gener
 
 A report is not a promotion. Promotion uses `singularity-upstream-promotion`, a candidate branch, full CI, and maintainer approval.
 
-## Release pipeline after independent cutover
+## Release pipeline
 
 The first CD target is reproducible release publication, not unattended production deployment.
 
 ```text
-approved release commit
+approved release commit on main
         │
         ├── full CI
         ├── clean-checkout build
@@ -88,13 +91,13 @@ approved release commit
         └── create GitHub Release with artifact/evidence links
 ```
 
-The repository already contains Dockerfiles for the enterprise Web and API services; release implementation must inventory all production services, including Worker, before claiming a complete deployment bundle.
+The repository contains enterprise Web/API/Worker production surfaces. Release implementation must build and attest the complete deployed service set before claiming a complete distribution.
 
 ## Release permissions
 
-Release publishing is intentionally not enabled on the legacy fork. After the new canonical repository reports `fork: false`, a dedicated release workflow may receive the minimum permissions required for its actions, for example repository contents for release creation, package write for GHCR, and OIDC only when provenance/signing actually uses it.
+The canonical repository is now independent (`fork: false`), so release automation may be introduced as a dedicated workflow after its package/tag contract is implemented and verified. It receives only the permissions it actually needs: repository contents for release creation, package write for GHCR, and OIDC only when provenance/signing uses it.
 
-Those permissions belong only to the release workflow. PR workflows remain read-only and never receive release credentials.
+Those permissions belong only to the release workflow. PR workflows remain read-only and never receive release credentials. The current L0-era workflow verifier intentionally remains read-only until the dedicated release policy replaces that assumption; do not weaken all workflows merely to enable publication.
 
 ## Deployment pipeline
 
@@ -114,7 +117,7 @@ production deploy by digest
 post-deploy health and rollback checkpoint
 ```
 
-Do not deploy `master`, a mutable image tag, or an unreviewed upstream-promotion candidate directly to production.
+Do not deploy canonical `main`, a mutable image tag, or an unreviewed upstream-promotion candidate directly to production. Deploy only an approved immutable release artifact/digest.
 
 ## Release acceptance criteria
 
