@@ -3,7 +3,7 @@ title: "ADR-038: 独立仓库与受控上游晋升"
 description: "定义Singularity脱离GitHub Fork Network后的canonical仓库身份、SiYuan基线、差异登记与受控promotion流程"
 author: "Singularity Contributors"
 date: "2026-08-24"
-version: "1.0.0"
+version: "1.0.1"
 status: "accepted"
 tags: ["adr", "repository", "upstream", "governance", "ci", "siyuan"]
 ---
@@ -16,7 +16,7 @@ Accepted
 
 ## Context
 
-Singularity最初以`SparkElf/singularity`作为` s iyuan-note/siyuan`的GitHub Fork开发。GitHub Fork Network身份限制了项目作为独立产品被发现、索引和治理的方式，也容易把“GitHub fork同步”误当作正式的上游维护模型。与此同时，Singularity已经在SiYuan 3.7.2基线上形成大量企业能力与原生`app/**`/`kernel/**`差异，简单追随上游`master`会把产品差异、上游能力重叠和回归风险隐藏在普通merge冲突之后。
+Singularity最初以`SparkElf/singularity`作为`siyuan-note/siyuan`的GitHub Fork开发。GitHub Fork Network身份限制了项目作为独立产品被发现、索引和治理的方式，也容易把“GitHub fork同步”误当作正式的上游维护模型。与此同时，Singularity已经在SiYuan 3.7.2基线上形成大量企业能力与原生`app/**`/`kernel/**`差异，简单追随上游`master`会把产品差异、上游能力重叠和回归风险隐藏在普通merge冲突之后。
 
 2026-08-24完成仓库身份切换：历史fork改名为`SparkElf/singularity-legacy-fork`，新的`SparkElf/singularity`以普通公开仓库创建并验证为`fork: false`。既有SiYuan和Singularity产品提交保持原Git对象与作者历史；仓库身份变化不改变AGPL-3.0、NOTICE、上游署名或源码提供义务。
 
