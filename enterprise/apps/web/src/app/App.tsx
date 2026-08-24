@@ -11,7 +11,6 @@ import { EnterpriseAdminLayout } from "@/enterprise/EnterpriseAdminLayout.tsx";
 import { GroupsPage } from "@/enterprise/GroupsPage.tsx";
 import { InvitationAcceptPage } from "@/enterprise/InvitationAcceptPage.tsx";
 import { MembersPage } from "@/enterprise/MembersPage.tsx";
-import { OidcPage } from "@/enterprise/OidcPage.tsx";
 import { ObservabilityPage } from "@/enterprise/ObservabilityPage.tsx";
 import { SharesPage } from "@/enterprise/SharesPage.tsx";
 import { SpaceAccessPage } from "@/enterprise/SpaceAccessPage.tsx";
@@ -60,7 +59,6 @@ export function App({
         <Route path="members" element={<MembersPage />} />
         <Route path="groups" element={<GroupsPage />} />
         <Route path="spaces" element={<SpacesManagementPage />} />
-        <Route path="oidc" element={<OidcPage />} />
         <Route path="audit" element={<AuditPage scope="organization" />} />
         <Route path="spaces/:spaceId/access" element={<SpaceAccessPage />} />
         <Route path="spaces/:spaceId/shares" element={<SharesPage />} />
