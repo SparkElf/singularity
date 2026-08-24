@@ -121,6 +121,7 @@ jobs:
       - name: Verify native app source
         run: |
           pnpm run lint
+          git diff --exit-code -- .
           pnpm test
         working-directory: app
 
