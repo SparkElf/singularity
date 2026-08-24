@@ -19,7 +19,7 @@ on:
       - "scripts/singularity/**"
   push:
     branches:
-      - master
+      - main
     paths:
       - ".dockerignore"
       - ".github/**"
@@ -72,7 +72,7 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: enterprise
 
-      - name: Verify fork governance
+      - name: Verify upstream and repository governance
         run: node scripts/singularity/verify-upstream-baseline.mjs
 
       - name: Test governance policy
