@@ -94,8 +94,7 @@ jobs:
         run: |
           node scripts/singularity/verify-upstream-baseline.mjs
           node scripts/singularity/verify-independent-governance.mjs
-          pnpm run test:l0-governance
-        working-directory: .
+          pnpm --dir enterprise run test:l0-governance
 
       - name: Read promoted upstream baseline
         id: baseline
@@ -219,6 +218,14 @@ jobs:
             printf 'GitHub Release %s already exists; refusing to mutate it\n' "$tag" >&2
             exit 1
           fi
+
+          generated_notes="$(gh api \
+            --method POST \
+            repos/SparkElf/singularity/releases/generate-notes \
+            -f tag_name="$tag" \
+            -f target_commitish="$SOURCE_SHA" \
+            --jq .body)"
+
           cat > release-notes.md <<EOF
           ## Release identity
 
@@ -232,9 +239,16 @@ jobs:
           - \`ghcr.io/sparkelf/singularity-worker:${RELEASE_VERSION}\`
 
           Each image is also published with immutable source tag \`sha-${SOURCE_SHA}\` and BuildKit provenance/SBOM attestations.
+
+          ${generated_notes}
           EOF
+
+          release_flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$tag" \
             --verify-tag \
             --title "Singularity ${RELEASE_VERSION}" \
-            --generate-notes \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            "${release_flags[@]}"
