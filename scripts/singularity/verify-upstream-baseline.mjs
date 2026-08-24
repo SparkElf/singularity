@@ -28,6 +28,7 @@ export const REQUIRED_L0_TRIGGER_PATHS = [
 ];
 
 const RELEASE_WORKFLOW = "singularity-release.yml";
+const REQUIRED_RELEASE_JOBS = ["verify", "images", "github-release"];
 
 const readJson = (root, path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
 const readText = (root, path) => readFileSync(resolve(root, path), "utf8");
@@ -169,6 +170,24 @@ function validateReleaseTriggers(workflow, failures) {
   }
 }
 
+function validateReleaseEvidenceGate(jobs, failures) {
+  for (const jobName of REQUIRED_RELEASE_JOBS) {
+    if (jobs?.[jobName] === undefined) {
+      failures.push(`release workflow must define ${jobName} job`);
+    }
+  }
+  const verifySteps = Array.isArray(jobs?.verify?.steps) ? jobs.verify.steps : [];
+  const evidenceStep = verifySteps.find((step) => step?.name === "Require successful canonical L0 evidence");
+  if (
+    evidenceStep === undefined ||
+    typeof evidenceStep.run !== "string" ||
+    !evidenceStep.run.includes("actions/workflows/singularity-l0.yml/runs") ||
+    !evidenceStep.run.includes(".head_sha")
+  ) {
+    failures.push("release verify job must require successful canonical Singularity L0 evidence by source SHA");
+  }
+}
+
 export function validateWorkflowDocument(workflow, path, expectedRepositoryGuard) {
   const failures = [];
   const isReleaseWorkflow = path === RELEASE_WORKFLOW;
@@ -197,6 +216,7 @@ export function validateWorkflowDocument(workflow, path, expectedRepositoryGuard
     failures.push("workflow must define at least one job");
     return failures;
   }
+  if (isReleaseWorkflow) validateReleaseEvidenceGate(jobs, failures);
 
   const guardBody = expectedRepositoryGuard
     .replace(/^\$\{\{\s*/, "")
