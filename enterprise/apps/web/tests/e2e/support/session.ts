@@ -109,6 +109,7 @@ export async function loginAs(
   }
   await account.fill(credentials.loginIdentifier);
   await page.getByLabel("密码").fill(credentials.password);
+  await page.getByLabel("我已阅读并同意奇点服务条款").check();
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 20_000 });
 }
