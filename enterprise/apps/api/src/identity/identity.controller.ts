@@ -10,7 +10,6 @@ import {
 } from "@nestjs/common";
 import {
   ApiBody,
-  ApiConsumes,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -26,9 +25,6 @@ import {
   AUTH_PASSWORD_RESET_PATH,
   AUTH_PASSWORD_RESET_REQUEST_PATH,
   AUTH_LOGOUT_PATH,
-  AUTH_MFA_CHALLENGE_VERIFY_PATH,
-  AUTH_SAML_CALLBACK_PATH,
-  AUTH_SAML_START_PATH,
   AUTH_REGISTER_PATH,
   AUTH_SETUP_PATH,
   AUTH_SESSION_COOKIE_NAME,
@@ -50,9 +46,6 @@ import {
   type SetupStatusResponse,
   REGISTER_REQUEST_OPENAPI_SCHEMA,
   SETUP_STATUS_RESPONSE_OPENAPI_SCHEMA,
-  registerRequestSchema,
-  type MfaLoginChallengeResponse,
-  type MfaLoginChallengeVerifyRequest,
   ACCEPT_LOCAL_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
   ACCEPT_ORGANIZATION_INVITATION_REQUEST_OPENAPI_SCHEMA,
   acceptLocalOrganizationInvitationRequestSchema,
@@ -60,7 +53,7 @@ import {
   loginRequestSchema,
   passwordResetConfirmRequestSchema,
   passwordResetRequestSchema,
-  mfaLoginChallengeVerifyRequestSchema,
+  registerRequestSchema,
 } from "@singularity/contracts";
 import { Prisma } from "@singularity/database";
 
@@ -81,48 +74,13 @@ import { PasswordResetService } from "./password-reset.service.js";
 import { SESSION_COOKIE_OPTIONS } from "./session-crypto.js";
 import { OrganizationManagementService } from "../organizations/organization-management.service.js";
 import { ZodValidationPipe } from "./zod-validation.pipe.js";
-import { SamlService } from "./saml.service.js";
-import { z } from "zod";
-import { conflict, notFound } from "../problem.js";
+import { conflict } from "../problem.js";
 
 const RETRY_AFTER_RESPONSE_HEADER_OPENAPI = {
   description: "Seconds until the login may be retried",
   required: true,
   schema: { type: "integer" as const, minimum: 1 },
 };
-
-const samlCallbackRequestSchema = z.object({
-  RelayState: z.string().max(4_096).optional(),
-  SAMLResponse: z.string().min(1).max(2_000_000),
-}).strict();
-const SAML_CALLBACK_OPENAPI_SCHEMA = {
-  type: "object" as const,
-  additionalProperties: false,
-  required: ["SAMLResponse"],
-  properties: {
-    RelayState: { type: "string" as const, maxLength: 4_096 },
-    SAMLResponse: { type: "string" as const, minLength: 1, maxLength: 2_000_000 },
-  },
-};
-const MFA_LOGIN_CHALLENGE_RESPONSE_OPENAPI_SCHEMA = {
-  type: "object" as const,
-  additionalProperties: false,
-  required: ["challengeToken", "expiresAt"],
-  properties: {
-    challengeToken: { type: "string" as const },
-    expiresAt: { type: "string" as const, format: "date-time" },
-  },
-};
-
-/** 从 ACS 请求 URL 读取并验证 providerId；provider 标识不再依赖 IdP 表单附加字段。 */
-function samlProviderId(request: HttpRequestBoundary): string {
-  const value = new URL(request.url, "https://singularity.invalid").searchParams.get("providerId");
-  const parsed = z.string().uuid().safeParse(value);
-  if (!parsed.success) {
-    throw notFound();
-  }
-  return parsed.data;
-}
 
 @ApiTags("identity")
 @Controller()
@@ -131,7 +89,6 @@ export class IdentityController {
     private readonly identity: IdentityService,
     private readonly provisioning: IdentityProvisioningService,
     private readonly organizations: OrganizationManagementService,
-    private readonly saml: SamlService,
     private readonly passwordReset: PasswordResetService,
   ) {}
 
@@ -140,7 +97,6 @@ export class IdentityController {
   @ApiProblemResponses(503)
   @ApiOperation({ summary: "Read installation status" })
   @ApiOkResponse({ schema: SETUP_STATUS_RESPONSE_OPENAPI_SCHEMA })
-  /** 读取首次安装状态；注册入口不依赖该状态，始终保持可用。 */
   async getSetupStatus(): Promise<SetupStatusResponse> {
     return this.provisioning.getSetupStatus();
   }
@@ -153,7 +109,6 @@ export class IdentityController {
   @ApiOperation({ summary: "Create a local account" })
   @ApiBody({ schema: REGISTER_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: LOGIN_RESPONSE_OPENAPI_SCHEMA })
-  /** 在已初始化系统中只创建本地账号；组织归属由邀请、管理员分配或身份同步建立。 */
   async register(
     @Body(new ZodValidationPipe(registerRequestSchema)) body: RegisterRequest,
     @Req() request: HttpRequestBoundary,
@@ -165,11 +120,10 @@ export class IdentityController {
         currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
         requestId: request.id,
         createUser: (transaction) =>
-          this.provisioning
-            .createRegisteredUserInTransaction(transaction, {
-              loginIdentifier: body.loginIdentifier,
-              passwordDigest,
-            }),
+          this.provisioning.createRegisteredUserInTransaction(transaction, {
+            loginIdentifier: body.loginIdentifier,
+            passwordDigest,
+          }),
       });
       reply.setCookie(
         AUTH_SESSION_COOKIE_NAME,
@@ -178,7 +132,10 @@ export class IdentityController {
       );
       return { csrfToken: session.csrfToken };
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
         throw conflict({ cause: error });
       }
       throw error;
@@ -201,7 +158,6 @@ export class IdentityController {
     headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
   })
-  /** 接收邮箱找回请求并统一返回 accepted，避免从公开接口枚举账号是否存在。 */
   async requestPasswordReset(
     @Body(new ZodValidationPipe(passwordResetRequestSchema))
     body: PasswordResetRequest,
@@ -228,7 +184,6 @@ export class IdentityController {
     headers: { "Retry-After": RETRY_AFTER_RESPONSE_HEADER_OPENAPI },
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[429],
   })
-  /** 消费单次令牌并原子更新密码；令牌无效时不透露用户或会话内部信息。 */
   async confirmPasswordReset(
     @Body(new ZodValidationPipe(passwordResetConfirmRequestSchema))
     body: PasswordResetConfirmRequest,
@@ -268,64 +223,12 @@ export class IdentityController {
       request.cookies[AUTH_SESSION_COOKIE_NAME],
       request.id,
     );
-    reply.setCookie(AUTH_SESSION_COOKIE_NAME, session.tokenValue, SESSION_COOKIE_OPTIONS);
+    reply.setCookie(
+      AUTH_SESSION_COOKIE_NAME,
+      session.tokenValue,
+      SESSION_COOKIE_OPTIONS,
+    );
     return { csrfToken: session.csrfToken };
-  }
-
-  @Post(AUTH_MFA_CHALLENGE_VERIFY_PATH)
-  @HttpCode(200)
-  @Header("Cache-Control", "no-store")
-  @SameOrigin()
-  @ApiProblemResponses(400, 401, 403, 503)
-  @ApiOperation({ summary: "Verify an MFA login challenge" })
-  async verifyMfaChallenge(
-    @Body(new ZodValidationPipe(mfaLoginChallengeVerifyRequestSchema)) body: MfaLoginChallengeVerifyRequest,
-    @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
-  ): Promise<LoginResponse> {
-    const session = await this.identity.verifyMfaLogin({
-      challengeToken: body.challengeToken,
-      code: body.code,
-      currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
-      requestId: request.id,
-    });
-    reply.setCookie(AUTH_SESSION_COOKIE_NAME, session.tokenValue, SESSION_COOKIE_OPTIONS);
-    return { csrfToken: session.csrfToken };
-  }
-
-  @Post(AUTH_SAML_CALLBACK_PATH)
-  @HttpCode(200)
-  @Header("Cache-Control", "no-store")
-  @ApiConsumes("application/x-www-form-urlencoded")
-  @ApiBody({ schema: SAML_CALLBACK_OPENAPI_SCHEMA })
-  @ApiProblemResponses(400, 401, 403, 404, 503)
-  @ApiOperation({ summary: "Complete a SAML login assertion" })
-  async samlCallback(
-    @Body(new ZodValidationPipe(samlCallbackRequestSchema)) body: { RelayState?: string; SAMLResponse: string },
-    @Req() request: HttpRequestBoundary,
-    @Res({ passthrough: true }) reply: HttpReplyBoundary,
-  ): Promise<LoginResponse> {
-    const providerId = samlProviderId(request);
-    const session = await this.saml.authenticate({
-      currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
-      encodedResponse: body.SAMLResponse,
-      providerId,
-      requestId: request.id,
-    });
-    reply.setCookie(AUTH_SESSION_COOKIE_NAME, session.tokenValue, SESSION_COOKIE_OPTIONS);
-    return { csrfToken: session.csrfToken };
-  }
-
-  @Get(AUTH_SAML_START_PATH)
-  @Header("Cache-Control", "no-store")
-  @SameOrigin()
-  @ApiProblemResponses(400, 403, 404, 503)
-  @ApiOperation({ summary: "Create a SAML login redirect" })
-  async samlStart(
-    @Req() request: HttpRequestBoundary,
-  ): Promise<{ location: string }> {
-    const providerId = samlProviderId(request);
-    return this.saml.authorize(providerId, request.id);
   }
 
   @Post(AUTH_INVITATION_ACCEPT_PATH)
@@ -356,7 +259,6 @@ export class IdentityController {
   @ApiOperation({ summary: "Create a local authenticated session" })
   @ApiBody({ schema: LOGIN_REQUEST_OPENAPI_SCHEMA })
   @ApiOkResponse({ schema: LOGIN_RESPONSE_OPENAPI_SCHEMA })
-  @ApiResponse({ status: 202, schema: MFA_LOGIN_CHALLENGE_RESPONSE_OPENAPI_SCHEMA })
   @ApiResponse({
     status: 400,
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[400],
@@ -382,7 +284,7 @@ export class IdentityController {
     @Body(new ZodValidationPipe(loginRequestSchema)) body: LoginRequest,
     @Req() request: HttpRequestBoundary,
     @Res({ passthrough: true }) reply: HttpReplyBoundary,
-  ): Promise<LoginResponse | MfaLoginChallengeResponse> {
+  ): Promise<LoginResponse> {
     const session = await this.identity.login({
       currentTokenValue: request.cookies[AUTH_SESSION_COOKIE_NAME],
       loginIdentifier: body.loginIdentifier,
@@ -390,12 +292,12 @@ export class IdentityController {
       requestId: request.id,
       sourceAddress: request.ip,
     });
-    if ("tokenValue" in session) {
-      reply.setCookie(AUTH_SESSION_COOKIE_NAME, session.tokenValue, SESSION_COOKIE_OPTIONS);
-      return { csrfToken: session.csrfToken };
-    }
-    reply.status(202);
-    return session;
+    reply.setCookie(
+      AUTH_SESSION_COOKIE_NAME,
+      session.tokenValue,
+      SESSION_COOKIE_OPTIONS,
+    );
+    return { csrfToken: session.csrfToken };
   }
 
   @Get(AUTH_CSRF_PATH)
@@ -411,9 +313,7 @@ export class IdentityController {
     status: 503,
     schema: API_PROBLEM_OPENAPI_SCHEMA_BY_STATUS[503],
   })
-  getCsrf(
-    @CurrentSession() session: AuthenticatedSession,
-  ): CsrfResponse {
+  getCsrf(@CurrentSession() session: AuthenticatedSession): CsrfResponse {
     return { csrfToken: session.csrfToken };
   }
 
