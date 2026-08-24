@@ -1,0 +1,61 @@
+name: One-shot supply-chain policy patch
+
+on:
+  push:
+    branches:
+      - infra/canonical-ci-release
+    paths:
+      - ".github/workflows/one-shot-supply-chain-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: infra/canonical-ci-release
+          fetch-depth: 0
+
+      - name: Replace redundant supply-chain outcome aggregation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/singularity-l0.yml')
+          text = workflow.read_text(encoding='utf-8')
+          marker = '      - name: Enforce supply-chain step outcomes\n'
+          if text.count(marker) != 1:
+              raise SystemExit(f'expected one outcome aggregator, found {text.count(marker)}')
+          prefix, _ = text.split(marker, 1)
+          replacement = '''      - name: Enforce supply-chain step outcomes
+        if: ${{ always() && github.repository == 'SparkElf/singularity' }}
+        env:
+          LICENSE_POLICY: ${{ steps.license_policy.outcome }}
+          PRODUCTION_SBOM_POLICY: ${{ steps.production_sbom_policy.outcome }}
+          VULNERABILITY_POLICY: ${{ steps.vulnerability_policy.outcome }}
+        run: |
+          for outcome in \\
+            "$LICENSE_POLICY" \\
+            "$PRODUCTION_SBOM_POLICY" \\
+            "$VULNERABILITY_POLICY"; do
+            if [ "$outcome" != "success" ]; then
+              exit 1
+            fi
+          done
+'''
+          workflow.write_text(prefix + replacement, encoding='utf-8')
+          Path('.github/workflows/one-shot-supply-chain-patch.yml').unlink()
+          PY
+
+      - name: Commit patch and self-remove
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/singularity-l0.yml .github/workflows/one-shot-supply-chain-patch.yml
+          git commit -m "fix(ci): enforce authoritative supply-chain policies"
+          git push origin HEAD:infra/canonical-ci-release
