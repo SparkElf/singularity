@@ -248,3 +248,51 @@ jobs:
           path: artifacts/upstream-impact/
           if-no-files-found: error
           retention-days: 30
+
+  dependency-audit:
+    if: ${{ github.repository == 'SparkElf/singularity' && github.event_name == 'pull_request' && github.head_ref == 'infra/canonical-ci-release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 11.9.0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: enterprise/pnpm-lock.yaml
+
+      - name: Install enterprise dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: enterprise
+
+      - name: Record vulnerable dependency parent chains
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/dependency-audit
+          {
+            for package in brace-expansion deepmerge-ts fast-uri find-my-way ip-address js-yaml nanoid postcss react-router undici; do
+              echo "===== ${package} ====="
+              pnpm why --recursive "$package" || true
+              echo
+            done
+          } > artifacts/dependency-audit/pnpm-why.txt
+          docker buildx imagetools inspect golang:1.26.6-bookworm \
+            > artifacts/dependency-audit/golang-1.26.6-bookworm.txt
+
+      - name: Upload dependency audit
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: dependency-audit-${{ github.sha }}
+          path: artifacts/dependency-audit/
+          if-no-files-found: error
+          retention-days: 7
