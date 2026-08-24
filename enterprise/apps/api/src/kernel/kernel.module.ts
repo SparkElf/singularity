@@ -37,16 +37,17 @@ import { SharePasswordRateLimiter } from "../shares/share-password-rate-limiter.
 import { ShareService } from "../shares/share.service.js";
 import { SHARE_KERNEL } from "../shares/share.types.js";
 import { KERNEL_RUNTIME_DEPLOYMENT_CONFIGURATION } from "../tokens.js";
-import { CollaborationCoordinator, COLLABORATION_FEATURE_GATE, KERNEL_COLLABORATION_PORT } from "../collaboration/realtime-coordinator.js";
+import {
+  CollaborationCoordinator,
+  COLLABORATION_FEATURE_GATE,
+  KERNEL_COLLABORATION_PORT,
+} from "../collaboration/realtime-coordinator.js";
 import { RealtimeCollaborationWebSocketGateway } from "../collaboration/realtime-websocket.gateway.js";
 import { CollaborationOperationDiscovery } from "../collaboration/realtime-handler-discovery.js";
 import { RealtimeOperationHandlers } from "../collaboration/realtime-operation-handlers.js";
 import { KernelProductionCollaborationPort } from "../collaboration/kernel-production-collaboration.port.js";
 import { CollaborationControlService } from "../collaboration/collaboration-control.service.js";
 import { RealtimeFeatureController } from "../collaboration/realtime-feature.controller.js";
-import { GovernanceController } from "../governance/governance.controller.js";
-import { EnterpriseGovernanceService } from "../governance/governance.service.js";
-import { ScimTokenGuard } from "../governance/scim-token.guard.js";
 
 export interface KernelGatewayModuleOptions
   extends KernelGatewayRuntimeConfiguration {
@@ -93,8 +94,6 @@ function kernelProviders(options: KernelGatewayModuleOptions): Provider[] {
     AccessChangedListener,
     SpaceDiscoveryService,
     ContentDirectoryService,
-    EnterpriseGovernanceService,
-    ScimTokenGuard,
     KernelAccessService,
     KernelGatewayService,
     HistoryService,
@@ -137,7 +136,6 @@ export class KernelGatewayModule {
         PublicShareController,
         ShareManagementController,
         RealtimeFeatureController,
-        GovernanceController,
       ],
       providers: kernelProviders(options),
       exports: [

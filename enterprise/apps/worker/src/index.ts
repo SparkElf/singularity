@@ -10,7 +10,6 @@ export {
   type RestoreSpaceJob,
   type ReconcileContentAuditJob,
   type SampleKernelJob,
-  type GovernanceTaskJob,
   type WorkerJobBase,
   type WorkerJobHandler,
   type WorkerJobKind,
@@ -60,7 +59,6 @@ export {
   type RestoreDeploymentPort,
 } from "./l1-handlers.js";
 export { ContentAuditHandler } from "./content-audit-reconciliation.js";
-export { GovernanceTaskHandler } from "./governance-task-handler.js";
 export {
   ArchiveAuditJobProducer,
   ContentAuditJobProducer,
