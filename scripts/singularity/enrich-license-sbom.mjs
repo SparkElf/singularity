@@ -16,11 +16,11 @@ function readOutputPath(args) {
 
 const outputPath = readOutputPath(process.argv.slice(2));
 if (outputPath.endsWith("source.cdx.json")) {
-  const enriched = enrichMaterializedLicenseSboms({
+  const enriched = await enrichMaterializedLicenseSboms({
     roots: ["enterprise", "app"],
     sboms: [outputPath],
   });
   process.stdout.write(
-    `Enriched ${String(enriched)} source SBOM components from materialized package manifests\n`,
+    `Enriched ${String(enriched)} source SBOM components from package manifests\n`,
   );
 }

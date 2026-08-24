@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repositoryRoot = resolve(dirname(scriptPath), "../..");
+const enterpriseRequire = createRequire(resolve(repositoryRoot, "enterprise/package.json"));
+const { parse } = enterpriseRequire("yaml");
 const evidencePropertyPrefix = "io.singularity.license.evidence";
 
 function readArgumentValue(args, index, option) {
@@ -65,6 +68,7 @@ function readManifest(path) {
     return null;
   }
   return {
+    kind: "materialized-package-manifest",
     license: manifest.license.trim(),
     name: manifest.name,
     path: repositoryPath(manifestPath),
@@ -135,11 +139,106 @@ function buildPackageIndex(roots) {
   return index;
 }
 
+function lockfilePackageIdentity(key) {
+  const versionSeparator = key.lastIndexOf("@");
+  if (versionSeparator <= 0 || versionSeparator === key.length - 1) {
+    return null;
+  }
+  const name = key.slice(0, versionSeparator);
+  const version = key.slice(versionSeparator + 1).split("(", 1)[0];
+  return name.length === 0 || version.length === 0 ? null : { name, version };
+}
+
+function buildLockfileIntegrityIndex(roots) {
+  const index = new Map();
+  for (const root of roots) {
+    const lockfilePath = resolve(repositoryRoot, root, "pnpm-lock.yaml");
+    if (!existsSync(lockfilePath)) {
+      continue;
+    }
+    const lockfile = parse(readFileSync(lockfilePath, "utf8"));
+    const packages = lockfile?.packages;
+    if (packages === null || typeof packages !== "object" || Array.isArray(packages)) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(packages)) {
+      const identity = lockfilePackageIdentity(key);
+      const integrity = value?.resolution?.integrity;
+      if (identity === null || typeof integrity !== "string" || integrity.length === 0) {
+        continue;
+      }
+      const packageIdentityKey = packageKey(identity.name, identity.version);
+      const existing = index.get(packageIdentityKey);
+      if (existing !== undefined && existing !== integrity) {
+        throw new Error(`Conflicting lockfile integrity for ${identity.name}@${identity.version}`);
+      }
+      index.set(packageIdentityKey, integrity);
+    }
+  }
+  return index;
+}
+
+function registryManifestUrl(name, version) {
+  const configuredRegistry = process.env.npm_config_registry ?? "https://registry.npmjs.org/";
+  const registry = configuredRegistry.endsWith("/")
+    ? configuredRegistry
+    : `${configuredRegistry}/`;
+  return new URL(`${encodeURIComponent(name)}/${encodeURIComponent(version)}`, registry).toString();
+}
+
+async function readRegistryManifest(name, version, expectedIntegrity) {
+  if (expectedIntegrity === undefined) {
+    return null;
+  }
+  const url = registryManifestUrl(name, version);
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const text = await response.text();
+  const manifest = JSON.parse(text);
+  if (
+    manifest?.name !== name ||
+    manifest?.version !== version ||
+    typeof manifest?.license !== "string" ||
+    manifest.license.trim().length === 0 ||
+    manifest?.dist?.integrity !== expectedIntegrity
+  ) {
+    return null;
+  }
+  return {
+    integrity: expectedIntegrity,
+    kind: "registry-package-manifest",
+    license: manifest.license.trim(),
+    name,
+    sha256: sha256(text),
+    url,
+    version,
+  };
+}
+
 function hasLicense(component) {
   return Array.isArray(component?.licenses) && component.licenses.length > 0;
 }
 
-function enrichSbom(path, packageIndex) {
+function attachEvidence(component, evidence) {
+  component.licenses = [{ expression: evidence.license }];
+  component.properties ??= [];
+  component.properties.push(
+    { name: `${evidencePropertyPrefix}.kind`, value: evidence.kind },
+    ...(evidence.kind === "materialized-package-manifest"
+      ? [{ name: `${evidencePropertyPrefix}.path`, value: evidence.path }]
+      : [
+          { name: `${evidencePropertyPrefix}.url`, value: evidence.url },
+          { name: `${evidencePropertyPrefix}.integrity`, value: evidence.integrity },
+        ]),
+    { name: `${evidencePropertyPrefix}.sha256`, value: evidence.sha256 },
+  );
+}
+
+async function enrichSbom(path, packageIndex, integrityIndex) {
   const absolutePath = resolve(repositoryRoot, path);
   const sbom = JSON.parse(readFileSync(absolutePath, "utf8"));
   if (sbom.bomFormat !== "CycloneDX" || !Array.isArray(sbom.components)) {
@@ -157,17 +256,17 @@ function enrichSbom(path, packageIndex) {
     ) {
       continue;
     }
-    const evidence = packageIndex.get(packageKey(component.name, component.version));
-    if (evidence === undefined) {
+    const key = packageKey(component.name, component.version);
+    const materialized = packageIndex.get(key);
+    const evidence = materialized ?? await readRegistryManifest(
+      component.name,
+      component.version,
+      integrityIndex.get(key),
+    );
+    if (evidence === null || evidence === undefined) {
       continue;
     }
-    component.licenses = [{ expression: evidence.license }];
-    component.properties ??= [];
-    component.properties.push(
-      { name: `${evidencePropertyPrefix}.kind`, value: "materialized-package-manifest" },
-      { name: `${evidencePropertyPrefix}.path`, value: evidence.path },
-      { name: `${evidencePropertyPrefix}.sha256`, value: evidence.sha256 },
-    );
+    attachEvidence(component, evidence);
     enriched += 1;
   }
 
@@ -175,19 +274,20 @@ function enrichSbom(path, packageIndex) {
   return enriched;
 }
 
-export function enrichMaterializedLicenseSboms({ roots, sboms }) {
+export async function enrichMaterializedLicenseSboms({ roots, sboms }) {
   const packageIndex = buildPackageIndex(roots);
+  const integrityIndex = buildLockfileIntegrityIndex(roots);
   let enriched = 0;
   for (const sbom of sboms) {
-    enriched += enrichSbom(sbom, packageIndex);
+    enriched += await enrichSbom(sbom, packageIndex, integrityIndex);
   }
   return enriched;
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {
   const { roots, sboms } = parseArguments(process.argv.slice(2));
-  const enriched = enrichMaterializedLicenseSboms({ roots, sboms });
+  const enriched = await enrichMaterializedLicenseSboms({ roots, sboms });
   process.stdout.write(
-    `Enriched ${String(enriched)} CycloneDX components from materialized package manifests\n`,
+    `Enriched ${String(enriched)} CycloneDX components from package manifests\n`,
   );
 }

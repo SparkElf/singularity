@@ -135,6 +135,7 @@ export class IdentityService {
       throw unauthenticated();
     }
 
+    await this.loginRateLimiter.rewardAccount(input.loginIdentifier);
     if (await this.mfa.hasEnabledFactor(candidate.id)) {
       // 密码已经通过但 MFA 尚未完成时不创建会话，只发放一次性 challenge。
       return this.mfa.createLoginChallenge(candidate.id);
