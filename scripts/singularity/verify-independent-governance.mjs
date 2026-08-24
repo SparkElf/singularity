@@ -24,6 +24,18 @@ const REQUIRED_PR_HEADINGS = [
   "## Migration and security",
   "## Related issue",
 ];
+const REQUIRED_CODEOWNER_LINES = [
+  "* @SparkElf",
+  "/.github/ @SparkElf",
+  "/.agents/ @SparkElf",
+  "/upstream/ @SparkElf",
+  "/diffs/ @SparkElf",
+  "/scripts/singularity/ @SparkElf",
+  "/docs/adr/ @SparkElf",
+  "/app/ @SparkElf",
+  "/kernel/ @SparkElf",
+  "/enterprise/ @SparkElf",
+];
 
 const readText = (path) => readFileSync(resolve(repositoryRoot, path), "utf8");
 const readJson = (path) => JSON.parse(readText(path));
@@ -90,6 +102,57 @@ function validateRegistry(path, kind, baselineCommit, failures) {
   }
 }
 
+function validateRepositoryGovernance(governance, failures) {
+  if (governance?.schemaVersion !== 1) failures.push(".github/repository-governance.json schemaVersion must be 1");
+  if (governance?.repository !== "SparkElf/singularity") failures.push("repository governance target must be SparkElf/singularity");
+  if (governance?.canonicalBranch !== "main") failures.push("repository governance canonicalBranch must be main");
+  if (governance?.visibility !== "public") failures.push("repository governance visibility must be public");
+
+  requireString(governance?.description, "repository governance description", failures);
+  if (typeof governance?.description === "string" && governance.description.length > 350) {
+    failures.push("repository governance description must fit GitHub's 350-character repository description limit");
+  }
+  if (governance?.homepage !== "") failures.push("repository governance homepage must remain empty until Singularity owns a public site");
+
+  const topics = governance?.topics;
+  if (!Array.isArray(topics) || topics.length === 0 || topics.length > 20) {
+    failures.push("repository governance topics must contain between 1 and 20 topics");
+  } else {
+    const uniqueTopics = new Set(topics);
+    if (uniqueTopics.size !== topics.length) failures.push("repository governance topics must be unique");
+    for (const topic of topics) {
+      if (typeof topic !== "string" || !/^[a-z0-9][a-z0-9-]{0,49}$/.test(topic)) {
+        failures.push(`invalid GitHub topic in repository governance: ${String(topic)}`);
+      }
+    }
+    for (const requiredTopic of ["enterprise-knowledge-base", "knowledge-base", "siyuan", "self-hosted"]) {
+      if (!uniqueTopics.has(requiredTopic)) failures.push(`repository governance topics must include ${requiredTopic}`);
+    }
+  }
+
+  const features = governance?.features;
+  if (features?.issues !== true) failures.push("repository governance must keep Issues enabled");
+  if (features?.projects !== true) failures.push("repository governance must keep Projects enabled while it is the planning surface");
+  if (features?.wiki !== false) failures.push("repository governance must keep Wiki disabled in favor of versioned docs");
+  if (features?.discussions !== true) failures.push("repository governance must enable Discussions for non-issue community/design conversations");
+
+  const mergePolicy = governance?.mergePolicy;
+  if (mergePolicy?.allowMergeCommit !== true) failures.push("repository governance must allow merge commits for auditable upstream promotion");
+  if (mergePolicy?.allowAutoMerge !== false) failures.push("repository governance must keep auto-merge disabled");
+  if (mergePolicy?.requireLinearHistory !== false) failures.push("repository governance must not require linear history while upstream promotion preserves ancestry");
+
+  const ruleset = governance?.mainRuleset;
+  if (ruleset?.requirePullRequest !== true) failures.push("main ruleset must require pull requests");
+  if (ruleset?.requiredApprovingReviewCount !== 0) failures.push("single-maintainer main ruleset must not require an impossible separate approval");
+  if (ruleset?.requireCodeOwnerReview !== false) failures.push("single-maintainer main ruleset must not require a separate CODEOWNER approval");
+  if (ruleset?.requireConversationResolution !== true) failures.push("main ruleset must require conversation resolution");
+  if (ruleset?.blockForcePushes !== true) failures.push("main ruleset must block force pushes");
+  if (ruleset?.blockDeletions !== true) failures.push("main ruleset must block deletion");
+  if (!Array.isArray(ruleset?.requiredChecksAfterFirstCanonicalPullRequest) || ruleset.requiredChecksAfterFirstCanonicalPullRequest.length === 0) {
+    failures.push("main ruleset must declare intended required checks after the first canonical pull request establishes exact contexts");
+  }
+}
+
 function changedFilesFromEnvironment() {
   const base = process.env.SINGULARITY_GOVERNANCE_BASE_SHA?.trim();
   const head = process.env.SINGULARITY_GOVERNANCE_HEAD_SHA?.trim();
@@ -114,10 +177,13 @@ export function verifyIndependentGovernance() {
     ".agents/skills/singularity-simplification-review/SKILL.md",
     ".agents/skills/singularity-pr-authoring/SKILL.md",
     ".agents/skills/singularity-release-notes/SKILL.md",
+    ".github/CODEOWNERS",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/repository-governance.json",
     "DIFFS.md",
     "docs/adr/0038-independent-repository-and-controlled-upstream-promotion.md",
     "docs/ci-cd.md",
+    "docs/github-governance.md",
     "docs/repository-rebuild.md",
     "docs/ui-governance.md",
     "upstream/baseline.yaml",
@@ -131,6 +197,9 @@ export function verifyIndependentGovernance() {
 
   const baseline = readYaml("upstream/baseline.yaml");
   const compatibilityBaseline = readJson("config/upstream-baseline.json");
+  const repositoryGovernance = readJson(".github/repository-governance.json");
+  validateRepositoryGovernance(repositoryGovernance, failures);
+
   if (baseline?.version !== 1) failures.push("upstream/baseline.yaml must declare version: 1");
   if (baseline?.canonical?.repository !== "SparkElf/singularity") failures.push("canonical repository must be SparkElf/singularity");
   if (baseline?.canonical?.branch !== "main") failures.push("canonical branch must be main");
@@ -142,6 +211,12 @@ export function verifyIndependentGovernance() {
   if (baseline?.tracking?.require_pull_request !== true) failures.push("upstream promotion must require a pull request");
   if (baseline?.tracking?.require_full_governance !== true) failures.push("upstream promotion must require full governance");
 
+  if (repositoryGovernance?.repository !== baseline?.canonical?.repository) {
+    failures.push("repository governance repository must match upstream/baseline.yaml canonical repository");
+  }
+  if (repositoryGovernance?.canonicalBranch !== baseline?.canonical?.branch) {
+    failures.push("repository governance canonicalBranch must match upstream/baseline.yaml");
+  }
   if (compatibilityBaseline?.canonicalRepository !== baseline?.canonical?.repository) {
     failures.push("config/upstream-baseline.json canonicalRepository must match upstream/baseline.yaml");
   }
@@ -170,6 +245,11 @@ export function verifyIndependentGovernance() {
 
   validateRegistry("diffs/upstream/registry.yaml", "upstream", baselineCommit, failures);
   validateRegistry("diffs/product/registry.yaml", "product", baselineCommit, failures);
+
+  const codeowners = readText(".github/CODEOWNERS");
+  for (const requiredLine of REQUIRED_CODEOWNER_LINES) {
+    if (!codeowners.split(/\r?\n/).includes(requiredLine)) failures.push(`CODEOWNERS is missing required ownership: ${requiredLine}`);
+  }
 
   const prTemplate = readText(".github/PULL_REQUEST_TEMPLATE.md");
   for (const heading of REQUIRED_PR_HEADINGS) {
