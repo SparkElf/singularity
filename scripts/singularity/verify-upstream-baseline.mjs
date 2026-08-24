@@ -27,6 +27,8 @@ export const REQUIRED_L0_TRIGGER_PATHS = [
   "scripts/singularity/**",
 ];
 
+const RELEASE_WORKFLOW = "singularity-release.yml";
+
 const readJson = (root, path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
 const readText = (root, path) => readFileSync(resolve(root, path), "utf8");
 const runGit = (root, ...args) => execFileSync("git", args, {
@@ -99,18 +101,55 @@ function sha256(root, path) {
   return createHash("sha256").update(readFileSync(resolve(root, path))).digest("hex");
 }
 
+function isReadOnlyWorkflowPermissions(permissions) {
+  return permissions !== null &&
+    typeof permissions === "object" &&
+    !Array.isArray(permissions) &&
+    Object.keys(permissions).length === 1 &&
+    permissions.contents === "read";
+}
+
+function validateReleaseJobPermissions(jobName, permissions, failures) {
+  if (permissions === undefined) return;
+  if (permissions === null || typeof permissions !== "object" || Array.isArray(permissions)) {
+    failures.push(`release job ${jobName} permissions must be a mapping`);
+    return;
+  }
+
+  const keys = Object.keys(permissions).sort();
+  if (keys.some((key) => key !== "contents" && key !== "packages")) {
+    failures.push(`release job ${jobName} may only declare contents/packages permissions`);
+  }
+  for (const [name, value] of Object.entries(permissions)) {
+    if (!["read", "write", "none"].includes(value)) {
+      failures.push(`release job ${jobName} permission ${name} has invalid value ${String(value)}`);
+    }
+  }
+  if (permissions.contents === "write" && permissions.packages === "write") {
+    failures.push(`release job ${jobName} must not combine contents: write with packages: write`);
+  }
+}
+
+function validateReleaseTriggers(workflow, failures) {
+  if (workflow?.on?.pull_request !== undefined) {
+    failures.push("release workflow must not run on pull_request");
+  }
+  const tags = workflow?.on?.push?.tags;
+  if (!Array.isArray(tags) || !tags.includes("singularity-v*")) {
+    failures.push("release workflow push trigger must include singularity-v*");
+  }
+  if (workflow?.on?.workflow_dispatch === undefined) {
+    failures.push("release workflow must support workflow_dispatch dry runs");
+  }
+}
+
 export function validateWorkflowDocument(workflow, path, expectedRepositoryGuard) {
   const failures = [];
-  const permissions = workflow?.permissions;
-  if (
-    permissions === null ||
-    typeof permissions !== "object" ||
-    Array.isArray(permissions) ||
-    Object.keys(permissions).length !== 1 ||
-    permissions.contents !== "read"
-  ) {
+  const isReleaseWorkflow = path === RELEASE_WORKFLOW;
+  if (!isReadOnlyWorkflowPermissions(workflow?.permissions)) {
     failures.push("workflow permissions must be exactly contents: read");
   }
+  if (isReleaseWorkflow) validateReleaseTriggers(workflow, failures);
 
   if (path === "singularity-l0.yml") {
     for (const eventName of ["pull_request", "push"]) {
@@ -145,7 +184,9 @@ export function validateWorkflowDocument(workflow, path, expectedRepositoryGuard
     if (typeof job.if !== "string" || !job.if.includes(guardBody)) {
       failures.push(`job ${jobName} must include the canonical repository guard`);
     }
-    if (job.permissions !== undefined) {
+    if (isReleaseWorkflow) {
+      validateReleaseJobPermissions(jobName, job.permissions, failures);
+    } else if (job.permissions !== undefined) {
       failures.push(`job ${jobName} must not widen workflow permissions`);
     }
     if (job.uses !== undefined) {
@@ -197,12 +238,12 @@ export function verifyUpstreamBaseline(root = repositoryRoot, configuredBaseline
   const notice = existsSync(resolve(root, baseline.noticeFile)) ? readText(root, baseline.noticeFile) : "";
   const workflowDirectory = resolve(root, ".github/workflows");
   const actualWorkflows = readdirSync(workflowDirectory)
-    .filter((path) => /\.ya?ml$/.test(path))
+    .filter((workflowPath) => /\.ya?ml$/.test(workflowPath))
     .sort();
   const allowedWorkflows = [...baseline.allowedWorkflows].sort();
   const expectedRepositoryGuard = "${{ github.repository == '" + canonicalRepository + "' }}";
-  const workflowFailures = actualWorkflows.flatMap((path) =>
-    validateWorkflow(root, path, expectedRepositoryGuard).map((failure) => `${path}: ${failure}`),
+  const workflowFailures = actualWorkflows.flatMap((workflowPath) =>
+    validateWorkflow(root, workflowPath, expectedRepositoryGuard).map((failure) => `${workflowPath}: ${failure}`),
   );
   const licenseExists = existsSync(resolve(root, baseline.licenseFile));
   const licenseHash = licenseExists ? sha256(root, baseline.licenseFile) : "missing";
