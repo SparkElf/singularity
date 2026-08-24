@@ -9,10 +9,6 @@ import { CoreModule } from "./core.module.js";
 import { DatabaseHealthController } from "./database-health.controller.js";
 import type { Clock } from "./identity/clock.js";
 import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
-import type {
-  OidcClientSecretResolver,
-  OidcHttpTransport,
-} from "./identity/oidc.service.js";
 import type { PasswordResetMailer } from "./identity/password-reset-mailer.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import { KernelGatewayAdmission } from "./kernel/kernel-gateway-admission.js";
@@ -25,8 +21,6 @@ export interface AppModuleOptions {
   auditConfiguration: AuditConfiguration;
   kernelGateway: KernelGatewayRuntimeConfiguration;
   loginRateLimiter?: LoginRateLimiter;
-  oidcClientSecretResolver?: OidcClientSecretResolver;
-  oidcHttpTransport?: OidcHttpTransport;
   passwordResetMailer?: PasswordResetMailer;
 }
 
