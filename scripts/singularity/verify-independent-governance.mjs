@@ -26,6 +26,7 @@ const REQUIRED_PR_HEADINGS = [
 ];
 
 const readText = (path) => readFileSync(resolve(repositoryRoot, path), "utf8");
+const readJson = (path) => JSON.parse(readText(path));
 
 function readYaml(path) {
   const document = parseDocument(readText(path), { prettyErrors: true, uniqueKeys: true });
@@ -100,11 +101,24 @@ export function verifyIndependentGovernance() {
   const failures = [];
   const requiredFiles = [
     ".agents/README.md",
+    ".agents/skills/singularity-product-design/SKILL.md",
+    ".agents/skills/singularity-architecture-planning/SKILL.md",
     ".agents/skills/singularity-frontend-design/SKILL.md",
+    ".agents/skills/singularity-implementation/SKILL.md",
+    ".agents/skills/singularity-code-review/SKILL.md",
+    ".agents/skills/singularity-test-governance/SKILL.md",
+    ".agents/skills/singularity-verification/SKILL.md",
     ".agents/skills/singularity-maintain-diffs/SKILL.md",
     ".agents/skills/singularity-upstream-promotion/SKILL.md",
+    ".agents/skills/singularity-pre-push-checks/SKILL.md",
+    ".agents/skills/singularity-simplification-review/SKILL.md",
+    ".agents/skills/singularity-pr-authoring/SKILL.md",
+    ".agents/skills/singularity-release-notes/SKILL.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     "DIFFS.md",
+    "docs/adr/0038-independent-repository-and-controlled-upstream-promotion.md",
+    "docs/ci-cd.md",
+    "docs/repository-rebuild.md",
     "docs/ui-governance.md",
     "upstream/baseline.yaml",
     "diffs/upstream/registry.yaml",
@@ -116,13 +130,33 @@ export function verifyIndependentGovernance() {
   if (failures.length > 0) return failures;
 
   const baseline = readYaml("upstream/baseline.yaml");
+  const compatibilityBaseline = readJson("config/upstream-baseline.json");
   if (baseline?.version !== 1) failures.push("upstream/baseline.yaml must declare version: 1");
+  if (baseline?.canonical?.repository !== "SparkElf/singularity") failures.push("canonical repository must be SparkElf/singularity");
+  if (baseline?.canonical?.branch !== "main") failures.push("canonical branch must be main");
   if (baseline?.upstream?.repository !== "siyuan-note/siyuan") failures.push("baseline upstream repository must be siyuan-note/siyuan");
   if (baseline?.upstream?.branch !== "master") failures.push("baseline upstream branch must be master");
   if (!/^[0-9a-f]{40}$/.test(baseline?.baseline?.commit ?? "")) failures.push("baseline commit must be a full 40-character SHA");
   if (baseline?.tracking?.mode !== "controlled-promotion") failures.push("tracking mode must be controlled-promotion");
   if (baseline?.tracking?.automatic_merge !== false) failures.push("automatic upstream merge must remain false");
   if (baseline?.tracking?.require_pull_request !== true) failures.push("upstream promotion must require a pull request");
+  if (baseline?.tracking?.require_full_governance !== true) failures.push("upstream promotion must require full governance");
+
+  if (compatibilityBaseline?.canonicalRepository !== baseline?.canonical?.repository) {
+    failures.push("config/upstream-baseline.json canonicalRepository must match upstream/baseline.yaml");
+  }
+  if (compatibilityBaseline?.canonicalBranch !== baseline?.canonical?.branch) {
+    failures.push("config/upstream-baseline.json canonicalBranch must match upstream/baseline.yaml");
+  }
+  if (compatibilityBaseline?.upstreamBranch !== baseline?.upstream?.branch) {
+    failures.push("config/upstream-baseline.json upstreamBranch must match upstream/baseline.yaml");
+  }
+  if (compatibilityBaseline?.upstreamCommit !== baseline?.baseline?.commit) {
+    failures.push("config/upstream-baseline.json upstreamCommit must match upstream/baseline.yaml");
+  }
+  if (compatibilityBaseline?.upstreamVersion !== baseline?.baseline?.version) {
+    failures.push("config/upstream-baseline.json upstreamVersion must match upstream/baseline.yaml");
+  }
 
   const baselineCommit = baseline?.baseline?.commit;
   if (typeof baselineCommit === "string") {
@@ -148,7 +182,10 @@ export function verifyIndependentGovernance() {
       failures.push("changes to app/** or kernel/** must update diffs/upstream/registry.yaml in the same pull request");
     }
   }
-  if (changedFiles.includes("upstream/baseline.yaml") && !changedFiles.includes("diffs/upstream/registry.yaml")) {
+  if (
+    (changedFiles.includes("upstream/baseline.yaml") || changedFiles.includes("config/upstream-baseline.json")) &&
+    !changedFiles.includes("diffs/upstream/registry.yaml")
+  ) {
     failures.push("an upstream baseline change must update diffs/upstream/registry.yaml");
   }
 
