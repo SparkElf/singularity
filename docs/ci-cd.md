@@ -47,7 +47,7 @@ The repository-identity cutover is complete, but CI responsibility migration is 
 
 Current canary ownership:
 
-- `native_app` → install the SiYuan app workspace and run native lint/tests;
+- `native_app` → install the SiYuan app workspace, run native lint/tests, and fail if lint mutates tracked source;
 - `enterprise_static` → run the existing `verify:b4` contract;
 - `package` → build API/Web/Worker container candidates and verify image metadata;
 - `upstream` → verify the read-only upstream relationship and generate divergence-aware impact evidence.
@@ -85,7 +85,9 @@ A report is not a promotion. Promotion uses `singularity-upstream-promotion`, a 
 - `workflow_dispatch` verifies a selected canonical ref and builds all three production images locally, but **never publishes**;
 - pushing `singularity-vX.Y.Z` publishes only when that tag points at the current canonical `main` HEAD.
 
-The release verify job re-checks repository/upstream governance, runs L0 governance tests, builds API/Web/Worker images from the tagged source, and validates OCI metadata before any registry write is possible.
+Before any release build or registry write, the verify job requires a previously completed **successful `Singularity L0` push run on `main` for the exact same source SHA**. A PR L0 run, an older main run, or an in-progress/failing L0 run does not satisfy the release gate. This binds release publication to the existing authoritative full-CI evidence without duplicating the complete PostgreSQL/Playwright/E2E/supply-chain suite inside the release workflow.
+
+After that evidence check, the release verify job re-checks repository/upstream governance, runs L0 governance tests, builds API/Web/Worker images from the tagged source, and validates OCI metadata before any registry write is possible.
 
 On an approved version tag the publish jobs create:
 
@@ -97,12 +99,13 @@ GHCR publication uses BuildKit SBOM and provenance attestations. After all image
 
 ## Release permissions
 
-The release workflow keeps top-level permissions at `contents: read`. Write capability is job-scoped:
+The release workflow keeps top-level permissions at `contents: read`. Elevated capability is job-scoped and machine-verified:
 
+- release verification job: `actions: read`, `contents: read`, only so it can prove the exact source SHA already has successful canonical L0 evidence;
 - image publication job: `contents: read`, `packages: write`;
 - GitHub Release job: `contents: write` only.
 
-No job receives both package-write and contents-write authority, and the workflow has no `pull_request` trigger. The repository verifier explicitly permits this narrow release exception while all other workflows remain read-only and may not add job-level write permissions.
+`actions: read` is not a publication authority. No job receives both package-write and contents-write authority, and the workflow has no `pull_request` trigger. The repository verifier constrains these permissions to the named jobs and requires the L0-evidence step by source SHA; all other workflows remain read-only and may not add job-level write permissions.
 
 OIDC is not granted merely for future signing plans. Add `id-token: write` only when a concrete provenance/signing mechanism requires it and its verifier is updated in the same change.
 
@@ -132,7 +135,8 @@ A public Singularity release is ready only when:
 
 - the canonical repository is independent (`fork: false`);
 - the release tag identifies current canonical `main` HEAD;
-- all required CI and governance checks pass before the maintainer creates the version tag;
+- the exact release SHA has a successful canonical `main` `Singularity L0` push run;
+- all required governance checks pass before publication;
 - the release dry-run can build and verify API/Web/Worker image metadata from a clean checkout;
 - the exact SiYuan baseline and active divergences are recorded;
 - migrations and rollback boundaries are documented and verified when applicable;
