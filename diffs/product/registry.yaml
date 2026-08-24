@@ -23,7 +23,7 @@ records:
     status: active
     title: Independent repository, upstream tracking, AI engineering governance, and release policy
     capability:
-      - Maintain Singularity as an independently discoverable repository with explicit SiYuan baseline tracking, divergence records, AI development skills, controlled upstream promotion, CI evidence, and product-owned release governance.
+      - Maintain Singularity as an independently discoverable repository with explicit SiYuan baseline tracking, divergence records, AI development skills, controlled upstream promotion, CI evidence, GitHub ownership/settings contracts, and product-owned release governance.
     source:
       repository: SparkElf/singularity
       relationship: product-owned
@@ -41,7 +41,8 @@ records:
       - Dockerfile*
     owner: repository-governance
     compatibility: >-
-      Repository identity is independent from GitHub's SiYuan fork network while attribution and AGPL-3.0 obligations remain explicit. Upstream integration occurs through pinned baselines and reviewed promotion candidates.
+      Repository identity is independent from GitHub's SiYuan fork network while attribution and AGPL-3.0 obligations remain explicit. Upstream integration occurs through pinned baselines and reviewed promotion candidates; GitHub settings and ownership are governed separately from SiYuan upstream state.
     verification:
+      - node scripts/singularity/verify-independent-governance.mjs
       - node scripts/singularity/verify-upstream-baseline.mjs
       - cd enterprise && pnpm run test:l0-governance
