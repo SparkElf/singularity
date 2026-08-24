@@ -8,30 +8,19 @@ import {
   AUTH_REGISTER_PATH,
   AUTH_SETUP_PATH,
   AUTH_LOGOUT_PATH,
-  AUTH_MFA_CHALLENGE_VERIFY_PATH,
-  AUTH_OIDC_PROVIDERS_PATH,
-  AUTH_OIDC_START_PATH,
   CSRF_HEADER_NAME,
   csrfResponseSchema,
-  loginAttemptResponseSchema,
   loginResponseSchema,
   passwordResetRequestedResponseSchema,
   type PasswordResetConfirmRequest,
   type PasswordResetRequest,
   type PasswordResetRequestedResponse,
-  oidcProvidersResponseSchema,
-  oidcStartResponseSchema,
   type AcceptLocalOrganizationInvitationRequest,
   type AcceptOrganizationInvitationRequest,
   type LoginRequest,
   type LoginResponse,
-  type LoginAttemptResponse,
-  type MfaLoginChallengeVerifyRequest,
   type RegisterRequest,
   type SetupStatusResponse,
-  type OidcProvidersResponse,
-  type OidcStartRequest,
-  type OidcStartResponse,
   setupStatusResponseSchema,
 } from "@singularity/contracts";
 
@@ -61,7 +50,8 @@ class CsrfRequestInvalidatedError extends Error {
 }
 
 function callerAbortReason(signal: AbortSignal | undefined): Error {
-  const reason: unknown = signal?.reason ?? new DOMException("The request was aborted", "AbortError");
+  const reason: unknown =
+    signal?.reason ?? new DOMException("The request was aborted", "AbortError");
   return reason instanceof Error
     ? reason
     : new Error(String(reason), { cause: reason });
@@ -126,9 +116,14 @@ function waitForCsrfFetch(
     signal?.addEventListener("abort", abort, { once: true });
     void active.promise.then(
       (csrfToken) => finish(() => resolve(csrfToken)),
-      (error: unknown) => finish(() => reject(
-        error instanceof Error ? error : new Error(String(error), { cause: error }),
-      )),
+      (error: unknown) =>
+        finish(() =>
+          reject(
+            error instanceof Error
+              ? error
+              : new Error(String(error), { cause: error }),
+          ),
+        ),
     );
     if (signal?.aborted) {
       abort();
@@ -139,8 +134,8 @@ function waitForCsrfFetch(
 export function login(
   request: LoginRequest,
   signal?: AbortSignal,
-): Promise<LoginAttemptResponse> {
-  return requestJson(loginAttemptResponseSchema, AUTH_LOGIN_PATH, {
+): Promise<LoginResponse> {
+  return requestJson(loginResponseSchema, AUTH_LOGIN_PATH, {
     body: JSON.stringify(request),
     headers: { "Content-Type": "application/json" },
     method: "POST",
@@ -197,19 +192,6 @@ export function confirmPasswordReset(
   });
 }
 
-// 完成密码之后的 MFA challenge；只有该请求成功才会得到可写会话的 CSRF token。
-export function verifyMfaChallenge(
-  request: MfaLoginChallengeVerifyRequest,
-  signal?: AbortSignal,
-): Promise<LoginResponse> {
-  return requestJson(loginResponseSchema, AUTH_MFA_CHALLENGE_VERIFY_PATH, {
-    body: JSON.stringify(request),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-    signal: signal ?? null,
-  });
-}
-
 export function getOrFetchCsrfToken(signal?: AbortSignal): Promise<string> {
   if (signal?.aborted) {
     return Promise.reject(callerAbortReason(signal));
@@ -232,26 +214,6 @@ export function getOrFetchCsrfToken(signal?: AbortSignal): Promise<string> {
 export function logout(csrfToken: string, signal?: AbortSignal): Promise<void> {
   return requestNoContent(AUTH_LOGOUT_PATH, {
     headers: { [CSRF_HEADER_NAME]: csrfToken },
-    method: "POST",
-    signal: signal ?? null,
-  });
-}
-
-export function getOidcProviders(
-  signal?: AbortSignal,
-): Promise<OidcProvidersResponse> {
-  return requestJson(oidcProvidersResponseSchema, AUTH_OIDC_PROVIDERS_PATH, {
-    signal: signal ?? null,
-  });
-}
-
-export function startOidc(
-  request: OidcStartRequest,
-  signal?: AbortSignal,
-): Promise<OidcStartResponse> {
-  return requestJson(oidcStartResponseSchema, AUTH_OIDC_START_PATH, {
-    body: JSON.stringify(request),
-    headers: { "Content-Type": "application/json" },
     method: "POST",
     signal: signal ?? null,
   });
