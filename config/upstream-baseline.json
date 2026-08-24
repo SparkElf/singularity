@@ -14,6 +14,7 @@
   "licenseSha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b",
   "noticeFile": "NOTICE",
   "allowedWorkflows": [
+    "singularity-ci-impact.yml",
     "singularity-governance.yml",
     "singularity-l0.yml",
     "singularity-upstream-impact.yml"
