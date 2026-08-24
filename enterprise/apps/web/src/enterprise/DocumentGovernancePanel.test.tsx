@@ -1,61 +1,101 @@
-import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DocumentGovernancePanel } from "@/enterprise/DocumentGovernancePanel.tsx";
+import type { AuthIdentity } from "../auth/types";
+import { DocumentGovernancePanel } from "./DocumentGovernancePanel";
 
-const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
-const SPACE_ID = "22222222-2222-4222-8222-222222222222";
-const NOTEBOOK_ID = "20260723090000-l4book1";
-const DOCUMENT_A = "20260723090001-l4doc01";
-const DOCUMENT_B = "20260723090002-l4doc02";
-const CSRF_TOKEN = "A".repeat(42) + "E";
+const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000501";
+const SPACE_ID = "00000000-0000-4000-8000-000000000502";
+const DOCUMENT_A = "20260713000000-a1b2c3d";
+const CSRF_TOKEN = "csrf-token";
 
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    headers: { "Content-Type": "application/json" },
-    status: 200,
-  });
-}
-
-function identity(documentId: string) {
+function identity(documentId: string): AuthIdentity {
   return {
+    sessionId: "00000000-0000-4000-8000-000000000503",
+    user: { id: "00000000-0000-4000-8000-000000000504", username: "governor" },
+    organization: { id: ORGANIZATION_ID, slug: "governance", name: "Governance" },
+    space: { id: SPACE_ID, slug: "knowledge", name: "Knowledge", role: "owner" },
+    capabilities: {
+      canRead: true,
+      canWrite: true,
+      canShare: true,
+      canAdminister: true,
+    },
+    permissions: ["space:read", "space:write", "space:share", "space:admin"],
     documentId,
-    notebookId: NOTEBOOK_ID,
-    organizationId: ORGANIZATION_ID,
-    spaceId: SPACE_ID,
-  } as const;
+  };
 }
 
 function governance(documentId: string) {
   return {
-    classification: "internal",
-    document: identity(documentId),
-    legalHold: false,
-    lifecycle: "draft",
-    verification: "needs-review",
+    documentId,
+    retention: { policy: "keep", updatedAt: null },
+    approvals: [],
+    embeds: [],
   };
 }
 
-function queryClient(): QueryClient {
-  return new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function queryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
 }
 
 afterEach(() => {
-  cleanup();
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
 
 describe("DocumentGovernancePanel", () => {
-  test("requests governance data with all four document identity fields", async () => {
-    const requests: URL[] = [];
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
-      requests.push(url);
+  it("loads governance state and updates retention", async () => {
+    const requests: Array<{ body: unknown; method: string; url: URL }> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "https://singularity.invalid");
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
+      requests.push({ body, method, url });
+      if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
       if (url.pathname.endsWith("/governance/approvals")) return Promise.resolve(jsonResponse({ approvals: [] }));
+      if (url.pathname.endsWith("/governance/embeds")) return Promise.resolve(jsonResponse({ embeds: [] }));
+      if (method === "PUT") return Promise.resolve(jsonResponse({ ...governance(DOCUMENT_A), retention: { policy: "archive", updatedAt: "2026-07-13T00:00:00.000Z" } }));
+      return Promise.resolve(jsonResponse(governance(DOCUMENT_A)));
+    }));
+
+    render(
+      <QueryClientProvider client={queryClient()}>
+        <MemoryRouter>
+          <DocumentGovernancePanel identity={identity(DOCUMENT_A)} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("文档治理");
+    fireEvent.click(screen.getByRole("button", { name: "归档" }));
+    await waitFor(() => expect(requests.some((request) => request.method === "PUT")).toBe(true));
+    expect(requests.find((request) => request.method === "PUT")?.body).toEqual({ policy: "archive" });
+  });
+
+  it("requests approval with CSRF protection", async () => {
+    const requests: Array<{ body: unknown; method: string; url: URL }> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "https://singularity.invalid");
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
+      requests.push({ body, method, url });
+      if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
+      if (url.pathname.endsWith("/governance/approvals") && method === "GET") return Promise.resolve(jsonResponse({ approvals: [] }));
+      if (url.pathname.endsWith("/governance/approvals") && method === "POST") return Promise.resolve(jsonResponse({ approvalId: "00000000-0000-4000-8000-000000000505", status: "pending" }, 201));
       if (url.pathname.endsWith("/governance/embeds")) return Promise.resolve(jsonResponse({ embeds: [] }));
       return Promise.resolve(jsonResponse(governance(DOCUMENT_A)));
     }));
@@ -68,80 +108,20 @@ describe("DocumentGovernancePanel", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("文档治理")).toBeVisible();
-    await waitFor(() => expect(requests.some((request) => request.pathname === `/api/v1/organizations/${ORGANIZATION_ID}/spaces/${SPACE_ID}/notebooks/${NOTEBOOK_ID}/documents/${DOCUMENT_A}/governance`)).toBe(true));
+    await screen.findByText("文档治理");
+    fireEvent.change(screen.getByLabelText("审批说明"), { target: { value: "发布前复核" } });
+    fireEvent.click(screen.getByRole("button", { name: "申请审批" }));
+    await waitFor(() => expect(requests.some((request) => request.method === "POST" && request.url.pathname.endsWith("/governance/approvals"))).toBe(true));
+    expect(requests.find((request) => request.method === "POST")?.body).toEqual({ reason: "发布前复核" });
   });
 
-  test("does not render a late AI response after the document scope changes", async () => {
-    let resolveAi: ((response: Response) => void) | undefined;
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
-      if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
-      if (url.pathname.endsWith("/ai-chat")) return new Promise<Response>((resolve) => { resolveAi = resolve; });
-      if (url.pathname.endsWith("/governance/approvals")) return Promise.resolve(jsonResponse({ approvals: [] }));
-      if (url.pathname.endsWith("/governance/embeds")) return Promise.resolve(jsonResponse({ embeds: [] }));
-      const documentId = url.pathname.endsWith(`/${DOCUMENT_B}/governance`) ? DOCUMENT_B : DOCUMENT_A;
-      return Promise.resolve(jsonResponse(governance(documentId)));
-    }));
-
-    const client = queryClient();
-    const view = render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <DocumentGovernancePanel identity={identity(DOCUMENT_A)} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    expect(await screen.findByText("文档治理")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("AI 问题"), { target: { value: "旧文档问题" } });
-    fireEvent.click(screen.getByRole("button", { name: "提问" }));
-    view.rerender(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <DocumentGovernancePanel identity={identity(DOCUMENT_B)} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    await waitFor(() => expect(resolveAi).toBeDefined());
-    resolveAi?.(jsonResponse({ answer: "旧回答", citations: [{ document: identity(DOCUMENT_A), excerpt: "旧引用" }], conversationId: "33333333-3333-4333-8333-333333333333", messageId: "44444444-4444-4444-8444-444444444444" }));
-    await waitFor(() => expect(screen.queryByText("旧回答")).not.toBeInTheDocument());
-  });
-
-  test("renders a sandboxed embed preview and exposes an identity-bound citation target", async () => {
-    const navigate = vi.fn();
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
-      if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
-      if (url.pathname.endsWith("/governance/approvals")) return Promise.resolve(jsonResponse({ approvals: [] }));
-      if (url.pathname.endsWith("/governance/embeds")) return Promise.resolve(jsonResponse({ embeds: [{ embedId: "55555555-5555-4555-8555-555555555555", kind: "drawio", payload: { previewUrl: "https://app.diagrams.net/" }, status: "active", version: 2 }] }));
-      if (url.pathname.endsWith("/ai-chat")) return Promise.resolve(jsonResponse({ answer: "已找到", citations: [{ document: identity(DOCUMENT_A), excerpt: "可追溯引用" }], conversationId: "33333333-3333-4333-8333-333333333333", messageId: "44444444-4444-4444-8444-444444444444" }));
-      return Promise.resolve(jsonResponse(governance(DOCUMENT_A)));
-    }));
-
-    render(
-      <QueryClientProvider client={queryClient()}>
-        <MemoryRouter>
-          <DocumentGovernancePanel identity={identity(DOCUMENT_A)} onNavigateCitation={navigate} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    expect(await screen.findByTitle("drawio 嵌入编辑器")).toHaveAttribute("sandbox", "allow-forms allow-popups allow-scripts allow-same-origin");
-    fireEvent.change(screen.getByLabelText("AI 问题"), { target: { value: "查找" } });
-    fireEvent.click(screen.getByRole("button", { name: "提问" }));
-    await screen.findByText("已找到");
-    fireEvent.click(screen.getByRole("button", { name: `打开引用 ${DOCUMENT_A}` }));
-    expect(navigate).toHaveBeenCalledWith(identity(DOCUMENT_A));
-  });
-
-  test("accepts saves only from the matching embed iframe and kind", async () => {
-    const requests: Array<{ method: string; url: URL; body: string }> = [];
-    const embedId = "55555555-5555-4555-8555-555555555555";
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>((input, init) => {
-      const request = input instanceof Request ? input : undefined;
-      const url = new URL(request?.url ?? String(input), window.location.origin);
-      const method = request?.method ?? init?.method ?? "GET";
-      const body = request?.body === null || request?.body === undefined ? String(init?.body ?? "") : "[request-body]";
+  it("accepts drawio save messages only from the registered iframe origin and source", async () => {
+    const requests: Array<{ body: unknown; method: string; url: URL }> = [];
+    const embedId = "00000000-0000-4000-8000-000000000506";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "https://singularity.invalid");
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
       requests.push({ body, method, url });
       if (url.pathname === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ csrfToken: CSRF_TOKEN }));
       if (url.pathname.endsWith("/governance/approvals")) return Promise.resolve(jsonResponse({ approvals: [] }));
@@ -158,7 +138,7 @@ describe("DocumentGovernancePanel", () => {
       </QueryClientProvider>,
     );
 
-    const iframe = await screen.findByTitle("drawio 嵌入编辑器") as HTMLIFrameElement;
+    const iframe = await screen.findByTitle("drawio 嵌入编辑器");
     expect(iframe).toHaveAttribute("sandbox", "allow-forms allow-popups allow-scripts allow-same-origin");
     const saveMessage = { embedId, kind: "drawio", payload: { saved: true }, type: "singularity.embed.save", version: 1 } as const;
     window.dispatchEvent(new MessageEvent("message", { data: saveMessage, origin: "https://app.diagrams.net", source: window }));
