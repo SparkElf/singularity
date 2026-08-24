@@ -1,5 +1,4 @@
 import { isIP } from "node:net";
-import { isAbsolute } from "node:path";
 
 export const DEFAULT_CONTENT_AUDIT_INDETERMINATE_AFTER_MILLISECONDS = 120_000;
 
@@ -10,18 +9,9 @@ export class ApiConfigurationError extends Error {
   }
 }
 
-export interface OidcClientSecretBinding {
-  readonly clientId: string;
-  readonly issuer: string;
-  readonly organizationId: string;
-  readonly reference: string;
-  readonly secretFile: string;
-}
-
 export interface ApiConfiguration {
   collaborationEnabled: boolean;
   contentAuditIndeterminateAfterMilliseconds: number;
-  oidcClientSecretBindings: readonly OidcClientSecretBinding[];
   publicOrigin: string;
   passwordResetFrom: string | undefined;
   passwordResetSmtpUrl: string | undefined;
@@ -48,82 +38,6 @@ export function parseContentAuditIndeterminateAfterMilliseconds(
     throw new ApiConfigurationError();
   }
   return parsed;
-}
-
-function parseOidcBindingIssuer(value: string): string {
-  let issuer: URL;
-  try {
-    issuer = new URL(value);
-  } catch (error) {
-    throw new ApiConfigurationError({ cause: error });
-  }
-  if (
-    issuer.protocol !== "https:" ||
-    issuer.username.length > 0 ||
-    issuer.password.length > 0 ||
-    issuer.search.length > 0 ||
-    issuer.hash.length > 0
-  ) {
-    throw new ApiConfigurationError();
-  }
-  return issuer.toString();
-}
-
-export function parseOidcClientSecretBindings(
-  value: string | undefined,
-): readonly OidcClientSecretBinding[] {
-  if (value === undefined || value.length === 0) {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new ApiConfigurationError({ cause: error });
-  }
-  if (!Array.isArray(parsed)) {
-    throw new ApiConfigurationError();
-  }
-  const references = new Set<string>();
-  const result: OidcClientSecretBinding[] = [];
-  for (const value of parsed) {
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value)
-    ) {
-      throw new ApiConfigurationError();
-    }
-    const record = value as Record<string, unknown>;
-    if (
-      Object.keys(record).sort().join(",") !==
-        "clientId,issuer,organizationId,reference,secretFile" ||
-      typeof record.clientId !== "string" ||
-      record.clientId.length === 0 ||
-      record.clientId.length > 512 ||
-      typeof record.organizationId !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        record.organizationId,
-      ) ||
-      typeof record.reference !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(record.reference) ||
-      references.has(record.reference) ||
-      typeof record.secretFile !== "string" ||
-      !isAbsolute(record.secretFile) ||
-      typeof record.issuer !== "string"
-    ) {
-      throw new ApiConfigurationError();
-    }
-    references.add(record.reference);
-    result.push({
-      clientId: record.clientId,
-      issuer: parseOidcBindingIssuer(record.issuer),
-      organizationId: record.organizationId,
-      reference: record.reference,
-      secretFile: record.secretFile,
-    });
-  }
-  return result;
 }
 
 export function parsePublicOrigin(value: string | undefined): string {
