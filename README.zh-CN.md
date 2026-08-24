@@ -20,7 +20,7 @@ tags: ["奇点", "知识库", "思源笔记", "AGPL"]
 |------|------|------|------|
 | 1.0.0 | 2026-07-15 | 奇点贡献者 | 将上游产品介绍替换为奇点项目入口 |
 | 1.1.0 | 2026-07-17 | 奇点贡献者 | 将已合并的思源 3.7.2 提交晋升为上游基线 |
-| 1.2.0 | 2026-08-24 | 奇点贡献者 | 建立独立仓库治理、显式上游追踪、AI 工程 Skills、UI 治理和基于影响面的 CI 规划 |
+| 1.2.0 | 2026-08-24 | 奇点贡献者 | 完成独立仓库切换，并建立显式上游追踪、AI 工程 Skills、UI 治理和基于影响面的 CI 规划 |
 
 ## 目录
 
@@ -39,17 +39,17 @@ tags: ["奇点", "知识库", "思源笔记", "AGPL"]
 
 项目计划在思源笔记基础上演进出云端企业知识库，并逐步建设组织、分享、权限、协作、治理、发现和 AI 辅助能力。这些内容是项目目标，不代表所有能力已经实现。
 
-奇点按照“基于思源、独立维护的产品仓库”进行治理。GitHub Fork Network 不再承担上游集成关系：项目固定精确的思源基线、显式记录长期差异，并通过候选分支与 Pull Request 审阅后晋升新的上游版本。
+奇点按照“基于思源、独立维护的产品仓库”进行治理。Canonical 仓库为 `SparkElf/singularity`，canonical 分支为 `main`。GitHub Fork Network 不再承担上游集成关系：项目固定精确的思源基线、显式记录长期差异，并通过候选分支与 Pull Request 审阅后晋升新的上游版本。
 
 ## 工程与上游治理
 
 AI 辅助开发遵循 [`.agents/README.md`](.agents/README.md) 和 [`AGENTS.md`](AGENTS.md) 中的仓库原生流程。可见 UI 变更必须遵循 [`docs/ui-governance.md`](docs/ui-governance.md)：AI 复用现有语义主题、组件和交互模式，不为单个功能另建一套视觉或组件体系。
 
-当前思源上游基线记录在 [`upstream/baseline.yaml`](upstream/baseline.yaml)。长期维护的上游差异和产品自有能力由 [`DIFFS.md`](DIFFS.md) 及 `diffs/` 下的 registry 管理。上游版本会先进行影响分析，再通过受控 promotion 流程合入；不会自动把思源 `master` 合并到主分支。
+当前思源上游基线记录在 [`upstream/baseline.yaml`](upstream/baseline.yaml)。长期维护的上游差异和产品自有能力由 [`DIFFS.md`](DIFFS.md) 及 `diffs/` 下的 registry 管理。思源 `master` 只作为只读上游；上游版本先经过影响分析和受控 promotion，再进入 canonical `main`，不会自动合并。
 
 CI/CD 规则见 [`docs/ci-cd.md`](docs/ci-cd.md)。变更影响分析遇到未知路径或上游基线变更时会 fail-open 到完整验证。PR 检查通过并不自动授权合并、发布、上游晋升或生产部署。
 
-从旧 GitHub Fork Network 仓库切换到新的独立 canonical 仓库的一次性流程见 [`docs/repository-rebuild.md`](docs/repository-rebuild.md)。
+旧 GitHub Fork Network 仓库到 canonical 独立仓库的切换记录见 [`docs/repository-rebuild.md`](docs/repository-rebuild.md)，治理决策见 [ADR-038](docs/adr/0038-independent-repository-and-controlled-upstream-promotion.md)。
 
 ## 贡献与安全
 
