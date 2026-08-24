@@ -19,14 +19,12 @@ export const REQUIRED_L0_TRIGGER_PATHS = [
   "Dockerfile*",
   "app/**",
   "config/**",
-  "diffs/**",
   "docs/**",
   "enterprise/**",
   "kernel/**",
   "output/md/**",
   "plans/**",
   "scripts/singularity/**",
-  "upstream/**",
 ];
 
 const readJson = (root, path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
