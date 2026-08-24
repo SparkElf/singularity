@@ -110,20 +110,46 @@ function isReadOnlyWorkflowPermissions(permissions) {
 }
 
 function validateReleaseJobPermissions(jobName, permissions, failures) {
-  if (permissions === undefined) return;
+  if (permissions === undefined) {
+    if (jobName === "verify") {
+      failures.push("release verify job must declare actions: read and contents: read");
+    }
+    return;
+  }
   if (permissions === null || typeof permissions !== "object" || Array.isArray(permissions)) {
     failures.push(`release job ${jobName} permissions must be a mapping`);
     return;
   }
 
   const keys = Object.keys(permissions).sort();
-  if (keys.some((key) => key !== "contents" && key !== "packages")) {
-    failures.push(`release job ${jobName} may only declare contents/packages permissions`);
+  if (keys.some((key) => key !== "actions" && key !== "contents" && key !== "packages")) {
+    failures.push(`release job ${jobName} may only declare actions/contents/packages permissions`);
   }
   for (const [name, value] of Object.entries(permissions)) {
     if (!["read", "write", "none"].includes(value)) {
       failures.push(`release job ${jobName} permission ${name} has invalid value ${String(value)}`);
     }
+  }
+
+  if (permissions.actions !== undefined && (jobName !== "verify" || permissions.actions !== "read")) {
+    failures.push(`release job ${jobName} may use actions permission only as actions: read on verify`);
+  }
+  if (jobName === "verify") {
+    if (
+      keys.length !== 2 ||
+      keys[0] !== "actions" ||
+      keys[1] !== "contents" ||
+      permissions.actions !== "read" ||
+      permissions.contents !== "read"
+    ) {
+      failures.push("release verify job permissions must be exactly actions: read and contents: read");
+    }
+  }
+  if (permissions.packages === "write" && jobName !== "images") {
+    failures.push(`release job ${jobName} may use packages: write only on images`);
+  }
+  if (permissions.contents === "write" && jobName !== "github-release") {
+    failures.push(`release job ${jobName} may use contents: write only on github-release`);
   }
   if (permissions.contents === "write" && permissions.packages === "write") {
     failures.push(`release job ${jobName} must not combine contents: write with packages: write`);
