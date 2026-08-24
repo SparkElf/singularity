@@ -1,6 +1,7 @@
 {
   "product": "Singularity",
   "canonicalRepository": "SparkElf/singularity",
+  "canonicalBranch": "main",
   "upstreamRepository": "https://github.com/siyuan-note/siyuan.git",
   "upstreamBranch": "master",
   "upstreamPushUrl": "DISABLED",
