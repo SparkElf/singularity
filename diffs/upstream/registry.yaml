@@ -1,0 +1,24 @@
+version: 1
+records:
+  - id: siyuan-native-app-divergence-bootstrap
+    status: active
+    title: Native SiYuan workspace and Protyle integration divergence bootstrap
+    capability:
+      - Preserve the SiYuan-native workspace while exposing Singularity enterprise entry points and browser/editor integration seams.
+      - Carry the pre-governance native-app refactors already present in Singularity until they are decomposed into capability-specific records.
+    source:
+      repository: siyuan-note/siyuan
+      baseline_version: 3.7.2
+      baseline_commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
+    paths:
+      - app/**
+    owner: upstream-integration
+    compatibility: >-
+      SiYuan remains the native workspace and editor owner. Singularity-specific native changes must stay narrow enough to re-evaluate on every SiYuan promotion; new work should create capability-specific records instead of expanding this bootstrap record.
+    verification:
+      - cd app && pnpm run lint
+      - cd enterprise && pnpm verify:b4
+      - cd enterprise && pnpm verify:s0-s3
+    notes:
+      - The initial baseline-to-Singularity comparison is 131 commits ahead of SiYuan 3.7.2 and contains a broad native-app refactor surface.
+      - Decompose this bootstrap record as touched areas are next modified or promoted upstream.
