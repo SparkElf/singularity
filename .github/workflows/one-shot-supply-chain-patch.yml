@@ -33,11 +33,11 @@ jobs:
               raise SystemExit(f'expected one outcome aggregator, found {text.count(marker)}')
           prefix, _ = text.split(marker, 1)
           replacement = '''      - name: Enforce supply-chain step outcomes
-        if: ${{ always() && github.repository == 'SparkElf/singularity' }}
+        if: __EXPR_OPEN__ always() && github.repository == 'SparkElf/singularity' }}
         env:
-          LICENSE_POLICY: ${{ steps.license_policy.outcome }}
-          PRODUCTION_SBOM_POLICY: ${{ steps.production_sbom_policy.outcome }}
-          VULNERABILITY_POLICY: ${{ steps.vulnerability_policy.outcome }}
+          LICENSE_POLICY: __EXPR_OPEN__ steps.license_policy.outcome }}
+          PRODUCTION_SBOM_POLICY: __EXPR_OPEN__ steps.production_sbom_policy.outcome }}
+          VULNERABILITY_POLICY: __EXPR_OPEN__ steps.vulnerability_policy.outcome }}
         run: |
           for outcome in \\
             "$LICENSE_POLICY" \\
@@ -47,7 +47,7 @@ jobs:
               exit 1
             fi
           done
-'''
+'''.replace('__EXPR_OPEN__', '$' + '{{')
           workflow.write_text(prefix + replacement, encoding='utf-8')
           Path('.github/workflows/one-shot-supply-chain-patch.yml').unlink()
           PY
