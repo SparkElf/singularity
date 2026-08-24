@@ -20,7 +20,7 @@ tags: ["singularity", "knowledge-base", "siyuan", "agpl"]
 |---------|------|--------|---------|
 | 1.0.0 | 2026-07-15 | Singularity Contributors | Replaced the upstream product page with the Singularity project entry point |
 | 1.1.0 | 2026-07-17 | Singularity Contributors | Promoted the integrated SiYuan 3.7.2 commit to the upstream baseline |
-| 1.2.0 | 2026-08-24 | Singularity Contributors | Prepared independent-repository governance, explicit upstream tracking, AI engineering skills, UI governance, and impact-based CI planning |
+| 1.2.0 | 2026-08-24 | Singularity Contributors | Completed the independent repository cutover and established explicit upstream tracking, AI engineering skills, UI governance, and impact-based CI planning |
 
 ## Table of Contents
 
@@ -39,17 +39,17 @@ Singularity is under active development and is not yet a production release. Cap
 
 The project is evolving the SiYuan foundation toward a cloud-hosted enterprise knowledge base with organization, sharing, permission, collaboration, governance, discovery, and AI-assisted capabilities. These are project goals, not a claim that every capability is already implemented.
 
-Singularity is maintained as an independent product repository built on SiYuan. GitHub fork-network metadata is not the upstream integration mechanism: the project pins an exact SiYuan baseline, records maintained divergences, and promotes newer upstream versions through reviewed candidate branches and pull requests.
+Singularity is maintained as an independent product repository built on SiYuan. The canonical repository is `SparkElf/singularity` with canonical branch `main`. GitHub fork-network metadata is not the upstream integration mechanism: the project pins an exact SiYuan baseline, records maintained divergences, and promotes newer upstream versions through reviewed candidate branches and pull requests.
 
 ## Engineering and upstream governance
 
 AI-assisted development follows the repository-native workflow in [`.agents/README.md`](.agents/README.md) and [`AGENTS.md`](AGENTS.md). Visible UI work follows [`docs/ui-governance.md`](docs/ui-governance.md): agents reuse the existing semantic theme and interaction primitives rather than creating a parallel design system.
 
-The current SiYuan baseline is recorded in [`upstream/baseline.yaml`](upstream/baseline.yaml). Maintained upstream and product differences are described by [`DIFFS.md`](DIFFS.md) and the registries under `diffs/`. Upstream releases are analyzed before promotion; they are never merged automatically into the canonical branch.
+The current SiYuan baseline is recorded in [`upstream/baseline.yaml`](upstream/baseline.yaml). Maintained upstream and product differences are described by [`DIFFS.md`](DIFFS.md) and the registries under `diffs/`. SiYuan `master` is treated as read-only upstream; upstream releases are analyzed before promotion and are never merged automatically into canonical `main`.
 
 CI/CD policy is documented in [`docs/ci-cd.md`](docs/ci-cd.md). Change-impact planning fails open to full validation for unknown paths or upstream-baseline changes. A passing pull request does not authorize merge, release, upstream promotion, or deployment.
 
-The one-time transition from the legacy GitHub fork-network repository to the canonical independent repository is documented in [`docs/repository-rebuild.md`](docs/repository-rebuild.md).
+The completed transition from the legacy GitHub fork-network repository to the canonical independent repository is recorded in [`docs/repository-rebuild.md`](docs/repository-rebuild.md), with the governing decision in [ADR-038](docs/adr/0038-independent-repository-and-controlled-upstream-promotion.md).
 
 ## Contributing and security
 
