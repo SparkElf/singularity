@@ -52,6 +52,7 @@ export const openProtyleDialog = (options: OpenProtyleDialogOptions): ProtyleDia
     element.append(scrim, container);
 
     const overlays = options.protyle.runtime.overlays;
+    // eslint-disable-next-line prefer-const -- 关闭回调先捕获 overlay 句柄，再由 overlays.add 返回并绑定，避免同步关闭路径触发 TDZ。
     let overlayHandle!: ProtyleOverlayHandle;
     let closed = false;
     const close = () => {
