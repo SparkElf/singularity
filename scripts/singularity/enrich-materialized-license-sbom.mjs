@@ -3,7 +3,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const scriptPath = fileURLToPath(import.meta.url);
+const repositoryRoot = resolve(dirname(scriptPath), "../..");
 const evidencePropertyPrefix = "io.singularity.license.evidence";
 
 function readArgumentValue(args, index, option) {
@@ -174,10 +175,19 @@ function enrichSbom(path, packageIndex) {
   return enriched;
 }
 
-const { roots, sboms } = parseArguments(process.argv.slice(2));
-const packageIndex = buildPackageIndex(roots);
-let enriched = 0;
-for (const sbom of sboms) {
-  enriched += enrichSbom(sbom, packageIndex);
+export function enrichMaterializedLicenseSboms({ roots, sboms }) {
+  const packageIndex = buildPackageIndex(roots);
+  let enriched = 0;
+  for (const sbom of sboms) {
+    enriched += enrichSbom(sbom, packageIndex);
+  }
+  return enriched;
 }
-process.stdout.write(`Enriched ${String(enriched)} CycloneDX components from materialized package manifests\n`);
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {
+  const { roots, sboms } = parseArguments(process.argv.slice(2));
+  const enriched = enrichMaterializedLicenseSboms({ roots, sboms });
+  process.stdout.write(
+    `Enriched ${String(enriched)} CycloneDX components from materialized package manifests\n`,
+  );
+}
