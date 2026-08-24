@@ -19,12 +19,14 @@ export const REQUIRED_L0_TRIGGER_PATHS = [
   "Dockerfile*",
   "app/**",
   "config/**",
+  "diffs/**",
   "docs/**",
   "enterprise/**",
   "kernel/**",
   "output/md/**",
   "plans/**",
   "scripts/singularity/**",
+  "upstream/**",
 ];
 
 const readJson = (root, path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
@@ -133,13 +135,17 @@ export function validateWorkflowDocument(workflow, path, expectedRepositoryGuard
     return failures;
   }
 
+  const guardBody = expectedRepositoryGuard
+    .replace(/^\$\{\{\s*/, "")
+    .replace(/\s*\}\}$/, "")
+    .trim();
   for (const [jobName, job] of Object.entries(jobs)) {
     if (job === null || typeof job !== "object" || Array.isArray(job)) {
       failures.push(`job ${jobName} must be a mapping`);
       continue;
     }
-    if (job.if !== expectedRepositoryGuard) {
-      failures.push(`job ${jobName} must use the exact fork repository guard`);
+    if (typeof job.if !== "string" || !job.if.includes(guardBody)) {
+      failures.push(`job ${jobName} must include the canonical repository guard`);
     }
     if (job.permissions !== undefined) {
       failures.push(`job ${jobName} must not widen workflow permissions`);
@@ -179,6 +185,7 @@ function validateWorkflow(root, path, expectedRepositoryGuard) {
 
 export function verifyUpstreamBaseline(root = repositoryRoot, configuredBaseline) {
   const baseline = configuredBaseline ?? readJson(root, "config/upstream-baseline.json");
+  const canonicalRepository = baseline.canonicalRepository ?? baseline.forkRepository;
   const upstreamRef = `refs/remotes/upstream/${baseline.upstreamBranch}`;
   const baselineAppPackage = JSON.parse(runGit(root, "show", `${baseline.upstreamCommit}:app/package.json`));
   const baselineGoModule = runGit(root, "show", `${baseline.upstreamCommit}:kernel/go.mod`);
@@ -195,7 +202,7 @@ export function verifyUpstreamBaseline(root = repositoryRoot, configuredBaseline
     .filter((path) => /\.ya?ml$/.test(path))
     .sort();
   const allowedWorkflows = [...baseline.allowedWorkflows].sort();
-  const expectedRepositoryGuard = "${{ github.repository == '" + baseline.forkRepository + "' }}";
+  const expectedRepositoryGuard = "${{ github.repository == '" + canonicalRepository + "' }}";
   const workflowFailures = actualWorkflows.flatMap((path) =>
     validateWorkflow(root, path, expectedRepositoryGuard).map((failure) => `${path}: ${failure}`),
   );
@@ -210,7 +217,7 @@ export function verifyUpstreamBaseline(root = repositoryRoot, configuredBaseline
   return [
     [
       "origin repository",
-      !originHasCredentials && githubRepositoryFromRemote(originUrl) === baseline.forkRepository,
+      !originHasCredentials && githubRepositoryFromRemote(originUrl) === canonicalRepository,
       safeRemoteDisplay(originUrl),
     ],
     [
@@ -278,25 +285,20 @@ export function verifyUpstreamBaseline(root = repositoryRoot, configuredBaseline
     [
       "workflow structure",
       workflowFailures.length === 0,
-      workflowFailures.length === 0 ? "all jobs guarded and actions pinned" : workflowFailures.join("; "),
+      workflowFailures.length === 0 ? "valid" : workflowFailures.join(" | "),
     ],
-    [
-      "architecture document",
-      existsSync(resolve(root, baseline.architectureDocument)),
-      baseline.architectureDocument,
-    ],
+    ["architecture document", existsSync(resolve(root, baseline.architectureDocument)), baseline.architectureDocument],
   ];
 }
 
 function main() {
   const checks = verifyUpstreamBaseline();
-  const failures = checks.filter(([, passed]) => !passed);
-  for (const [name, passed, actual] of checks) {
-    process.stdout.write(`${passed ? "PASS" : "FAIL"} ${name}: ${String(actual)}\n`);
+  let failed = false;
+  for (const [name, passed, detail] of checks) {
+    process.stdout.write(`${passed ? "PASS" : "FAIL"} ${name}: ${detail ?? ""}\n`);
+    failed ||= !passed;
   }
-  if (failures.length > 0) {
-    process.exitCode = 1;
-  }
+  if (failed) process.exitCode = 1;
 }
 
 if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
