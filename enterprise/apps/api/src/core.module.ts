@@ -25,9 +25,6 @@ import { IdentityProvisioningService } from "./identity/identity-provisioning.se
 import { HttpAccessGuard } from "./identity/http-access.js";
 import { IdentityService } from "./identity/identity.service.js";
 import { LoginRateLimiter } from "./identity/login-rate-limiter.js";
-import { MfaService } from "./identity/mfa.service.js";
-import { SamlService } from "./identity/saml.service.js";
-import { OidcStartAdmission } from "./identity/oidc-start-admission.js";
 import { PasswordHasher } from "./identity/password-hasher.js";
 import {
   SmtpPasswordResetMailer,
@@ -35,14 +32,6 @@ import {
 } from "./identity/password-reset-mailer.js";
 import { PasswordResetService } from "./identity/password-reset.service.js";
 import { AccessChangedPublisher } from "./kernel/access-changed.js";
-import {
-  FetchOidcProviderClient,
-  FileOidcClientSecretResolver,
-  type OidcClientSecretResolver,
-  type OidcHttpTransport,
-  OidcService,
-} from "./identity/oidc.service.js";
-import { OidcController } from "./identity/oidc.controller.js";
 import { AccessOperationDiscovery } from "./operations/access-operation-discovery.js";
 import { AccessOperationsService } from "./operations/access-operations.service.js";
 import { OrganizationManagementService } from "./organizations/organization-management.service.js";
@@ -59,8 +48,6 @@ import {
   API_CONFIGURATION,
   AUDIT_CONFIGURATION,
   CLOCK,
-  OIDC_CLIENT_SECRET_RESOLVER,
-  OIDC_PROVIDER_CLIENT,
   PASSWORD_RESET_MAILER,
 } from "./tokens.js";
 
@@ -71,8 +58,6 @@ export interface CoreModuleOptions {
   auditConfiguration: AuditConfiguration;
   initializeDummyPasswordHash?: boolean;
   loginRateLimiter?: LoginRateLimiter;
-  oidcClientSecretResolver?: OidcClientSecretResolver;
-  oidcHttpTransport?: OidcHttpTransport;
   passwordResetMailer?: PasswordResetMailer;
 }
 
@@ -85,7 +70,6 @@ export class CoreModule {
       controllers: [
         GroupsController,
         IdentityController,
-        OidcController,
         OrganizationsController,
         SpaceManagementController,
         SpacesController,
@@ -139,10 +123,6 @@ export class CoreModule {
           provide: LoginRateLimiter,
           useFactory: () => options.loginRateLimiter ?? new LoginRateLimiter(),
         },
-        {
-          provide: OidcStartAdmission,
-          useFactory: () => new OidcStartAdmission(),
-        },
         IdentityService,
         IdentityProvisioningService,
         PasswordResetService,
@@ -158,30 +138,10 @@ export class CoreModule {
               smtpUrl: configuration.passwordResetSmtpUrl,
             }),
         },
-        MfaService,
-        SamlService,
         SpaceAccessService,
         OrganizationManagementService,
         GroupManagementService,
         SpaceManagementService,
-        {
-          provide: OIDC_CLIENT_SECRET_RESOLVER,
-          useFactory: () =>
-            options.oidcClientSecretResolver ??
-            new FileOidcClientSecretResolver(
-              options.configuration.oidcClientSecretBindings,
-            ),
-        },
-        {
-          provide: OIDC_PROVIDER_CLIENT,
-          inject: [OIDC_CLIENT_SECRET_RESOLVER],
-          useFactory: (secretResolver: OidcClientSecretResolver) =>
-            new FetchOidcProviderClient(
-              secretResolver,
-              options.oidcHttpTransport,
-            ),
-        },
-        OidcService,
         AccessOperationDiscovery,
         AccessOperationsService,
       ],
@@ -194,9 +154,6 @@ export class CoreModule {
         GroupManagementService,
         HttpAccessGuard,
         IdentityService,
-        MfaService,
-        SamlService,
-        OidcService,
         OrganizationManagementService,
         PasswordHasher,
         PasswordResetService,
