@@ -1,0 +1,75 @@
+name: Singularity CI Impact
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: ${{ github.repository == 'SparkElf/singularity' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+
+      - name: Resolve CI impact
+        id: impact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$HEAD_SHA^"
+          fi
+          node scripts/singularity/resolve-ci-impact.mjs \
+            --base "$base" \
+            --head "$HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            --json
+
+      - name: Publish impact summary
+        env:
+          MODE: ${{ steps.impact.outputs.mode }}
+          REASON: ${{ steps.impact.outputs.reason }}
+          GOVERNANCE: ${{ steps.impact.outputs.governance }}
+          NATIVE_APP: ${{ steps.impact.outputs.native_app }}
+          ENTERPRISE_STATIC: ${{ steps.impact.outputs.enterprise_static }}
+          INTEGRATION: ${{ steps.impact.outputs.integration }}
+          BROWSER: ${{ steps.impact.outputs.browser }}
+          E2E: ${{ steps.impact.outputs.e2e }}
+          PACKAGE: ${{ steps.impact.outputs.package }}
+          UPSTREAM: ${{ steps.impact.outputs.upstream }}
+        run: |
+          {
+            echo "## Singularity CI impact plan"
+            echo
+            echo "- Mode: \`$MODE\`"
+            echo "- Reason: $REASON"
+            echo
+            echo "| Lane | Selected |"
+            echo "| --- | --- |"
+            echo "| governance | $GOVERNANCE |"
+            echo "| native_app | $NATIVE_APP |"
+            echo "| enterprise_static | $ENTERPRISE_STATIC |"
+            echo "| integration | $INTEGRATION |"
+            echo "| browser | $BROWSER |"
+            echo "| e2e | $E2E |"
+            echo "| package | $PACKAGE |"
+            echo "| upstream | $UPSTREAM |"
+          } >> "$GITHUB_STEP_SUMMARY"
