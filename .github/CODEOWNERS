@@ -1,0 +1,18 @@
+# Singularity ownership map
+#
+# CODEOWNERS records the accountable maintainer for review routing. Branch
+# protection does not require a separate approving code-owner review while the
+# repository has a single human maintainer, because GitHub does not allow an
+# author to satisfy their own required approval.
+
+* @SparkElf
+
+/.github/ @SparkElf
+/.agents/ @SparkElf
+/upstream/ @SparkElf
+/diffs/ @SparkElf
+/scripts/singularity/ @SparkElf
+/docs/adr/ @SparkElf
+/app/ @SparkElf
+/kernel/ @SparkElf
+/enterprise/ @SparkElf
