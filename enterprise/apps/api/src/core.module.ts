@@ -55,14 +55,12 @@ import { SpaceObservabilityController } from "./spaces/space-observability.contr
 import { SpaceObservabilityService } from "./spaces/space-observability.service.js";
 import { NotificationController } from "./notifications/notification.controller.js";
 import { NotificationService } from "./notifications/notification.service.js";
-import { HttpAiProvider, type AiProvider } from "./governance/ai-provider.js";
 import {
   API_CONFIGURATION,
   AUDIT_CONFIGURATION,
   CLOCK,
   OIDC_CLIENT_SECRET_RESOLVER,
   OIDC_PROVIDER_CLIENT,
-  AI_PROVIDER,
   PASSWORD_RESET_MAILER,
 } from "./tokens.js";
 
@@ -75,7 +73,6 @@ export interface CoreModuleOptions {
   loginRateLimiter?: LoginRateLimiter;
   oidcClientSecretResolver?: OidcClientSecretResolver;
   oidcHttpTransport?: OidcHttpTransport;
-  aiProvider?: AiProvider;
   passwordResetMailer?: PasswordResetMailer;
 }
 
@@ -118,10 +115,6 @@ export class CoreModule {
         DocumentAccessPolicyService,
         CommentService,
         NotificationService,
-        {
-          provide: AI_PROVIDER,
-          useFactory: () => options.aiProvider ?? new HttpAiProvider(),
-        },
         {
           provide: CLOCK,
           useValue: options.clock,
@@ -217,7 +210,6 @@ export class CoreModule {
         DocumentAccessPolicyService,
         CommentService,
         NotificationService,
-        AI_PROVIDER,
       ],
     };
   }
