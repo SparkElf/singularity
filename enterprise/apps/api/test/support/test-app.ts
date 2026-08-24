@@ -6,13 +6,7 @@ import { createApiApplication } from "../../src/application.js";
 import type { KernelGatewayRuntimeConfiguration } from "../../src/kernel/configuration.js";
 import type { Clock } from "../../src/identity/clock.js";
 import type { LoginRateLimiter } from "../../src/identity/login-rate-limiter.js";
-import type {
-  OidcClientSecretResolver,
-  OidcHttpTransport,
-} from "../../src/identity/oidc.service.js";
-import type { AiProvider } from "../../src/governance/ai-provider.js";
 import type { PasswordResetMailer } from "../../src/identity/password-reset-mailer.js";
-import { OidcHttpTransportError } from "../../src/identity/oidc-http-transport.js";
 import { testAuditConfiguration } from "./audit-configuration.js";
 import {
   TEST_TLS_CERTIFICATE,
@@ -35,36 +29,9 @@ export interface TestApiApplicationOptions {
   kernelGateway?: KernelGatewayRuntimeConfiguration;
   loginRateLimiter?: LoginRateLimiter;
   logger?: LoggerService;
-  oidcClientSecretResolver?: OidcClientSecretResolver;
-  oidcHttpTransport?: OidcHttpTransport;
-  aiProvider?: AiProvider;
   passwordResetMailer?: PasswordResetMailer;
   trustedProxyCidrs?: string;
 }
-
-const testOidcClientSecretResolver: OidcClientSecretResolver = {
-  assertBound: () => undefined,
-  resolve: async () => "test-oidc-client-secret",
-};
-
-const testOidcHttpTransport: OidcHttpTransport = {
-  async request(input) {
-    const response = await fetch(input.url, {
-      ...(input.body === undefined ? {} : { body: input.body }),
-      headers: input.headers,
-      method: input.method,
-      redirect: "error",
-      signal: AbortSignal.timeout(input.timeoutMilliseconds),
-    });
-    const body = Buffer.from(await response.arrayBuffer());
-    if (body.byteLength > input.maximumBodyBytes) {
-      throw new OidcHttpTransportError(
-        "OIDC response exceeded the byte limit",
-      );
-    }
-    return { body, status: response.status };
-  },
-};
 
 export async function startTestApiApplication(
   options: TestApiApplicationOptions = {},
@@ -93,10 +60,6 @@ export async function startTestApiApplication(
       ? {}
       : { loginRateLimiter: options.loginRateLimiter }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
-    oidcClientSecretResolver:
-      options.oidcClientSecretResolver ?? testOidcClientSecretResolver,
-    oidcHttpTransport: options.oidcHttpTransport ?? testOidcHttpTransport,
-    ...(options.aiProvider === undefined ? {} : { aiProvider: options.aiProvider }),
     ...(options.passwordResetMailer === undefined
       ? {}
       : { passwordResetMailer: options.passwordResetMailer }),
