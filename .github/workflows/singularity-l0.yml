@@ -449,7 +449,7 @@ jobs:
       - name: Apply enterprise migrations and audit ACL
         env:
           DATABASE_URL: postgresql://singularity_test:singularity_test@127.0.0.1:55432/singularity_test
-        run: pnpm --filter @singularity/database deploy
+        run: pnpm --filter @singularity/database run deploy
         working-directory: enterprise
 
       - name: Smoke enterprise images
