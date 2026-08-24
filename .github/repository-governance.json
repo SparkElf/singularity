@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "repository": "SparkElf/singularity",
+  "canonicalBranch": "main",
+  "description": "Singularity: an enterprise knowledge base built on SiYuan for organization, sharing, permissions, collaboration, governance, discovery, and AI-assisted knowledge work.",
+  "homepage": "",
+  "visibility": "public",
+  "features": {
+    "issues": true,
+    "projects": true,
+    "wiki": false,
+    "discussions": true
+  },
+  "topics": [
+    "enterprise-knowledge-base",
+    "knowledge-base",
+    "knowledge-management",
+    "siyuan",
+    "self-hosted",
+    "collaboration",
+    "permissions",
+    "ai-agents",
+    "mcp",
+    "typescript",
+    "golang",
+    "react",
+    "postgresql",
+    "local-first"
+  ],
+  "mergePolicy": {
+    "allowMergeCommit": true,
+    "allowSquashMerge": true,
+    "allowRebaseMerge": true,
+    "allowAutoMerge": false,
+    "deleteBranchOnMerge": false,
+    "requireLinearHistory": false
+  },
+  "mainRuleset": {
+    "requirePullRequest": true,
+    "requiredApprovingReviewCount": 0,
+    "requireCodeOwnerReview": false,
+    "requireConversationResolution": true,
+    "blockForcePushes": true,
+    "blockDeletions": true,
+    "requiredChecksAfterFirstCanonicalPullRequest": [
+      "Singularity Governance / pr-evidence",
+      "Singularity Governance / metadata",
+      "Singularity L0 / repository-governance",
+      "Singularity L0 / enterprise-web",
+      "Singularity L0 / space-session",
+      "Singularity L0 / p5-e2e",
+      "Singularity L0 / kernel-baseline",
+      "Singularity L0 / supply-chain"
+    ]
+  }
+}
