@@ -24,17 +24,12 @@ import { AppModule } from "./app.module.js";
 import {
   parseContentAuditIndeterminateAfterMilliseconds,
   parseBooleanFlag,
-  parseOidcClientSecretBindings,
   parsePasswordResetFrom,
   parsePasswordResetSmtpUrl,
   parsePublicOrigin,
   parseTrustedProxyCidrs,
 } from "./configuration.js";
 import { SystemClock, type Clock } from "./identity/clock.js";
-import type {
-  OidcClientSecretResolver,
-  OidcHttpTransport,
-} from "./identity/oidc.service.js";
 import type { LoginRateLimiter } from "./identity/login-rate-limiter.js";
 import type { KernelGatewayRuntimeConfiguration } from "./kernel/configuration.js";
 import {
@@ -55,9 +50,6 @@ export interface CreateApiApplicationOptions {
   kernelGateway: KernelGatewayRuntimeConfiguration;
   loginRateLimiter?: LoginRateLimiter;
   logger?: LoggerService;
-  oidcClientSecretBindings?: string | undefined;
-  oidcClientSecretResolver?: OidcClientSecretResolver;
-  oidcHttpTransport?: OidcHttpTransport;
   passwordResetMailer?: import("./identity/password-reset-mailer.js").PasswordResetMailer;
   publicOrigin: string | undefined;
   trustedProxyCidrs?: string | undefined;
@@ -70,10 +62,9 @@ export async function createApiApplication(
     contentAuditIndeterminateAfterMilliseconds:
       parseContentAuditIndeterminateAfterMilliseconds(
         options.contentAuditIndeterminateAfterMilliseconds,
-    ),
-    collaborationEnabled: parseBooleanFlag(process.env.SINGULARITY_COLLABORATION_ENABLED),
-    oidcClientSecretBindings: parseOidcClientSecretBindings(
-      options.oidcClientSecretBindings,
+      ),
+    collaborationEnabled: parseBooleanFlag(
+      process.env.SINGULARITY_COLLABORATION_ENABLED,
     ),
     passwordResetFrom: parsePasswordResetFrom(
       process.env.SINGULARITY_PASSWORD_RESET_FROM,
@@ -109,12 +100,6 @@ export async function createApiApplication(
       ...(options.loginRateLimiter === undefined
         ? {}
         : { loginRateLimiter: options.loginRateLimiter }),
-      ...(options.oidcClientSecretResolver === undefined
-        ? {}
-        : { oidcClientSecretResolver: options.oidcClientSecretResolver }),
-      ...(options.oidcHttpTransport === undefined
-        ? {}
-        : { oidcHttpTransport: options.oidcHttpTransport }),
       ...(options.passwordResetMailer === undefined
         ? {}
         : { passwordResetMailer: options.passwordResetMailer }),
