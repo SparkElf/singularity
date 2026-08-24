@@ -1,0 +1,16 @@
+version: 1
+upstream:
+  repository: siyuan-note/siyuan
+  url: https://github.com/siyuan-note/siyuan
+  branch: master
+baseline:
+  version: 3.7.2
+  tag: v3.7.2
+  commit: c8dcdd0860ef000a14552c619fe19c0dcb5175f5
+  adopted_at: 2026-07-17
+tracking:
+  mode: controlled-promotion
+  automatic_merge: false
+  candidate_branch_prefix: upstream/siyuan-
+  require_pull_request: true
+  require_full_governance: true
