@@ -24,6 +24,9 @@ jobs:
     if: ${{ github.repository == 'SparkElf/singularity' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
     outputs:
       publish: ${{ steps.source.outputs.publish }}
       release_version: ${{ steps.source.outputs.release_version }}
@@ -67,6 +70,29 @@ jobs:
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful canonical L0 evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          run_id="$({
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/singularity-l0.yml/runs?branch=main&event=push&status=success&per_page=100" \
+              | jq -r --arg sha "$SOURCE_SHA" \
+                '.workflow_runs[]? | select(.head_sha == $sha and .head_branch == "main" and .event == "push" and .conclusion == "success") | .id'
+          } | head -n 1)"
+          if [ -z "$run_id" ]; then
+            printf 'No successful Singularity L0 push run exists for canonical main SHA %s\n' "$SOURCE_SHA" >&2
+            exit 1
+          fi
+          {
+            echo "## Release CI evidence"
+            echo
+            echo "- Canonical main SHA: \`$SOURCE_SHA\`"
+            echo "- Successful Singularity L0 run: \`$run_id\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Register read-only SiYuan upstream
         run: |
