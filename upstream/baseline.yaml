@@ -1,4 +1,7 @@
 version: 1
+canonical:
+  repository: SparkElf/singularity
+  branch: main
 upstream:
   repository: siyuan-note/siyuan
   url: https://github.com/siyuan-note/siyuan
