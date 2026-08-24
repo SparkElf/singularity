@@ -1,10 +1,10 @@
 ---
 title: "ADR-008: 差异化上游同步策略"
-description: "定义Kernel、Protyle与原生思源工作区及企业React模块的上游同步方式"
+description: "历史决策：定义Kernel、Protyle与原生思源工作区及企业React模块的上游同步方式"
 author: "Codex"
 date: "2026-07-13"
-version: "1.0.0"
-status: "accepted"
+version: "1.1.0"
+status: "superseded"
 tags: ["adr", "git", "upstream"]
 ---
 
@@ -12,7 +12,7 @@ tags: ["adr", "git", "upstream"]
 
 ## Status
 
-Accepted
+Superseded by [ADR-038](0038-independent-repository-and-controlled-upstream-promotion.md) for repository/upstream synchronization. The surviving native-workspace and enterprise-mount ownership is carried by [ADR-035](0035-native-siyuan-workspace-react-enterprise-mount.md).
 
 ## Context
 
@@ -21,6 +21,8 @@ Kernel、Protyle与原生工作区需持续吸收思源修复，企业 React 模
 ## Decision
 
 Kernel保持最小补丁并定期 merge 上游。Protyle 与原生工作区继续沿上游同步；企业模块位于独立目录，通过原生 Dock custom model 挂载，不替代上游旧壳。
+
+> 历史说明：以上“定期merge上游”的流程不再是当前维护合同。当前模型为独立canonical `main` + SiYuan `upstream/master` + 固定baseline + diff registry + promotion PR，见ADR-038。
 
 ## Consequences
 
@@ -33,4 +35,6 @@ Kernel保持最小补丁并定期 merge 上游。Protyle 与原生工作区继�
 ## References
 
 1. [SiYuan official repository](https://github.com/siyuan-note/siyuan)
-2. [奇点完整方案](../../output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md)
+2. [ADR-035](0035-native-siyuan-workspace-react-enterprise-mount.md)
+3. [ADR-038](0038-independent-repository-and-controlled-upstream-promotion.md)
+4. [奇点完整方案](../../output/md/Singularity_Enterprise_Knowledge_Base_v1.0.0_2026-07-13.md)
